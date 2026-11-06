@@ -4,9 +4,10 @@ Two UEFI applications for x86-64, each written against the UEFI 2.10
 specification with no UEFI library:
 
 - `hello.c` prints a line through the firmware's console and waits for a key.
-- `splash.c` draws nova-os's first screen, a gradient, the name in a 5x7
-  pixel font and an accent bar, into the framebuffer the Graphics Output
-  Protocol gives it, then waits for a key.
+- `splash.c` draws nova-os's boot screen into the framebuffer the Graphics
+  Output Protocol gives it: a dithered gradient with a soft glow, the
+  wordmark "nova" in anti-aliased strokes, and a spinner that turns until a
+  key is pressed.
 
 ## Build
 
@@ -34,7 +35,7 @@ DLL-style image. Each build gives the same bytes:
 | Source | Size | sha256 |
 |---|---|---|
 | `hello.c` | 3,584 | `f01a6eb42f744db0e36636c794cfe19e4e1bd680a8170772537778fca6bac750` |
-| `splash.c` | 4,608 | `69c57592ad992b92d8fe21a1175ebd735d813b94eebd60bee88eeef95630fdbb` |
+| `splash.c` | 9,216 | `66e20fa61c5602ca2b6ac3fc3ef301dcaca8a35b11d8a23c40738a75e8de0977` |
 
 ## Run
 
@@ -49,9 +50,10 @@ qemu-system-x86_64 -machine q35 -m 256M \
   -drive if=pflash,format=raw,readonly=on,file=$fw/edk2-x86_64-code.fd \
   -drive if=pflash,format=raw,file=vars.fd \
   -drive if=virtio,format=raw,file=fat:esp,readonly=on \
-  -net none
+  -net none -device qemu-xhci -device usb-tablet
 ```
 
 The firmware boots `esp/EFI/BOOT/BOOTX64.EFI`. The firmware's variable store
 needs a writable copy, and the folder is attached as a read-only virtio disk,
-since QEMU's default IDE disk cannot be read-only.
+since QEMU's default IDE disk cannot be read-only. The USB tablet gives the
+window an absolute pointer, so QEMU does not capture the mouse.
