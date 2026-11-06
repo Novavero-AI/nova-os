@@ -5,9 +5,9 @@ specification with no UEFI library:
 
 - `hello.c` prints a line through the firmware's console and waits for a key.
 - `splash.c` draws nova-os's boot screen into the framebuffer the Graphics
-  Output Protocol gives it: a dithered gradient with a soft glow, the
-  wordmark "nova" in anti-aliased strokes, and a spinner that turns until a
-  key is pressed.
+  Output Protocol gives it: on black, the wordmark "nova" in anti-aliased
+  strokes and a spinning arc, until a key is pressed. It first switches to
+  the largest mode up to 1920x1080.
 
 ## Build
 
@@ -35,7 +35,7 @@ DLL-style image. Each build gives the same bytes:
 | Source | Size | sha256 |
 |---|---|---|
 | `hello.c` | 3,584 | `f01a6eb42f744db0e36636c794cfe19e4e1bd680a8170772537778fca6bac750` |
-| `splash.c` | 9,216 | `66e20fa61c5602ca2b6ac3fc3ef301dcaca8a35b11d8a23c40738a75e8de0977` |
+| `splash.c` | 8,704 | `bd3e2ec7cab6accfdcd63f6e7ee8c7ebc9a641240ce162f09eacc371bc421271` |
 
 ## Run
 
@@ -56,4 +56,5 @@ qemu-system-x86_64 -machine q35 -m 256M \
 The firmware boots `esp/EFI/BOOT/BOOTX64.EFI`. The firmware's variable store
 needs a writable copy, and the folder is attached as a read-only virtio disk,
 since QEMU's default IDE disk cannot be read-only. The USB tablet gives the
-window an absolute pointer, so QEMU does not capture the mouse.
+window an absolute pointer, so QEMU does not capture the mouse. On a Mac,
+`-display cocoa,zoom-to-fit=on -full-screen` gives it a full-screen Space.

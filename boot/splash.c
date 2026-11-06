@@ -1,24 +1,19 @@
-/* A UEFI application that draws nova-os's boot screen through the Graphics
-   Output Protocol: a dithered gradient with a soft glow, the wordmark
-   "nova" in anti-aliased strokes, and a spinner that turns until a key is
-   pressed, then returns EFI_SUCCESS.
+/* nova-os's boot screen: on black, the wordmark "nova" and a spinning arc,
+   drawn into the Graphics Output Protocol's framebuffer until a key is
+   pressed.
 
-   Types and layouts are written out from the UEFI Specification 2.10:
-     2.3.1  common data types; 2.3.4 x64 calling convention
-     4.3.1  EFI_SYSTEM_TABLE; 4.4.1 EFI_BOOT_SERVICES
-     7.1.5  WaitForEvent; 7.1.7 CheckEvent; 7.3.16 LocateProtocol
-     7.5.1  SetWatchdogTimer; 7.5.2 Stall
-     12.3.1 EFI_SIMPLE_TEXT_INPUT_PROTOCOL
-     12.9   EFI_GRAPHICS_OUTPUT_PROTOCOL
-   A table member this program never calls is declared VOID * so the offsets
-   of the members it does call stay right; the static assertions pin those
-   offsets to the specification's.
+   Types and layouts follow the UEFI Specification 2.10: 2.3 (data types,
+   x64 calling convention), 4.3.1 (EFI_SYSTEM_TABLE), 4.4.1
+   (EFI_BOOT_SERVICES), 7.1 (CheckEvent), 7.2.4 (FreePool), 7.3.16
+   (LocateProtocol), 7.5 (SetWatchdogTimer, Stall), 12.3.1 (simple text
+   input) and 12.9 (EFI_GRAPHICS_OUTPUT_PROTOCOL). Members this program
+   never calls are VOID * so the offsets of those it does call stay right;
+   the static assertions pin them.
 
-   Everything is integer arithmetic: the image links no C runtime, and
-   TinyCC compiles floating-point conversions as calls into one. Geometry
-   is in eighths of a pixel. A pixel's coverage is the share of 16 sample
-   points, on a 4x4 grid, that fall inside a stroke; inside tests compare
-   squared distances, so no square root is taken. */
+   The image links no C runtime, and TinyCC compiles floating-point
+   conversions as calls into one, so all arithmetic is integer. Geometry is
+   in eighths of a pixel, and a pixel's coverage is how many of 16 sample
+   points fall inside a stroke. */
 
 #include <stddef.h>
 
@@ -57,6 +52,7 @@ typedef struct {
     EFI_EVENT WaitForKey;
 } EFI_SIMPLE_TEXT_INPUT_PROTOCOL;
 
+typedef EFI_STATUS (*EFI_FREE_POOL)(VOID *Buffer);
 typedef EFI_STATUS (*EFI_CHECK_EVENT)(EFI_EVENT Event);
 typedef EFI_STATUS (*EFI_STALL)(UINTN Microseconds);
 typedef EFI_STATUS (*EFI_SET_WATCHDOG_TIMER)(UINTN Timeout,
@@ -66,8 +62,7 @@ typedef EFI_STATUS (*EFI_LOCATE_PROTOCOL)(EFI_GUID *Protocol,
                                           VOID *Registration,
                                           VOID **Interface);
 
-/* A prefix of the table, through LocateProtocol, the last member this
-   program calls; it is only ever reached through the firmware's pointer. */
+/* The table through LocateProtocol, the last member this program calls. */
 typedef struct {
     EFI_TABLE_HEADER Hdr;
     VOID *RaiseTPL;
@@ -76,7 +71,7 @@ typedef struct {
     VOID *FreePages;
     VOID *GetMemoryMap;
     VOID *AllocatePool;
-    VOID *FreePool;
+    EFI_FREE_POOL FreePool;
     VOID *CreateEvent;
     VOID *SetTimer;
     VOID *WaitForEvent;
@@ -110,12 +105,11 @@ typedef struct {
     EFI_LOCATE_PROTOCOL LocateProtocol;
 } EFI_BOOT_SERVICES_PREFIX;
 
-_Static_assert(offsetof(EFI_BOOT_SERVICES_PREFIX, CheckEvent) == 0x78,
-               "CheckEvent is the thirteenth service after the header");
-_Static_assert(offsetof(EFI_BOOT_SERVICES_PREFIX, Stall) == 0xF8,
-               "Stall is the twenty-ninth service after the header");
+_Static_assert(offsetof(EFI_BOOT_SERVICES_PREFIX, FreePool) == 0x48, "");
+_Static_assert(offsetof(EFI_BOOT_SERVICES_PREFIX, CheckEvent) == 0x78, "");
+_Static_assert(offsetof(EFI_BOOT_SERVICES_PREFIX, Stall) == 0xF8, "");
 _Static_assert(offsetof(EFI_BOOT_SERVICES_PREFIX, LocateProtocol) == 0x140,
-               "LocateProtocol is the thirty-eighth service after the header");
+               "");
 
 typedef struct {
     EFI_TABLE_HEADER Hdr;
@@ -162,19 +156,29 @@ typedef struct {
     UINTN FrameBufferSize;
 } EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE;
 
-typedef struct {
-    VOID *QueryMode;
-    VOID *SetMode;
+typedef struct EFI_GRAPHICS_OUTPUT_PROTOCOL EFI_GRAPHICS_OUTPUT_PROTOCOL;
+
+struct EFI_GRAPHICS_OUTPUT_PROTOCOL {
+    EFI_STATUS (*QueryMode)(EFI_GRAPHICS_OUTPUT_PROTOCOL *This,
+                            UINT32 ModeNumber, UINTN *SizeOfInfo,
+                            EFI_GRAPHICS_OUTPUT_MODE_INFORMATION **Info);
+    EFI_STATUS (*SetMode)(EFI_GRAPHICS_OUTPUT_PROTOCOL *This,
+                          UINT32 ModeNumber);
     VOID *Blt;
     EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *Mode;
-} EFI_GRAPHICS_OUTPUT_PROTOCOL;
+};
 
 static EFI_GUID graphics_output_guid = {
     0x9042a9de, 0x23dc, 0x4a38,
     {0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a}};
 
-/* ------------------------------------------------------------------------
-   The screen and the background */
+/* The largest mode the screen is switched to. */
+#define MAX_WIDTH 1920
+#define MAX_HEIGHT 1080
+
+#define SUBPIXEL 8
+#define SAMPLES 4
+#define COVERAGE_MAX (SAMPLES * SAMPLES)
 
 typedef struct {
     UINT32 *pixels;
@@ -182,86 +186,33 @@ typedef struct {
     INT64 height;
     INT64 stride;
     UINT32 format;
-    INT64 glow_x;      /* the glow's centre, in pixels */
-    INT64 glow_y;
-    INT64 glow_radius; /* in pixels */
 } SCREEN;
 
 typedef struct {
-    INT64 r, g, b; /* each 0..255 */
+    INT64 r, g, b;
 } RGB;
 
-/* A 4x4 ordered-dither matrix, in sixteenths of a colour step. */
-static const UINT8 bayer[4][4] = {
-    {0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
+static const RGB ink = {242, 242, 246};
 
-#define SUBPIXEL 8   /* geometry units per pixel */
-#define SAMPLES 4    /* sample points per pixel along each axis */
-#define COVERAGE_MAX (SAMPLES * SAMPLES)
-
-static void put(const SCREEN *screen, INT64 x, INT64 y, RGB c)
+/* The ink at a brightness of 0..255 times coverage, over black. */
+static void put(const SCREEN *screen, INT64 x, INT64 y, INT64 brightness,
+                INT64 coverage)
 {
-    UINT32 packed;
+    INT64 a = brightness * coverage / COVERAGE_MAX;
+    INT64 r = ink.r * a / 255, g = ink.g * a / 255, b = ink.b * a / 255;
 
     if (x < 0 || y < 0 || x >= screen->width || y >= screen->height)
         return;
-    if (screen->format == PIXEL_BGR)
-        packed = (UINT32)(c.r << 16 | c.g << 8 | c.b);
-    else
-        packed = (UINT32)(c.b << 16 | c.g << 8 | c.r);
-    screen->pixels[y * screen->stride + x] = packed;
-}
-
-/* One channel of the background, in sixteenths of a step: a vertical
-   gradient from top to bottom, plus a glow that falls off with the square
-   of the distance from its centre. */
-static INT64 channel(INT64 top, INT64 bottom, INT64 glow, INT64 y,
-                     INT64 height, INT64 strength)
-{
-    INT64 base = (top * (height - y) + bottom * y) * 16 / height;
-
-    return base + glow * strength / 16;
-}
-
-static RGB background(const SCREEN *screen, INT64 x, INT64 y)
-{
-    INT64 dx = x - screen->glow_x, dy = y - screen->glow_y;
-    INT64 r2 = screen->glow_radius * screen->glow_radius;
-    INT64 d2 = dx * dx + dy * dy;
-    INT64 strength = 0; /* 0..256 */
-    INT64 dither = bayer[y & 3][x & 3];
-    RGB c;
-
-    if (d2 < r2) {
-        strength = (r2 - d2) * 256 / r2;
-        strength = strength * strength / 256;
-    }
-    c.r = (channel(9, 20, 46, y, screen->height, strength) + dither) / 16;
-    c.g = (channel(10, 14, 20, y, screen->height, strength) + dither) / 16;
-    c.b = (channel(22, 44, 96, y, screen->height, strength) + dither) / 16;
-    if (c.r > 255) c.r = 255;
-    if (c.g > 255) c.g = 255;
-    if (c.b > 255) c.b = 255;
-    return c;
-}
-
-/* Over the background, a colour at alpha (0..255) times coverage. */
-static RGB blend(RGB under, RGB over, INT64 alpha, INT64 coverage)
-{
-    INT64 a = alpha * coverage / COVERAGE_MAX;
-    RGB c;
-
-    c.r = (under.r * (255 - a) + over.r * a) / 255;
-    c.g = (under.g * (255 - a) + over.g * a) / 255;
-    c.b = (under.b * (255 - a) + over.b * a) / 255;
-    return c;
+    screen->pixels[y * screen->stride + x] =
+        (UINT32)(screen->format == PIXEL_BGR ? r << 16 | g << 8 | b
+                                             : b << 16 | g << 8 | r);
 }
 
 /* ------------------------------------------------------------------------
-   Shapes, in eighths of a pixel */
+   Strokes */
 
-#define CAPSULE 0 /* a segment from (ax, ay) to (bx, by), radius r */
-#define RING 1    /* a circle of centre (ax, ay) and radius bx, half-width r */
+#define CAPSULE 0 /* the segment (ax, ay)-(bx, by), radius r */
+#define RING 1    /* centre (ax, ay), radius bx, half-width r */
 #define ARCH 2    /* the upper half of a RING */
 
 typedef struct {
@@ -284,6 +235,7 @@ static int inside(const SHAPE *s, INT64 px, INT64 py)
             INT64 ex = px - s->bx, ey = py - s->by;
             return ex * ex + ey * ey <= s->r * s->r;
         }
+        /* The squared distance to the line is cross^2 / len2. */
         cross = qx * dy - qy * dx;
         return cross * cross <= s->r * s->r * len2;
     } else {
@@ -298,7 +250,6 @@ static int inside(const SHAPE *s, INT64 px, INT64 py)
     }
 }
 
-/* How many of a pixel's 16 sample points fall inside any of the shapes. */
 static INT64 coverage(const SHAPE *shapes, int count, INT64 x, INT64 y)
 {
     INT64 sx, sy, hits = 0;
@@ -318,28 +269,13 @@ static INT64 coverage(const SHAPE *shapes, int count, INT64 x, INT64 y)
     return hits;
 }
 
-/* Paint the shapes over the background within a box, in pixels. */
-static void paint(const SCREEN *screen, const SHAPE *shapes, int count,
-                  INT64 x0, INT64 y0, INT64 x1, INT64 y1, RGB color,
-                  INT64 alpha)
-{
-    INT64 x, y;
-
-    for (y = y0; y <= y1; y++)
-        for (x = x0; x <= x1; x++) {
-            INT64 c = coverage(shapes, count, x, y);
-            RGB under = background(screen, x, y);
-
-            put(screen, x, y, c ? blend(under, color, alpha, c) : under);
-        }
-}
-
 /* ------------------------------------------------------------------------
-   The wordmark: "nova" in geometric strokes. h is the x-height, all in
-   eighths of a pixel; each letter adds its shapes at (x, y), its top-left
-   corner, and returns its width. */
+   The wordmark, in geometric strokes: x-height h, stroke radius r. Each
+   letter adds its strokes with its top-left corner at (x, y) and returns
+   its width. */
 
 #define MAX_SHAPES 8
+#define LETTER_GAP 32 /* percent of h */
 
 static SHAPE wordmark[MAX_SHAPES];
 static int wordmark_count;
@@ -388,57 +324,120 @@ static INT64 letter_a(INT64 x, INT64 y, INT64 h, INT64 r)
     return h;
 }
 
-/* The wordmark's width for x-height h, in the same units: the four
-   letters (0.82h, h, 0.90h, h) and three gaps of 0.32h. */
 static INT64 wordmark_width(INT64 h)
 {
-    return h * 82 / 100 + h + h * 90 / 100 + h + 3 * (h * 32 / 100);
+    return h * 82 / 100 + h + h * 90 / 100 + h + 3 * (h * LETTER_GAP / 100);
+}
+
+static void draw_wordmark(const SCREEN *screen, INT64 left, INT64 top,
+                          INT64 h)
+{
+    INT64 r = h / 13, x = left, y;
+    INT64 right = (left + wordmark_width(h)) / SUBPIXEL + 1;
+
+    x += letter_n(x, top, h, r) + h * LETTER_GAP / 100;
+    x += letter_o(x, top, h, r) + h * LETTER_GAP / 100;
+    x += letter_v(x, top, h, r) + h * LETTER_GAP / 100;
+    letter_a(x, top, h, r);
+    for (y = top / SUBPIXEL; y <= (top + h) / SUBPIXEL + 1; y++)
+        for (x = left / SUBPIXEL - 1; x <= right; x++)
+            put(screen, x, y, 255,
+                coverage(wordmark, wordmark_count, x, y));
 }
 
 /* ------------------------------------------------------------------------
-   The spinner: twelve dots on a circle, a bright head and a fading trail. */
+   The spinner: a thin ring whose bright head sweeps clockwise, trailed by
+   a fading tail, over a faint track. Angles are in sixteenths of a degree,
+   clockwise from twelve o'clock. */
 
-#define DOTS 12
-#define FRAME_MICROSECONDS 66000
+#define TURN (360 * 16)
+#define TAIL (TURN * 3 / 4)
+#define STEP (TURN / 48)  /* the head's advance per frame */
+#define TRACK 22          /* the track's brightness, 0..255 */
+#define FRAME_MICROSECONDS 33000
 
-/* sin and cos of i * 30 degrees, times 1024. */
-static const INT64 dot_sin[DOTS] = {0,     512,  887,  1024, 887,  512,
-                                    0,     -512, -887, -1024, -887, -512};
-static const INT64 dot_cos[DOTS] = {1024,  887,  512,  0,    -512, -887,
-                                    -1024, -887, -512, 0,    512,  887};
-
-typedef struct {
-    INT64 cx, cy;   /* the circle's centre, in pixels */
-    INT64 radius;   /* in pixels */
-    INT64 dot;      /* each dot's radius, in pixels */
-} SPINNER;
-
-static void draw_spinner(const SCREEN *screen, const SPINNER *sp,
-                         INT64 frame, RGB color)
+/* atan of z/4096 for 0 <= z <= 4096, in sixteenths of a degree, from
+   atan(z) ~ 45z + 15.64z(1 - z) degrees, within a quarter degree. */
+static INT64 atan_octant(INT64 z)
 {
-    int i;
+    return (720 * z + 250 * z * (4096 - z) / 4096) / 4096;
+}
 
-    for (i = 0; i < DOTS; i++) {
-        INT64 x = sp->cx + sp->radius * dot_sin[i] / 1024;
-        INT64 y = sp->cy - sp->radius * dot_cos[i] / 1024;
-        INT64 age = ((frame - i) % DOTS + DOTS) % DOTS; /* 0 is the head */
-        INT64 alpha = 255 - age * 255 / DOTS;
-        SHAPE disc;
+/* The angle of (dx, dy), with y growing downward, clockwise from up. */
+static INT64 clock_angle(INT64 dx, INT64 dy)
+{
+    INT64 ex = dx, ny = -dy;
+    INT64 ax = ex < 0 ? -ex : ex, ay = ny < 0 ? -ny : ny;
+    INT64 base, theta;
 
-        disc.kind = CAPSULE;
-        disc.ax = disc.bx = x * SUBPIXEL + SUBPIXEL / 2;
-        disc.ay = disc.by = y * SUBPIXEL + SUBPIXEL / 2;
-        disc.r = sp->dot * SUBPIXEL;
-        paint(screen, &disc, 1, x - sp->dot - 1, y - sp->dot - 1,
-              x + sp->dot + 1, y + sp->dot + 1, color,
-              alpha * alpha / 255);
-    }
+    if (ax == 0 && ay == 0)
+        return 0;
+    base = ax >= ay ? atan_octant(ay * 4096 / ax)
+                    : TURN / 4 - atan_octant(ax * 4096 / ay);
+    if (ex >= 0)
+        theta = ny >= 0 ? base : TURN - base;
+    else
+        theta = ny >= 0 ? TURN / 2 - base : TURN / 2 + base;
+    return ((TURN / 4 - theta) % TURN + TURN) % TURN;
+}
+
+static void draw_spinner(const SCREEN *screen, INT64 cx, INT64 cy,
+                         INT64 radius, INT64 width, INT64 head)
+{
+    SHAPE ring;
+    INT64 x, y, reach = (radius + width) / SUBPIXEL + 2;
+
+    ring.kind = RING;
+    ring.ax = cx * SUBPIXEL + SUBPIXEL / 2;
+    ring.ay = cy * SUBPIXEL + SUBPIXEL / 2;
+    ring.bx = radius;
+    ring.r = width;
+    for (y = cy - reach; y <= cy + reach; y++)
+        for (x = cx - reach; x <= cx + reach; x++) {
+            INT64 behind = ((head - clock_angle(x - cx, y - cy)) % TURN +
+                            TURN) % TURN;
+            INT64 brightness = TRACK;
+
+            if (behind < TAIL) {
+                INT64 t = (TAIL - behind) * 255 / TAIL;
+
+                brightness = TRACK + (255 - TRACK) * t * t / (255 * 255);
+            }
+            put(screen, x, y, brightness, coverage(&ring, 1, x, y));
+        }
 }
 
 /* ------------------------------------------------------------------------ */
 
-/* The wordmark's and the spinner's colour. */
-static const RGB ink = {236, 234, 255};
+/* Switch to the largest mode within MAX_WIDTH x MAX_HEIGHT that has a
+   linear 32-bit framebuffer, if it is larger than the current one. */
+static void largest_mode(EFI_BOOT_SERVICES_PREFIX *boot,
+                         EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
+{
+    UINT32 mode, best = gop->Mode->Mode;
+    INT64 best_area = (INT64)gop->Mode->Info->HorizontalResolution *
+                      gop->Mode->Info->VerticalResolution;
+
+    for (mode = 0; mode < gop->Mode->MaxMode; mode++) {
+        EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+        UINTN size;
+        INT64 area;
+
+        if (gop->QueryMode(gop, mode, &size, &info) != EFI_SUCCESS)
+            continue;
+        area = (INT64)info->HorizontalResolution * info->VerticalResolution;
+        if (info->HorizontalResolution <= MAX_WIDTH &&
+            info->VerticalResolution <= MAX_HEIGHT && area > best_area &&
+            (info->PixelFormat == PIXEL_RGB ||
+             info->PixelFormat == PIXEL_BGR)) {
+            best = mode;
+            best_area = area;
+        }
+        boot->FreePool(info);
+    }
+    if (best != gop->Mode->Mode)
+        gop->SetMode(gop, best);
+}
 
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
@@ -446,8 +445,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
     EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
     SCREEN screen;
-    SPINNER spinner;
-    INT64 h, r, x, y, left, top, width, frame;
+    INT64 h, top, x, y, cx, cy, head;
     EFI_STATUS status;
 
     (void)ImageHandle;
@@ -458,6 +456,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     status = boot->LocateProtocol(&graphics_output_guid, 0, (VOID **)&gop);
     if (status != EFI_SUCCESS)
         return status;
+    largest_mode(boot, gop);
     info = gop->Mode->Info;
     if (info->PixelFormat != PIXEL_RGB && info->PixelFormat != PIXEL_BGR)
         return EFI_SUCCESS;
@@ -468,41 +467,21 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     screen.stride = info->PixelsPerScanLine;
     screen.format = info->PixelFormat;
 
-    /* The wordmark spans about 30% of the screen's width. */
-    h = screen.width * SUBPIXEL / 16;
-    r = h / 13;
-    width = wordmark_width(h);
-    left = (screen.width * SUBPIXEL - width) / 2;
-    top = screen.height * SUBPIXEL * 42 / 100 - h / 2;
-
-    screen.glow_x = screen.width / 2;
-    screen.glow_y = (top + h / 2) / SUBPIXEL;
-    screen.glow_radius = screen.width * 35 / 100;
-
     for (y = 0; y < screen.height; y++)
         for (x = 0; x < screen.width; x++)
-            put(&screen, x, y, background(&screen, x, y));
+            screen.pixels[y * screen.stride + x] = 0;
 
-    x = left;
-    x += letter_n(x, top, h, r) + h * 32 / 100;
-    x += letter_o(x, top, h, r) + h * 32 / 100;
-    x += letter_v(x, top, h, r) + h * 32 / 100;
-    letter_a(x, top, h, r);
-    paint(&screen, wordmark, wordmark_count, left / SUBPIXEL - 1,
-          top / SUBPIXEL - 1, (left + width) / SUBPIXEL + 1,
-          (top + h) / SUBPIXEL + 1, ink, 255);
+    h = screen.width * SUBPIXEL / 22;
+    top = screen.height * SUBPIXEL * 44 / 100 - h / 2;
+    draw_wordmark(&screen, (screen.width * SUBPIXEL - wordmark_width(h)) / 2,
+                  top, h);
 
-    spinner.cx = screen.width / 2;
-    spinner.cy = (top + h) / SUBPIXEL + h * 2 / SUBPIXEL;
-    spinner.radius = h * 30 / 100 / SUBPIXEL;
-    spinner.dot = h * 5 / 100 / SUBPIXEL;
-    if (spinner.dot < 2)
-        spinner.dot = 2;
-
-    for (frame = 0; boot->CheckEvent(SystemTable->ConIn->WaitForKey) !=
-                    EFI_SUCCESS;
-         frame++) {
-        draw_spinner(&screen, &spinner, frame, ink);
+    cx = screen.width / 2;
+    cy = (top + h) / SUBPIXEL + h * 13 / 10 / SUBPIXEL;
+    for (head = 0; boot->CheckEvent(SystemTable->ConIn->WaitForKey) !=
+                   EFI_SUCCESS;
+         head = (head + STEP) % TURN) {
+        draw_spinner(&screen, cx, cy, h * 26 / 100, h * 3 / 100 + 1, head);
         boot->Stall(FRAME_MICROSECONDS);
     }
     return EFI_SUCCESS;
