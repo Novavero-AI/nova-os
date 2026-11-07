@@ -85,7 +85,7 @@ Both disks hold:
 \NOVA\NTDLL.DLL          ntdll for 32-bit processes
 \NOVA\VIRTBLK.EXE        the virtio block driver
 \NOVA\VIRTINP.EXE        the virtio input driver
-\NOVA\CONSOLE.EXE        the console, the input driver's client
+\NOVA\CONSOLE.EXE        the console, the input drivers' client
 \NOVA\STORE.IMG          the store image
 \NOVA\FS.EXE             the file system service, for a data disk
 \NOVA\FSTEST.EXE         the data disk's check

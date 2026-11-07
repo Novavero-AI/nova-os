@@ -33,11 +33,12 @@ for source in $(git ls-files '*.c'); do
   flags=$(cat "$dir/compile_flags.txt")
   standard=
   case $source in
-    # check-masks.c is C11, as the build line in its header says, because
-    # include/cpu.h is; tools/compile_flags.txt gives the C99 the other
-    # tools are written in. Drop this once check-masks.c has a
-    # compile_flags.txt of its own.
-    tools/check-masks.c) standard=-std=c11 ;;
+    # These are C11, as the build lines in their headers say, because
+    # include/cpu.h and include/input_protocol.h are;
+    # tools/compile_flags.txt gives the C99 the other tools are written
+    # in. Drop this once they have a compile_flags.txt of their own.
+    tools/check-masks.c | tools/check-pointer.c | tools/check-text.c)
+      standard=-std=c11 ;;
   esac
   # shellcheck disable=SC2086
   if ! (cd "$dir" && "$clang" -fsyntax-only -Wall -Wextra -pedantic \

@@ -1,33 +1,34 @@
 /* The platform driver. It walks PCI configuration space through the ECAM
    ranges the kernel found in the ACPI MCFG table, from each range's
    first bus down through the bridges, mapping each bus it visits once,
-   and logs each function. Two functions get a driver, each a process of
-   its own in a job of its own, whose bootstrap message (pci.h) carries
-   resources covering only that function: its configuration space, its
-   memory BARs, its message-signalled interrupts and an initiator for
-   its requester ID, with PIN alone. init keeps the initiator's RELEASE.
+   and logs each function. Each function named below gets a driver, a
+   process of its own in a job of its own, whose bootstrap message
+   (pci.h) carries resources covering only that function: its
+   configuration space, its memory BARs, its message-signalled
+   interrupts and an initiator for its requester ID, with PIN alone.
+   init keeps the initiator's RELEASE.
 
    The first virtio block function goes to \nova\virtblk.exe, which reads
    the boot disk and ends. The walk notes the second as the data disk,
    whose driver and file system service data.c starts, with this file's
-   BAR sizing and driver handles. The first virtio input function goes to
-   \nova\virtinp.exe, which runs on: once its device is live it reports
-   with an endpoint, which init hands to its client, the console,
-   \nova\console.exe, whose bootstrap message console.c writes
-   (docs/spec/input.md, docs/spec/console.md).
+   BAR sizing and driver handles. Each virtio input function, up to
+   INPUT_DEVICES_MAX, goes to a \nova\virtinp.exe of its own, which runs
+   on: once its device is live it reports with an endpoint, which init
+   hands to their client, the console, \nova\console.exe, whose bootstrap
+   message console.c writes (docs/spec/input.md, docs/spec/console.md).
 
-   init supervises the three for the life of the system (ipc.md I10),
-   and the programs it keeps running that are not drivers, the accounts
-   service and login among them (platform_keep). It waits for them
-   through one port, on which a watch of each one's
-   process queues a packet when it ends, and a watch of the input
+   init supervises the drivers and the console for the life of the
+   system (ipc.md I10), and the programs it keeps running that are not
+   drivers, the accounts service and login among them (platform_keep).
+   It waits for them through one port, on which a watch of each one's
+   process queues a packet when it ends, and a watch of each input
    driver's bootstrap channel one when it reports. One that ends, or does
    not start, is started again as the restart policy below allows, a
    driver once init has stopped its function: cleared Bus Master Enable,
    reset the device and released the initiator's quarantine. The block
    driver's end with VIRTIO_BLK_EXIT_DONE is the end of its work, and it
    is not started again. The client keeps its bootstrap channel to init,
-   which hands it each endpoint the input driver reports: the first, and
+   which hands it each endpoint an input driver reports: the first, and
    one after each restart of the driver. */
 
 #include "platform.h"
@@ -54,8 +55,8 @@
 #define DRIVER_SELF_RIGHTS (PROCESS_RIGHT_MAP | RIGHT_TRANSFER)
 #define DRIVER_INITIATOR_RIGHTS (INITIATOR_RIGHT_PIN | RIGHT_TRANSFER)
 
-/* The rights a client's endpoint travels with: it reads key events and
-   waits for them, and passes the endpoint nowhere. */
+/* The rights a client's endpoint travels with: it reads key events or
+   pointer reports and waits for them, and passes the endpoint nowhere. */
 #define CLIENT_ENDPOINT_RIGHTS (CHANNEL_RIGHT_READ | RIGHT_WAIT)
 
 /* The interrupt vectors a driver's job may hold: each driver takes one,
@@ -83,10 +84,10 @@ static const JOB_LIMITS driver_limits = {DRIVER_INTERRUPT_VECTORS};
 #define SUPERVISOR_PORT_CAPACITY 1
 
 /* The client's bootstrap channel queues its bootstrap message and the
-   endpoints it has yet to take: the one from the driver's start and the
-   one from the restart the policy allows within RESTART_PERIOD_SECONDS,
-   should the client take neither meanwhile. */
-#define CLIENT_CHANNEL_CAPACITY 3
+   endpoints it has yet to take: for each input driver, the one from its
+   start and the one from the restart the policy allows within
+   RESTART_PERIOD_SECONDS, should the client take neither meanwhile. */
+#define CLIENT_CHANNEL_CAPACITY (1 + 2 * INPUT_DEVICES_MAX)
 
 /* A packet's key: the child's index in bits 7:0, what the watch waits
    for in bits 15:8, and the child's start number from bit 16 on, so a
@@ -98,7 +99,7 @@ static const JOB_LIMITS driver_limits = {DRIVER_INTERRUPT_VECTORS};
 #define EVENT_REPORTED 1
 
 /* What a child does once started: a driver that does its work and ends,
-   one that reports with an endpoint and runs on, that driver's client,
+   one that reports with an endpoint and runs on, the client of those,
    or a program kept running that drives nothing. */
 #define KIND_FINISHES 0
 #define KIND_REPORTS 1
@@ -123,10 +124,12 @@ typedef struct {
                                in init once it is first reset, or 0 */
 } FUNCTION;
 
-/* The first function of each kind a driver serves, and the data disk,
-   the second virtio block function. */
+/* The first virtio block function, the data disk, the second, and the
+   virtio input functions, inputs of them, in the order of the walk. */
 typedef struct {
-    FUNCTION block, input, data;
+    FUNCTION block, data;
+    FUNCTION input[INPUT_DEVICES_MAX];
+    UINT32 inputs;
 } FOUND;
 
 /* The buses of one ECAM range, each mapped into init when first
@@ -164,15 +167,19 @@ typedef struct {
     UINT32 client_start;
 } CHILD;
 
+/* The block driver and the console take the first places, then an
+   input driver for each input function the walk found. The programs
+   platform_keep keeps running take the places after theirs: the
+   accounts service and login. */
 #define CHILD_BLOCK 0
-#define CHILD_INPUT 1
-#define CHILD_CLIENT 2
-
-/* The programs platform_keep keeps running take the places after the
-   drivers' and the console's: the accounts service and login. */
-#define CHILD_FIRST_PROGRAM 3
+#define CHILD_CLIENT 1
+#define CHILD_FIRST_INPUT 2
+#define CHILD_FIRST_PROGRAM (CHILD_FIRST_INPUT + INPUT_DEVICES_MAX)
 #define PROGRAMS_MAX 2
 #define CHILDREN (CHILD_FIRST_PROGRAM + PROGRAMS_MAX)
+
+_Static_assert(CHILDREN <= KEY_FIELD_MASK + 1,
+               "a packet's key names every child");
 
 static FOUND found_functions;
 static CHILD children[CHILDREN] = {
@@ -180,10 +187,6 @@ static CHILD children[CHILDREN] = {
                      .file = BLOCK_FILE,
                      .kind = KIND_FINISHES,
                      .function = &found_functions.block},
-    [CHILD_INPUT] = {.name = "virtio input driver",
-                     .file = INPUT_FILE,
-                     .kind = KIND_REPORTS,
-                     .function = &found_functions.input},
     [CHILD_CLIENT] = {.name = "console",
                       .file = CLIENT_FILE,
                       .kind = KIND_CLIENT},
@@ -216,12 +219,19 @@ static void say_function(UINT32 requester, UINT32 vendor, UINT32 id)
     say("\r\n");
 }
 
+/* A line about child: before, its name, and a driver's function, if the
+   walk found one, so that the input drivers are told apart; after ends
+   it. */
 static void say_child(const char *before, const CHILD *child,
                       const char *after)
 {
     say("nova-init: ");
     say(before);
     say(child->name);
+    if (child->function && child->function->config) {
+        say(" at ");
+        pci_say_function(child->function->requester);
+    }
     say(after);
 }
 
@@ -245,6 +255,28 @@ static void note(FUNCTION *kind, UINT32 requester, UINT64 config,
     kind->mapped = mapped;
 }
 
+/* Note an input function after those noted, unless it is one of them
+   seen again, as two ECAM ranges over one bus show it, or there are
+   INPUT_DEVICES_MAX already, which is logged. */
+static void note_input(FOUND *found, UINT32 requester, UINT64 config,
+                       volatile UINT8 *mapped)
+{
+    UINT32 i;
+
+    for (i = 0; i < found->inputs; i++)
+        if (found->input[i].requester == requester)
+            return;
+    if (found->inputs == INPUT_DEVICES_MAX) {
+        say("nova-init: no input driver for ");
+        pci_say_function(requester);
+        say(", past the first ");
+        say_number(INPUT_DEVICES_MAX);
+        say("\r\n");
+        return;
+    }
+    note(&found->input[found->inputs++], requester, config, mapped);
+}
+
 /* Note a virtio endpoint function, by its PCI device ID, if a driver
    serves it. The boot disk's function seen again, as two ECAM ranges
    over one bus show it, is not the data disk. */
@@ -259,11 +291,11 @@ static void note_virtio(FOUND *found, UINT32 id, UINT32 requester,
     else if (block && requester != found->block.requester)
         note(&found->data, requester, config, mapped);
     else if (id == VIRTIO_INPUT_PCI_DEVICE)
-        note(&found->input, requester, config, mapped);
+        note_input(found, requester, config, mapped);
 }
 
 /* Visit bus and, through the bridges on it, the buses below, each once;
-   log every function, and note the first of each kind in found. A
+   log every function, and note in found those a driver serves. A
    device's functions above 0 are read only if function 0 is
    multi-function. */
 static void scan_bus(const PLATFORM *platform, UINT32 bus, FOUND *found)
@@ -316,7 +348,8 @@ static void scan_bus(const PLATFORM *platform, UINT32 bus, FOUND *found)
 /* The walk, made once, by whichever of data.c and platform_start asks
    first. Each range starts with no bus visited; the windows of an
    earlier one stay mapped. The walk stops after the range in which the
-   last kind is found. */
+   last kind is found, every input function the drivers serve
+   included. */
 static void scan(const PLATFORM *platform, FOUND *found)
 {
     const BOOTSTRAP_PLATFORM *boot = platform->boot;
@@ -327,8 +360,8 @@ static void scan(const PLATFORM *platform, FOUND *found)
         return;
     scanned = 1;
     for (i = 0; i < boot->ecam_count && i < BOOTSTRAP_ECAM_RANGES_MAX &&
-                !(found->block.config && found->input.config &&
-                  found->data.config);
+                !(found->block.config && found->data.config &&
+                  found->inputs == INPUT_DEVICES_MAX);
          i++) {
         segment.range = &boot->ecam[i];
         for (bus = 0; bus < BUSES; bus++)
@@ -475,9 +508,7 @@ static void say_start(const CHILD *child)
     const PCI_DEVICE_BOOTSTRAP *device = &child->device;
     UINT32 i;
 
-    say_child("starting the ", child, " for ");
-    pci_say_function(child->function->requester);
-    say(", with its configuration space at ");
+    say_child("starting the ", child, ", with its configuration space at ");
     say_hex(child->function->config);
     for (i = 0; i < PCI_BARS; i++)
         if (device->bar_size[i]) {
@@ -681,7 +712,7 @@ static int start_driver(const PLATFORM *platform, CHILD *child)
     return 1;
 }
 
-/* Start child, the input driver's client, the console, in the root job
+/* Start child, the input drivers' client, the console, in the root job
    with the bootstrap message console.c writes, keeping init's end of the
    channel, on which its endpoints follow (input_protocol.h). Returns 1
    with its process and that end in child; 0, logged, with nothing left
@@ -857,9 +888,9 @@ static UINT32 exit_code_of(const CHILD *child)
 /* child's process has ended. A driver's function is stopped first,
    whatever the end; the block driver's end with VIRTIO_BLK_EXIT_DONE is
    the end of its work, whose function keeps its quarantine if it does
-   not stop, as any driver's does; the input driver is not started again
+   not stop, as any driver's does; an input driver is not started again
    for a client given up, which would leave each endpoint it reports
-   with nobody to read it. The input driver's end with
+   with nobody to read it. An input driver's end with
    VIRTIO_INPUT_EXIT_DONE once the client it served has been restarted
    is the client's failure, not the driver's, and the driver starts
    again without counting a restart; the client's own policy bounds how
@@ -897,15 +928,16 @@ static void ended(const PLATFORM *platform, CHILD *child)
     }
 }
 
-/* The client's endpoint from the driver's report, read from channel, if
-   the report is the one virtio_input.h gives; else HANDLE_INVALID,
-   logged, with any handle it carried closed. */
-static UINT32 take_report(UINT32 channel)
+/* The client's endpoint from the report of driver, read from its
+   bootstrap channel, if the report is the one virtio_input.h gives; else
+   HANDLE_INVALID, logged, with any handle it carried closed. */
+static UINT32 take_report(const CHILD *driver)
 {
     RECEIVED_HANDLE handle;
     UINT32 transaction, byte_count, handle_count;
-    UINT32 status = channel_read(channel, &transaction, sizeof transaction,
-                                 &handle, 1, &byte_count, &handle_count);
+    UINT32 status =
+        channel_read(driver->channel, &transaction, sizeof transaction,
+                     &handle, 1, &byte_count, &handle_count);
 
     if (status == OK && byte_count == VIRTIO_INPUT_REPORT_SIZE &&
         transaction == 0 && handle_count == 1 &&
@@ -914,10 +946,7 @@ static UINT32 take_report(UINT32 channel)
         return handle.handle;
     if (status == OK && handle_count)
         handle_close(handle.handle);
-    say("nova-init: the virtio input driver's report is malformed, "
-        "status ");
-    say_number(status);
-    say("\r\n");
+    say_status("the report of the ", driver, " is malformed", status);
     return HANDLE_INVALID;
 }
 
@@ -944,12 +973,12 @@ static void hand_endpoint(CHILD *driver, UINT32 endpoint)
     say_status("the endpoint reached no ", client, "", status);
 }
 
-/* child, the input driver, has reported: its endpoint goes to its
-   client, which is started the first time. */
+/* child, an input driver, has reported: its endpoint goes to the
+   client, which the first report of any input driver starts. */
 static void reported(const PLATFORM *platform, CHILD *child)
 {
     CHILD *client = &children[CHILD_CLIENT];
-    UINT32 endpoint = take_report(child->channel);
+    UINT32 endpoint = take_report(child);
 
     close_if_open(&child->channel);
     child->state = STATE_RUNNING;
@@ -1025,18 +1054,33 @@ static UINT32 start_up(const PLATFORM *platform, CHILD *child)
     return supervise_start(platform, child);
 }
 
+/* The input driver for the walk's input function index. */
+static CHILD *input_child(UINT32 index)
+{
+    CHILD *child = &children[CHILD_FIRST_INPUT + index];
+
+    child->name = "virtio input driver";
+    child->file = INPUT_FILE;
+    child->kind = KIND_REPORTS;
+    child->function = &found_functions.input[index];
+    return child;
+}
+
 int platform_start(const PLATFORM *platform)
 {
     CHILD *block = &children[CHILD_BLOCK];
     UINT32 status = port_create(SUPERVISOR_PORT_CAPACITY, &supervisor_port);
+    UINT32 i;
 
     scan(platform, &found_functions);
     if (status == OK)
         status = start_up(platform, block);
     if (status == OK && block->state == STATE_GIVEN_UP)
         return 0;
-    if (status == OK)
-        status = start_up(platform, &children[CHILD_INPUT]);
+    if (status == OK && !found_functions.inputs)
+        say("nova-init: no function for the virtio input driver\r\n");
+    for (i = 0; status == OK && i < found_functions.inputs; i++)
+        status = start_up(platform, input_child(i));
     if (status == OK)
         return 1;
     say("nova-init: cannot supervise, status ");

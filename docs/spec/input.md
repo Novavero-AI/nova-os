@@ -53,10 +53,10 @@ job of its own, with the bootstrap message every PCI device driver gets
    bitmap and its value is 0, 1 or 2; anything else, `EV_SYN` included,
    is ignored (5.8.6.1). On a pointer, a device that has `EV_ABS` or
    `EV_REL`, its `EV_KEY` events within the bitmap, its `EV_ABS` events
-   of `ABS_X` and `ABS_Y` and its `EV_REL` events of `REL_WHEEL` are
-   collected up to each `SYN_REPORT` and sent as one pointer report
-   (K2); anything else is ignored. The buffers go back to the device
-   once the pass has sent their events.
+   of `ABS_X` and `ABS_Y` and its `EV_REL` events of `REL_X`, `REL_Y`
+   and `REL_WHEEL` are collected up to each `SYN_REPORT` and sent as one
+   pointer report (K2); anything else is ignored. The buffers go back
+   to the device once the pass has sent their events.
 
 The bitmap's bit order is not in VIRTIO 1.4; QEMU's devices were
 observed to use this one. VIRTIO 1.4 5.8.4 says a string has no NUL
@@ -66,11 +66,11 @@ name's `size`, so the name ends at its first NUL.
 - **Why a driver for every function:** a keyboard and a tablet are
   separate virtio input functions, each with its own queues and
   configuration, so each gets a driver that can fail and restart alone.
-- **Why only these events:** a key press, and a tablet's position,
-  buttons and wheel, are what the first set needs
-  ([display.md D10](display.md#d10-the-pointer)); the device's `EV_LED`
-  and `EV_REP` (QEMU's keyboard has both) are for the status queue and
-  for software autorepeat, which nothing does yet.
+- **Why only these events:** a key press, a tablet's position, a
+  mouse's motion, and a pointer's buttons and wheel, are what the first
+  set needs ([display.md D10](display.md#d10-the-pointer)); the
+  device's `EV_LED` and `EV_REP` (QEMU's keyboard has both) are for the
+  status queue and for software autorepeat, which nothing does yet.
 - **Why check the codes against the bitmap:** the device states what it
   sends, so a code outside that set is one the driver does not
   recognize, and the client never receives a code the device did not
@@ -106,9 +106,15 @@ by `EV_SYN` `SYN_REPORT`, which a device should buffer or drop whole
 (VIRTIO 1.4 5.8.6.2; evdev, `SYN_REPORT`). The driver sends each update
 as one message, transaction 0, on the client's endpoint, in the same
 queue as key events: the axes that changed, with their values; the
-buttons that changed, pressed or released; the wheel's movement, as
-`REL_WHEEL` gives it; and the time it took the `SYN_REPORT` from the
-used ring (`include/input_protocol.h`). An `EV_SYN` `SYN_DROPPED` drops
+buttons that changed, pressed or released; a mouse's motion, `REL_X`
+and `REL_Y`, as the device's deltas summed over the update
+([display.md D10](display.md#d10-the-pointer), item 6); the wheel's
+movement, as `REL_WHEEL` gives it; and the time it took the
+`SYN_REPORT` from the used ring (`include/input_protocol.h`). A report
+holds at most `INPUT_REPORT_BUTTONS` (8) changes of buttons, and one of
+each; an update that changes more, or one button twice, is sent as more
+than one report, each ended at the change that would not fit, at the
+time it was taken. An `EV_SYN` `SYN_DROPPED` drops
 the events collected since the last report and every event up to and
 including the next `SYN_REPORT`, as evdev asks of a client (evdev,
 `SYN_DROPPED`).
@@ -161,10 +167,13 @@ message, carries the handles the console needs ([console.md
 C2](console.md#c2-starting-the-console)); each after it carries one
 handle, an endpoint the driver reported, with `READ` and `WAIT` alone,
 one for the driver's first report and one for each report after a
-restart (K4). The console takes each key event on its endpoint as a key
-typed at it ([console.md C3](console.md#c3-keys)); once the driver has
-closed the endpoint it takes the next from the channel when one comes,
-and it exits once the platform driver has closed the channel.
+restart (K4). The console reads every endpoint it holds, up to
+`INPUT_DEVICES_MAX` (4): the description first, then each key event as
+a key typed at it ([console.md C3](console.md#c3-keys)) and each pointer
+report as [console.md C6](console.md#c6-the-pointer) gives. It closes
+an endpoint once its driver has closed it, takes each new one from the
+channel when one comes, and exits once the platform driver has closed
+the channel.
 
 While a compositor runs, it is every input driver's client in the
 console's place ([display.md D2](display.md#d2-who-holds-the-display)):

@@ -64,10 +64,10 @@ _Static_assert(sizeof(CONSOLE_REQUEST) + CONSOLE_WRITE_MAX <=
 
 /** @name Starting the console
     Starting the console (C2). Its bootstrap channel is the one the
-    platform driver keeps to the keyboard driver's client (input.md K3).
+    platform driver keeps to the input drivers' client (input.md K3).
     The first message there is INPUT_CLIENT_MESSAGE_SIZE bytes, a
     transaction ID of 0, and these handles in this order; each after it
-    carries a keyboard endpoint, as input_protocol.h gives.
+    carries an input endpoint, as input_protocol.h gives.
     @{ */
 #define CONSOLE_BOOTSTRAP_DEBUG_LOG 0 /**< the debug log's resource */
 #define CONSOLE_BOOTSTRAP_SELF 1      /**< its process, with MAP */

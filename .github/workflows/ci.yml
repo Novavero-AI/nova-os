@@ -77,6 +77,13 @@ jobs:
             -I gfx -o "$RUNNER_TEMP/check-fade" tools/check-fade.c
           "$RUNNER_TEMP/check-fade"
 
+      - name: A pointer's events gather into reports as input.md K2 gives
+        run: |
+          cc -std=c11 -Wall -Wextra -pedantic -Werror -I include -I drivers \
+            -o "$RUNNER_TEMP/check-pointer" tools/check-pointer.c \
+            drivers/pointer.c
+          "$RUNNER_TEMP/check-pointer"
+
       - name: gfx/limb.c draws Limb as its prototype does
         run: design/backgrounds/check-limb.sh
 

@@ -8,3 +8,4 @@
 -I../fs
 -I../gfx
 -I../kernel
+-I../drivers

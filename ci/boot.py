@@ -16,20 +16,25 @@ started and written to LOG.
 In system mode, the boot of disk.img must report each kernel self-test
 passing, the store service serving, the test program from /store
 passing its checks, the virtio block driver reading the GPT, init's
-checks passing, startup done, the background drawn and the console
-drawn. With a data disk whose GPT is whole, the accounts service must
-report no account and login must start; then, typed through QMP,
-QEMU's monitor protocol, the first account is created, the shell
-starts, and the shell must report running whoami for it; the
-password, typed at the shell's prompt too, must appear nowhere in the
-log. The session then makes a directory in its home, writes a file in
-it twice, shows it, moves it, writes and removes an empty file, and is
-refused a directory under /store and a file in another user's home.
-The shell must log each command's status, and then the data disk, read
-on the host as docs/spec/pool-format.md lays it out, must hold the
-account's home alone in /users and the command's change in the home,
-and nothing else there; no word of a name or line typed for the
-commands may appear in the log. In persist mode the same copy of the
+checks passing, startup done, the background drawn, the console drawn,
+and the console taking the description of each of the keyboard, the
+mouse and the tablet, the tablet's with its axes' range. Then, sent
+through QMP, QEMU's monitor protocol, the tablet moves, each of three
+buttons is clicked, the wheel turns up and down and the mouse moves,
+and the console must report each; no position sent may appear in a line
+of the console or an input driver. With a data disk whose GPT is whole,
+the accounts service must report no account and login must start; then,
+typed through QMP, the first account is created, the shell starts, and
+the shell must report running whoami for it; the password, typed at the
+shell's prompt too, must appear nowhere in the log. The session then
+makes a directory in its home, writes a file in it twice, shows it,
+moves it, writes and removes an empty file, and is refused a directory
+under /store and a file in another user's home. The shell must log each
+command's status, and then the data disk, read on the host as
+docs/spec/pool-format.md lays it out, must hold the account's home
+alone in /users and the command's change in the home, and nothing else
+there; no word of a name or line typed for the commands may appear in
+the log. In persist mode the same copy of the
 data disk is booted twice: the first boot is system mode's, and the
 second must report the account the first made and, typed again, log
 in with it, run whoami and show the file, which the disk must still
@@ -64,6 +69,7 @@ import hashlib
 import json
 import os
 import queue
+import re
 import shutil
 import socket
 import subprocess
@@ -74,18 +80,36 @@ import time
 import zlib
 
 # README.md's Run command, with the display off, the serial port on
-# standard output and a QMP socket for the keys. -no-reboot makes a reset
-# end QEMU, so that the lines of a second boot cannot complete the
-# first's.
+# standard output, a QMP socket for the keys and the pointer, and a
+# virtio mouse, so that a relative pointer's events reach a driver too.
+# The mouse comes before the tablet: QEMU sends a button or the wheel to
+# the device whose driver set DRIVER_OK last of those that take them
+# (hw/input/virtio-input.c, virtio_input_set_status; ui/input.c,
+# qemu_input_find_handler), and the input drivers start in the order of
+# the PCI walk, so the tablet takes them, as it does in the Run command.
+# -no-reboot makes a reset end QEMU, so that the lines of a second boot
+# cannot complete the first's.
 MEMORY = "256M"
 DEVICES = ["-net", "none", "-device", "virtio-rng-pci",
-           "-device", "virtio-keyboard-pci", "-device", "qemu-xhci",
-           "-device", "usb-tablet", "-no-reboot"]
+           "-device", "virtio-keyboard-pci", "-device", "virtio-mouse-pci",
+           "-device", "virtio-tablet-pci", "-no-reboot"]
 
 SELF_TESTS = ["nova: %s self-test passed" % name
               for name in ("page allocator", "random", "object", "thread")]
 INIT_PASSED = "nova-init: checks passed"
 STARTUP_DONE = "nova: first process reports startup done"
+
+# The console's line for each endpoint's description
+# (include/input_protocol.h): QEMU's keyboard, its mouse, which has no
+# absolute axis, and its tablet, whose axes run from 0 to 0x7FFF
+# (include/ui/input.h, INPUT_EVENT_ABS_MAX).
+TABLET_MAX = 0x7FFF
+INPUT_LINES = [
+    "nova-console: input from a keyboard",
+    "nova-console: input from a pointer with no absolute axis",
+    "nova-console: input from a pointer, x from 0 to %d, y from 0 to %d"
+    % (TABLET_MAX, TABLET_MAX),
+]
 
 SYSTEM_LINES = SELF_TESTS + [
     "nova-store: serving ",
@@ -96,7 +120,7 @@ SYSTEM_LINES = SELF_TESTS + [
     STARTUP_DONE,
     "nova: background drawn in ",
     "nova-console: drawing on the ",
-]
+] + INPUT_LINES
 
 # init prints a link's line before comparing it with its pin, and stops
 # with "the chain failed" on a mismatch, so the line naming every link
@@ -293,13 +317,65 @@ FILE_COMMANDS = [
 ]
 LATER_FILE_COMMANDS = [(["cat notes/final"], "cat", OK, MOVED)]
 
-# What no line of the log may hold: the password, and each word of the
-# names and lines typed for the file commands, words no other line of
-# the log holds, so that a log of any of them is found.
-UNLOGGED = ([(ACCOUNT_PASSWORD, "the account's password")]
-            + [(word, "%r, typed for a file command" % word)
+# The pointer's events, each one QMP input-send-event command, which
+# QEMU ends with one SYN_REPORT (ui/input.c, qmp_input_send_event): the
+# tablet moved to POINTER_AT, whose numbers no other line of the log
+# holds; each button the console names pressed and released; the wheel
+# turned up and down, each turn a press, which QEMU sends as REL_WHEEL,
+# and a release, which it sends as a button no driver takes
+# (hw/input/virtio-input-hid.c); and the mouse moved, which alone takes
+# relative motion. Then the line the console must log for each.
+POINTER_AT = {"x": 13579, "y": 24680}
+BUTTONS = ["left", "right", "middle"]
+
+
+def button(name, down):
+    return [{"type": "btn", "data": {"button": name, "down": down}}]
+
+
+def move(kind, at):
+    return [{"type": kind, "data": {"axis": axis, "value": value}}
+            for axis, value in at.items()]
+
+
+POINTER_EVENTS = ([move("abs", POINTER_AT)]
+                  + [button(name, down)
+                     for name in BUTTONS + ["wheel-up", "wheel-down"]
+                     for down in (True, False)]
+                  + [move("rel", {"x": 7, "y": -3})])
+POINTER_LINES = (["nova-console: pointer moved, absolute x and y"]
+                 + ["nova-console: pointer %s button %s" % (name, change)
+                    for name in BUTTONS
+                    for change in ("pressed", "released")]
+                 + ["nova-console: pointer wheel turned up",
+                    "nova-console: pointer wheel turned down",
+                    "nova-console: pointer moved, relative x and y"])
+
+# What no line of the log may hold: the password, each word of the names
+# and lines typed for the file commands, words no other line of the log
+# holds, so that a log of any of them is found, and, in a line of the
+# console or an input driver, the only processes that see it, the
+# pointer's position as sent, which the driver passes on as it is, as a
+# whole number. Other lines hold numbers that change from run to run,
+# such as the thread self-test's loop counts and times, which can hold
+# a position's digits.
+def literal(word):
+    return re.compile(re.escape(word.encode("ascii")))
+
+
+SEES_POSITION = rb"nova-(?:console|virtio-input): .*"
+
+
+def whole_number(value):
+    return re.compile(SEES_POSITION + rb"(?<![0-9])%d(?![0-9])" % value)
+
+
+UNLOGGED = ([(literal(ACCOUNT_PASSWORD), "the account's password")]
+            + [(literal(word), "%r, typed for a file command" % word)
                for word in ["notes", "draft", "final", "stale", "nobody"]
-               + " ".join([FIRST_DRAFT] + FINAL_LINES).split()])
+               + " ".join([FIRST_DRAFT] + FINAL_LINES).split()]
+            + [(whole_number(value), "the pointer's %s" % axis)
+               for axis, value in POINTER_AT.items()])
 
 # The account's home on the data disk's volume, which must be the only
 # entry of /users.
@@ -349,7 +425,7 @@ class Serial:
             log.flush()
             text = raw.rstrip(b"\r\n").replace(b"\r", b"")
             self.leaked.update(what for unlogged, what in UNLOGGED
-                               if unlogged.encode("ascii") in text)
+                               if unlogged.search(text))
             self.lines.put(text.decode("ascii", "replace"))
         self.lines.put(None)
 
@@ -413,6 +489,17 @@ def type_line(qmp, text, shown=True):
         qmp.execute("send-key", keys=[{"type": "qcode", "data": name}])
 
 
+def point(serial, qmp):
+    """Send the pointer's events and wait for the console's lines."""
+    for events in POINTER_EVENTS:
+        print("          input-send-event %s"
+              % ", ".join("%s %s" % (e["type"], " ".join(
+                  str(v) for v in e["data"].values())) for e in events),
+              flush=True)
+        qmp.execute("input-send-event", events=events)
+    serial.wait_for(POINTER_LINES, time.monotonic() + KEY_TIMEOUT)
+
+
 def run_commands(serial, qmp, commands, data):
     """Type each command's lines, wait for the status it must log, and
     check the home's tree on data, the data disk, which QEMU holds open
@@ -427,28 +514,35 @@ def run_commands(serial, qmp, commands, data):
               flush=True)
 
 
-def log_in(serial, qmp_path, data, first):
+def log_in(serial, qmp, data, first):
     """Create the account on a first boot, or log in with it on a later
     one, then run whoami and the file commands in its shell, checking
     data, the data disk, after each."""
+    type_line(qmp, ACCOUNT_NAME)
+    type_line(qmp, ACCOUNT_PASSWORD, shown=False)
+    if first:
+        type_line(qmp, ACCOUNT_PASSWORD, shown=False)
+    serial.wait_for(CREATED if first else LOGGED_IN,
+                    time.monotonic() + HASH_TIMEOUT)
+    type_line(qmp, WHOAMI)
+    serial.wait_for([WHOAMI_RAN], time.monotonic() + KEY_TIMEOUT)
+    type_line(qmp, ACCOUNT_PASSWORD, shown=False)
+    serial.wait_for([NO_COMMAND], time.monotonic() + KEY_TIMEOUT)
+    run_commands(serial, qmp,
+                 FILE_COMMANDS if first else LATER_FILE_COMMANDS, data)
+
+
+def drive(serial, qmp_path, data, accounts, first):
+    """Over QMP: send the pointer's events, then, with accounts, create
+    the account or log in with it as log_in does."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(QMP_TIMEOUT)
         connection.connect(qmp_path)
         with connection.makefile("rwb") as stream:
             qmp = Qmp(stream)
-            type_line(qmp, ACCOUNT_NAME)
-            type_line(qmp, ACCOUNT_PASSWORD, shown=False)
-            if first:
-                type_line(qmp, ACCOUNT_PASSWORD, shown=False)
-            serial.wait_for(CREATED if first else LOGGED_IN,
-                            time.monotonic() + HASH_TIMEOUT)
-            type_line(qmp, WHOAMI)
-            serial.wait_for([WHOAMI_RAN], time.monotonic() + KEY_TIMEOUT)
-            type_line(qmp, ACCOUNT_PASSWORD, shown=False)
-            serial.wait_for([NO_COMMAND], time.monotonic() + KEY_TIMEOUT)
-            run_commands(serial, qmp,
-                         FILE_COMMANDS if first else LATER_FILE_COMMANDS,
-                         data)
+            point(serial, qmp)
+            if accounts:
+                log_in(serial, qmp, data, first)
 
 
 def read_ppm(path):
@@ -763,9 +857,10 @@ def data_disk(args, scratch):
 
 def boot(args, scratch, log, data_drive, data_lines, first):
     """Boot once with data_drive, the data disk's arguments, and check
-    the boot's lines; with a data disk whose GPT is whole, create the
-    account if first or log in with it, and run whoami and the file
-    commands."""
+    the boot's lines; for the specimen, check its screen; in system and
+    persist modes, send the pointer's events, and with a data disk whose
+    GPT is whole create the account if first or log in with it, and run
+    whoami and the file commands."""
     vars_copy = os.path.join(scratch, "vars.fd")
     shutil.copyfile(args.vars, vars_copy)
     qmp_path = os.path.join(scratch, "qmp.sock")
@@ -796,9 +891,9 @@ def boot(args, scratch, log, data_drive, data_lines, first):
                         serial.start + args.timeout)
         if args.mode == "specimen":
             check_specimen(qmp_path, scratch, args.fonts, args.screen)
-        if accounts:
-            log_in(serial, qmp_path, os.path.join(scratch, DATA_COPY),
-                   first)
+        if args.mode in ("system", "persist"):
+            drive(serial, qmp_path, os.path.join(scratch, DATA_COPY),
+                  accounts, first)
     finally:
         stop(qemu)
         if serial:

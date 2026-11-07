@@ -97,8 +97,8 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   -I include -I native -I lib -I drivers -Wl,-subsystem=native \
   -Wl,-e=virtio_input_main -Wl,-section-alignment=1000 \
   -Wl,-file-alignment=200 -o virtinp.exe drivers/virtio_input.c \
-  drivers/virtio_driver.c drivers/virtio_pci.c drivers/pci.c lib/log.c \
-  native/native.S
+  drivers/pointer.c drivers/virtio_driver.c drivers/virtio_pci.c \
+  drivers/pci.c lib/log.c native/native.S
 ./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I native -I lib -I gfx -I kernel/random \
   -Wl,-subsystem=native -Wl,-e=console_main -Wl,-section-alignment=1000 \
@@ -220,10 +220,10 @@ build gives the same bytes:
 |---|---|---|
 | `BOOTX64.EFI` | 29,696 | `ed744ea9428e8fd8a0cd1f8173cdfead7fc0d9ad98f1fa48b1f94f417337c70f` |
 | `kernel.exe` | 205,312 | `919fca80e36d04f6d0bf295e0904a3131eb61f731ab01f2df0fb2c95f2e74a17` |
-| `init.exe` | 95,232 | `d9b0d268623381e46878a2b00a5ba593861612d4c1c02d0f84a433624a1da08b` |
+| `init.exe` | 96,256 | `16b6656f2420024be63ee676086819d1692fc25361028b9041fac1b13084de81` |
 | `virtblk.exe` | 19,456 | `14c68c048f14db914dc5a3164a7e9806625b2c4089f72a7b3cce835eaa24fc02` |
-| `virtinp.exe` | 15,872 | `f4322918ebc64193d49a56c2e638c2c4081afeb13251826c9e56f2371f448704` |
-| `console.exe` | 36,352 | `0044d91df7e9774f01480cb6018d5c1ab9858500269f650e26e42009297679ab` |
+| `virtinp.exe` | 19,456 | `f9fc996d58e9ee795a3e45c8054ea4013f970940d0e924b33efa0f272f907c20` |
+| `console.exe` | 41,472 | `41770080bbee70e28e6174f370dbb8817a865e80996d5559bfe536dce8f38393` |
 | `ntdll.dll` | 10,240 | `9a43b4e3b773c1b5a3b6eb541fd0de9c3f3675d2867d1193b707118648853d10` |
 | `store.exe` | 28,672 | `08b1663767426a0daf34b2f9b0c56bb2bc5e805d692b39bd83deef89355cee1a` |
 | `namespace.exe` | 11,264 | `ea99c11b7bbc69cf1b10e383391216c7c7bc25fd8b7ba48c9ee47de8c7c4182b` |
@@ -388,12 +388,12 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `be68849efe0ee73be1e4a54de4d38e5fdc3bdd49883907b21823440e3c33d111` |
-| `disk.vhdx` | 71,303,168 | `8759172d2905940c45647c16e26b4f1d4b95e7aa28f192a878cd9f5a504e65d5` |
-| `chain.img` | 67,108,864 | `108dc27b58922e114a335c11013cfef4b4d0e31ca91e573c959cb52cf303378d` |
-| `chain.vhdx` | 71,303,168 | `1a049e24759d13da168b44d7fbeb0a49d663b08cd01c53321cf5ff3187159429` |
-| `specimen.img` | 67,108,864 | `5bec5ae39688aec2ab24937fb0a4383eca61e6332d693dff6121433d9509650a` |
-| `specimen.vhdx` | 71,303,168 | `386593f1f85353355630599c9311c312290da4df041f536fd07cff7b1d6aa120` |
+| `disk.img` | 67,108,864 | `5f47d73f9c60809c125ef0ab98c916bfb080aa8af3d8410c0ed6602bb803623f` |
+| `disk.vhdx` | 71,303,168 | `62226a91f2678d8e52f05e1b6416d6a4afcff0a7f04edadd1a68f09b3beee52a` |
+| `chain.img` | 67,108,864 | `9331eae03c83e0b25a286438102fce21356ed6647804abc80705bcfd582b57a1` |
+| `chain.vhdx` | 71,303,168 | `86c7b113afcdbaac17257814537d69fc8d0e2f32eb04b7435dee66e003424372` |
+| `specimen.img` | 67,108,864 | `0049146d69e5583f6a515c32c97c1e328e2cae53ce85ab3e0ab442eea42c6872` |
+| `specimen.vhdx` | 71,303,168 | `20aa95adc717bd22cbc8060cbafcfbe0a4a780c7c93b02c69fb808a581a19ab1` |
 | `data.img` | 67,108,864 | `fc0e119b885b341b5385e351b1f334c4da7cb921ef2dfbd994e9e20917e27804` |
 
 ## Run
@@ -412,7 +412,7 @@ qemu-system-x86_64 -machine q35 -m 256M \
   -drive if=virtio,format=raw,readonly=on,file=disk.img \
   -drive if=virtio,format=raw,file=data-run.img \
   -net none -device virtio-rng-pci -device virtio-keyboard-pci \
-  -device qemu-xhci -device usb-tablet -serial stdio
+  -device virtio-tablet-pci -serial stdio
 ```
 
 The kernel prints its lines, and those of the programs it runs, to the
@@ -457,10 +457,12 @@ nova-boot asks for the seed of the kernel's generator: QEMU's default
 processor has neither RDRAND nor RDSEED, so without the device the
 kernel's generator has no seed and says so, and no account can be
 created, since its salt comes from that generator. The virtio keyboard
-gives the input driver its device, so the keys typed in QEMU's window
-reach the console, which edits the line login or the shell reads and
-shows it in the panel. The USB tablet gives the window an
-absolute pointer, so QEMU does not capture the mouse; on a Mac,
+and tablet each give an input driver its device: the keys typed in
+QEMU's window reach the console, which edits the line login or the
+shell reads and shows it in the panel, and the pointer's moves, clicks
+and wheel reach it too, and it logs them. Once its driver runs, the
+tablet makes the window's pointer absolute, so QEMU does not capture the
+mouse; on a Mac,
 `-display cocoa,zoom-to-fit=on -full-screen` gives it a full-screen
 Space.
 

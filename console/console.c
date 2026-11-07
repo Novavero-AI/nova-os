@@ -1,7 +1,7 @@
-/* The console, \nova\console.exe (docs/spec/console.md): the keyboard
-   driver's client, which the platform driver starts and hands each
-   keyboard endpoint on its bootstrap channel (C2), and the server of
-   the sessions the first process sends on its control channel (C4).
+/* The console, \nova\console.exe (docs/spec/console.md): the input
+   drivers' client, which the platform driver starts and hands each
+   input endpoint on its bootstrap channel (C2), and the server of the
+   sessions the first process sends on its control channel (C4).
    Once the display comes there (C1) it draws the panel and, after every
    round of messages, the cells whose text changed and the caret.
 
@@ -42,18 +42,17 @@
 #define TIMES_TEN_PER_MS 10
 
 /* The objects one wait watches: the bootstrap channel, the control
-   channel, the keyboard's endpoint and the sessions. */
+   channel, the input endpoints and the sessions. */
 #define ENTRY_BOOTSTRAP 0
 #define ENTRY_CONTROL 1
-#define ENTRY_KEYBOARD 2
-#define ENTRY_SESSIONS 3
+#define ENTRY_INPUTS 2
+#define ENTRY_SESSIONS (ENTRY_INPUTS + INPUT_DEVICES_MAX)
 #define ENTRIES (ENTRY_SESSIONS + CONSOLE_SESSIONS)
 
 #define WAKE_SIGNALS (CHANNEL_READABLE | CHANNEL_PEER_CLOSED)
 
 /* The rights the console needs on its end of a session, and on the
-   channels it only reads: the control channel and a keyboard's
-   endpoint. */
+   channels it only reads: the control channel and an input endpoint. */
 #define SESSION_NEEDS (CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT)
 #define CHANNEL_NEEDS (CHANNEL_RIGHT_READ | RIGHT_WAIT)
 
@@ -67,6 +66,16 @@ typedef struct {
     UINT32 echo;
     UINT64 order;
 } SESSION;
+
+/* An input driver's endpoint, HANDLE_INVALID for a free slot; the
+   kind and absolute axes its description gave, the kind 0 until it has
+   come; and whether a key event has come on it. */
+typedef struct {
+    UINT32 endpoint;
+    UINT32 kind;
+    UINT32 absolute;
+    UINT32 keys;
+} INPUT;
 
 /* A key typed while no read waits, kept for the next. */
 typedef struct {
@@ -86,7 +95,7 @@ static const HANDLE_TRANSFER no_handles[1];
 
 static UINT32 bootstrap = HANDLE_INVALID;
 static UINT32 control = HANDLE_INVALID;
-static UINT32 keyboard = HANDLE_INVALID;
+static INPUT inputs[INPUT_DEVICES_MAX];
 static SESSION sessions[CONSOLE_SESSIONS];
 static UINT64 reads;
 static int reader = -1;
@@ -112,6 +121,8 @@ static MAPPING mapping = {HANDLE_INVALID, MAPPINGS_BASE};
 static union {
     CONSOLE_REQUEST request;
     INPUT_EVENT event;
+    INPUT_DEVICE description;
+    INPUT_POINTER report;
     CONSOLE_SETUP_DISPLAY_MESSAGE setup;
     UINT8 bytes[sizeof(CONSOLE_REQUEST) + CONSOLE_WRITE_MAX];
 } message;
@@ -282,6 +293,239 @@ static void key(const INPUT_EVENT *event)
         typed[typed_count].character = character;
         typed_count++;
     }
+}
+
+/* ------------------------------------------------------------------------
+   The pointer's lines (C6). */
+
+/* A line of the log built whole, then written with one say, which the
+   kernel writes in one piece, so that no other process's line lands
+   among its pieces. A line longer than the buffer is cut short, before
+   the LINE_END bytes its end and the NUL take. */
+typedef struct {
+    char text[DEBUG_WRITE_MAX_BYTES];
+    UINT32 length;
+} LINE;
+
+#define LINE_END 3
+#define DECIMAL_DIGITS_MAX 20
+
+static void line_add(LINE *l, const char *piece)
+{
+    for (; *piece && l->length + LINE_END < sizeof l->text; piece++)
+        l->text[l->length++] = *piece;
+}
+
+static void line_number(LINE *l, UINT64 n)
+{
+    char digits[DECIMAL_DIGITS_MAX + 1];
+    UINT32 at = DECIMAL_DIGITS_MAX;
+
+    digits[at] = 0;
+    do
+        digits[--at] = (char)('0' + n % 10);
+    while (n /= 10);
+    line_add(l, digits + at);
+}
+
+static void line_signed(LINE *l, INT32 n)
+{
+    if (n < 0)
+        line_add(l, "-");
+    line_number(l, n < 0 ? (UINT64)(-(INT64)n) : (UINT64)n);
+}
+
+static void line_say(LINE *l)
+{
+    l->text[l->length++] = '\r';
+    l->text[l->length++] = '\n';
+    l->text[l->length] = 0;
+    say(l->text);
+}
+
+/* What a pointer line notes, as a kind and its detail: a motion,
+   absolute or relative, with the axes it moves; a button pressed or
+   released, with its code; the wheel turned up or down. */
+#define NOTE_ABSOLUTE 0x10000
+#define NOTE_RELATIVE 0x20000
+#define NOTE_PRESSED 0x30000
+#define NOTE_RELEASED 0x40000
+#define NOTE_WHEEL 0x50000
+#define NOTE_KIND 0xF0000
+#define NOTE_DETAIL 0xFFFF
+#define WHEEL_UP 0
+#define WHEEL_DOWN 1
+#define BOTH_AXES (INPUT_AXIS_X | INPUT_AXIS_Y)
+
+/* evdev's BTN_MISC, below which every key code is a keyboard's key, and
+   BTN_LEFT, with its names for that code and the seven after it, up to
+   BTN_TASK. */
+#define BTN_MISC 0x100
+#define BTN_LEFT 0x110
+static const char *const button_names[] = {
+    "left", "right", "middle", "side", "extra", "forward", "back", "task"};
+#define BUTTON_NAMES (sizeof button_names / sizeof button_names[0])
+
+/* The pointer line noted last. */
+static UINT32 pointer_noted;
+
+static void line_axes(LINE *l, UINT32 axes)
+{
+    if (axes == BOTH_AXES)
+        line_add(l, " x and y");
+    else
+        line_add(l, axes == INPUT_AXIS_X ? " x" : " y");
+}
+
+/* A button by its evdev name, a code past those by its number, and a
+   keyboard's key by neither, since its code is what was typed. */
+static void line_button(LINE *l, UINT32 code)
+{
+    if (code >= BTN_LEFT && code - BTN_LEFT < BUTTON_NAMES) {
+        line_add(l, button_names[code - BTN_LEFT]);
+        line_add(l, " button");
+    } else if (code >= BTN_MISC) {
+        line_add(l, "button ");
+        line_number(l, code);
+    } else {
+        line_add(l, "key");
+    }
+}
+
+/* Whether note says what the note before it did: the same motion's
+   kind, whatever axes it moves, or the same button change or turn. */
+static int noted(UINT32 note)
+{
+    UINT32 kind = note & NOTE_KIND;
+
+    if (kind == NOTE_ABSOLUTE || kind == NOTE_RELATIVE)
+        return kind == (pointer_noted & NOTE_KIND);
+    return note == pointer_noted;
+}
+
+/* Log note unless it says what the one before did, so that a run of
+   motion of one kind, or of turns one way, is one line. */
+static void pointer_line(UINT32 note)
+{
+    UINT32 detail = note & NOTE_DETAIL;
+    LINE l;
+
+    if (noted(note))
+        return;
+    pointer_noted = note;
+    l.length = 0;
+    line_add(&l, "nova-console: pointer ");
+    switch (note & NOTE_KIND) {
+    case NOTE_ABSOLUTE:
+        line_add(&l, "moved, absolute");
+        line_axes(&l, detail);
+        break;
+    case NOTE_RELATIVE:
+        line_add(&l, "moved, relative");
+        line_axes(&l, detail);
+        break;
+    case NOTE_PRESSED:
+    case NOTE_RELEASED:
+        line_button(&l, detail);
+        line_add(&l, (note & NOTE_KIND) == NOTE_PRESSED ? " pressed"
+                                                         : " released");
+        break;
+    default:
+        line_add(&l, detail == WHEEL_UP ? "wheel turned up"
+                                        : "wheel turned down");
+        break;
+    }
+    line_say(&l);
+}
+
+/* Log what a pointer report does, and nothing of where the pointer is
+   or how far it moved. */
+static void pointer(const INPUT_POINTER *report)
+{
+    UINT32 i;
+
+    if (report->absolute)
+        pointer_line(NOTE_ABSOLUTE | report->absolute);
+    if (report->dx || report->dy)
+        pointer_line(NOTE_RELATIVE | (report->dx ? INPUT_AXIS_X : 0) |
+                     (report->dy ? INPUT_AXIS_Y : 0));
+    for (i = 0; i < report->buttons; i++)
+        pointer_line((report->button[i].value == INPUT_KEY_PRESSED
+                          ? NOTE_PRESSED
+                          : NOTE_RELEASED) |
+                     report->button[i].code);
+    if (report->wheel)
+        pointer_line(NOTE_WHEEL |
+                     (report->wheel > 0 ? WHEEL_UP : WHEEL_DOWN));
+}
+
+/* Whether a message of a pointer report's size is one from a pointer
+   with the absolute axes axes: tagged as one, setting no other axis,
+   and changing at most INPUT_REPORT_BUTTONS buttons, each pressed or
+   released. */
+static int is_report(const INPUT_POINTER *report, UINT32 axes)
+{
+    UINT32 i;
+
+    if (report->transaction != 0 || report->type != INPUT_TYPE_SYN ||
+        report->code != INPUT_SYN_REPORT || report->reserved != 0 ||
+        (report->absolute & ~axes) != 0 ||
+        report->buttons > INPUT_REPORT_BUTTONS)
+        return 0;
+    for (i = 0; i < report->buttons; i++)
+        if (report->button[i].value != INPUT_KEY_PRESSED &&
+            report->button[i].value != INPUT_KEY_RELEASED)
+            return 0;
+    return 1;
+}
+
+/* ------------------------------------------------------------------------
+   An endpoint's description. */
+
+/* Whether a message of a description's size is one: a keyboard's with
+   no axis, or a pointer's with no axis but x and y, each with its
+   maximum above its minimum. */
+static int is_description(const INPUT_DEVICE *d)
+{
+    if (d->transaction != 0 || d->type != INPUT_TYPE_DEVICE ||
+        d->reserved != 0 || (d->absolute & ~(UINT32)BOTH_AXES) != 0)
+        return 0;
+    if (d->kind == INPUT_DEVICE_KEYBOARD)
+        return d->absolute == 0;
+    return d->kind == INPUT_DEVICE_POINTER &&
+           (!(d->absolute & INPUT_AXIS_X) || d->x.max > d->x.min) &&
+           (!(d->absolute & INPUT_AXIS_Y) || d->y.max > d->y.min);
+}
+
+static void line_range(LINE *l, const char *axis, const INPUT_RANGE *r)
+{
+    line_add(l, axis);
+    line_add(l, " from ");
+    line_signed(l, r->min);
+    line_add(l, " to ");
+    line_signed(l, r->max);
+}
+
+/* Log what an endpoint's description says the device is, its axes'
+   ranges included, which are the device's, not the user's. */
+static void describe(const INPUT_DEVICE *d)
+{
+    LINE l;
+
+    l.length = 0;
+    line_add(&l, "nova-console: input from a ");
+    if (d->kind == INPUT_DEVICE_KEYBOARD) {
+        line_add(&l, "keyboard");
+    } else {
+        line_add(&l, "pointer");
+        if (!d->absolute)
+            line_add(&l, " with no absolute axis");
+        if (d->absolute & INPUT_AXIS_X)
+            line_range(&l, ", x", &d->x);
+        if (d->absolute & INPUT_AXIS_Y)
+            line_range(&l, ", y", &d->y);
+    }
+    line_say(&l);
 }
 
 /* ------------------------------------------------------------------------
@@ -573,36 +817,99 @@ static void take_bootstrap(void)
     process_exit(EXIT_FAILED);
 }
 
-/* Take the key events queued on the keyboard's endpoint. A message that
-   is not one ends the endpoint, as one the driver closed does. */
-static void serve_keyboard(void)
+/* Close input endpoint index; a key held on it as its driver ended is
+   released. */
+static void close_input(int index)
+{
+    close_if_open(&inputs[index].endpoint);
+    if (inputs[index].keys)
+        modifiers.held = 0;
+    inputs[index].kind = 0;
+    inputs[index].absolute = 0;
+    inputs[index].keys = 0;
+}
+
+/* Take one message of byte_count bytes, in message, from input endpoint
+   index: first the device's description, then key events from a
+   keyboard, each a key typed (C3), or pointer reports from a pointer, as
+   C6 gives. Returns 0 if it is none of those. */
+static int take_input(int index, UINT32 byte_count)
+{
+    INPUT *input = &inputs[index];
+    const INPUT_EVENT *event = &message.event;
+
+    if (!input->kind) {
+        if (byte_count != sizeof message.description ||
+            !is_description(&message.description))
+            return 0;
+        input->kind = message.description.kind;
+        input->absolute = message.description.absolute;
+        describe(&message.description);
+        return 1;
+    }
+    if (input->kind == INPUT_DEVICE_KEYBOARD) {
+        if (byte_count != sizeof *event || event->transaction != 0 ||
+            event->type != INPUT_TYPE_KEY ||
+            event->value > INPUT_KEY_REPEATED)
+            return 0;
+        input->keys = 1;
+        key(event);
+        return 1;
+    }
+    if (byte_count != sizeof message.report ||
+        !is_report(&message.report, input->absolute))
+        return 0;
+    pointer(&message.report);
+    return 1;
+}
+
+/* Take the messages queued on input endpoint index. A message out of
+   place ends the endpoint, as one the driver closed does. */
+static void serve_input(int index)
 {
     RECEIVED_HANDLE handles[1];
-    const INPUT_EVENT *event = &message.event;
     UINT32 byte_count, handle_count, status;
 
     for (;;) {
-        status = channel_read(keyboard, message.bytes, sizeof message.bytes,
-                              handles, 0, &byte_count, &handle_count);
+        status = channel_read(inputs[index].endpoint, message.bytes,
+                              sizeof message.bytes, handles, 0, &byte_count,
+                              &handle_count);
         if (status == ERR_SHOULD_WAIT)
             return;
-        if (status == OK && byte_count == sizeof *event &&
-            event->transaction == 0 && event->type == INPUT_TYPE_KEY &&
-            event->value <= INPUT_KEY_REPEATED) {
-            key(event);
+        if (status == OK && take_input(index, byte_count))
             continue;
-        }
         if (status != ERR_PEER_CLOSED)
-            say_status("a keyboard message that is not a key event", status);
-        close_if_open(&keyboard);
+            say_status("an input message out of place: not the device's "
+                       "description first, then its key events or pointer "
+                       "reports",
+                       status);
+        close_input(index);
         return;
     }
 }
 
-/* A keyboard endpoint from the platform driver, in place of the one
-   before, whose queued keys are taken first; a key held as the old
-   driver ended is released. The platform driver's close of the channel
-   ends the console. */
+/* Take endpoint, from the platform driver, among the input endpoints.
+   Those held are served first, so that one whose driver has ended gives
+   its queued messages and then its place. */
+static void add_input(UINT32 endpoint)
+{
+    int i;
+
+    for (i = 0; i < INPUT_DEVICES_MAX; i++)
+        if (inputs[i].endpoint != HANDLE_INVALID)
+            serve_input(i);
+    for (i = 0; i < INPUT_DEVICES_MAX; i++)
+        if (inputs[i].endpoint == HANDLE_INVALID) {
+            inputs[i].endpoint = endpoint;
+            return;
+        }
+    say("nova-console: an input endpoint past the ones it reads is "
+        "closed\r\n");
+    handle_close(endpoint);
+}
+
+/* An input endpoint from the platform driver. The platform driver's
+   close of the channel ends the console. */
 static void serve_bootstrap(void)
 {
     RECEIVED_HANDLE handle;
@@ -620,16 +927,12 @@ static void serve_bootstrap(void)
         transaction == 0 && handle_count == 1 &&
         handle.type == TYPE_CHANNEL &&
         (handle.rights & CHANNEL_NEEDS) == CHANNEL_NEEDS) {
-        if (keyboard != HANDLE_INVALID)
-            serve_keyboard();
-        close_if_open(&keyboard);
-        keyboard = handle.handle;
-        modifiers.held = 0;
+        add_input(handle.handle);
         return;
     }
     if (status == OK && handle_count)
         handle_close(handle.handle);
-    say_status("a message from the platform driver that is not a keyboard "
+    say_status("a message from the platform driver that is not an input "
                "endpoint",
                status);
     process_exit(EXIT_FAILED);
@@ -682,10 +985,11 @@ static void serve(void)
         entries[count].handle = control;
         which[count++] = ENTRY_CONTROL;
     }
-    if (keyboard != HANDLE_INVALID) {
-        entries[count].handle = keyboard;
-        which[count++] = ENTRY_KEYBOARD;
-    }
+    for (i = 0; i < INPUT_DEVICES_MAX; i++)
+        if (inputs[i].endpoint != HANDLE_INVALID) {
+            entries[count].handle = inputs[i].endpoint;
+            which[count++] = ENTRY_INPUTS + i;
+        }
     for (i = 0; i < CONSOLE_SESSIONS; i++)
         if (sessions[i].channel != HANDLE_INVALID) {
             entries[count].handle = sessions[i].channel;
@@ -707,10 +1011,12 @@ static void serve(void)
             serve_bootstrap();
         else if (which[i] == ENTRY_CONTROL)
             serve_control();
-        else if (which[i] == ENTRY_KEYBOARD)
-            serve_keyboard();
-        else if (sessions[which[i] - ENTRY_SESSIONS].channel ==
-                 entries[i].handle)
+        else if (which[i] < ENTRY_SESSIONS &&
+                 inputs[which[i] - ENTRY_INPUTS].endpoint == entries[i].handle)
+            serve_input((int)(which[i] - ENTRY_INPUTS));
+        else if (which[i] >= ENTRY_SESSIONS &&
+                 sessions[which[i] - ENTRY_SESSIONS].channel ==
+                     entries[i].handle)
             serve_session((int)(which[i] - ENTRY_SESSIONS));
     }
     pump();
@@ -730,6 +1036,8 @@ _Noreturn void console_main(UINT32 bootstrap_channel, UINT64 argument)
     bootstrap = bootstrap_channel;
     for (i = 0; i < CONSOLE_SESSIONS; i++)
         sessions[i].channel = HANDLE_INVALID;
+    for (i = 0; i < INPUT_DEVICES_MAX; i++)
+        inputs[i].endpoint = HANDLE_INVALID;
     take_bootstrap();
     text_init(&text, TEXT_COLUMNS_MAX);
     say("nova-console: running, waiting for the display and sessions\r\n");
