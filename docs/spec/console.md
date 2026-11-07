@@ -1,0 +1,236 @@
+# Console
+
+The console: a user-mode service that draws a text panel over the
+desktop background, reads the keyboard, and serves programs text output
+and line input (`console/`). This document gives how it gets the screen
+from the kernel through the first process, how the first process starts
+it and gives it sessions (`init/console.c`), what the keyboard does in
+it, the session protocol a program speaks (`include/console_protocol.h`)
+and what it draws.
+
+Specifications are cited by the versions in [README.md](README.md):
+"evdev" is the Linux input documents pinned under
+[Devices](README.md#devices), "SDM" the Intel manual's Volume 3.
+
+## C1. The display handoff
+
+**Decided.**
+
+The kernel draws the boot screen and fades it into the desktop
+background ([boot-protocol.md](boot-protocol.md#startup-done)). Once the
+fade's last frame is drawn, it closes its end of the first process's
+bootstrap channel and never draws again. The first process takes
+`PEER_CLOSED` on its endpoint as the display's release.
+
+The bootstrap message's platform record describes the display in a
+`BOOTSTRAP_DISPLAY` (`include/native_abi.h`): the physical address of
+its first pixel, its width and height in pixels, its pixels per scan
+line and its pixel format, as nova-boot reported them in `BOOT_INFO`.
+After the release the first process creates, with `resource_create` on
+its root MMIO resource, a resource covering exactly the pages the
+framebuffer's `stride` x `height` pixels lie on, and sends it with the
+record to the console (C2). The console makes write-combining sections
+over it, each at most `SECTION_MAX_SIZE`, and maps them
+([ipc.md I6](ipc.md#i6-device-memory-and-io-ports)). It is the only
+process given a resource over the framebuffer, so after the release
+only the console and the first process, which holds every device's
+authority, can draw.
+
+- **Why the kernel's close:** the bootstrap channel already joins the
+  kernel and the first process and nothing else, and its close is a
+  signal the first process can wait for, so the release needs no new
+  message or object. The report and the release are two events because
+  the fade starts at the report and ends some time later.
+- **Why a narrowed resource:** a section holds at most
+  `SECTION_MAX_SIZE` (2 MiB) and a 2560 x 1600 framebuffer is 16 MiB,
+  so the console makes several; a resource covering the framebuffer is
+  the authority to make them and nothing else, as a driver's resources
+  cover only its function.
+- **Cost:** the first process could draw over the console; it already
+  holds the authority over every device (ipc.md I6, Cost).
+- **Not taken:** a section over the framebuffer that the kernel creates
+  and passes in the bootstrap message, as I6 planned for a compositor.
+  Its cost is a size limit no framebuffer of a modern display fits, and
+  a handle the first process holds before the kernel stops drawing.
+
+## C2. Starting the console
+
+**Decided.**
+
+The console, `\nova\console.exe`, is the keyboard driver's client
+([input.md K3](input.md#k3-the-report-and-the-client)): the platform
+driver starts it in the root job when the driver first reports,
+supervises it, and hands it each endpoint the driver reports on the
+channel it keeps to it. The first message on that channel is
+`INPUT_CLIENT_MESSAGE_SIZE` (4) bytes, a transaction ID of 0, and three
+handles, in the order `include/console_protocol.h` gives: the debug
+log, the console's own process with `MAP`, so that it can map sections
+for its buffers and the framebuffer, and its end of a control channel
+whose other end the first process keeps.
+
+On the control channel the first process sends two kinds of message,
+each a `CONSOLE_SETUP` of 8 bytes, a transaction ID of 0 and a kind,
+with one handle:
+
+| Kind | Bytes after the setup | Handle |
+|---|---|---|
+| `CONSOLE_SETUP_DISPLAY` (1) | The `BOOTSTRAP_DISPLAY` | An MMIO resource covering the framebuffer (C1) |
+| `CONSOLE_SETUP_SESSION` (2) | None | The console's end of a session (C4), with `CONSOLE_SESSION_RIGHTS` |
+
+The display comes once, after the release; a console restarted after it
+gets it at once. Until it comes the console draws nothing, but serves
+its sessions and keeps what they write, and draws it all when it does.
+
+A program gets a session from the first process: it creates a channel
+of `CONSOLE_SESSION_CAPACITY` messages, sends one end to the console and
+passes the other, with `CONSOLE_SESSION_RIGHTS`, to the program
+(`console_session` in `init/console.h`). At the end of startup, after
+the release, the first process starts `\nova\conecho.exe`, a demo client
+that writes a greeting and echoes each line it reads, with a session.
+A console that ends closes every session; when the platform driver
+restarts it, the first process starts the demo client again with a new
+session.
+
+- **Why the keyboard's client:** the console is where keys are typed,
+  and the platform driver already supervises the client and hands it a
+  restarted driver's endpoint (input.md K4); `inputlog.exe`, the client
+  that logged keys, is no longer started.
+- **Why a control channel of its own:** the platform driver owns the
+  bootstrap channel and its messages; the display and the sessions come
+  from the part of the first process that starts programs on the
+  console, which keeps the other end without reaching into the platform
+  driver.
+- **Cost:** without a keyboard the platform driver starts no client, so
+  there is no console.
+- **Not taken:** the console publishing itself in the namespace for
+  programs to open. Its cost is a namespace that serves for the life of
+  the system, which the first milestone's does not; a session handed by
+  the program's creator also keeps a program's authority to its
+  creator's grant (DESIGN.md, principle 7).
+
+## C3. Keys
+
+**Decided.**
+
+The console reads key events (input.md K2) and maps each key code to
+the character a US keyboard gives: a key's name in the evdev header is
+its unshifted label, so `KEY_A` (30) gives `a` and `KEY_1` (2) gives
+`1`. Shift, either one, gives the shifted character; Caps Lock, which
+each press toggles, shifts the letters alone, and Shift with Caps Lock
+gives them unshifted. A repeat (value 2) acts as a press. Control and
+Alt make a key give nothing.
+
+While a read waits (C4) the keys edit its line:
+
+| Key | Effect |
+|---|---|
+| A printable character | Inserted at the caret, unless the line holds its most bytes |
+| Backspace | Deletes the character before the caret |
+| Delete | Deletes the character at the caret |
+| Left, Right | Move the caret one character |
+| Home, End | Move the caret to the line's start or end |
+| Enter | Ends the line |
+| Page Up, Page Down | Scroll the panel half its height back or forward through what it has shown |
+
+Keys typed while no read waits are kept, up to `CONSOLE_LINE_MAX`, and
+edit the next read's line as though typed then. Any key but Page Up and
+Page Down scrolls the panel back to its end.
+
+- **Why a US layout:** QEMU's keyboard reports positions, which evdev
+  names by their US labels; another layout is a table more, and choosing
+  one is a setting nothing offers yet.
+- **Cost:** the console knows no other layout, no dead keys and nothing
+  past ASCII.
+
+## C4. Sessions
+
+**Decided.**
+
+A session is a channel between a client and the console. The client
+writes requests on its end; the console answers a read on the same
+channel. A request is a `CONSOLE_REQUEST` of 16 bytes:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | `transaction`: any value; a read's reply carries it back |
+| 4 | 4 | `operation`: `CONSOLE_WRITE` (1) or `CONSOLE_READ` (2) |
+| 8 | 4 | `length`: a write's bytes, which follow; a read's most |
+| 12 | 4 | `flags`: 0, or for a read `CONSOLE_READ_NO_ECHO` (1) |
+
+**Write.** `length` bytes follow the request, at most
+`CONSOLE_WRITE_MAX` (4,096), with no handles. The console shows them at
+its output position and does not reply. Each printable ASCII byte, 20h
+to 7Eh, is drawn and moves the position a column; LF (0Ah) moves it to
+the start of the next line, CR (0Dh) to the start of its own, and TAB
+(09h) to the next column that is a multiple of 8. Any other byte is
+drawn as `?`. A line wider than the panel continues on the next.
+
+**Read.** Nothing follows the request, and `length` is the most bytes
+the line may hold, 1 to `CONSOLE_LINE_MAX` (256). The console replies
+once Enter ends the line: a `CONSOLE_REPLY` of 8 bytes, the request's
+`transaction` and the line's `length`, then the line, printable ASCII
+without its end. With echo the line is drawn after the output so far as
+it is edited, and Enter moves the output position to the next line;
+with `CONSOLE_READ_NO_ECHO` nothing of it is drawn, its end included,
+and the position stays where it was. The caret blinks at the editing
+position while a read waits. A session has at most one read waiting;
+reads from several sessions are served in the order they came, and the
+keys go to the first.
+
+Since the reply carries the read's transaction ID, a client can read a
+line with `channel_call` ([ipc.md I3](ipc.md#i3-synchronous-call-and-asynchronous-queues)).
+
+Any other message ends the session: one shorter than a request, an
+unknown operation, a write whose `length` is above `CONSOLE_WRITE_MAX`
+or not the bytes that follow, or whose `flags` are not 0, a read with
+bytes after it, a `length` out of range or another flag, any handle,
+and a read while the session's earlier read still waits. The console
+then closes its end without a reply. The console's end queues up to
+`CONSOLE_SESSION_CAPACITY` (16) messages, so a client that writes
+faster than the console draws gets `ERR_SHOULD_WAIT` and waits for
+`WRITABLE` ([ipc.md I1](ipc.md#i1-channels)).
+
+A session ends when either end closes; a client that closes its end
+while a read waits drops the read. The console serves up to
+`CONSOLE_SESSIONS` (8) at once and closes one sent past them.
+
+- **Why lines, not keys:** a login prompt and a shell read lines; the
+  console edits a line where it draws it, so a client neither handles
+  keys nor draws its own echo, and a password read with no echo never
+  reaches the screen.
+- **Why no reply to a write:** the queue's bound is the flow control,
+  and a reply to every write would double the messages of the common
+  case.
+- **Cost:** a client cannot move the output position, clear the panel
+  or colour text.
+- **Not taken:** a byte stream with a terminal's escape sequences, as
+  VT100 descendants take. Its cost is a parser and a state machine for
+  every byte, and editing that each client does itself in a raw mode.
+
+## C5. The panel
+
+**Decided.**
+
+The console draws, over the desktop background, one dark translucent
+panel with rounded corners, and in it the text in the console font,
+80 columns by 30 lines on a 16:10 screen, with a caret that blinks
+while a read waits. It keeps the last 1,024 lines it has shown, for
+Page Up. The panel's colour mixes with the background in linear light,
+as the boot screen mixes ink with black, so nothing of the background
+is read back from the framebuffer: the console draws Limb's pixels
+under the panel itself, with `gfx/limb.c`.
+
+The font is the wordmark's strokes made a typeface
+([design/font](../../design/font/README.md)): each printable ASCII glyph
+is a few capsules, rings and arcs of one width, rendered once per size
+into a coverage mask with the boot screen's sampling, so that drawing
+text copies masks and mixes them with the panel. A cell is twice as
+tall as it is wide, and its width is the screen's height divided by
+100, so 16 x 32 pixels at 2560 x 1600 and 8 x 16 at 1280 x 800.
+
+- **Why that size:** 8 x 16 is the cell text consoles have used on
+  screens of 1280 x 800 pixels and less; a 2560 x 1600 screen is
+  usually the same panel at twice the density, where 16 x 32 shows the
+  same text at the same size.
+- **Cost:** the boot protocol passes no physical size, so a large
+  screen of low density shows larger text than it needs.

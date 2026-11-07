@@ -18,6 +18,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [compat.md](compat.md) | How a 32-bit Windows program runs: its process, ntdll, paths and the stand-in file protocol |
 | [storage.md](storage.md) | The directory protocol and per-process views, the native file system, the store at `/store`, its builds and garbage collection, and the first milestone |
 | [input.md](input.md) | The virtio input driver, the key events it sends a client, its report to the platform driver and how that supervises it |
+| [console.md](console.md) | The console: how it takes the display from the kernel, how the first process starts it, its keys, the session protocol programs write text and read lines with, and its panel and font |
 | [store-image.md](store-image.md) | The store image the first milestone boots from: its header, registrations, nodes, blobs and their hash trees |
 
 ## Firmware and platform

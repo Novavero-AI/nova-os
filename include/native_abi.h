@@ -302,6 +302,18 @@ typedef struct {
     ECAM_RANGE ecam[BOOTSTRAP_ECAM_RANGES_MAX];
 } BOOTSTRAP_PLATFORM;
 
+/* The screen nova-boot drew on (docs/spec/console.md C1): the physical
+   address of pixel (0, 0), the size in pixels, the pixels per scan line,
+   and the EFI_GRAPHICS_PIXEL_FORMAT, 0 (byte 0 red) or 1 (byte 0
+   blue). Pixel (x, y) is the 4 bytes at base + 4 * (y * stride + x). */
+typedef struct {
+    UINT64 base;
+    UINT32 width;
+    UINT32 height;
+    UINT32 stride;
+    UINT32 format;
+} BOOTSTRAP_DISPLAY;
+
 /* A port packet (ipc.md I4). An interrupt packet's payload starts with
    the interrupt's time on the monotonic clock in nanoseconds. A signal
    packet's first word holds the signals its watch asked for in its low
