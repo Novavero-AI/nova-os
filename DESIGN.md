@@ -107,9 +107,28 @@ The first target is a VM whose disk lives on a spare volume of the test
 machine, never the host's own system disk. Real hardware comes later, booted
 from a spare drive through the firmware's boot menu.
 
-The repository runs no CI while it is private. Changes are checked on a
-development machine with host-built stand-ins of the chain's compilers and
-by booting the VM by hand.
+CI checks every pull request and every push to main:
+
+- **Reproduce** runs README.md's build and disk image blocks verbatim on
+  Linux and on macOS (Apple silicon), each host's compiler building
+  TinyCC, and checks every size and sha256 the README gives, so both
+  hosts must give the README's bytes. It also builds with TinyCC's
+  `-Wall -Werror`.
+- **Lint** checks that tracked text is ASCII and that clang's `-Wall
+  -Wextra -pedantic -Wshadow` find nothing in any C source, built with
+  its `compile_flags.txt`; it runs `tools/check-masks.c` and
+  `design/backgrounds/check-limb.sh`, and actionlint over the workflow.
+- **Boot** boots the reproduced `disk.img` under QEMU with Ubuntu 24.04's
+  OVMF: on QEMU's default processor, on Skylake-Client, which needs
+  page-table isolation, on `-cpu max`, and under KVM. The serial log must
+  show the kernel's self-tests, the store, the test program, the virtio
+  block driver reading the GPT, init's checks, startup done, the
+  background and the console, and a line typed through QEMU's monitor
+  must come back from the console's demo client.
+- **Chain** boots `chain.img` and checks that each step of the bootstrap
+  chain runs and each pinned link matches.
+
+The jobs' scripts are in `ci/`, each with its usage in its header.
 
 ## Trust
 
