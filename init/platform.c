@@ -32,7 +32,6 @@
 #include "console.h"
 #include "init.h"
 #include "input_protocol.h"
-#include "loader.h"
 #include "mmio.h"
 #include "pci.h"
 #include "virtio_blk.h"
@@ -632,7 +631,7 @@ static int start_driver(const PLATFORM *platform, CHILD *child)
     program.process = HANDLE_INVALID;
     program.thread = HANDLE_INVALID;
     if (job != HANDLE_INVALID)
-        status = loader_load(job, boot_file(child->file), &program);
+        status = load_boot_file(job, boot_file(child->file), &program);
     if (status == OK) {
         count = platform_driver_handles(platform, &child->device,
                                         program.process, child->initiator,
@@ -653,7 +652,7 @@ static int start_driver(const PLATFORM *platform, CHILD *child)
         status = watch(child, program.process, PROCESS_TERMINATED,
                        EVENT_ENDED);
     if (status == OK)
-        status = loader_start(&program, theirs);
+        status = program_start(&program, theirs);
     if (status != OK) {
         say_status("cannot start the ", child, "", status);
         close_if_open(&theirs);
@@ -682,7 +681,7 @@ static int start_client(const PLATFORM *platform, CHILD *child)
     PROGRAM program;
     UINT32 mine = HANDLE_INVALID, theirs = HANDLE_INVALID;
     UINT32 status =
-        loader_load(platform->job, boot_file(child->file), &program);
+        load_boot_file(platform->job, boot_file(child->file), &program);
 
     if (status == OK)
         status = channel_create(CLIENT_CHANNEL_CAPACITY, &mine, &theirs);
@@ -692,7 +691,7 @@ static int start_client(const PLATFORM *platform, CHILD *child)
         status = watch(child, program.process, PROCESS_TERMINATED,
                        EVENT_ENDED);
     if (status == OK)
-        status = loader_start(&program, theirs);
+        status = program_start(&program, theirs);
     if (status != OK) {
         say_status("cannot start the ", child, "", status);
         close_if_open(&theirs);

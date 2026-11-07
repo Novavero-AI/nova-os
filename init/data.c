@@ -20,7 +20,6 @@
 #include "fstest.h"
 #include "init.h"
 #include "launch.h"
-#include "loader.h"
 #include "path.h"
 #include "pci.h"
 #include "services.h"
@@ -155,7 +154,7 @@ static UINT32 start_driver(const PLATFORM *platform,
         status = initiator_create(platform->dma, device->requester,
                                   &initiator);
     if (status == OK)
-        status = loader_load(job, boot_file(BLOCK_FILE), &program);
+        status = load_boot_file(job, boot_file(BLOCK_FILE), &program);
     if (status == OK) {
         count = platform_driver_handles(platform, device, program.process,
                                         initiator, handles);
@@ -203,7 +202,7 @@ static void start_fs(const PLATFORM *platform, UINT32 job, UINT32 block)
         handles[i].rights = RIGHTS_SAME;
     }
     handles[FS_BOOTSTRAP_BLOCK].handle = block;
-    status = loader_load(job, boot_file(FS_FILE), &program);
+    status = load_boot_file(job, boot_file(FS_FILE), &program);
     if (status == OK)
         status = resource_create(platform->debug_log,
                                  SYSTEM_PRIVILEGE_DEBUG_LOG, 1,
@@ -347,7 +346,7 @@ static UINT32 run_check(UINT32 job, UINT32 debug_log)
         handles[i].handle = HANDLE_INVALID;
         handles[i].rights = RIGHTS_SAME;
     }
-    status = loader_load(job, boot_file(FSTEST_FILE), &program);
+    status = load_boot_file(job, boot_file(FSTEST_FILE), &program);
     if (status != OK)
         return status;
     if (resource_create(debug_log, SYSTEM_PRIVILEGE_DEBUG_LOG, 1,

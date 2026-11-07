@@ -11,7 +11,6 @@
 #include "console_protocol.h"
 #include "init.h"
 #include "input_protocol.h"
-#include "loader.h"
 
 #define DEMO_FILE "conecho.exe"
 #define PIXEL_BYTES 4
@@ -146,7 +145,7 @@ static void start_demo(const PLATFORM *platform)
     handles[CONSOLE_PROGRAM_SESSION].rights = CONSOLE_SESSION_RIGHTS;
     status = handles[CONSOLE_PROGRAM_SESSION].handle == HANDLE_INVALID
                  ? ERR_BAD_STATE
-                 : loader_load(platform->job, file, &program);
+                 : load_boot_file(platform->job, file, &program);
     if (status == OK)
         status = resource_create(platform->debug_log,
                                  SYSTEM_PRIVILEGE_DEBUG_LOG, 1,
@@ -160,7 +159,7 @@ static void start_demo(const PLATFORM *platform)
     if (status != OK)
         close_handles(handles, CONSOLE_PROGRAM_HANDLES);
     if (status == OK)
-        status = loader_start(&program, theirs);
+        status = program_start(&program, theirs);
     if (status == OK)
         theirs = HANDLE_INVALID;
     close_if_open(&theirs);
