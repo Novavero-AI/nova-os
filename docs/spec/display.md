@@ -24,15 +24,13 @@ input driver), [accounts.md](accounts.md) (login and the session) and
 [replay.md](replay.md). The shell's specification, `shell.md`, proposed
 separately, is cited in plain text by section, as "shell.md L18".
 
-Each item gives the design, why, what it costs, and the main
-alternative not taken. Items the owner has ruled on are marked
-**Decided**; every other item is **Proposed**, and [Open decisions for
-Devon](#open-decisions-for-devon) lists those that need a ruling.
-Specifications are cited by the versions in [README.md](README.md):
-"VIRTIO 1.4" by section, "evdev" for the Linux input documents and
-"SDM" for the Intel manual's Volume 3, as the other specifications do;
-"QEMU" for QEMU's source at the tag pinned there; and the systems and
-papers under [Display and interface design
+Each item gives the design, why, what it costs, and the main alternative
+not taken. Items the owner has ruled on are marked **Decided**; every
+other item is **Proposed**. Specifications are cited by the versions in
+[README.md](README.md): "VIRTIO 1.4" by section, "evdev" for the Linux
+input documents and "SDM" for the Intel manual's Volume 3, as the other
+specifications do; "QEMU" for QEMU's source at the tag pinned there; and
+the systems and papers under [Display and interface design
 references](README.md#display-and-interface-design-references) by the
 names given there.
 
@@ -145,7 +143,11 @@ a time:
 
 ## D3. The compositor's supervision, its restart and what a crash shows
 
-**Proposed.** The first process supervises the compositor as it
+**Decided** (by the owner): programs survive a restart of the compositor
+by reconnecting through login's grant channel (rule 4). **Proposed:** the
+rest.
+
+The first process supervises the compositor as it
 supervises a driver ([ipc.md I10](ipc.md#i10-driver-failure-and-restart)):
 one that ends is started again, unless it was restarted within the
 last 60 seconds, when it is given up.
@@ -198,7 +200,9 @@ its exit from the process handle it holds
   knows which program a process is. A program that keeps its channel to
   the party that granted its endpoint, and takes a new endpoint there
   after a restart, is how the console survives its keyboard driver's
-  restart ([input.md K3](input.md#k3-the-report-and-the-client)).
+  restart ([input.md K3](input.md#k3-the-report-and-the-client)). A
+  program's buffers survive the restart, since its sections are its own
+  memory, and its user's work should survive with them.
 - **Why the console as fallback:** the console draws a whole screen
   from its own memory with no client, and is what
   [console.md](console.md) has boot; a machine whose compositor fails
@@ -350,7 +354,10 @@ itself.
 
 ## D6. Windows and buffers
 
-**Proposed.** A window is a channel. To make one, a client creates a
+**Decided** (by the owner): a buffer larger than a section is held in
+bands of sections, with no kernel change. **Proposed:** the rest.
+
+A window is a channel. To make one, a client creates a
 channel of `WINDOW_CAPACITY` (64) messages and sends one end in a
 `DISPLAY_WINDOW` request on its connection, with the size it wants;
 the compositor answers on the connection with a status, and serves the
@@ -425,17 +432,22 @@ screen's order, `PIXEL_RGB` or `PIXEL_BGR`, as it writes.
 - **Why bands of sections:** `section_create` makes at most 2 MiB, the
   pages one page of the kernel's page list holds (`native_abi.h`), and
   mapped one after another the bands are one buffer to both sides, with
-  no kernel change ([Open decisions](#open-decisions-for-devon), item 4).
+  no kernel change.
 - **Cost:** a buffer at 2880 x 1800 is ten handles to send and ten
   mappings on each side; a window's memory is the client's even while
   the compositor reads it.
 - **Not taken:** buffers the compositor allocates and lends to clients.
   Its cost is the compositor's memory, and its job's quota, filled by
-  whichever client asks for the most windows.
+  whichever client asks for the most windows. `section_create` raised
+  past 2 MiB, with a page list of more than one page. Its cost is a
+  kernel change for what bands already give, where the protocol takes
+  several sections a buffer either way.
 
 ## D7. Presenting and pacing
 
-**Proposed.** A client shows a frame with `WINDOW_PRESENT`: the buffer
+**Decided** (by the owner): the scale, rule 5. **Proposed:** the rest.
+
+A client shows a frame with `WINDOW_PRESENT`: the buffer
 and up to `WINDOW_DAMAGE_MAX` (16) rectangles, in the buffer's pixels,
 that differ from the buffer it presented before; no rectangle means the
 whole buffer. The compositor reads a buffer from the moment it is
@@ -462,6 +474,11 @@ it stopped reading. A client draws only into a released buffer.
    state with `WINDOW_CONFIGURE`, with a serial; the client's next
    present at that size answers it. Until then the compositor shows the
    old buffer, cut or padded with the window's material.
+5. **The scale** is the screen's height over 800, rounded to the nearest
+   quarter: 1 at 1280 x 800, 2 at 2560 x 1600 and 2.25 at 2880 x 1800.
+   The system setting `display.scale` overrides it. A program draws at
+   the screen's pixels with the scale each configure gives, so no window
+   is ever stretched.
 
 - **Why release, not a lock:** the client never waits on the compositor
   to draw, and the compositor never reads a buffer the client is
@@ -475,6 +492,10 @@ it stopped reading. A client draws only into a released buffer.
   framebuffer must not be read for (SDM 14.3), and a band of 16 rows of
   a 2880-pixel screen is 180 KiB, against a whole-screen back buffer
   of 19.8 MiB that would hold nothing a band does not.
+- **Why the scale from the height:** the boot protocol gives no physical
+  size ([console.md C5](console.md#c5-the-panel)), and the console sizes
+  its cells from the height too, so the console's text and the
+  interface's grow alike.
 - **Cost:** the GOP framebuffer gives no vertical blank to wait for, so
   a band can land while the display scans it out, and a large change can
   show torn for one refresh; the GPU path flushes whole frames
@@ -483,11 +504,18 @@ it stopped reading. A client draws only into a released buffer.
   own window and nothing else.
 - **Not taken:** composing straight onto the framebuffer. Its cost is a
   read of WC memory for every blended pixel, and frames shown half
-  composed.
+  composed. A scale from EDID's physical size where the firmware passes
+  it. Its cost is a size the boot protocol does not pass, and a second
+  way to size the screen beside the console's.
 
 ## D8. Composition
 
-**Proposed.** Translucency is over a static wallpaper, precomputed, and
+**Decided** (by the owner): the strip is always shown, and true full
+screen waits until a game needs it, when it comes with a system
+overlay; the compositor draws every window's frame and label.
+**Proposed:** the rest.
+
+Translucency is over a static wallpaper, precomputed, and
 there is no full-screen blur, since all drawing is on the CPU, as the
 recommended visual direction, Horizon, has it
 ([ui.md U9](ui.md#u9-theming-from-tokens)).
@@ -502,7 +530,7 @@ The compositor composes, bottom to top:
 | 4 | `TRUSTED` | The powerbox's dialogs | The powerbox |
 | 5 | `SYSTEM` | Login's screens: the login screen, the secure screen | Login |
 | 6 | Pointer | The pointer's image ([D10](#d10-the-pointer)) | The compositor |
-| 7 | Strip | A band along one edge of the screen, at least `STRIP_MIN` deep, a screen's height over 100, and as deep as the system's theme makes it: the focused window's label and marks ([D16](#d16-trusted-interface-and-the-powerbox)), and the compositor's notices | The compositor |
+| 7 | Strip | A band along one edge of the screen, always shown, at least `STRIP_MIN` deep, a screen's height over 100, and as deep as the system's theme makes it: the focused window's label and marks ([D16](#d16-trusted-interface-and-the-powerbox)), and the compositor's notices | The compositor |
 
 No window of any layer covers the strip. A window's frame, its shadow,
 its corners and the mark of its focus are the compositor's, drawn from
@@ -550,6 +578,12 @@ does.
   where no window can reach. EWS's display server likewise "reserves a
   band at the bottom of the display that is used to provide labeling
   feedback" ([EWS](README.md#display-and-interface-design-references), 7.2).
+  The WHATWG asks a browser in full screen to ensure "that the end user
+  is aware something is displayed fullscreen", "to prevent a site from
+  spoofing the end user by recreating the user agent or even operating
+  system environment"
+  ([Fullscreen](README.md#display-and-interface-design-references), 8);
+  a strip always shown leaves no full screen to spoof from.
 - **Why the compositor's frames:** the label on a window and the mark
   of the focus must be true, so the program that owns the window
   cannot draw them; and every window then moves, resizes and closes
@@ -557,15 +591,27 @@ does.
   display server"
   ([EWS](README.md#display-and-interface-design-references), 7.1),
   and in Qubes by the trusted domain's decorator
-  ([Qubes](README.md#display-and-interface-design-references)).
+  ([Qubes](README.md#display-and-interface-design-references)). A
+  program that wants a different look draws it inside its window.
 - **Cost:** a translucent panel over another window shows the
   wallpaper, not the window, which a user may read as the window not
   being there; a program cannot draw its own title bar; a window's
-  shape is a rounded rectangle and no other.
+  shape is a rounded rectangle and no other; the strip's band is on
+  every screen, and no window, a game's included, covers the whole
+  screen.
 - **Not taken:** a scene of every window blended with what lies beneath
   it, as compositors with a GPU do. Its cost on the CPU is
   [D9](#d9-budgets)'s full-screen figure on every change under a
-  translucent window, and a blur several times that.
+  translucent window, and a blur several times that. True full screen
+  now, for a window that asks, with the strip back on any key the
+  compositor reserves; its cost is a program in true full screen that
+  can draw a picture of the strip, before the overlay that answers it is
+  designed. No strip, the secure attention key alone marking the trusted
+  interface; its cost is a login screen with nothing on it that a
+  program cannot draw. Frames each program draws, the compositor drawing
+  only a label; their cost is a focus mark the program draws, which can
+  claim a focus it lacks, and windows that each move and close their
+  own way.
 
 ## D9. Budgets
 
@@ -788,12 +834,16 @@ channel, and to no other:
 
 ## D12. The secure attention key and global keys
 
-**Proposed.** Some keys belong to the system and never reach a window:
+**Decided** (by the owner): the secure attention key is Ctrl+Alt+Delete,
+the keypad's Delete included; the HUD key is Super tapped alone and
+Alt+Space, both settings. **Proposed:** the rest.
+
+Some keys belong to the system and never reach a window:
 
 | Keys | What they do | Configurable |
 |---|---|---|
-| Ctrl+Alt+Delete, either Ctrl and either Alt | The secure attention key | No |
-| The HUD key ([Open decisions](#open-decisions-for-devon), item 2) | Opens and closes the HUD | A system setting, `desktop.hud-key` |
+| Ctrl+Alt+Delete: either Ctrl, either Alt, and Delete (`KEY_DELETE`) or the keypad's Delete (`KEY_KPDOT`) | The secure attention key | No |
+| Super (`KEY_LEFTMETA` or `KEY_RIGHTMETA`) tapped alone, pressed and released with no key between, and Alt+Space | Opens and closes the HUD | A system setting, `desktop.hud-keys`, which holds both |
 | Alt+Tab, Alt+Shift+Tab | Moves the focus through the session's windows | A system setting |
 | Print Screen | Takes a screenshot ([D15](#d15-capture-copy-and-paste)) | A system setting |
 
@@ -842,16 +892,26 @@ the keyboard.
   login's windows show, so no other trusted program, the powerbox
   included, can stand in for login after the key.
 - **Why Ctrl+Alt+Delete:** it is the combination people know for this
-  purpose, and no program here has a use for it.
+  purpose, and no program here has a use for it. The keypad's Delete
+  counts, so a keyboard whose Delete is on its keypad alone can press it.
+- **Why Super and Alt+Space:** a tap of Super with no key between gives
+  no text and completes no other combination; Alt+Space opens the HUD
+  on a keyboard without Super, or under a host that keeps Super for its
+  own shortcuts.
 - **Why reserved keys in the system's settings:** a session that could
   rebind Print Screen to Enter would take a screenshot at every Enter.
-- **Cost:** a program cannot use the keys reserved; a keyboard without
-  Delete needs another way to press it
-  ([Open decisions](#open-decisions-for-devon), item 1); changing a
-  reserved key needs an administrator.
+- **Cost:** a program cannot use the keys reserved; a keyboard with no
+  Delete key, on its keypad or off it, cannot press the secure attention
+  key; changing a reserved key needs an administrator.
 - **Not taken:** global shortcuts any program can register. Its cost is
   a program that registers the keys of another's shortcuts, or of
-  every letter, and reads them.
+  every letter, and reads them. A second combination for keyboards
+  without Delete; its cost is one more combination taken from every
+  program before any such keyboard is a target. A single dedicated key
+  for the secure attention key; its cost is a key a keyboard without it
+  cannot press at all. Ctrl+Space for the HUD; its cost is a third
+  combination taken from every program, for keyboards Alt+Space already
+  serves.
 
 ## D13. The graphical login
 
@@ -1304,56 +1364,3 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
   joins it; L20's grants gain the display, as a console session is
   declared; L24's system settings hold the compositor's theme, the
   background and the reserved keys.
-
-## Open decisions for Devon
-
-1. **The secure attention key.** Ctrl+Alt+Delete is the combination
-   people know and no program needs, but a compact keyboard may have no
-   Delete key. Options: Ctrl+Alt+Delete alone; Ctrl+Alt+Delete
-   and a second combination for keyboards without Delete; a single key,
-   as a dedicated key would be on a keyboard that has one.
-   **Recommendation:** Ctrl+Alt+Delete, with the keypad's Delete counted
-   as Delete, and a second combination decided once a keyboard without
-   Delete is a target; QEMU's monitor sends it on any host.
-2. **The HUD key.** Options: the Super key tapped alone (pressed and
-   released with no key between); Ctrl+Space; Alt+Space.
-   **Recommendation:** Super tapped alone, with Alt+Space as well, so a
-   keyboard without Super, or a host that keeps Super for its own
-   shortcuts, still opens it; both a setting.
-3. **The strip and full screen.** A band no program covers is what makes
-   the trusted interface unforgeable, at the cost of that band on every
-   screen. Options: the strip always shown, full screen meaning the rest
-   of the screen; true full screen for a window that asks, with the
-   strip back on any key the compositor reserves and no `TRUSTED` or
-   `SYSTEM` window shown until it is; no strip, the secure attention key
-   alone marking the trusted interface. The WHATWG asks a browser in
-   full screen to ensure "that the end user is aware something is
-   displayed fullscreen", "to prevent a site from spoofing the end user
-   by recreating the user agent or even operating system environment"
-   ([Fullscreen](README.md#display-and-interface-design-references), 8).
-   **Recommendation:** the strip always shown, and true full screen
-   decided when a game needs it; a program in true full screen can draw
-   a picture of the strip.
-4. **Buffers larger than a section.** Options: buffers in bands of
-   2 MiB sections, with no kernel change; `section_create` raised past
-   2 MiB with a page list of more than one page. **Recommendation:**
-   bands, until a measurement shows the extra mappings cost anything a
-   user would notice; the protocol takes several sections a buffer
-   either way.
-5. **Programs across a compositor restart.** Options: programs reconnect
-   through login's grant channel and present their buffers again; they
-   end with the compositor. **Recommendation:** reconnect, since a
-   program's buffers survive the restart and its user's work should.
-6. **Decorations.** Options: the compositor draws every window's frame,
-   with its label; programs draw their own frames, the compositor only
-   a label. **Recommendation:** the compositor's frames, since the label
-   and the focus mark must be the system's, and a program that wants a
-   different look draws it inside the window.
-7. **The scale.** The boot protocol gives no physical size
-   ([console.md C5](console.md#c5-the-panel)). Options: a scale from the
-   screen's height, its height over 800 rounded to a quarter, so
-   1280 x 800 is 1, 2560 x 1600 is 2 and 2880 x 1800 is 2.25; a scale
-   from EDID's physical size where the firmware passes it.
-   **Recommendation:** the height, as the console sizes its cells, with
-   a setting to override; programs draw at the screen's pixels with the
-   scale given in each configure, so no window is ever stretched.

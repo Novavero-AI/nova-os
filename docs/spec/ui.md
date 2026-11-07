@@ -11,9 +11,8 @@ two are separate documents.
 
 Each item gives the design, why, what it costs, and the main
 alternative not taken. Items the owner has ruled on are marked
-**Decided**; every other item is **Proposed**, and [Open decisions for
-Devon](#open-decisions-for-devon) lists those that need a ruling. The
-shell's specification, `shell.md`, proposed separately, is cited in
+**Decided**; every other item is **Proposed**. The shell's
+specification, `shell.md`, proposed separately, is cited in
 plain text by section, as "shell.md L7".
 
 Sources are pinned in [README.md](README.md) and cited by these names:
@@ -105,7 +104,7 @@ the wordmark and the console font, and adds filled outlines.
 - **Cost:** sixteen rows of crossings a pixel row, where an exact area
   computed per pixel takes one pass; text blended in linear light
   "thins out, making it harder to read" at small sizes (FreeType),
-  which [Open decisions](#open-decisions-for-devon), item 3, addresses.
+  which [U4](#u4-text-layout), rule 7, addresses.
 - **Not taken:** the exact area of each pixel accumulated from signed
   edges in one pass. Its cost is a winding
   number summed over a pixel rather than tested at each sample, so a
@@ -116,7 +115,11 @@ the wordmark and the console font, and adds filled outlines.
 ## U3. Fonts
 
 **Decided** (by the owner): Inter, under the OFL 1.1, is the interface's
-typeface, rendered by nova-os from its outlines. **Proposed:** the rest.
+typeface, rendered by nova-os from its outlines; it is converted at build
+time into nova-os's font format; the code points converted are Latin,
+Greek and Cyrillic with punctuation and currency, 1,025 of them; and two
+static weights start, settled by the approved mockups. **Proposed:** the
+rest.
 
 **The source.** Inter 4.1, the release at tag `v4.1` (commit
 `e3a3d4c57d5ecc01453a575621882a384c1995a3`), fetched by its SHA-256 as
@@ -124,6 +127,11 @@ the test disk's seed files are. Its static TrueType fonts,
 `extras/ttf/`, have quadratic outlines in `glyf`, 2,048 units to the em
 and 2,937 glyphs; the regular weight maps 2,852 code points and is
 411,640 bytes, hinted with ttfautohint (Inter's `Makefile`).
+
+**What is converted.** Latin, Greek and Cyrillic with general
+punctuation and currency, 1,025 code points, the scripts
+[U4](#u4-text-layout) can lay out; and two static weights to start, the
+two the approved mockups settle on.
 
 **The format.** `tools/mkfont.c`, a C tool the chain compiles, as it
 compiles `tools/mkstore.c`, reads the pinned TrueType fonts at build
@@ -181,13 +189,25 @@ be released under the OFL" (OFL FAQ 1.3).
   `GPOS` reader in C to write and keep; Inter's features beyond
   kerning, tabular figures among them, need adding to the converter one
   by one.
+- **Why these characters and weights:** the rest of Inter needs
+  shaping, or marks that U4 cannot place; each weight is a converted
+  file, and the variable font's deltas would be a second outline format
+  in the reader.
 - **Not taken:** a TrueType parser in `lib/font/`. Its cost is the
   table walk above in every graphical process, and either hinting's
-  interpreter or hinting dropped at run time anyway.
+  interpreter or hinting dropped at run time anyway. U+0020 to U+017F
+  alone, 317 glyphs; its cost is Greek and Cyrillic drawn as the
+  missing glyph. Everything Inter maps, 2,852 code points; its cost is
+  glyphs U4 cannot lay out in every font file. Inter's variable font,
+  instanced at run time; its cost is a second outline format in the
+  reader. Every weight the mockups use; its cost is a converted file
+  for each.
 
 ## U4. Text layout
 
-**Proposed.** `lib/text/` turns UTF-8 into positioned glyphs and lines:
+**Decided** (by the owner): small text, rule 7. **Proposed:** the rest.
+
+`lib/text/` turns UTF-8 into positioned glyphs and lines:
 
 1. **Decoding.** UTF-8 as RFC 3629 gives it; an ill-formed sequence is
    U+FFFD.
@@ -206,6 +226,14 @@ be released under the OFL" (OFL FAQ 1.3).
    for its box ends in an ellipsis.
 6. **Carets.** A caret stands between code points; the text field moves
    it by one, and by words at spaces.
+7. **Small text.** Below scale 2
+   ([display.md D7](display.md#d7-presenting-and-pacing), rule 5), each
+   size's baseline and x-height are snapped to whole pixels, the
+   vertical snapping FreeType's light hinting does, and stems are
+   darkened, "emboldening a glyph slightly in relation to its pixel
+   size" (FreeType), by an amount set on the specimen phase 2 renders at
+   1280 x 800 ([display.md D19](display.md#d19-the-build-plan)). At scale
+   2 and above, neither.
 
 Out of scope: right-to-left and bidirectional text, for scripts "where
 the natural ordering of horizontal text in display is from right to
@@ -224,14 +252,25 @@ unpositioned.
   with precomposed characters, needs only advances and pair kerning,
   which the font format holds already; every item out of scope is a
   stage of its own, and none changes the interface of this one.
+- **Why snapping and darkening below scale 2:** Inter's hinting is
+  dropped ([U3](#u3-fonts)), and text mixed in linear light thins out at
+  small sizes; FreeType says stem darkening "should only be enabled when
+  doing gamma correction, so ideally it should always be done", and that
+  at twice the density "smaller, fully black pixels reign supreme".
 - **Cost:** no Arabic, Hebrew or Indic text, and no languages written
-  with combining marks, until shaping exists.
+  with combining marks, until shaping exists; glyphs at small sizes that
+  differ from their outlines by the snapping and the darkening.
 - **Not taken:** a shaping engine from the start. Its cost is a large
-  body of OpenType layout code before a single label is drawn.
+  body of OpenType layout code before a single label is drawn. Nothing
+  for small text, relying on screens of twice the density; its cost is
+  thin text at scale 1, 1280 x 800 among the sizes. Snapping alone; its
+  cost is stems that stay thin in linear light.
 
 ## U5. The interface as data
 
-**Proposed**, and [Open decisions](#open-decisions-for-devon), item 1.
+**Decided** (by the owner): the interface as data, drawn by a renderer,
+with the raw window of [display.md D6](display.md#d6-windows-and-buffers)
+as the escape. **Proposed:** the rest.
 
 A program describes its interface as a value in the shell's value
 model (shell.md L3): a record whose `kind` names a node from a fixed
@@ -275,10 +314,10 @@ Three ways to build interfaces, against what nova-os needs:
 
 [Prior art](#prior-art) gives each system this draws on.
 
-**Recommendation:** the interface as data, drawn by a renderer process
-of its own for each program ([U6](#u6-the-renderer)), with the raw
-window of [display.md D6](display.md#d6-windows-and-buffers) as the
-escape for what the vocabulary cannot say, and no immediate-mode
+The raw window is the escape for what the vocabulary cannot say. This
+document proposes a renderer process of its own for each program
+([U6](#u6-the-renderer)), from its first use in phase 7, the trusted
+programs drawing their own with the same library, and no immediate-mode
 library in the system.
 
 - **Why:** it is the only one of the three in which the system, not the
@@ -294,10 +333,15 @@ library in the system.
   draw anything, a picture of the powerbox included.
 - **Not taken:** a retained toolkit linked into programs. Its cost is
   the column above, chiefly a system that cannot say what a window
-  showed. One renderer for the whole session; its cost is every
-  program's interface, secret fields included, in one process that any
-  program's values can attack, and every program's layout on one
-  thread.
+  showed. Immediate mode; its cost is the table's last column, chiefly
+  no tree a screen reader can read. One renderer for the whole session;
+  its cost is every program's interface, secret fields included, in one
+  process that any program's values can attack, and every program's
+  layout on one thread. The interface as data drawn by a library in the
+  program's own process, which would speak the same protocol; its cost
+  is what a renderer apart is for, a record of what was shown that the
+  program cannot write, and a renderer the program's values cannot take
+  over.
 
 ## U6. The renderer
 
@@ -406,8 +450,8 @@ root down.
    `gap` between them; a child with `grow` takes a share of the room
    left over, in proportion; `align` places children across the axis.
 2. **Sizes** are in the theme's units, scaled by the display's scale
-   ([display.md, Open decisions](display.md#open-decisions-for-devon),
-   item 7); a text's preferred size is its laid-out size, a button's its
+   ([display.md D7](display.md#d7-presenting-and-pacing), rule 5); a
+   text's preferred size is its laid-out size, a button's its
    label's and the theme's padding.
 3. **Tables** size each column to the widest of the cells shown, at most
    `TABLE_COLUMN_MAX`, half the table's width, and cut longer cells
@@ -600,45 +644,3 @@ action it offers is an nvo command the shell can run.
   adds to.
 - **nova-nix:** a derivation attribute that declares an interface, a
   raw window, or both.
-
-## Open decisions for Devon
-
-1. **The toolkit's model** ([U5](#u5-the-interface-as-data)). Options:
-   the interface as data, drawn by a renderer process for each program;
-   the same, drawn by one renderer for the session; the same, drawn by a
-   library in the program's own process; a retained toolkit linked into
-   each program; immediate mode. **Recommendation:** the interface as
-   data with a renderer process for each program from its first use, in
-   phase 7, a raw window as the escape, and the trusted programs
-   drawing their own with the same library. The library in the
-   program's own process would speak the same protocol, but forgo what
-   the recommendation is for: a record of what was shown that the
-   program cannot write, and a renderer the program's values cannot
-   take over.
-2. **Fonts** ([U3](#u3-fonts)). Options: converted at build time into
-   nova-os's format; TrueType parsed at run time. **Recommendation:**
-   converted, for the auditable reader in every process and the parsing
-   done once on pinned bytes.
-3. **Small text.** Inter's hinting is dropped either way, and text mixed
-   in linear light thins out at small sizes (FreeType). Options: nothing,
-   relying on screens of twice the density, where, FreeType says, the
-   grey shades matter less because "smaller, fully black pixels reign
-   supreme"; snapping each size's x-height and baseline to whole pixels,
-   the vertical snapping FreeType's light hinting does; that and stem
-   darkening, "emboldening a glyph slightly in relation to its pixel
-   size" at small sizes, which FreeType says "should only be enabled
-   when doing gamma correction, so ideally it should always be done".
-   **Recommendation:** snapping and stem darkening below scale 2, and
-   neither at 2 and above, judged on the specimen phase 2 renders at
-   1280 x 800.
-4. **The characters converted.** Options: U+0020 to U+017F, 317 glyphs;
-   Latin, Greek and Cyrillic with general punctuation and currency, 1,025
-   code points; everything Inter maps, 2,852. **Recommendation:** Latin,
-   Greek and Cyrillic with punctuation and currency, the scripts
-   [U4](#u4-text-layout) can lay out; the rest of Inter needs shaping or
-   marks it cannot place.
-5. **Weights.** Options: Regular and SemiBold; every weight the mockups
-   use; Inter's variable font, instanced at run time. **Recommendation:**
-   the static weights the mockups settle on, two to start, since each is
-   a converted file and the variable font's deltas would be a second
-   outline format in the reader.
