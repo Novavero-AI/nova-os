@@ -25,7 +25,11 @@ compared.
 3. **Interface and developer experience first.** The boot screen and the
    desktop are designed, not left for last. Building, booting and seeing a
    change takes one command and seconds. Applications get a documented,
-   modern API over the native one, and an SDK.
+   modern API over the native one, and an SDK. The graphical interface and
+   the shell are two clients of one system API: every setting, action and
+   piece of state the interface offers is reachable from the shell and
+   from scripts, and the reverse, so neither holds a fact or a power the
+   other lacks.
 4. **Portable by construction.** Boot through UEFI, discover hardware
    through ACPI, and keep everything hardware-specific in the kernel's
    architecture layer and in drivers. x86-64 first, then ARM64.
