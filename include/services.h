@@ -36,7 +36,11 @@ typedef struct {
 } STORE_BOOTSTRAP;
 
 /* The rights of the store service's control channel (storage.md F12);
-   this milestone has CLOSURE alone. */
+   this milestone has CLOSURE alone. An IO_OPEN of the empty path on a
+   control channel, with rights of its own at most, opens another, so
+   that its holder can give one to a program and keep its own; the
+   open's attributes give IO_KIND_SERVICE, and the new channel belongs
+   to the client of the one it was opened through (F17). */
 #define STORE_RIGHT_CLOSURE 0x1
 
 /* Open the closure directory of a store path (F5): on the control
