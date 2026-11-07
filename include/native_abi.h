@@ -29,11 +29,12 @@
 #define ERR_NO_RESOURCES 15
 
 /* Status codes only I/O completions carry (S7): a name a directory does
-   not hold, a name it holds already, and data that fails the check of
-   its digest. */
+   not hold, a name it holds already, data that fails the check of its
+   digest, and a request a device failed. */
 #define ERR_NOT_FOUND 16
 #define ERR_ALREADY_EXISTS 17
 #define ERR_DATA_INTEGRITY 18
+#define ERR_IO 19
 
 /* The numbers of the calls this kernel implements (S8). Number 0 is
    reserved and names no call. */

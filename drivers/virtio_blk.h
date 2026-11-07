@@ -1,5 +1,6 @@
 /* The virtio block driver's face to the platform driver that starts it:
-   the PCI IDs it drives, its entry, and its exit codes. */
+   the PCI IDs it drives, its two modes, its report when it serves a
+   client, its entry, and its exit codes. */
 
 #ifndef NOVA_VIRTIO_BLK_H
 #define NOVA_VIRTIO_BLK_H
@@ -13,14 +14,29 @@
 #define VIRTIO_BLK_PCI_DEVICE 0x1042
 #define VIRTIO_BLK_PCI_TRANSITIONAL 0x1001
 
-/* The driver ends with VIRTIO_BLK_EXIT_DONE once it has read and logged
-   the sectors and reset the device, else with VIRTIO_BLK_EXIT_FAILED.
-   Both lie above the exception vectors a faulting process ends with
+/* The argument the driver starts with: VIRTIO_BLK_INSPECT reads and logs
+   the boot disk's partition table and boot sector, then ends;
+   VIRTIO_BLK_SERVE serves one client the block protocol
+   (block_protocol.h) until the client closes its end. */
+#define VIRTIO_BLK_INSPECT 0
+#define VIRTIO_BLK_SERVE 1
+
+/* Serving, once its device is live the driver writes one message on its
+   bootstrap channel: VIRTIO_BLK_REPORT_SIZE bytes, a transaction ID of 0
+   (ipc.md I3), and one handle, the client's endpoint, with
+   BLOCK_CLIENT_RIGHTS. It then closes the channel. */
+#define VIRTIO_BLK_REPORT_SIZE 4
+
+/* The driver ends with VIRTIO_BLK_EXIT_DONE once it has done its mode's
+   work, read and logged the sectors or served a client that has closed
+   its end, and reset the device; else with VIRTIO_BLK_EXIT_FAILED. Both
+   lie above the exception vectors a faulting process ends with
    (docs/spec/objects.md O10). */
 #define VIRTIO_BLK_EXIT_DONE 100
 #define VIRTIO_BLK_EXIT_FAILED 101
 
-/* The driver's entry, from a PCI device bootstrap message (pci.h). */
+/* The driver's entry, from a PCI device bootstrap message (pci.h), with
+   its mode as argument. */
 _Noreturn void virtio_blk_main(UINT32 bootstrap, UINT64 argument);
 
 #endif
