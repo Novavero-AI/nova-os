@@ -188,7 +188,7 @@ build gives the same bytes:
 | `console.exe` | 36,352 | `b3d3caa685145e77e152e6599e6aa8b6660a89ea70931ca57208b0b043f89ded` |
 | `conecho.exe` | 6,144 | `372dd9cc445e7ed18fb7dfcc6f20cce16907c3a845273f0c7efefaa9c398271d` |
 | `ntdll.dll` | 10,240 | `9a43b4e3b773c1b5a3b6eb541fd0de9c3f3675d2867d1193b707118648853d10` |
-| `store.exe` | 28,160 | `20dfd6c22e6a444981b6cd66305d30e0f3e4e46899e2768b53aa87f4a0aecf88` |
+| `store.exe` | 28,672 | `08b1663767426a0daf34b2f9b0c56bb2bc5e805d692b39bd83deef89355cee1a` |
 | `namespace.exe` | 11,264 | `ea99c11b7bbc69cf1b10e383391216c7c7bc25fd8b7ba48c9ee47de8c7c4182b` |
 | `hello.exe` | 20,480 | `31f37c7fce61b532e1ece9dab9d55ee49ff76ee4ed621533fac2f7cf6de4ab60` |
 | `fs.exe` | 42,496 | `180a2a8323b06b8ed933a9dbde69f616abe2b3868e4cab245ea586a6deccda13` |
@@ -213,7 +213,7 @@ block above. Each build gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `store.img` | 69,632 | `25260e8d4b2b47bd61fc46e50798e368daed9aba36689366154cf602f195adfa` |
+| `store.img` | 69,632 | `8dc8d0f59432c68be81a7b998bb5e79d0607c2a20009c926b84e622d8819a135` |
 
 ## Disk image
 
@@ -321,10 +321,10 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `a2364985924eb4b18603661b96e54e35443c9baddae77bf59ff92575f9bad9d8` |
-| `disk.vhdx` | 71,303,168 | `05b173f4c466e7c8809c006f96617d5778e6214529e064776db25ce97a1f3348` |
-| `chain.img` | 67,108,864 | `80449c2af4d57f903aa0799a600d91d0a438e2ffb770611647a09d97985be4f0` |
-| `chain.vhdx` | 71,303,168 | `b450dc65d0d95cee05222382b2799a8ad9f8ae51c2dde7ed563a57ddb4d6ae7e` |
+| `disk.img` | 67,108,864 | `89ba4be31d39408334451f068d5fee023a0fd000f22114947f3edddfcf024477` |
+| `disk.vhdx` | 71,303,168 | `66765abc1d92f2b25d7e2848d4291dddc7ef6d15886fd36bd0b2c03d92a1c006` |
+| `chain.img` | 67,108,864 | `faf8cb90f48cc075ba1af7e9a89f7dbcdff28ea1a4b9891e08fabf218ee8a888` |
+| `chain.vhdx` | 71,303,168 | `e16ffcb82030b399ca959330c1b57684cb72dc33f57bc02c810a4d48a1ae4f74` |
 | `data.img` | 67,108,864 | `fc0e119b885b341b5385e351b1f334c4da7cb921ef2dfbd994e9e20917e27804` |
 
 ## Run

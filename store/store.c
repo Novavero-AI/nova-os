@@ -19,7 +19,9 @@
    client takes what another holds; the clients are the control channel,
    the root and up to six programs' closure directories. The root is
    one client, which every process that opens /store through the
-   namespace server shares.
+   namespace server shares, and the control channel's client holds each
+   control channel opened through it, which an open of the empty path
+   on a control channel makes (services.h).
 
    One thread waits on every channel it serves and serves each message
    in turn; it ends once no channel is left. */
@@ -432,6 +434,32 @@ static void open_closure(const UINT8 *name, UINT32 length, UINT32 rights,
     send(endpoint, transaction, OK, 0, listing_attributes(rights), 0, 0);
 }
 
+/* Another control channel, at endpoint, with rights, at most c's, in
+   c's client (services.h). */
+static void open_control(const CHANNEL *c, UINT32 rights, UINT32 transaction,
+                         UINT32 endpoint)
+{
+    IO_ATTRIBUTES *a = (IO_ATTRIBUTES *)(reply + sizeof(IO_REPLY));
+    UINT32 i, status = rights & ~c->rights ? ERR_ACCESS_DENIED : OK;
+
+    if (status == OK)
+        status = add_channel(endpoint, c->client, CHANNEL_CONTROL, rights, 0,
+                             0);
+    if (status != OK) {
+        send(endpoint, transaction, status, 0, 0, 0, 0);
+        handle_close(endpoint);
+        return;
+    }
+    a->kind = IO_KIND_SERVICE;
+    a->flags = 0;
+    a->size = 0;
+    for (i = 0; i < IO_DIGEST_SIZE; i++)
+        a->digest[i] = 0;
+    a->rights = rights;
+    a->remaining = 0;
+    send(endpoint, transaction, OK, 0, sizeof *a, 0, 0);
+}
+
 /* ------------------------------------------------------------------------
    Listings. */
 
@@ -709,7 +737,10 @@ static int serve_request(UINT32 index, UINT32 bytes)
         received_count = 0;
         if (request->flags || request->reserved)
             status = ERR_INVALID_ARGS;
-        else if ((request->operation == IO_OPEN) != (c.kind != CHANNEL_CONTROL))
+        else if (request->operation == IO_OPEN && c.kind == CHANNEL_CONTROL)
+            status = request->length ? ERR_NOT_SUPPORTED : OK;
+        else if (request->operation == STORE_OPEN_CLOSURE &&
+                 c.kind != CHANNEL_CONTROL)
             status = ERR_NOT_SUPPORTED;
         else if (request->operation == IO_OPEN)
             status = OK;
@@ -718,6 +749,10 @@ static int serve_request(UINT32 index, UINT32 bytes)
         if (status != OK) {
             send(endpoint, request->transaction, status, 0, 0, 0, 0);
             handle_close(endpoint);
+        } else if (c.kind == CHANNEL_CONTROL &&
+                   request->operation == IO_OPEN) {
+            open_control(&c, request->rights, request->transaction,
+                         endpoint);
         } else if (request->operation == IO_OPEN) {
             open_path(&c, data, request->length, request->rights,
                       request->transaction, endpoint);

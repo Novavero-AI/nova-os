@@ -155,6 +155,7 @@
 #define IO_KIND_DIRECTORY 1
 #define IO_KIND_FILE 2
 #define IO_KIND_LINK 3
+#define IO_KIND_SERVICE 4
 
 /* An attribute record's flags: the file is executable; digest holds the
    node's content digest. */
