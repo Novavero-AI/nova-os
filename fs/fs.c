@@ -140,6 +140,7 @@ _Static_assert(NODES_MAX < NO_SLOT, "no slot is a node's");
 #define GPT_HEADER_CRC 16
 #define GPT_HEADER_CRC_SIZE 4
 #define GPT_MY_LBA 24
+#define GPT_ALTERNATE_LBA 32
 #define GPT_FIRST_USABLE 40
 #define GPT_LAST_USABLE 48
 #define GPT_HEADER_MIN 92
@@ -1475,18 +1476,23 @@ static int gpt_entry_unused(const UINT8 *entry)
 /* The used entries' extents, read in one pass with the array's CRC. */
 static UINT64 used_first[GPT_ENTRIES_MAX], used_last[GPT_ENTRIES_MAX];
 
-/* The pool partition, by its type GUID in the disk's primary GPT, whose
-   header and entry array must pass their CRCs, and which must lie within
-   the header's usable LBAs and overlap no other used entry (UEFI 2.11
-   5.3.1); a disk that fails any of these is refused, so the pool's
-   rings never overwrite the table or another partition. The backup
-   table at the disk's end, which 5.3.2 has software read when the
+/* The pool partition, by its type GUID in the disk's primary GPT. The
+   header and the entry array must pass their CRCs (UEFI 2.11 5.3.2);
+   the header must put the array after itself, the backup header at the
+   disk's last LBA, and its usable LBAs after the array and before the
+   backup array's room at the disk's end; and the pool's entry must lie
+   within those usable LBAs and overlap no other used entry (5.3.1). A
+   disk that fails any of these is refused. So the pool never covers
+   the protective MBR, the primary header or array, the disk's last
+   LBAs the backup table takes where 5.3.1 places it, or another
+   partition. The backup table, which 5.3.2 has software read when the
    primary fails, is not read. */
 static UINT32 find_partition(UINT64 capacity)
 {
     static const UINT8 type[POOL_GUID_SIZE] = POOL_PARTITION_TYPE;
     const UINT8 *entry;
-    UINT64 entries, first_usable, last_usable, first = 0, last = 0;
+    UINT64 entries, first_usable, last_usable, array_sectors;
+    UINT64 first = 0, last = 0;
     UINT32 count, size, per_sector, expected, crc = 0, i, j, status;
     UINT32 used = 0, pool = 0;
     int found = 0;
@@ -1507,10 +1513,19 @@ static UINT32 find_partition(UINT64 capacity)
     last_usable = pool_get64(page(IO_PAGE) + GPT_LAST_USABLE);
     if (size < GPT_ENTRY_MIN || size > POOL_SECTOR_SIZE ||
         POOL_SECTOR_SIZE % size || count > GPT_ENTRIES_MAX ||
-        entries >= capacity ||
-        ((UINT64)count * size + POOL_SECTOR_SIZE - 1) / POOL_SECTOR_SIZE >
-            capacity - entries)
+        entries >= capacity)
         return ERR_NOT_SUPPORTED;
+    array_sectors =
+        ((UINT64)count * size + POOL_SECTOR_SIZE - 1) / POOL_SECTOR_SIZE;
+    if (entries <= GPT_HEADER_LBA || array_sectors > capacity - entries ||
+        pool_get64(page(IO_PAGE) + GPT_ALTERNATE_LBA) != capacity - 1 ||
+        first_usable < entries + array_sectors ||
+        last_usable >= capacity - 1 - array_sectors ||
+        first_usable > last_usable) {
+        say("nova-fs: the disk's GPT header places its tables or its usable "
+            "LBAs where they overlap\r\n");
+        return ERR_DATA_INTEGRITY;
+    }
     per_sector = POOL_SECTOR_SIZE / size;
     for (i = 0; i < count; i++) {
         if (i % per_sector == 0) {
@@ -1545,7 +1560,7 @@ static UINT32 find_partition(UINT64 capacity)
         if (i != pool && used_first[i] <= last && first <= used_last[i])
             break;
     if (first < first_usable || first > last || last > last_usable ||
-        last_usable >= capacity || i < used) {
+        i < used) {
         say("nova-fs: the disk's pool entry lies outside the usable LBAs or "
             "overlaps another\r\n");
         return ERR_DATA_INTEGRITY;
