@@ -654,7 +654,10 @@ rest.
    command substitution (POSIX 2.6.3).
 7. **At the prompt**, the values a statement outputs are rendered by the
    shell (a table as columns, a record as two), and bytes are written as
-   they come.
+   they come. In a session in values mode, which login gives the shell
+   it starts for the HUD ([ui.md U11](ui.md#u11-the-hud)), each line
+   comes as a string and a statement's values go back unrendered, in the
+   value encoding (rule 9), for the HUD to draw.
 8. **`print`** writes its argument to the shell's own standard output
    at once, outside the pipeline, so a function can report progress
    without adding to its output.
@@ -1225,7 +1228,10 @@ the write before Enter. **Proposed:** the rest.
 1. A program whose recipe declares it receives a powerbox channel to the
    shell. On it the program asks to open a file, to save a file, or to
    pick a directory, with read or write, and a reason of at most 200
-   characters. It cannot propose a path.
+   characters. It cannot propose a path. A program with windows has the
+   channel to the session's powerbox program instead, which answers the
+   same protocol in a window
+   ([display.md D16](display.md#d16-trusted-interface-and-the-powerbox)).
 2. The shell stops forwarding the program's output and shows, on its own
    console session, the program's name taken from its store path, the
    rights asked for, the reason marked as the program's words, and a path
@@ -1289,23 +1295,31 @@ def main(src: path, dest: path(write)) {
    module the script imports, found from its literal `use` paths
    ([L10](#l10-modules)), read-only; the grants its arguments make under
    `main`'s signature; its standard streams; `$cwd` as text; a launcher
-   channel, through which the programs it runs get only what the script
-   itself holds; the user's profile and the running system, read-only,
-   so names resolve as they do at the prompt
+   channel, through which the programs it runs get of the user's files
+   only what the script itself holds, and of services only what its
+   `needs` declares; the user's profile and the running system,
+   read-only, so names resolve as they do at the prompt
    ([L13](#l13-command-resolution)); and what its `needs` block
-   declares.
+   declares, its paths from the shell's view and its services and
+   network from the launcher, as a program's are
+   ([L20](#l20-the-recipe-and-the-command-line), rule 2).
 2. It inherits nothing else: not the caller's variables, functions,
    history, settings, home or `$env` beyond what the call passes, and
    nothing the shell's own derivation declares.
 3. `needs` is a record whose keys are `read` and `write`, each a list
-   of paths, and `services` and `devices`, each a list of names; the
-   wall clock is the service `date` reads, so a script that runs `date`
-   needs it, and `settings` is the service
+   of paths; `services` and `devices`, each a list of names; and
+   `network`, a list of rules as
+   [network.md N12](network.md#n12-grants) writes them. The wall clock
+   is the service `date` reads, so a script that runs `date` needs it,
+   and `settings` is the service
    [L24](#l24-settings-and-service-commands) reads. At the prompt the
    shell shows them and asks once per SHA-256 of the file, so an edited
    script asks again, and keeps the answer as a setting; elsewhere an
    unapproved `needs` fails the launch
-   ([L20](#l20-the-recipe-and-the-command-line), rule 2).
+   ([L20](#l20-the-recipe-and-the-command-line), rule 3). A script
+   outside `/store` has no derivation for the launcher to read, so the
+   shell sends the approved `needs` with the run request, and the
+   launcher gives no more of any service than the session holds.
 4. A script in `/store` takes its `needs` from its derivation
    ([L20](#l20-the-recipe-and-the-command-line)); a `needs` block that
    asks for more than the derivation declares fails the launch.
@@ -1326,16 +1340,17 @@ def main(src: path, dest: path(write)) {
 
 ## L20. The recipe and the command line
 
-**Decided** (by the owner): consent, rule 2. **Proposed:** the rest.
+**Decided** (by the owner): consent, rule 3. **Proposed:** the rest.
 
 What an external program holds when it starts is the union of:
 
 | Part | From |
 |---|---|
 | Its closure, at `/store` | Its store path, through the launcher ([storage.md F5](storage.md#f5-per-process-views)) |
-| Services, devices and names its derivation declares | The shell's view, by name; one the shell cannot give fails the launch with `launch`, naming it (F5, rule 3) |
+| The network, the display and the other services and devices its derivation declares | The launcher, from the session's own channels to them (rule 2), never from the shell |
+| Paths its derivation declares | The shell's view, by name; one the shell cannot give fails the launch with `launch`, naming it (F5, rule 3) |
 | Its working directory, with read or write | Its derivation's declaration, from `$cwd`, shown as a grant before Enter ([L21](#l21-interactive-behaviour)) |
-| A console session | Its derivation's declaration |
+| A console session | Its derivation's declaration, given by the shell |
 | A powerbox channel | Its derivation's declaration ([L18](#l18-asking-for-more-the-powerbox)) |
 | What its arguments name | The command line ([L15](#l15-grants-from-arguments)) |
 | What `grant` attaches | The command line ([L17](#l17-rights)) |
@@ -1351,7 +1366,18 @@ What an external program holds when it starts is the union of:
    The launcher reads them, since the deriver is outside the shell's
    closure. A path with no deriver, such as a source, has none and gets
    only its closure, its arguments and its streams.
-2. **Consent.** Installing a program into a profile, the user's or the
+2. **Services from the launcher.** For each service or device the
+   derivation declares, the launcher makes the program's handle from
+   the session's own channel to that service: a network grant with
+   exactly the declared rules, on the session's network control channel,
+   or for a program a script runs on the script's
+   ([network.md N15](network.md#n15-declared-authority)), and a display
+   connection, minted from the session's
+   ([display.md D5](display.md#d5-connections-labels-and-layers)). One
+   the session's channel does not cover fails the launch with `launch`,
+   naming it. The shell asks the launcher to run the program and sends
+   it no handle to a service, its own included.
+3. **Consent.** Installing a program into a profile, the user's or the
    system's ([storage.md F13](storage.md#f13-profiles-system-and-garbage-collection)),
    is consent to what its derivation declares. A program run from a
    store path that is in no profile asks once per SHA-256 of its
@@ -1360,7 +1386,7 @@ What an external program holds when it starts is the union of:
    answer as a setting, so the same derivation or file is not asked
    about again. Outside an interactive session a declaration without
    consent fails the launch with `launch`.
-3. `grants { command }` shows every row above for each program the
+4. `grants { command }` shows every row above for each program the
    command would start whose arguments are known without running
    anything; it runs no capture, and shows an argument that depends on
    one, and a program a condition chooses, as unknown.
@@ -1373,6 +1399,11 @@ What an external program holds when it starts is the union of:
   program" (Plash, The Plash shell); the command line gives what this
   run needs. Reading the declaration from the derivation and not the
   output means a build cannot widen its own program's authority.
+- **Why services from the launcher:** a service can check only a grant
+  it issued itself, so the launcher, which reads the declaration, has
+  the service issue each one on a channel it served to the session;
+  the rules a program gets are then its declaration's, never the
+  shell's choice.
 - **Cost:** a substituted path needs its derivation present to have its
   declarations; an endowment declared wrongly fails the launch until
   the recipe is fixed; a program that declares its working directory
@@ -1391,7 +1422,13 @@ What an external program holds when it starts is the union of:
   recipe. Granting what is declared without asking, as principle 7 reads
   on its own; its cost is a script from anywhere given its `needs` the
   first time it runs. Asking at every run; its cost is a prompt users
-  learn to accept unread.
+  learn to accept unread. The shell deriving each program's service
+  grants from its own and sending them with its run request. Its cost
+  is a grant the service cannot tell from a channel of the shell's own
+  making, since an endpoint's handle reports its own object and not its
+  peer ([objects.md O4](objects.md#o4-handle-operations)), and rules the
+  shell, not the declaration, chooses
+  ([network.md N15](network.md#n15-declared-authority)).
 
 ## L21. Interactive behaviour
 
@@ -1537,13 +1574,13 @@ setting watch desktop.background        # one record per change, until interrupt
    settings for the whole system need the handle an administrator holds.
    A script asks for them in `needs` as the service `settings`
    ([L19](#l19-scripts)).
-4. **One description per service.** Each service describes its
-   interface once, in the interface description language
-   ([Changes elsewhere](#changes-elsewhere)): its requests and replies,
-   its settings with their schemas, and what each is for. From that one
-   text the generator makes the service's C protocol header, the nvo
-   commands that speak its protocol, the Settings window's form for each
-   of its settings, and its documentation.
+4. **The generic bridge.** Each service describes its interface once, in
+   the interface description language ([Changes
+   elsewhere](#changes-elsewhere)): its requests and replies, its
+   settings with their schemas, and what each is for. From that one text
+   the generator makes the service's C protocol header, the nvo commands
+   that speak its protocol, the Settings window's form for each of its
+   settings, and its documentation.
 5. **A service's settings** are keys of the settings service whose
    schemas come from the service's description; the service reads them
    there. The network service's log is one
@@ -1721,10 +1758,11 @@ What this design needs outside this document:
   working directory, console and powerbox, and its signature: parameters,
   stream kinds and exit statuses.
 - **New specifications:** the value protocol, the CBOR tags and framing
-  of [L7](#l7-pipelines); the settings service and its schemas
-  ([L24](#l24-settings-and-service-commands)); the interface description
-  language and its generator ([L24](#l24-settings-and-service-commands));
-  the powerbox protocol ([L18](#l18-asking-for-more-the-powerbox)).
+  of [L7](#l7-pipelines) and the session in values mode; the settings
+  service and its schemas ([L24](#l24-settings-and-service-commands));
+  the interface description language and its generator
+  ([L24](#l24-settings-and-service-commands)); the powerbox protocol
+  ([L18](#l18-asking-for-more-the-powerbox)).
 
 ## References
 

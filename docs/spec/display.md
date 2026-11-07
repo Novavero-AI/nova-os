@@ -20,9 +20,9 @@ It builds on [objects.md](objects.md) (handles, rights, sections),
 [ipc.md](ipc.md) (channels, bulk data in sections, device memory,
 driver restart), [console.md](console.md) (the display handoff and
 the console that owns the screen after it), [input.md](input.md) (the
-input driver), [accounts.md](accounts.md) (login and the session) and
-[replay.md](replay.md). The shell's specification, `shell.md`, proposed
-separately, is cited in plain text by section, as "shell.md L18".
+input driver), [accounts.md](accounts.md) (login and the session),
+[replay.md](replay.md) and [shell.md](shell.md) (the shell's grants, its
+powerbox and its settings).
 
 Each item gives the design, why, what it costs, and the main alternative
 not taken. Items the owner has ruled on are marked **Decided**; every
@@ -262,7 +262,7 @@ its issuer gave it, and nothing on the connection can change that:
 
 | Field | What it is |
 |---|---|
-| Label | UTF-8 text of at most `DISPLAY_LABEL_MAX` (64) bytes, a longer name cut at a character's boundary: the program's name, taken by login from its store path, as the powerbox names a program in shell.md L18. The compositor shows it on every window of the connection and in the strip |
+| Label | UTF-8 text of at most `DISPLAY_LABEL_MAX` (64) bytes, a longer name cut at a character's boundary: the program's name, taken by login from its store path, as the powerbox names a program in [shell.md L18](shell.md#l18-asking-for-more-the-powerbox). The compositor shows it on every window of the connection and in the strip |
 | Mark | Whether the compositor draws the system's mark before the label: set for the system's own programs, the console, the HUD and the powerbox, and never for a program a user runs |
 | Layers | Which of `APP`, `OVERLAY`, `TRUSTED` and `SYSTEM` its windows may be on ([D8](#d8-composition)) |
 | Rights | `MINT`: issue connections with the layers `APP`, `OVERLAY` and `TRUSTED`, the mark and `ACTIVATE`, none beyond its own. `ATTENTION`: receive the secure attention key ([D12](#d12-the-secure-attention-key-and-global-keys)). `CAPTURE`: make captures ([D15](#d15-capture-copy-and-paste)). `ACTIVATE`: its first window may take the focus ([D11](#d11-routing-input)) |
@@ -312,10 +312,11 @@ focus, once, within `ACTIVATE_NS` (10 seconds) of the connection's
 issue; it lapses sooner at the user's first key or click in any other
 window.
 
-The display is part of a program's grant as a console session is in
-shell.md L20: a program gets a connection only if its derivation
-declares the display, and its label is its name, whatever it calls
-itself.
+The display is one of the services a program's derivation declares and
+the launcher gives
+([shell.md L20](shell.md#l20-the-recipe-and-the-command-line), rule
+2): a program gets a connection only if its derivation declares the
+display, and its label is its name, whatever it calls itself.
 
 - **Why labels from the issuer:** what a window says about its owner is
   what the user trusts when deciding whether to type into it, so the
@@ -848,12 +849,12 @@ Some keys belong to the system and never reach a window:
 | Print Screen | Takes a screenshot ([D15](#d15-capture-copy-and-paste)) | A system setting |
 
 The compositor matches them on key events before routing, and sends a
-window neither the press nor the release of a key that completes one;
-a window that had Ctrl and Alt pressed is told they are released. A
+window neither the press nor the release of a key that completes one; a
+window that had Ctrl and Alt pressed is told they are released. A
 reserved key other than the secure attention key is a setting of the
-system, which only an administrator's settings handle changes (shell.md
-L24, rule 3), and none may be a key that gives text, or Enter, Tab or
-Escape.
+system, which only an administrator's settings handle changes ([shell.md
+L24](shell.md#l24-settings-and-service-commands), rule 3), and none may
+be a key that gives text, or Enter, Tab or Escape.
 
 **The secure attention key.** On it the compositor, at once and before
 any other event: ends any hold of the pointer, any popup and any
@@ -1012,8 +1013,8 @@ interface:
 
 1. **A screenshot.** Print Screen makes login start the screenshot
    program with a capture of one frame of the screen and a slot for one
-   new file in the home (shell.md L17); the strip says a screenshot was
-   taken.
+   new file in the home ([shell.md L17](shell.md#l17-rights)); the strip
+   says a screenshot was taken.
 2. **Sharing.** A program whose recipe declares it asks the powerbox to
    share; the powerbox shows the user a choice of the screen or one
    window, by label, and on the user's choice login makes the capture
@@ -1030,15 +1031,15 @@ that connection closes, as at logout
 ([D5](#d5-connections-labels-and-layers)), or at the secure attention
 key.
 
-**Copy and paste.** The compositor holds one clipboard: text, or a
-value in the shell's encoding (shell.md L7), carried in messages of at
-most `CHANNEL_MAX_BYTES` and `CLIPBOARD_MAX` (1 MiB) in all. A window
-puts its selection there with `WINDOW_COPY` and asks for it with
-`WINDOW_PASTE`, and the compositor honours each only within
+**Copy and paste.** The compositor holds one clipboard: text, or a value
+in the shell's encoding ([shell.md L7](shell.md#l7-pipelines)), carried
+in messages of at most `CHANNEL_MAX_BYTES` and `CLIPBOARD_MAX` (1 MiB)
+in all. A window puts its selection there with `WINDOW_COPY` and asks
+for it with `WINDOW_PASTE`, and the compositor honours each only within
 `USER_ACT_NS` (1 second) of a key or click it delivered to that window,
 so data moves between programs only on the user's act there. A paste
-into a window of another connection than the copy's is logged with
-both labels, never the content.
+into a window of another connection than the copy's is logged with both
+labels, never the content.
 
 - **Why a granted capture:** what is on a screen is everything a user
   is working on, so reading it is a power the user grants for one
@@ -1052,7 +1053,9 @@ both labels, never the content.
   ([Qubes](README.md#display-and-interface-design-references)).
 - **Cost:** a program cannot make its own screenshots, and the shell has
   no command for one or for moving the focus, which principle 3 asks
-  for, until the launcher protocol gains them with the HUD; a recorded
+  for, until the launcher protocol gains them, its commands made by the
+  generic bridge as every service's are
+  ([shell.md L24](shell.md#l24-settings-and-service-commands)); a recorded
   program cannot take a capture, since its buffers are written by the
   compositor, outside the recording
   ([replay.md](replay.md#shared-memory), as amended in [Changes
@@ -1093,16 +1096,17 @@ of the first three:
    It makes the trusted window easy to see; the strip is what proves it.
 
 The powerbox is the session's file chooser, `powerbox.exe`, started by
-login with the session's view, in a job of its own. It speaks shell.md
-L18's protocol: a program whose recipe declares a powerbox channel asks
-to open a file, save a file or pick a directory, with read or write and
-a reason of at most 200 characters, and cannot propose a path. The
-powerbox shows the program's label, the rights asked for, the reason,
-marked as the program's words, and a chooser over the session's view;
-it grants as the shell grants and answers with the handle. Programs on
-the console get their powerbox channel to the shell, which answers the
-same protocol in text (shell.md L18); programs with windows get it to
-the powerbox. The same channel carries
+login with the session's view, in a job of its own. It speaks [shell.md
+L18](shell.md#l18-asking-for-more-the-powerbox)'s protocol: a program
+whose recipe declares a powerbox channel asks to open a file, save a
+file or pick a directory, with read or write and a reason of at most 200
+characters, and cannot propose a path. The powerbox shows the program's
+label, the rights asked for, the reason, marked as the program's words,
+and a chooser over the session's view; it grants as the shell grants and
+answers with the handle. Programs on the console get their powerbox
+channel to the shell, which answers the same protocol in text ([shell.md
+L18](shell.md#l18-asking-for-more-the-powerbox)); programs with windows
+get it to the powerbox. The same channel carries
 [D15](#d15-capture-copy-and-paste)'s request to share.
 
 1. A dialog is shown only while a window of the asking program has the
@@ -1117,15 +1121,16 @@ The powerbox writes a line to the log for every request: the program's
 label, what it asked for and what the user granted or refused, never
 the reason's text or a file's contents.
 
-- **Why a process of its own:** shell.md L18 quotes Plash's reasons: a
-  powerbox "must be implemented as a separate, trusted component", with
-  "a trusted path to the user", and the program "cannot specify a
-  default pathname". The shell is that component on the console because
-  it already holds the session's view; on the desktop the HUD would be,
-  but it parses everything a user types and every command's result, and
-  a chooser is smaller. It is not login: a flaw a crafted request
-  reaches in the powerbox gains `TRUSTED`, which the secure attention
-  key hides, and not `SYSTEM`.
+- **Why a process of its own:** [shell.md
+  L18](shell.md#l18-asking-for-more-the-powerbox) quotes Plash's
+  reasons: a powerbox "must be implemented as a separate, trusted
+  component", with "a trusted path to the user", and the program "cannot
+  specify a default pathname". The shell is that component on the
+  console because it already holds the session's view; on the desktop
+  the HUD would be, but it parses everything a user types and every
+  command's result, and a chooser is smaller. It is not login: a flaw a
+  crafted request reaches in the powerbox gains `TRUSTED`, which the
+  secure attention key hides, and not `SYSTEM`.
 - **Why one protocol:** a program asks for a file the same way whether
   it runs in the terminal or in a window, and the grant it gets is the
   same (DESIGN.md, principle 3).
@@ -1270,8 +1275,8 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
 | 3. The compositor with one surface | `compositor.exe` takes the display; the console runs in window mode, its one window; the software pointer; materials; budgets logged ([D2](#d2-who-holds-the-display) to [D9](#d9-budgets)) | | The login prompt in the console's window, with the pointer, matched against the host's render; the first frame after the handoff equals the kernel's last; a boot with a flag file that makes the compositor exit twice shows the console's fallback, Limb over the whole screen, and logs in on it |
 | 4. The graphical login | Login's window, `ACCOUNTS_LIST`, the strip, the attention state and the secure attention key, the session's connection and logout ([D5](#d5-connections-labels-and-layers), [D12](#d12-the-secure-attention-key-and-global-keys), [D13](#d13-the-graphical-login)) | | The login screen with its list matched; the account created and logged into by QMP keys; the secure attention key from the shell shows login's secure screen, and keys typed after it reach no session program; after logout the screen is the login screen again; the password appears nowhere in the log |
 | 5. Windows | Many windows, popups and children, frames and labels, focus, stacking, damage and release, copy and paste ([D5](#d5-connections-labels-and-layers) to [D7](#d7-presenting-and-pacing), [D11](#d11-routing-input), [D15](#d15-capture-copy-and-paste)) | | A test program opens two windows with known patterns; QMP drags one and clicks the other; screens matched; the program logs which window got which key, and a key typed at one never reaches the other; a popup asked for from a window without the focus is refused |
-| 6. The HUD | The HUD and its key, launching, finding, settings and nvo commands ([ui.md U11](ui.md#u11-the-hud)) | The nvo interpreter and a session in values mode (shell.md); the settings service (shell.md L24) | The HUD key opens it; a typed command's table matched against the host's render; a program launched from it gets the focus |
-| 7. Files, Settings and the terminal | The renderer, `uihost.exe`, and the first programs drawn through it; the terminal; the powerbox; capture ([D15](#d15-capture-copy-and-paste), [D16](#d16-trusted-interface-and-the-powerbox), [ui.md U6](ui.md#u6-the-renderer), [ui.md U12](ui.md#u12-the-first-programs)) | The shell's built-ins for files and settings (shell.md L25); a job for each program, with `CREATE_JOB` for login | Each program's first window matched; the terminal runs `whoami` and the file commands as the system boot does; a powerbox grant by QMP keys and the log's line for it; the secure attention key with a powerbox dialog open shows login's screen alone |
+| 6. The HUD | The HUD and its key, launching, finding, settings and nvo commands ([ui.md U11](ui.md#u11-the-hud)) | The nvo interpreter and a session in values mode ([shell.md L7](shell.md#l7-pipelines), rule 7); the settings service ([shell.md L24](shell.md#l24-settings-and-service-commands)) | The HUD key opens it; a typed command's table matched against the host's render; a program launched from it gets the focus |
+| 7. Files, Settings and the terminal | The renderer, `uihost.exe`, and the first programs drawn through it; the terminal; the powerbox; capture ([D15](#d15-capture-copy-and-paste), [D16](#d16-trusted-interface-and-the-powerbox), [ui.md U6](ui.md#u6-the-renderer), [ui.md U12](ui.md#u12-the-first-programs)) | The shell's built-ins for files and settings ([shell.md L25](shell.md#l25-built-ins)); a job for each program, with `CREATE_JOB` for login | Each program's first window matched; the terminal runs `whoami` and the file commands as the system boot does; a powerbox grant by QMP keys and the log's line for it; the secure attention key with a powerbox dialog open shows login's screen alone |
 
 - **Why this order:** each phase uses what the ones before it built and
   what its row needs first, and each leaves the system working: the
@@ -1350,17 +1355,21 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
   recordable ([D17](#d17-replay-and-audit)).
 - **`include/`:** `display_protocol.h`, new: connections, windows,
   children and popups, buffers, presents, configures, events, captures
-  and the clipboard; `input_protocol.h`, pointer reports and the
-  device's description; `accounts_protocol.h`, `ACCOUNTS_LIST`;
-  `console_protocol.h`, the window mode's setup; `session.h`, the
-  display connection, the grant channel and `LAUNCHER_TERMINAL`.
+  and the clipboard, generated from the compositor's interface
+  description, as a new service's header is ([shell.md
+  L24](shell.md#l24-settings-and-service-commands)); `input_protocol.h`,
+  pointer reports and the device's description; `accounts_protocol.h`,
+  `ACCOUNTS_LIST`; `console_protocol.h`, the window mode's setup;
+  `session.h`, the display connection, the grant channel and
+  `LAUNCHER_TERMINAL`.
 - **README.md and `ci/boot.py`:** `-device virtio-tablet-pci` in place
   of `-device qemu-xhci -device usb-tablet`; screens checked as
   [D19](#d19-the-build-plan) gives, at 1280 x 800, and under KVM at
   2560 x 1600 and 2880 x 1800; a run at 2880 x 1800 needs more memory
   than 256 MiB once windows open ([D9](#d9-budgets)).
-- **shell.md:** L18's powerbox prompt has a graphical twin, the
-  powerbox program, speaking the same protocol, and the share request
-  joins it; L20's grants gain the display, as a console session is
-  declared; L24's system settings hold the compositor's theme, the
-  background and the reserved keys.
+- **[shell.md](shell.md):** L18's powerbox prompt has a graphical twin,
+  the powerbox program, speaking the same protocol, and the share
+  request joins it; L20's grants gain the display, which the launcher
+  gives from the session's connection; L24's system settings hold the
+  compositor's theme, the background and the reserved keys, declared in
+  the compositor's interface description.

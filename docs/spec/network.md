@@ -1005,10 +1005,11 @@ from the one above it, so each level can only narrow the one above.
 5. **Programs.** A program's derivation declares its rules in a
    `network` attribute, a list of rule strings as [N12](#n12-grants)
    writes them. Login, the launcher, reads the declaration from the
-   program's deriver, as the shell language's L20 (proposed in
-   `docs/spec/shell.md` on the `docs-shell` branch) has the launcher
-   read declarations, and gives the program a grant through `NET_GRANT`
-   on its session's control channel with exactly the declared rules.
+   program's deriver, as
+   [shell.md L20](shell.md#l20-the-recipe-and-the-command-line) has the
+   launcher read declarations, and gives the program a grant through
+   `NET_GRANT` on its session's control channel with exactly the
+   declared rules.
    The service refuses rules the session's channel does not cover, with
    `ERR_ACCESS_DENIED` naming the rule, and a session with no client
    left, with `ERR_NO_RESOURCES`; either fails the launch, naming the
@@ -1016,6 +1017,17 @@ from the one above it, so each level can only narrow the one above.
    fails a launch. A program whose derivation declares nothing gets no
    grant. The shell asks login to run a program, as it does now, and
    takes no part in its grant.
+6. **Scripts.** A script outside `/store` has no deriver; its `needs`,
+   which its user approved at the shell, is its declaration, and the
+   shell sends it with the run request
+   ([shell.md L19](shell.md#l19-scripts)). Login makes the script a
+   control channel of its own from the session's, through `NET_CONTROL`,
+   with the rules its `needs` names and clients reserved from the
+   session's, and gives the script's grant, and those of the programs
+   the script runs, on that channel. A program a script runs therefore
+   reaches no more of the network than the script declared, and a
+   script that names no rules gets no channel, and its programs no
+   grant.
 
 Until login reads declarations, it gives programs no grant, and a
 program run from the shell of [accounts.md A8](accounts.md#a8-the-shell)
@@ -1483,22 +1495,25 @@ What this design needs outside this document:
     starts its other checks.
 - **`include/`:** `frame_protocol.h` ([N4](#n4-the-frame-protocol));
   `network_protocol.h` ([N13](#n13-the-socket-protocol)) and its
-  constants ([N18](#n18-limits-on-clients)); `services.h`,
-  the service's and the resolver's bootstrap messages; `session.h`,
-  `SESSION_NETWORK` and a `LOGIN_SETUP_NETWORK` for login's control
-  channel; `native_abi.h`, the three statuses. `drivers/virtio_net.h`,
-  the driver's face to the platform driver, as `virtio_input.h` is,
-  with `VIRTIO_NET_EXIT_CLIENT_BROKE` beside its done and failure
-  codes.
+  constants ([N18](#n18-limits-on-clients)), generated from the network
+  service's interface description, as a new service's header is
+  ([shell.md L24](shell.md#l24-settings-and-service-commands));
+  `services.h`, the service's and the resolver's bootstrap messages;
+  `session.h`, `SESSION_NETWORK` and a `LOGIN_SETUP_NETWORK` for login's
+  control channel; `native_abi.h`, the three statuses.
+  `drivers/virtio_net.h`, the driver's face to the platform driver, as
+  `virtio_input.h` is, with `VIRTIO_NET_EXIT_CLIENT_BROKE` beside its
+  done and failure codes.
 - **`lib/`:** BLAKE2b, from `accounts/`, for the service and the
   accounts service both ([N9](#n9-one-thread-one-port-time-and-randomness)).
 - **[accounts.md](accounts.md):** A1 and A7, login's control channel
   for each session, the session's grant, and the grants login gives the
   programs it runs from their declarations; A10, login's network
   control channel and its hand-over.
-- **`docs/spec/shell.md`, on the `docs-shell` branch:** L20 takes a
-  program's network grant from the launcher's session control channel
-  ([N15](#n15-declared-authority)), not from the shell's view.
+- **[shell.md](shell.md):** L20 takes a program's network grant from
+  the launcher's session control channel, and L19 a script's from a
+  control channel login makes for it ([N15](#n15-declared-authority)),
+  never from the shell's view.
 - **[storage.md](storage.md) F12:** "a network handle", for a
   substituter and a fixed-output build, is a grant with the rules
   [N15](#n15-declared-authority) gives them.
@@ -1512,7 +1527,8 @@ What this design needs outside this document:
   network device in place of `-net none`.
 - **nova-nix:** a `network` derivation attribute, a list of rule
   strings ([N12](#n12-grants)), which the launcher reads from the
-  deriver, as the shell language's declarations are read.
+  deriver, as [shell.md L20](shell.md#l20-the-recipe-and-the-command-line)
+  reads a program's other declarations.
 
 ## References
 

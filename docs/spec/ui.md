@@ -11,9 +11,7 @@ two are separate documents.
 
 Each item gives the design, why, what it costs, and the main
 alternative not taken. Items the owner has ruled on are marked
-**Decided**; every other item is **Proposed**. The shell's
-specification, `shell.md`, proposed separately, is cited in
-plain text by section, as "shell.md L7".
+**Decided**; every other item is **Proposed**.
 
 Sources are pinned in [README.md](README.md) and cited by these names:
 
@@ -38,7 +36,7 @@ table.
 | Pixels | `gfx/` | sRGB and linear light, the strokes, filled outlines ([U2](#u2-the-rasterizer)) | nova-boot, the kernel, the console, the compositor, the renderer |
 | Fonts | `lib/font/` | The font format's reader and a cache of glyph masks ([U3](#u3-fonts)) | The compositor, the renderer |
 | Text | `lib/text/` | UTF-8 to positioned glyphs and lines ([U4](#u4-text-layout)) | The compositor, the renderer |
-| Values | `lib/value/` | The shell's value encoding (shell.md L7, rule 9) | The shell, the HUD, the renderer, programs |
+| Values | `lib/value/` | The shell's value encoding, CBOR with the core deterministic encoding ([shell.md L7](shell.md#l7-pipelines), rule 9) | The shell, the HUD, the renderer, programs |
 | Display | `lib/display/` | The display protocol's client ([display.md D5 to D7](display.md#d5-connections-labels-and-layers)) | Every graphical program |
 | Interface | `lib/ui/` | The interface as data: nodes, layout, widgets, themes, drawing and input ([U5](#u5-the-interface-as-data) to [U10](#u10-accessibility)) | The renderer, and login, the powerbox and the HUD in their own processes |
 
@@ -272,14 +270,15 @@ unpositioned.
 with the raw window of [display.md D6](display.md#d6-windows-and-buffers)
 as the escape. **Proposed:** the rest.
 
-A program describes its interface as a value in the shell's value
-model (shell.md L3): a record whose `kind` names a node from a fixed
-vocabulary ([U7](#u7-widgets)), or any other value, which draws by its
-type, a table as a table, a record as its fields, a path as a file. It
-sends the value, and then changes to it, on a channel to a renderer,
-which lays it out, draws it in the program's window, edits fields and
-moves focus itself, and sends back what the user did in the program's
-terms: this button activated, this field's new text, this row chosen.
+A program describes its interface as a value in the shell's value model
+([shell.md L3](shell.md#l3-values-and-types)): a record whose `kind`
+names a node from a fixed vocabulary ([U7](#u7-widgets)), or any other
+value, which draws by its type, a table as a table, a record as its
+fields, a path as a file. It sends the value, and then changes to it, on
+a channel to a renderer, which lays it out, draws it in the program's
+window, edits fields and moves focus itself, and sends back what the
+user did in the program's terms: this button activated, this field's new
+text, this row chosen.
 
 ```
 { kind: column, children: [
@@ -359,8 +358,9 @@ library in the system.
    ending the job needs `task_kill`, which the kernel lacks
    ([display.md, Changes elsewhere](display.md#changes-elsewhere)).
 2. **The protocol** (`include/ui_protocol.h`) carries values in the
-   shell's encoding (shell.md L7, rule 9), a value larger than one
-   message split across several in the value protocol's framing:
+   shell's value encoding, CBOR with the core deterministic encoding
+   ([shell.md L7](shell.md#l7-pipelines), rule 9), a value larger than
+   one message split across several in the value protocol's framing:
 
    | From | Message | What |
    |---|---|---|
@@ -392,9 +392,10 @@ library in the system.
 6. **Limits.** A program's interface holds at most `UI_NODES_MAX`
    (65,536) nodes; past it the renderer refuses the change and says so.
 7. **The log.** The renderer annotates its own recording with the
-   actions it reported, as the shell annotates its transcript (shell.md
-   L23), and a recording of the program's job holds both; it writes no
-   text a field held to any log.
+   actions it reported, as the shell annotates its transcript
+   ([shell.md L23](shell.md#l23-replay)), and a recording of the
+   program's job holds both; it writes no text a field held to any
+   log.
 8. **In process.** Login, the powerbox and the HUD link `lib/ui` and
    draw their own windows: they are trusted already, and a renderer of
    their own would add a process to the path of the secure screen.
@@ -479,13 +480,14 @@ wallpaper, marks the focus with a small horizon glow, and has no
 full-screen blur; the visuals are designed apart from this document,
 which depends on none of them. **Proposed:** the rest.
 
-A theme is a value of tokens, served by the settings service as the
-keys under `theme.` (shell.md L24). There are two: the system's, in the
-system's settings, which the compositor, login and the powerbox draw
-with, the same before any session; and the session's, which starts as
-the system's and which the renderers and the HUD draw with. Neither
-holds the strip's marks or its least depth, which are the compositor's
-own ([display.md D8](display.md#d8-composition)).
+A theme is a value of tokens, served by the settings service as the keys
+under `theme.` ([shell.md
+L24](shell.md#l24-settings-and-service-commands)). There are two: the
+system's, in the system's settings, which the compositor, login and the
+powerbox draw with, the same before any session; and the session's,
+which starts as the system's and which the renderers and the HUD draw
+with. Neither holds the strip's marks or its least depth, which are the
+compositor's own ([display.md D8](display.md#d8-composition)).
 
 | Tokens | What they give |
 |---|---|
@@ -498,8 +500,8 @@ own ([display.md D8](display.md#d8-composition)).
 | The pointer | Its shapes, as outlines |
 
 Programs name roles, never colours, as the shell's styles are roles
-(shell.md L21, rule 2). Changing a token changes every window the next
-time it draws.
+([shell.md L21](shell.md#l21-interactive-behaviour), rule 2). Changing a
+token changes every window the next time it draws.
 
 - **Why:** one source of every colour and size is what makes login, the
   HUD and a third party's dialog look like one system, and settings
@@ -555,20 +557,28 @@ structured results, one API for the interface and the shell.
    `shell.exe`, for the HUD, with the session's handles
    ([accounts.md A7](accounts.md#a7-the-session)) and a session in
    values mode: the HUD sends each line, the shell runs it with its
-   grants and authority as at the console (shell.md L15 to L20), and
-   answers with values in the value encoding (shell.md L7), which the
-   HUD shows as [U5](#u5-the-interface-as-data) draws them. The HUD
-   holds no handle of the session's and runs no command itself.
+   grants and authority as at the console
+   ([shell.md L15](shell.md#l15-grants-from-arguments) to
+   [L20](shell.md#l20-the-recipe-and-the-command-line)), and answers
+   with each statement's values unrendered, in the value encoding, CBOR
+   with the core deterministic encoding
+   ([shell.md L7](shell.md#l7-pipelines), rules 7 and 9), which the HUD
+   shows as [U5](#u5-the-interface-as-data) draws them. The HUD holds no
+   handle of the session's and runs no command itself.
 3. **Searching.** A line that is not a command is a search, and each
    suggestion is the command it stands for, shown before Enter as the
-   console shows grants (shell.md L21, rule 3): a program in the
-   profile (`run`), a file under the home by name (the program a
-   setting names for its kind, run with the file as its argument and so
-   granted it, shell.md L15), a setting by key or description
-   (`setting`), and history (shell.md L22).
+   console shows grants
+   ([shell.md L21](shell.md#l21-interactive-behaviour), rule 3): a
+   program in the profile (`run`), a file under the home by name (the
+   program a setting names for its kind, run with the file as its
+   argument and so granted it,
+   [shell.md L15](shell.md#l15-grants-from-arguments)), a setting by key
+   or description (`setting`), and history
+   ([shell.md L22](shell.md#l22-history)).
 4. **Assistance.** Highlighting by role, completions with descriptions
    and inline suggestions come from the shell as at the console
-   (shell.md L21), so the HUD and the terminal suggest alike.
+   ([shell.md L21](shell.md#l21-interactive-behaviour)), so the HUD and
+   the terminal suggest alike.
 5. **Results.** A table is a table, a record its fields, a path a file
    row whose activation opens it, an error the error's message and the
    span it names; a setting's result is an editor for its schema. A
@@ -579,8 +589,8 @@ structured results, one API for the interface and the shell.
   the terminal lacks, and a thing done in the HUD can be typed in the
   terminal as the same line (DESIGN.md, principle 3); the grants a
   command makes are the shell's, already specified and shown.
-- **Cost:** the HUD waits on the nvo interpreter, which shell.md
-  proposes and nothing yet implements; every HUD search is a shell
+- **Cost:** the HUD waits on the nvo interpreter, which
+  [shell.md](shell.md) specifies and nothing yet implements; every HUD search is a shell
   round trip.
 - **Not taken:** a launcher with its own index of programs and files.
   Its cost is a second authority over the session's files, and actions
@@ -595,14 +605,15 @@ action it offers is an nvo command the shell can run.
 |---|---|---|
 | Login | The accounts, a password field, the first boot's form, the secure screen ([display.md D13](display.md#d13-the-graphical-login)) | The accounts service's requests |
 | Files | A directory of the home as `ls` gives it, a table | Running a file's program on it, the shell's commands that make, move and remove files, and the powerbox for anything outside the home |
-| Settings | The settings service's keys by group, each by its schema: a `bool` a toggle, a choice a list, text a field | `setting set` and `setting reset` |
+| Settings | Each service's settings by group, in the forms the generic bridge makes from the service's description ([shell.md L24](shell.md#l24-settings-and-service-commands)): a `bool` a toggle, a choice a list, text a field | `setting set` and `setting reset` |
 | The terminal | The console in a window ([display.md D4](display.md#d4-the-console-in-a-window-and-as-the-fallback)) | The shell |
 
 - **Why these:** each is the graphical face of something the shell
   already does, so each tests the interface as data against a shell
   command whose result is known.
-- **Cost:** Files and Settings depend on the shell's built-ins and the
-  settings service, which are proposed in shell.md and not built. They
+- **Cost:** Files and Settings depend on the shell's built-ins, the
+  settings service and the generic bridge, which [shell.md](shell.md)
+  specifies and nothing yet builds. They
   are the first programs drawn through the renderer, in phase 7
   ([display.md D19](display.md#d19-the-build-plan)).
 - **Not taken:** a desktop of icons and folders as the first programs.
@@ -630,7 +641,9 @@ action it offers is an nvo command the shell can run.
 - **`lib/`:** `font/`, `text/`, `value/`, `display/` and `ui/`
   ([U1](#u1-the-layers)).
 - **`tools/`:** `mkfont.c` ([U3](#u3-fonts)).
-- **`include/`:** `font_format.h` and `ui_protocol.h`.
+- **`include/`:** `font_format.h`; and `ui_protocol.h`, generated from
+  the renderer's interface description, as a new service's header is
+  ([shell.md L24](shell.md#l24-settings-and-service-commands)).
 - **`design/`:** `outline/`, the rasterizer's prototype and its check.
 - **README.md:** the build fetches Inter's release by its SHA-256 and
   converts it; the font's store path carries Inter's licence.
@@ -638,9 +651,9 @@ action it offers is an nvo command the shell can run.
   sessions' job, a job for each program and its renderer, and a shell
   in values mode for the HUD
   ([display.md, Changes elsewhere](display.md#changes-elsewhere)).
-- **shell.md:** a session in values mode, for the HUD; the rendering of
-  values (L7, rule 7) shared with `lib/ui`; L24's schemas, which
-  Settings draws; the transcript's annotations (L23), which the renderer
-  adds to.
+- **[shell.md](shell.md):** a session in values mode, for the HUD
+  (L7, rule 7); the rendering of values (L7, rule 7) shared with
+  `lib/ui`; the forms L24's generic bridge makes, which Settings draws;
+  the transcript's annotations (L23), which the renderer adds to.
 - **nova-nix:** a derivation attribute that declares an interface, a
   raw window, or both.
