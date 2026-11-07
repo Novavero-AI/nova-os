@@ -369,10 +369,12 @@ static UINT32 start_namespace(UINT32 job, UINT32 debug_log, UINT32 store_root,
 }
 
 /* Publish *directory under name. Once the request is sent the handle
-   is the namespace server's, and *directory HANDLE_INVALID. */
+   is the namespace server's, and *directory HANDLE_INVALID. The reply is
+   read over the request, so the request is kept apart to check the
+   reply's transaction against. */
 static UINT32 publish(UINT32 root, const char *name, UINT32 *directory)
 {
-    IO_REQUEST *request = (IO_REQUEST *)message;
+    IO_REQUEST *request = (IO_REQUEST *)message, sent;
     HANDLE_TRANSFER transfer;
     UINT32 length = length_of(name), reply_length, status;
 
@@ -389,7 +391,8 @@ static UINT32 publish(UINT32 root, const char *name, UINT32 *directory)
     if (status != OK)
         return status;
     *directory = HANDLE_INVALID;
-    return io_receive(root, request, message, sizeof message, &reply_length,
+    sent = *request;
+    return io_receive(root, &sent, message, sizeof message, &reply_length,
                       0);
 }
 
