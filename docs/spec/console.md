@@ -68,17 +68,17 @@ panel, so nothing of the compositor's last frame stays.
 
 **Decided.**
 
-The console, `\nova\console.exe`, is the input drivers' client while
-no compositor runs
-([input.md K3](input.md#k3-the-report-and-the-client)): the platform
-driver starts it in the root job when the driver first reports,
-supervises it, and hands it each endpoint the driver reports on the
-channel it keeps to it. The first message on that channel is
-`INPUT_CLIENT_MESSAGE_SIZE` (4) bytes, a transaction ID of 0, and three
-handles, in the order `include/console_protocol.h` gives: the debug
-log, the console's own process with `MAP`, so that it can map sections
-for its buffers and the framebuffer, and its end of a control channel
-whose other end the first process keeps.
+The console, `\nova\console.exe`, is the input drivers' client while no
+compositor runs ([input.md K3](input.md#k3-the-report-and-the-client)):
+where the first process starts no compositor, the platform driver starts
+it in the root job when a driver first reports, supervises it, and hands
+it each endpoint the driver reports on the channel it keeps to
+it. The first message on that channel is `INPUT_CLIENT_MESSAGE_SIZE` (4)
+bytes, a transaction ID of 0, and three handles, in the order
+`include/console_protocol.h` gives: the debug log, the console's own
+process with `MAP`, so that it can map sections for its buffers and the
+framebuffer, and its end of a control channel whose other end the first
+process keeps.
 
 On the control channel the first process sends two kinds of message,
 each a `CONSOLE_SETUP` of 8 bytes, a transaction ID of 0 and a kind,

@@ -1230,8 +1230,9 @@ the write before Enter. **Proposed:** the rest.
    pick a directory, with read or write, and a reason of at most 200
    characters. It cannot propose a path. A program with windows has the
    channel to the session's powerbox program instead, which answers the
-   same protocol in a window
-   ([display.md D16](display.md#d16-trusted-interface-and-the-powerbox)).
+   same protocol in a window and takes on it, too, a request to share
+   the screen or a window ([display.md
+   D16](display.md#d16-trusted-interface-and-the-powerbox)).
 2. The shell stops forwarding the program's output and shows, on its own
    console session, the program's name taken from its store path, the
    rights asked for, the reason marked as the program's words, and a path
@@ -1333,7 +1334,10 @@ def main(src: path, dest: path(write)) {
   confined as a program is.
 - **Cost:** a script that needs the caller's functions imports them
   from a module; a script that touches files beyond its arguments says
-  so in `needs` and is asked about once.
+  so in `needs` and is asked about once; for a script outside `/store`
+  the launcher takes the rules the shell sends, the `needs` its user
+  approved, since no deriver holds them, and bounds them only by what
+  the session holds.
 - **Not taken:** sourcing, running a file in the caller's scope with
   the caller's authority (POSIX's `.` built-in). Its cost is that every
   script holds everything its caller holds.
@@ -1374,8 +1378,9 @@ What an external program holds when it starts is the union of:
    ([network.md N15](network.md#n15-declared-authority)), and a display
    connection, minted from the session's
    ([display.md D5](display.md#d5-connections-labels-and-layers)). One
-   the session's channel does not cover fails the launch with `launch`,
-   naming it. The shell asks the launcher to run the program and sends
+   the session's channel does not cover, or for a program a script runs
+   one the script's declaration does not name, fails the launch with
+   `launch`, naming it. The shell asks the launcher to run the program and sends
    it no handle to a service, its own included.
 3. **Consent.** Installing a program into a profile, the user's or the
    system's ([storage.md F13](storage.md#f13-profiles-system-and-garbage-collection)),

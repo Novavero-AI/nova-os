@@ -735,8 +735,8 @@ whose ports lie within its own and whose host lies within its own:
   name, `*.` rule, `nameservers` and prefix that holds no loopback
   address within `*`. A loopback prefix lies only within a prefix that
   holds it.
-- for `listen`, a local address lies within any prefix that holds it,
-  and, unless it is a loopback address, within `*`.
+- for `listen`, a local address or a prefix lies within any prefix
+  that holds it, and, if it holds no loopback address, within `*`.
 
 In a rule, `localhost` is the prefix 127.0.0.1/32. Since `*` never
 covers loopback, a program reaches a local program, and serves one,
@@ -745,8 +745,10 @@ only through a rule that names loopback: `connect tcp localhost 8080`,
 
 The root's rules ([N15](#n15-declared-authority)) are `*` and
 `127.0.0.0/8` for each action and protocol, with every port, which
-together cover every rule. A grant covers a rule if one of its rules
-does, and a set of rules if it covers each.
+together cover every name and every address; a prefix that holds both
+loopback and other addresses lies within neither, so a declaration
+writes it as `*` and a loopback prefix. A grant covers a rule if one of
+its rules does, and a set of rules if it covers each.
 
 **Checks.**
 
@@ -759,11 +761,14 @@ does, and a set of rules if it covers each.
    whatever the rules: RFC 9293 has TCP "reject as an error a local
    OPEN call for an invalid remote IP address (e.g., a broadcast or
    multicast address)" (3.9.1.1, MUST-46), and v1 does the same for
-   datagrams and echoes. A name never reaches loopback: an answer that
-   holds a loopback address is refused with `ERR_ACCESS_DENIED`,
-   whatever rule covered the name.
-3. A listen needs a rule that covers the local address and port; a port
-   already listened on, by any client, fails with `ERR_ALREADY_EXISTS`.
+   datagrams and echoes. No name but `localhost` and the names below it
+   reaches loopback: an answer that holds a loopback address is refused
+   with `ERR_ACCESS_DENIED`, whatever rule covered the name.
+3. A listen needs a rule that covers the local address and port; a
+   listen on a port a listener already holds at an address that
+   overlaps its own, by any client, fails with `ERR_ALREADY_EXISTS`.
+   `*` and a loopback address do not overlap, so one program can listen
+   on both.
    There are no privileged ports: the grant is the only authority a
    listen needs.
 4. A refused request sends nothing to the network.
@@ -989,7 +994,8 @@ from the one above it, so each level can only narrow the one above.
    are the only builds that get a network handle (F12).
 3. **Login.** The first process gives login a control channel through
    `NET_CONTROL`, with `NET_RIGHT_CLIENTS`, the rules the system recipe
-   gives any account's sessions, and the rest of the clients, 12; and a
+   gives any account's sessions, the outbound rules of item 4 among
+   them, and the rest of the clients, 12; and a
    new one after each start of login or of the service
    ([N5](#n5-supervision)). Login holds no grant of its own.
 4. **Sessions.** For each session it opens, login makes a control
@@ -1015,19 +1021,20 @@ from the one above it, so each level can only narrow the one above.
    left, with `ERR_NO_RESOURCES`; either fails the launch, naming the
    cause, as [storage.md F5](storage.md#f5-per-process-views), rule 3,
    fails a launch. A program whose derivation declares nothing gets no
-   grant. The shell asks login to run a program, as it does now, and
-   takes no part in its grant.
-6. **Scripts.** A script outside `/store` has no deriver; its `needs`,
-   which its user approved at the shell, is its declaration, and the
-   shell sends it with the run request
-   ([shell.md L19](shell.md#l19-scripts)). Login makes the script a
-   control channel of its own from the session's, through `NET_CONTROL`,
-   with the rules its `needs` names and clients reserved from the
-   session's, and gives the script's grant, and those of the programs
-   the script runs, on that channel. A program a script runs therefore
-   reaches no more of the network than the script declared, and a
-   script that names no rules gets no channel, and its programs no
-   grant.
+   grant. The shell asks login to run a program and takes no part in
+   its grant.
+6. **Scripts.** A script's declaration is its derivation's for a
+   script in `/store`, which login reads as a program's; one outside
+   `/store` has no deriver, so its `needs`, which its user approved at
+   the shell, is its declaration, and the shell sends it with the run
+   request ([shell.md L19](shell.md#l19-scripts)). Login makes the
+   script a control channel of its own from the session's, through
+   `NET_CONTROL`, with the rules its declaration names and at least one
+   client reserved from the session's, and gives the programs the
+   script runs their grants on that channel. A program a script runs
+   therefore reaches no more of the network than the script declared,
+   and a script that names no rules gets no channel, and its programs
+   no grant.
 
 Until login reads declarations, it gives programs no grant, and a
 program run from the shell of [accounts.md A8](accounts.md#a8-the-shell)
@@ -1100,9 +1107,10 @@ recording and behaves as it pleases.
    somewhere does not connect again.
 4. **What it could reach is on record apart from replay.** Its grant's
    rules are exactly its derivation's declaration, which login read and
-   gave it ([N15](#n15-declared-authority)), so a reader learns them
-   from the derivation. Replay itself cannot ask the service a grant's
-   rules, since no service runs under it.
+   gave it, or for a program a script outside `/store` ran, within the
+   `needs` its user approved ([N15](#n15-declared-authority)), so a
+   reader learns them from the derivation. Replay itself cannot ask the
+   service a grant's rules, since no service runs under it.
 5. **No socket data reaches a program through shared memory.** That
    is why data is inline: under replay.md, "no section a recorded
    process maps may be writable by a process outside the recording"

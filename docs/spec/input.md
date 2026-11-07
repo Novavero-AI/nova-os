@@ -152,20 +152,19 @@ the client's endpoint describes the device: a keyboard or a pointer,
 and for a pointer the range of each absolute axis (K1); key events or
 pointer reports follow it.
 
-The platform driver starts the client, the console,
-`\nova\console.exe`, in the root job when the driver first reports, and
-keeps its end of the client's bootstrap channel for as long as it
-supervises the client. Every message on that channel is 4 bytes and a
-transaction ID of 0: the first, the bootstrap message, carries the
-handles the console needs
-([console.md C2](console.md#c2-starting-the-console)); each after it
-carries one handle, an endpoint the driver reported, with `READ` and
-`WAIT` alone, one for the driver's first report and one for each report
-after a restart (K4).
-The console takes each key event on its endpoint as a key typed at it
-([console.md C3](console.md#c3-keys)); once the driver has closed the
-endpoint it takes the next from the channel when one comes, and it
-exits once the platform driver has closed the channel.
+Where the first process starts no compositor, the platform driver starts
+the client, the console, `\nova\console.exe`, in the root job when a
+driver first reports, and keeps its end of the client's bootstrap
+channel for as long as it supervises the client. Every message on that
+channel is 4 bytes and a transaction ID of 0: the first, the bootstrap
+message, carries the handles the console needs ([console.md
+C2](console.md#c2-starting-the-console)); each after it carries one
+handle, an endpoint the driver reported, with `READ` and `WAIT` alone,
+one for the driver's first report and one for each report after a
+restart (K4). The console takes each key event on its endpoint as a key
+typed at it ([console.md C3](console.md#c3-keys)); once the driver has
+closed the endpoint it takes the next from the channel when one comes,
+and it exits once the platform driver has closed the channel.
 
 While a compositor runs, it is every input driver's client in the
 console's place ([display.md D2](display.md#d2-who-holds-the-display)):

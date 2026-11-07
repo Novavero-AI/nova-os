@@ -268,8 +268,8 @@ with `ERR_ACCESS_DENIED`. Login shows the list on its screen
   channel lives as long as the session that holds it: when the shell
   ends, its handles close, and the service drops the channel.
 - **Why a list on the console's channel alone:** a person at the
-  machine picks their name rather than typing it, as display.md D13
-  decides; the mark keeps the list from a login elsewhere, such as a
+  machine picks their name rather than typing it, as
+  [display.md D13](display.md#d13-the-graphical-login) decides; the mark keeps the list from a login elsewhere, such as a
   network's, which must not list names.
 - **Cost:** a session that crashes loses its handles, so a new login is
   the only way back in; login sees the home's channel and could keep
@@ -334,10 +334,15 @@ and capture of the session goes at once. Login waits on one port for
 every channel it serves and blocks on none of them, so it answers the
 secure attention key while a password is checked.
 
-The shell's console session is a channel login serves: login shows
-each write on its own session, reads each line there and answers the
-shell with it, and ends the shell's session for any message the
-console would end one for ([console.md C4](console.md#c4-sessions)).
+On the console, the shell's console session is a channel login
+serves: login shows each write on its own session, reads each line
+there and answers the shell with it, and ends the shell's session for
+any message the console would end one for
+([console.md C4](console.md#c4-sessions)). While a compositor runs,
+login has no console session to relay: a terminal's shell has a
+session on the terminal's own console, which login starts with it, and
+the HUD's shell a session in values mode whose other end the HUD
+holds.
 
 - **Why these handles:** a user's shell reads and writes the user's
   files, reads what the store holds, talks to the console, and runs

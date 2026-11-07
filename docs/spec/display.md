@@ -301,11 +301,15 @@ issued goes with it.
 **Reconnecting.** Each program login starts with a connection also gets
 a display grant channel to login, on which it can ask for one thing: a
 new connection with the same label, mark, layers and rights, less
-`ACTIVATE`. Login answers only while the compositor runs, only once
-`DISPLAY_CLOSED` has said that the program's last connection is gone,
-and only after login has shown its own screen again
-([D3](#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows));
-at logout it closes every grant channel of the session.
+`ACTIVATE`. Login answers only while the compositor runs, only once the
+program's last connection is gone, and only after login has shown its
+own screen again
+([D3](#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)).
+While the compositor runs, `DISPLAY_CLOSED` says when a program's last
+connection has gone; when the compositor ends, the end of login's own
+connection says it of every connection issued from it, since a new
+compositor knows none of them. At logout login closes every grant
+channel of the session.
 
 **Activation.** `ACTIVATE` lets the connection's first window take the
 focus, once, within `ACTIVATE_NS` (10 seconds) of the connection's
@@ -1277,7 +1281,7 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
 | 4. The graphical login | Login's window, `ACCOUNTS_LIST`, the strip, the attention state and the secure attention key, the session's connection and logout ([D5](#d5-connections-labels-and-layers), [D12](#d12-the-secure-attention-key-and-global-keys), [D13](#d13-the-graphical-login)) | | The login screen with its list matched; the account created and logged into by QMP keys; the secure attention key from the shell shows login's secure screen, and keys typed after it reach no session program; after logout the screen is the login screen again; the password appears nowhere in the log |
 | 5. Windows | Many windows, popups and children, frames and labels, focus, stacking, damage and release, copy and paste ([D5](#d5-connections-labels-and-layers) to [D7](#d7-presenting-and-pacing), [D11](#d11-routing-input), [D15](#d15-capture-copy-and-paste)) | | A test program opens two windows with known patterns; QMP drags one and clicks the other; screens matched; the program logs which window got which key, and a key typed at one never reaches the other; a popup asked for from a window without the focus is refused |
 | 6. The HUD | The HUD and its key, launching, finding, settings and nvo commands ([ui.md U11](ui.md#u11-the-hud)) | The nvo interpreter and a session in values mode ([shell.md L7](shell.md#l7-pipelines), rule 7); the settings service ([shell.md L24](shell.md#l24-settings-and-service-commands)) | The HUD key opens it; a typed command's table matched against the host's render; a program launched from it gets the focus |
-| 7. Files, Settings and the terminal | The renderer, `uihost.exe`, and the first programs drawn through it; the terminal; the powerbox; capture ([D15](#d15-capture-copy-and-paste), [D16](#d16-trusted-interface-and-the-powerbox), [ui.md U6](ui.md#u6-the-renderer), [ui.md U12](ui.md#u12-the-first-programs)) | The shell's built-ins for files and settings ([shell.md L25](shell.md#l25-built-ins)); a job for each program, with `CREATE_JOB` for login | Each program's first window matched; the terminal runs `whoami` and the file commands as the system boot does; a powerbox grant by QMP keys and the log's line for it; the secure attention key with a powerbox dialog open shows login's screen alone |
+| 7. Files, Settings and the terminal | The renderer, `uihost.exe`, and the first programs drawn through it; the terminal; the powerbox; capture ([D15](#d15-capture-copy-and-paste), [D16](#d16-trusted-interface-and-the-powerbox), [ui.md U6](ui.md#u6-the-renderer), [ui.md U12](ui.md#u12-the-first-programs)) | The shell's commands for files and settings, built-ins and programs ([shell.md L25](shell.md#l25-built-ins)); a job for each program, with `CREATE_JOB` for login | Each program's first window matched; the terminal runs `whoami` and the file commands as the system boot does; a powerbox grant by QMP keys and the log's line for it; the secure attention key with a powerbox dialog open shows login's screen alone |
 
 - **Why this order:** each phase uses what the ones before it built and
   what its row needs first, and each leaves the system working: the

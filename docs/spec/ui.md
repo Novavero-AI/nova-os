@@ -281,12 +281,12 @@ user did in the program's terms: this button activated, this field's new
 text, this row chosen.
 
 ```
-{ kind: column, children: [
-    { kind: text, text: "Rename", style: title },
-    { kind: field, id: name, text: "notes.md" },
-    { kind: row, children: [
-        { kind: button, id: cancel, label: "Cancel" },
-        { kind: button, id: ok, label: "Rename", role: default } ] } ] }
+{ kind: "column", children: [
+    { kind: "text", text: "Rename", style: "title" },
+    { kind: "field", id: "name", text: "notes.md" },
+    { kind: "row", children: [
+        { kind: "button", id: "cancel", label: "Cancel" },
+        { kind: "button", id: "ok", label: "Rename", role: "default" } ] } ] }
 ```
 
 The console already works this way for a line of text: the shell asks
@@ -567,14 +567,13 @@ structured results, one API for the interface and the shell.
    handle of the session's and runs no command itself.
 3. **Searching.** A line that is not a command is a search, and each
    suggestion is the command it stands for, shown before Enter as the
-   console shows grants
-   ([shell.md L21](shell.md#l21-interactive-behaviour), rule 3): a
-   program in the profile (`run`), a file under the home by name (the
-   program a setting names for its kind, run with the file as its
-   argument and so granted it,
-   [shell.md L15](shell.md#l15-grants-from-arguments)), a setting by key
-   or description (`setting`), and history
-   ([shell.md L22](shell.md#l22-history)).
+   console shows grants ([shell.md
+   L21](shell.md#l21-interactive-behaviour), rule 3): a program in the
+   profile, run by its name, a file under the home by name (the program
+   a setting names for its kind, run with the file as its argument and
+   so granted it, [shell.md L15](shell.md#l15-grants-from-arguments)), a
+   setting by key or description (`setting`), and history ([shell.md
+   L22](shell.md#l22-history)).
 4. **Assistance.** Highlighting by role, completions with descriptions
    and inline suggestions come from the shell as at the console
    ([shell.md L21](shell.md#l21-interactive-behaviour)), so the HUD and
@@ -611,8 +610,8 @@ action it offers is an nvo command the shell can run.
 - **Why these:** each is the graphical face of something the shell
   already does, so each tests the interface as data against a shell
   command whose result is known.
-- **Cost:** Files and Settings depend on the shell's built-ins, the
-  settings service and the generic bridge, which [shell.md](shell.md)
+- **Cost:** Files and Settings depend on the shell's file commands,
+  the settings service and the generic bridge, which [shell.md](shell.md)
   specifies and nothing yet builds. They
   are the first programs drawn through the renderer, in phase 7
   ([display.md D19](display.md#d19-the-build-plan)).

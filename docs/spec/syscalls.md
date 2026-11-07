@@ -396,7 +396,7 @@ cancelled by a closing handle the signals it observed,
 | 14 | `ERR_BAD_STATE` | The object's state forbids the call: a thread already started, an interrupt already bound, a process already terminated, a device page another mapping gives another memory type |
 | 15 | `ERR_NO_RESOURCES` | A resource other than memory is exhausted: the job's quota of interrupt vectors, or the vectors the kernel has for message-signalled interrupts |
 | 16 | `ERR_NOT_FOUND` | A name a directory does not hold ([storage.md F1](storage.md#f1-the-directory-protocol)), or a host name with no address ([network.md N13](network.md#n13-the-socket-protocol)) |
-| 17 | `ERR_ALREADY_EXISTS` | A name a directory holds already, as a publication's ([storage.md F4](storage.md#f4-publishing-file-systems)), or a port already listened on ([network.md N12](network.md#n12-grants)) |
+| 17 | `ERR_ALREADY_EXISTS` | A name a directory holds already, as a publication's ([storage.md F4](storage.md#f4-publishing-file-systems)), or a port already listened on at an overlapping address ([network.md N12](network.md#n12-grants)) |
 | 18 | `ERR_DATA_INTEGRITY` | Data that fails the check of its digest ([storage.md F9](storage.md#f9-reading-and-verifying-the-store)) |
 | 19 | `ERR_IO` | A request the device failed, as a virtio block device's `VIRTIO_BLK_S_IOERR` status reports one (VIRTIO 1.4 5.2.6) |
 | 20 | `ERR_CONNECTION_REFUSED` | The peer refused a connection ([network.md N13](network.md#n13-the-socket-protocol)) |
