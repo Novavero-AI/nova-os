@@ -23,6 +23,8 @@ sha256 identifies the exact copy the pin was taken from.
 | [pool-format.md](pool-format.md) | A data disk's pool: its partition, superblock rings, block pointers, node table and directories, and its commit |
 | [accounts.md](accounts.md) | Users' accounts and records, password hashing, login, the session a login opens, the shell and the first boot |
 | [shell.md](shell.md) | nova-script, the shell's language: its grammar, values, pipelines and errors, how a command is found and run from `/store`, the handles the shell grants a command, interactive behaviour, replay and settings |
+| [display.md](display.md) | Who holds the display from boot to the desktop, the compositor, windows and their buffers, composition, the pointer, routing input, the secure attention key, capture, the trusted interface, replay, the GPU path and the build plan |
+| [ui.md](ui.md) | The toolkit: the rasterizer's outlines, the font and its format, text layout, the interface as data and its renderer, widgets, layout, themes, accessibility, the HUD and the first programs |
 
 ## Firmware and platform
 
@@ -83,7 +85,9 @@ BSD-2-Clause-Patent).
   Local APIC, TSC, the interrupt flag); the system-call entry
   ([syscalls.md](syscalls.md)); page-table isolation
   ([speculation.md](speculation.md): SMEP and PCID enumeration, 5.1.4;
-  PCIDs, 5.10.1 and 5.10.4.1).
+  PCIDs, 5.10.1 and 5.10.4.1); [display.md](display.md), for the
+  write-combining type's properties (14.3, Table 14-2) and its buffers
+  (14.3.1).
 
 **Intel 64 and IA-32 Architectures Software Developer's Manual, Volume 1:
 Basic Architecture**, order number 253665-093US, September 2026, the same
@@ -449,7 +453,8 @@ December 6, 2000; legal agreement updated March 30, 2011.
 - sha256: `a2a3a39457d30420c812f87a38cc2b9194832f6982ef17e619de7d816879d6a6`
 - Used by: names in the namespace, the store and a pool's directories
   ([store-image.md](store-image.md), [pool-format.md](pool-format.md);
-  `lib/name.c` and `tools/mkstore.c`, section 4).
+  `lib/name.c` and `tools/mkstore.c`, section 4); text layout
+  ([ui.md](ui.md) U4).
 
 ## Devices
 
@@ -465,7 +470,9 @@ April 8, 2026 (OASIS).
   virtio block driver (`drivers/virtio_blk.c`), for the block device
   (5.2), and the virtio input driver (`drivers/virtio_input.c`,
   [input.md](input.md)), for the input device (5.8);
-  [storage.md](storage.md), for when a block write is stable (5.2.6.2).
+  [storage.md](storage.md), for when a block write is stable (5.2.6.2);
+  [display.md](display.md), for a pointing device's reports and its
+  axes' ranges (5.8.4, 5.8.6.2), and the GPU device in 2D (5.7).
 
 **Linux input subsystem**, tag `v7.3`, commit
 `c03c1a14507dfaf8b856c2608f9ac216021fc222`: the event codes header,
@@ -484,7 +491,43 @@ defers to them for the meaning of an input event.
   (documentation)
 - Used by: [input.md](input.md): the event type `EV_KEY` (1) and the key
   codes (the header); a key event's values, 0 released, 1 pressed and 2
-  repeated (the documentation, `EV_KEY`).
+  repeated (the documentation, `EV_KEY`). [display.md](display.md): the
+  types `EV_SYN` (0), `EV_REL` (2) and `EV_ABS` (3), `SYN_REPORT` (0)
+  and `SYN_DROPPED` (3), `ABS_X` and `ABS_Y`, `REL_X`, `REL_Y` and
+  `REL_WHEEL`, the buttons from `BTN_LEFT` (0x110) and the keys of the
+  secure attention key (the header); what a report and a dropped report
+  are (`EV_SYN`), and the high-resolution wheel's 120ths of a detent
+  (`EV_REL`) (the documentation).
+
+**QEMU**, release 11.1.3, tag `v11.1.3`, commit
+`005c61c0ef6f6ae615283440b4bb7be51b2c6ddd`, and release 8.2.2, tag
+`v8.2.2`, commit `11aa0b1ff115b86160c4d37e7c37e6a6b13b77ea`, the
+upstream release of the QEMU that CI installs from Ubuntu 24.04
+(`1:8.2.2+ds-0ubuntu1.18`, whose own patches were not read).
+
+| File | Tag | sha256 |
+|---|---|---|
+| [`hw/input/virtio-input-hid.c`][qemu-hid] | `v11.1.3` | `aae90a22fda46a0a61939cf3f4e56f93bf751215dffb3d2ba643b7f09a3693f9` |
+| [`include/ui/input.h`][qemu-input] | `v11.1.3` | `7ebddaca72c431b3fd91fd4b96fb5c23d2bdd99b416da655625339b8d515426f` |
+| [`ui/input.c`][qemu-input-c] | `v11.1.3` | `619089241c78af002e296ce54627ae2a30cb3421dc8684e8d879471e3af43b83` |
+| [`qapi/ui.json`][qemu-qapi] | `v11.1.3` | `87ac10949caa0da383eaba3d0676f078915bed9ea96025a6c7fb1c08135548ba` |
+| [`hw/input/virtio-input-hid.c`][qemu-hid-8] | `v8.2.2` | `ed8537556bba0b21814c010bd6b73b1b9338d807bd3592e6a37576b53b9b14ee` |
+
+[qemu-hid]: https://gitlab.com/qemu-project/qemu/-/raw/v11.1.3/hw/input/virtio-input-hid.c
+[qemu-input]: https://gitlab.com/qemu-project/qemu/-/raw/v11.1.3/include/ui/input.h
+[qemu-input-c]: https://gitlab.com/qemu-project/qemu/-/raw/v11.1.3/ui/input.c
+[qemu-qapi]: https://gitlab.com/qemu-project/qemu/-/raw/v11.1.3/qapi/ui.json
+[qemu-hid-8]: https://gitlab.com/qemu-project/qemu/-/raw/v8.2.2/hw/input/virtio-input-hid.c
+
+- Access: free. `virtio-input-hid.c` is under the GPL, version 2 or
+  later; [display.md](display.md) cites what the files declare and
+  copies none of their code.
+- Used by: [display.md](display.md): the virtio tablet's axes, their
+  range of 0 to `0x7FFF`, its buttons and wheel, and its reports
+  (`virtio-input-hid.c`, `input.h`), the same in 8.2.2 while the
+  tablet's `wheel-axis` property is on, its default; when QEMU counts
+  the pointer absolute (`input.c`); QMP's `screendump` and
+  `input-send-event` (`ui.json`).
 
 **eXtensible Host Controller Interface for Universal Serial Bus (xHCI)
 Requirements Specification**, revision 2.0, October 2025, document
@@ -515,6 +558,115 @@ ICC profiles** (International Color Consortium), April 2015.
   line misprints 12.92 as 12.02.
 - IEC 61966-2-1, which defines the transfer function, is sold by the IEC
   and not pinned.
+
+**OpenType specification**, version 1.9.1 (Microsoft Learn), each page
+pinned as fetched on November 7, 2026, with the date it shows as its
+last update ("OpenType").
+
+| Page | Updated | sha256 |
+|---|---|---|
+| [TrueType fundamentals][ot-ttch01] | 2024-05-30 | `eb5e56fe9ee721d74558f011fd84c12744ba2c3f1285e796fe3f2618db0b624a` |
+| [glyf - Glyf data table][ot-glyf] | 2024-05-31 | `c161f9f31207b1c7763541ef4fa44a432c5ed447ea8e4ddc40eed3d464fcf8d4` |
+| [CFF2 - Compact font format version 2 table][ot-cff2] | 2024-10-09 | `071673bea4bdf17a76219bd842b26c3cf2a2e0b47dde46da053d79986a9dd07f` |
+| [GPOS, the Glyph Positioning Table][ot-gpos] | 2024-05-29 | `34ecfdf76932cc64d02b1f12e473b2400b087af9c6e0b4db22b5688dbc93d83a` |
+| [OpenType layout common table formats][ot-common] | 2024-07-06 | `e0c3cc92012156a99c1e49c19c7444b2ef0acc9482bfe1a9947c73a14295d635` |
+| [cmap - Character To Glyph Index Mapping Table][ot-cmap] | 2024-05-29 | `6c99893737f661dc7c7d339e882e22a160eb1ee4d53f05c7a2e289afab4e838a` |
+| [hmtx - Horizontal metrics table][ot-hmtx] | 2023-01-10 | `667ced0913a7b8855b75af10ba40887f69967f156b3041a4123d166b0ae7c3aa` |
+| [OS/2 - OS/2 and Windows metrics table][ot-os2] | 2024-05-31 | `32085ba221973bc029e60f40c0c153b5003a45f3f60f9a8514df209865316281` |
+
+[ot-ttch01]: https://learn.microsoft.com/en-us/typography/opentype/spec/ttch01
+[ot-glyf]: https://learn.microsoft.com/en-us/typography/opentype/spec/glyf
+[ot-cff2]: https://learn.microsoft.com/en-us/typography/opentype/spec/cff2
+[ot-gpos]: https://learn.microsoft.com/en-us/typography/opentype/spec/gpos
+[ot-common]: https://learn.microsoft.com/en-us/typography/opentype/spec/chapter2
+[ot-cmap]: https://learn.microsoft.com/en-us/typography/opentype/spec/cmap
+[ot-hmtx]: https://learn.microsoft.com/en-us/typography/opentype/spec/hmtx
+[ot-os2]: https://learn.microsoft.com/en-us/typography/opentype/spec/os2
+
+- Access: free web pages.
+- Used by: [ui.md](ui.md): TrueType's quadratic outlines and nonzero
+  fill (TrueType fundamentals), composite glyphs (`glyf`), cubic
+  outlines (`CFF2`), pair adjustment and mark attachment (`GPOS`), the
+  order of lookups (common table formats), glyph 0 for a missing
+  character (`cmap`), advances (`hmtx`), line metrics (`OS/2`), and the
+  converter (`tools/mkfont.c`).
+
+**TrueType Reference Manual** (Apple Developer), which shows no version
+or date ("Apple TrueType"), fetched on November 7, 2026.
+
+| Chapter | sha256 |
+|---|---|
+| [1. Digitizing Letterform Designs][apple-rm01] | `0d649be52c2206b40cff6a1d9445df783050d8de39f383aba7dd8f7587eb968c` |
+| [2. Font Engine][apple-rm02] | `3ddadcbabef15ad04f1d53e8427124bf011b72f6f0bb847d706eb554700dceb7` |
+
+[apple-rm01]: https://developer.apple.com/fonts/TrueType-Reference-Manual/RM01/Chap1.html
+[apple-rm02]: https://developer.apple.com/fonts/TrueType-Reference-Manual/RM02/Chap2.html
+
+- Access: free web pages.
+- Used by: [ui.md](ui.md): the nonzero winding rule over overlapping
+  contours (chapter 1) and the instruction interpreter that hinting
+  needs (chapter 2).
+
+**Inter**, release 4.1, tag `v4.1`, commit
+`e3a3d4c57d5ecc01453a575621882a384c1995a3` (The Inter Project
+Authors).
+
+- Documents: <https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip>,
+  and at the commit
+  <https://raw.githubusercontent.com/rsms/inter/e3a3d4c57d5ecc01453a575621882a384c1995a3/LICENSE.txt>
+  and
+  <https://raw.githubusercontent.com/rsms/inter/e3a3d4c57d5ecc01453a575621882a384c1995a3/Makefile>
+- Access: free; the fonts under the SIL Open Font License 1.1, with no
+  Reserved Font Name. GitHub publishes no digest of the release's zip,
+  so its sha256 is of the copy fetched on November 7, 2026.
+- sha256: `9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e`
+  (the zip),
+  `262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a`
+  (`LICENSE.txt`, the same bytes as the zip's) and
+  `90cb33bbccb86be751f26760cca86157f86c8a3702add53d60b5f95eacf6326a`
+  (`Makefile`)
+- Used by: [ui.md](ui.md), the interface's typeface: the static
+  TrueType fonts in `extras/ttf/`, whose regular weight,
+  `Inter-Regular.ttf`, is 411,640 bytes with sha256
+  `40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82`;
+  their hinting (`Makefile`). Its tables, coverage and kerning were
+  measured with fontTools 4.68.0.
+
+**SIL Open Font License**, version 1.1, February 26, 2007 ("OFL"), and
+**OFL-FAQ**, version 1.1-update7, November 2023 ("OFL FAQ").
+
+- Documents: <https://openfontlicense.org/documents/OFL.txt>,
+  <https://openfontlicense.org/ofl-faq/>
+- Access: free; the FAQ page shows "Last updated on 12 January 2026".
+- sha256: `1d361a8f8e8ce6e68457dcd93fb56e162e6baa3bbb7e7573a290d44399f6b57e`
+  (the licence) and
+  `ef6f04f954db9536156a0a1586b975cf3f51964f4dd04f8d9c3f66b6a1089827`
+  (the FAQ)
+- Used by: [ui.md](ui.md): a converted font as a Modified Version, the
+  Reserved Font Name, and what must accompany the font.
+
+**On slight hinting, proper text rendering, stem darkening and LCD
+filters**, Nikolaus Waxweiler, November 30, 2015, updated December 8,
+2015, and **FreeType Glyph Conventions**, section VI, FreeType Outlines,
+last updated October 23, 2022 (the FreeType project) ("FreeType").
+
+- Documents: <https://freetype.org/freetype2/docs/hinting/text-rendering-general.html>,
+  <https://freetype.org/freetype2/docs/glyphs/glyphs-6.html>
+- Access: free web pages.
+- sha256: `ef42c819889f2fa1b4c2e08a0038e80a83d3a9ce0e434401f7b25d47da010ec0`
+  and `eae85382a238278ed2a1002a049f09d3f59b59c4e9d112e908221506c92c44bc`
+- Used by: [ui.md](ui.md): blending coverage in linear light, the
+  thinning it causes and stem darkening; vertical-only snapping;
+  implied on-curve points (Glyph Conventions, 1.a).
+
+**Unicode Standard Annex #9: Unicode Bidirectional Algorithm**,
+revision 52, for Unicode 18.0.0, September 1, 2026 ("UAX #9").
+
+- Document: <https://www.unicode.org/reports/tr9/tr9-52.html>
+- Access: free web page.
+- sha256: `3c281b38800bad85b16bf3a169b8cb693d8a2dbceb60903feb26e68a2659ee8a`
+- Used by: [ui.md](ui.md), for what left-to-right layout leaves out:
+  right-to-left text (1) and shaping (3.5).
 
 ## PCI Express configuration space
 
@@ -826,6 +978,154 @@ December 2020 (IETF) ("CBOR").
 [nix-run]: https://nix.dev/manual/nix/2.35/command-ref/new-cli/nix3-run.html
 [nix-env-shell]: https://nix.dev/manual/nix/2.35/command-ref/new-cli/nix3-env-shell.html
 [nix-shell]: https://nix.dev/manual/nix/2.35/command-ref/nix-shell.html
+
+## Display and interface design references
+
+Systems, papers and standards [display.md](display.md) and
+[ui.md](ui.md) compare nova-os with, cited by the name in each heading.
+Web pages were fetched on November 7, 2026; a page with no version is
+identified by its date and sha256, and a later copy may differ.
+
+**nitpicker**: Norman Feske and Christian Helmuth, A Nitpicker's guide
+to a minimal-complexity secure GUI, Proceedings of ACSAC 2005, as
+Genode's publications page gives the venue; the PDF names none.
+
+- Document: <https://genode-labs.com/publications/nitpicker-secure-gui-2005.pdf>,
+  listed at <https://genode.org/about/publications>
+- Access: free download; no terms stated. Its pages are cited by the
+  PDF's page index, since it prints none.
+- sha256: `d7cc038bdcd99aa9c7b3b2d665ed941de08e13bffacb233a34e465a5e97eb5e6`
+
+**EWS**: Jonathan S. Shapiro, John Vanderburgh, Eric Northup and David
+Chizmadia, Design of the EROS Trusted Window System, Proceedings of the
+13th USENIX Security Symposium, August 2004.
+
+- Document: <https://www.usenix.org/legacy/event/sec04/tech/full_papers/shapiro/shapiro.pdf>
+- Access: free download; USENIX permits "noncommercial reproduction of
+  the work for educational or research purposes".
+- sha256: `18ab072a47846cf58fb2758898779b9e84c07b3b5b41e997ead6f5d710b6704a`
+
+**Qubes**: GUI virtualization, the Qubes OS documentation's
+`developer/system/gui.rst` at commit
+`f7daea25d36a41e7c2b11fce2196ac7592287cfb`.
+
+- Document: <https://raw.githubusercontent.com/QubesOS/qubes-doc/f7daea25d36a41e7c2b11fce2196ac7592287cfb/developer/system/gui.rst>,
+  rendered at <https://doc.qubes-os.org/en/latest/developer/system/gui.html>
+- Access: free.
+- sha256: `7745667512d7a529c6924e9410216e60588c59383de222d8d59bcce56d6b2884`
+
+**Wayland**: release 1.26.0, commit
+`87cc8a8728a923fc57938faa81ba0e74f34ecdc7`: the protocol,
+`protocol/wayland.xml`, and the book's chapter on it,
+`doc/book/src/Protocol.md`.
+
+- Documents: <https://gitlab.freedesktop.org/wayland/wayland/-/raw/87cc8a8728a923fc57938faa81ba0e74f34ecdc7/protocol/wayland.xml>,
+  <https://gitlab.freedesktop.org/wayland/wayland/-/raw/87cc8a8728a923fc57938faa81ba0e74f34ecdc7/doc/book/src/Protocol.md>
+- Access: free, under an MIT-style notice.
+- sha256: `cc860987e54f8d85c940e97fa1270c69b6e4ad31fbcf5a7f00107ce1157f5e07`
+  (`wayland.xml`) and
+  `3ee13f2b1d232c6617a616b0fbbc9260799c82a8dd7d74cb3b50e327cd8657bd`
+  (`Protocol.md`)
+
+**X11**: Robert W. Scheifler, X Window System Protocol, X Version 11
+Release 7.7, and David P. Wiggins, Security Extension Specification,
+version 7.1, November 15, 1996 (X Consortium Standards).
+
+- Documents: <https://www.x.org/releases/current/doc/xproto/x11protocol.html>,
+  <https://www.x.org/releases/current/doc/xextproto/security.html>
+- Access: free, under MIT-style notices.
+- sha256: `ef66b4aef805ddbf9e9e8575123fe74e74156c79f5f6e43f3fd7e6bffcd8d7c0`
+  and `b673a19b52689e4ea0d3b2bb39f1152eeae352e1c166b791db1dd6c00b23d0f4`
+
+**Windows**: Microsoft Learn pages, with the date each shows as its
+last update.
+
+| Page | Updated | sha256 |
+|---|---|---|
+| [Interactive logon: Do not require CTRL+ALT+DEL][ms-sas-policy] | 2017-04-19 | `8aceb8e09630ae2f46c3b080e9c2439d3c76ec6c0f0f33ab5409e5deae7b6379` |
+| [Initializing Winlogon][ms-winlogon] | 2021-01-07 | `033f5da3ad3468a0be1a3d8436c2e18225eb93c3f2a6e443aa3f37f2e4bda5ab` |
+| [SendInput function (winuser.h)][ms-sendinput] | 2021-10-13 | `9be740f42e07620ed9827fc62fbbc43b75c9645a310b80b1798e36767ce59be1` |
+
+[ms-sas-policy]: https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/interactive-logon-do-not-require-ctrl-alt-del
+[ms-winlogon]: https://learn.microsoft.com/en-us/windows/win32/secauthn/initializing-winlogon
+[ms-sendinput]: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput
+
+- Access: free web pages.
+
+**Fullscreen**: WHATWG Fullscreen API Standard, commit snapshot
+`a3e9529f1cdff6a7f11b36b569dd38fbba40cb47`, last updated October 19,
+2026.
+
+- Document: <https://fullscreen.spec.whatwg.org/commit-snapshots/a3e9529f1cdff6a7f11b36b569dd38fbba40cb47/>
+- Access: free, under CC BY 4.0.
+- sha256: `4051d5fdbb65974898fefbbcea3e97a6fe216198001c48db61fc6b38ccdabbf3`
+
+**Plan 9**: the manual pages rio(1), rio(4) and draw(3), as 9p.io
+serves them; they state no edition.
+
+| Page | sha256 |
+|---|---|
+| [rio(1)](https://9p.io/magic/man2html/1/rio) | `5b1276c6759594af4ca732a037e7db8973801dc46d54dce2b7411f9b2b256559` |
+| [rio(4)](https://9p.io/magic/man2html/4/rio) | `0f73d39c3244d39dfaad6c77429a283a91a20237c879edd2366104f99759a15d` |
+| [draw(3)](https://9p.io/magic/man2html/3/draw) | `02fb5c60fe1bb6243033df373bfe151e7031e501655f3b6b7ae2b39158d9f9ff` |
+
+- Access: free web pages.
+
+**Scenic**: Fuchsia's Scenic, the Fuchsia system compositor (last
+updated October 12, 2026) and RFC-0147, View System (last updated
+September 22, 2026).
+
+- Documents: <https://fuchsia.dev/fuchsia-src/concepts/ui/scenic/index>,
+  <https://fuchsia.dev/fuchsia-src/contribute/governance/rfcs/0147_view_system>
+- Access: free web pages, under CC BY 4.0.
+- sha256: `c6352067317ee9a959227d56bc29756304791f97b2918517908bdfc8cc0ce0ab`
+  and `fc59cbe5bf8ab1ad06b59644d225b58b8002bd481e493df643675eb8cc2509d1`
+
+**HTML**: WHATWG HTML Standard, commit snapshot
+`5fcc2318395821db61e353705e6368ad9a000af5`, last updated November 6,
+2026.
+
+- Document: <https://html.spec.whatwg.org/commit-snapshots/5fcc2318395821db61e353705e6368ad9a000af5/>
+- Access: free, under CC BY 4.0.
+- sha256: `cda7b99bd4ee71fc87c8be8391d937161950c6becd8fee94e5665acc23622003`
+
+**RemoteViews**: Android's API reference for `android.widget.RemoteViews`,
+last updated August 28, 2026.
+
+- Document: <https://developer.android.com/reference/android/widget/RemoteViews>
+- Access: free web page.
+- sha256: `dd743734efdb082609fe88b07ae670447f56935133ada769c5c601294db4cba0`
+
+**Flutter**: Flutter architectural overview, for Flutter 3.47, last
+updated October 24, 2026.
+
+- Document: <https://docs.flutter.dev/resources/architectural-overview>
+- Access: free web page, under CC BY 4.0.
+- sha256: `042a66f37b1fde1f6bf54d547f6ae74342c894027c9785fdce9ed1f9f7655e57`
+
+**Dear ImGui**: release 1.93.0, commit
+`c1aaac65e896a45f81f47a4d68f9959e0f86c859`: `docs/README.md` and
+`docs/FAQ.md`.
+
+- Documents: <https://raw.githubusercontent.com/ocornut/imgui/c1aaac65e896a45f81f47a4d68f9959e0f86c859/docs/README.md>,
+  <https://raw.githubusercontent.com/ocornut/imgui/c1aaac65e896a45f81f47a4d68f9959e0f86c859/docs/FAQ.md>
+- Access: free, under the MIT licence.
+- sha256: `1abb04cbd7419abf31de079a619a9c1e50442d39abc5747b41beee8575da93ff`
+  and `04dd8e9edb859c27b0e1bf8fe5548497d79b6a2f3f352f5fe9a199ffeac542fd`
+
+**Arcan**: Bjorn Stahl, A deeper dive into the SHMIF IPC system, the
+Arcan blog, November 21, 2024.
+
+- Document: <https://arcan-fe.com/2024/11/21/a-deeper-dive-into-the-shmif-ipc-system/>
+- Access: free web page; no terms stated.
+- sha256: `0a9803468334741e70d212ddd0d2b14dc0d2c5de8a6867f0ab198fb60f1c0c10`
+
+**Adaptive Cards**: Adaptive Cards Overview (Microsoft Learn), last
+updated December 10, 2025.
+
+- Document: <https://learn.microsoft.com/en-us/adaptive-cards/>
+- Access: free web page.
+- sha256: `ebd4af5fa95b0332b13f5ba7d6e1889ad08f24dceb90fe037375f6c852ea9c02`
 
 ## Not pinned
 
