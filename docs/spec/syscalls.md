@@ -460,6 +460,7 @@ column marks an array the kernel fills in user memory.
 | 39 | `pin_release` | pin | | | Same |
 | 40 | `initiator_release_quarantine` | initiator | | `RELEASE` | Same |
 | 41 | `debug_write` | resource, bytes, byte count | | `USE` on the debug-log resource | The kernel's serial console |
+| 42 | `random_read` | bytes, byte count | | | The kernel's own generator, which it needs before any server runs; results are recorded for replay ([replay.md](replay.md)), as with Zircon's `zx_cprng_draw` ([cprng_draw][zx-cprng]) |
 
 A new thread, from `process_start` or `thread_start`, begins at `entry`
 with RCX and RDX holding its two arguments, every other general-purpose
@@ -479,7 +480,7 @@ function must not return.
 - **Why this set:** each call passes objects.md O1's test, shown in the
   last column; a call is added only when a first-stage component needs it
   and no user-mode server can provide it.
-- **Cost:** 41 calls to implement and test before the first user-mode
+- **Cost:** 42 calls to implement and test before the first user-mode
   driver runs.
 - **Not taken:** seL4's form, a handful of system calls with every object
   operation sent as a message to the object's capability (seL4 2.2). Its
@@ -532,4 +533,5 @@ calls", enforcing that every entry comes from the vDSO's code
 [ms-erref]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/87fba13e-bf06-450e-83b1-9241dc81e781
 [zx-errors]: https://fuchsia.dev/fuchsia-src/concepts/kernel/errors
 [zx-pstart]: https://fuchsia.dev/fuchsia-src/reference/syscalls/process_start
+[zx-cprng]: https://fuchsia.dev/fuchsia-src/reference/syscalls/cprng_draw
 [zx-vdso]: https://fuchsia.dev/fuchsia-src/concepts/kernel/vdso

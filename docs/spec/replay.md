@@ -37,13 +37,12 @@ the kernel.
 - **Hardware random numbers. Proposed.** The pinned SDM volume gives no
   way to stop RDRAND or RDSEED at CPL 3 outside VMX operation, where a
   VM-execution control can intercept them. A recorded program that
-  executes them is not replayable. Programs get random bytes from an
-  entropy service over a channel, so they are recorded at the message
-  boundary like any other input, and a recording reports whether the
+  executes them is not replayable. Programs get random bytes from the
+  kernel's generator through `random_read`, whose results are recorded
+  like any other system call's, and a recording reports whether the
   processor supports RDRAND, so whether recorded code could have bypassed
-  the service. Hiding RDRAND from CPUID
-  (CPUID faulting) is documented outside the pinned volume and is
-  unverified here.
+  the call. Hiding RDRAND from CPUID (CPUID faulting) is documented
+  outside the pinned volume and is unverified here.
 - **CPUID. Proposed.** Its results differ between machines, so a recording
   carries the CPUID results the recorded process could observe, and replay
   on a machine with different results is reported as unfaithful rather
