@@ -73,10 +73,10 @@ STATUS process_thread_create(PROCESS *process, USER_THREAD **thread);
    first argument and argument as its second (docs/spec/syscalls.md S8,
    S11). bootstrap is a handle the caller holds, which passes to the
    process's table with rights. Returns OK; ERR_BAD_STATE if process or
-   thread has been started; ERR_INVALID_ARGS if thread belongs to
-   another process, or entry or stack lies outside what the process's
-   mode allows (S5, S8, S11); or ERR_NO_MEMORY. On failure the caller
-   keeps the handle. */
+   thread has been started, or process is terminating; ERR_INVALID_ARGS
+   if thread belongs to another process, or entry or stack lies outside
+   what the process's mode allows (S5, S8, S11); or ERR_NO_MEMORY. On
+   failure the caller keeps the handle. */
 STATUS process_start(PROCESS *process, USER_THREAD *thread, UINT64 entry,
                      UINT64 stack, OBJECT *bootstrap, UINT32 rights,
                      UINT64 argument);
@@ -100,7 +100,7 @@ UINT32 process_map_rights(UINT32 protection);
    leaves user memory; ERR_ACCESS_DENIED if the protection is writable
    and executable and the process was not created with
    PROCESS_OPTION_WRITE_EXECUTE (O5); ERR_OUT_OF_RANGE if the range
-   passes the section's end; ERR_BAD_STATE if the process has terminated
+   passes the section's end; ERR_BAD_STATE if the process is terminating
    or a page of the range is mapped; or ERR_NO_MEMORY. A call that fails
    maps nothing. */
 STATUS process_map(PROCESS *process, SECTION *section, UINT64 offset,

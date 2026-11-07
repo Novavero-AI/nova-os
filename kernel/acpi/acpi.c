@@ -200,7 +200,8 @@ static void keep(UINT64 base, UINT64 size)
 /* ------------------------------------------------------------------------
    The tables. */
 
-/* A range is kept only if it overlaps no memory the map gives RAM or
+/* A range is kept only if it is page aligned, as the direct map and
+   sections need, if it overlaps no memory the map gives RAM or
    firmware, other than the reservation that firmware makes for it, and
    once the direct map, which covers that reservation with the type the
    MTRRs give it, no longer maps it: a section over configuration space
@@ -220,6 +221,12 @@ static void read_mcfg(const UINT8 *table, UINT32 length)
             continue;
         first = base + ((UINT64)start << ECAM_BUS_SHIFT);
         size = (UINT64)(end - start + 1) << ECAM_BUS_SHIFT;
+        if (first % PAGE_SIZE != 0) {
+            serial_write("nova: acpi: mcfg range at ");
+            serial_hex(first);
+            serial_write(" is not page aligned, left out\r\n");
+            continue;
+        }
         if (first < base || first + size < first ||
             memory_map_overlaps_other(first, size, ECAM_TYPES)) {
             serial_write("nova: acpi: mcfg range at ");

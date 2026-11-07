@@ -165,33 +165,39 @@ static void run_thread(PROCESS *process, USER_THREAD *thread)
 }
 
 /* The thread's object holds a reference to its process, and the process
-   is RUNNING from here until it terminates (O10). */
+   is RUNNING from here until it terminates (O10). Interrupts stay
+   disabled from the state's check until the thread runs, so no
+   termination begins in between. */
 STATUS process_start(PROCESS *process, USER_THREAD *thread, UINT64 entry,
                      UINT64 stack, OBJECT *bootstrap, UINT32 rights,
                      UINT64 argument)
 {
-    UINT64 flags;
+    UINT64 flags = save_and_disable_interrupts();
+    STATUS status = OK;
     UINT32 index;
 
-    if (process->state != PROCESS_STATE_NEW || thread->started)
-        return ERR_BAD_STATE;
-    if (thread->process != process || !start_allowed(process, entry, stack))
-        return ERR_INVALID_ARGS;
-    if (handle_reserve(process->handles, &index) != OK)
-        return ERR_NO_MEMORY;
-    if (thread_create_user(&thread->thread, process, process->space,
-                           thread->fpu, mode_of(process), entry, stack,
-                           handle_value(process->handles, index),
-                           argument) != OK) {
+    if (process->state != PROCESS_STATE_NEW || process->terminating ||
+        thread->started)
+        status = ERR_BAD_STATE;
+    else if (thread->process != process ||
+             !start_allowed(process, entry, stack))
+        status = ERR_INVALID_ARGS;
+    else if (handle_reserve(process->handles, &index) != OK)
+        status = ERR_NO_MEMORY;
+    else if (thread_create_user(&thread->thread, process, process->space,
+                                thread->fpu, mode_of(process), entry, stack,
+                                handle_value(process->handles, index),
+                                argument) != OK) {
         handle_unreserve(process->handles, index);
-        return ERR_NO_MEMORY;
+        status = ERR_NO_MEMORY;
     }
-    handle_place(process->handles, index, bootstrap, rights);
-    flags = save_and_disable_interrupts();
-    process->state = PROCESS_STATE_RUNNING;
-    run_thread(process, thread);
+    if (status == OK) {
+        handle_place(process->handles, index, bootstrap, rights);
+        process->state = PROCESS_STATE_RUNNING;
+        run_thread(process, thread);
+    }
     restore_interrupts(flags);
-    return OK;
+    return status;
 }
 
 /* Interrupts stay disabled from the state's check until the thread is on

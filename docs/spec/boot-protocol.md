@@ -353,8 +353,9 @@ the stack's guard, nor the page at `KERNEL_STACK_TOP`.
   ([Memory types](#memory-types)).
 - **Memory-mapped I/O.** Descriptors of `EfiMemoryMappedIO` and
   `EfiMemoryMappedIOPortSpace` are left out. They are device registers,
-  which the kernel reaches through no direct-map address and a driver
-  maps through a device section with the type it chooses
+  which the kernel does not reach through the direct map (it maps the
+  local APIC's page itself, uncached) and a driver maps through a device
+  section with the type it chooses
   ([ipc.md I6](ipc.md#i6-device-memory-and-io-ports)); mapped here too,
   with the type the MTRRs give them, their pages would have two types,
   which the SDM does not allow: "it is possible to have a single physical
@@ -419,12 +420,13 @@ with PCD and PWT alone (SDM 5.9.2).
   (`MdeModulePkg/Core/DxeIplPeim/X64/VirtualMemory.c`) and sets memory
   types through the MTRRs (`UefiCpuPkg/CpuDxe/CpuDxe.c`,
   `CpuSetMemoryAttributes`). The kernel maps the Local APIC's page
-  through a PAT entry that holds UC, entry 3. The one range of device
-  registers the memory map describes as other than memory-mapped I/O,
-  PCI Express configuration space, which firmware reserves, the kernel
-  removes from the direct map once it reads the MCFG
-  ([ipc.md I6](ipc.md#i6-device-memory-and-io-ports)), so every device
-  page but the framebuffer's takes its type from its sections alone.
+  through a PAT entry that holds UC, entry 3. Firmware also reserves
+  device registers in the map, such as the I/O APICs' and PCI Express
+  configuration space; of those, a device section may cover only
+  configuration space, which the kernel removes from the direct map once
+  it reads the MCFG ([ipc.md I6](ipc.md#i6-device-memory-and-io-ports)),
+  so every page a device section may cover, but the framebuffer's, takes
+  its type from its sections alone.
 - **Large pages.** A large page over memory the MTRRs give several types
   is undefined (SDM 14.11.9), the framebuffer's included, and nova-boot
   does not read the MTRRs to rule it out.

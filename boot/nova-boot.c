@@ -806,9 +806,10 @@ static EFI_STATUS map_direct_range(PAGE_TABLES *tables, const RANGE *range,
    and the framebuffer, which it need not describe, at DIRECT_MAP_BASE
    plus its physical address.
 
-   Memory-mapped I/O is device registers, which the kernel reaches through
-   no direct-map address, and which a driver maps through a device section
-   with the type it chooses, uncached or write-combining. Mapped here too,
+   Memory-mapped I/O is device registers, which the kernel does not reach
+   through the direct map (it maps the local APIC's page itself,
+   uncached), and which a driver maps through a device section with the
+   type it chooses, uncached or write-combining. Mapped here too,
    with the type the MTRRs give it, the page would have two types, and
    the SDM forbids that: "it is possible to have a single physical page
    mapped to two or more different linear addresses, each with different
