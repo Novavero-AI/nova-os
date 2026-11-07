@@ -46,7 +46,7 @@ prototype and the check that `gfx/font.c` draws its glyphs.
 
 ## Build
 
-The thirteen images are compiled by TinyCC at commit
+The sixteen images are compiled by TinyCC at commit
 cb41cbfe717e4c00d7bb70035cda5ee5f0ff9341, built twice: as a cross
 compiler that writes x86-64 PE, and as one that writes i386 PE for ntdll.
 The archive's sha256 is
@@ -142,6 +142,22 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   -Wl,-e=fstest_main -Wl,-section-alignment=1000 \
   -Wl,-file-alignment=200 -o fstest.exe test/fstest.c lib/path.c \
   lib/log.c native/native.S
+./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
+  -I include -I native -I lib -I kernel/random -Wl,-subsystem=native \
+  -Wl,-e=accounts_main -Wl,-section-alignment=1000 \
+  -Wl,-file-alignment=200 -o accounts.exe accounts/accounts.c \
+  accounts/argon2.c accounts/blake2b.c accounts/record.c lib/path.c \
+  lib/log.c native/native.S
+./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
+  -I include -I native -I lib -I kernel/random -Wl,-subsystem=native \
+  -Wl,-e=login_main -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
+  -o login.exe login/login.c lib/program.c lib/console.c lib/path.c \
+  lib/log.c native/native.S
+./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
+  -I include -I native -I lib -I kernel/random -Wl,-subsystem=native \
+  -Wl,-e=shell_main -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
+  -o shell.exe shell/shell.c lib/console.c lib/path.c lib/log.c \
+  native/native.S
 cc -o mknar -I include -I kernel/random tools/mknar.c tools/store_path.c \
   kernel/random/sha256.c
 cc -o mkstore -I include -I kernel/random tools/mkstore.c \
@@ -154,12 +170,15 @@ greeting=$(./mknar greeting greeting file . test/greeting.txt)
   lib/path.c lib/log.c native/native.S
 services=$(./mknar services nova-services dir bin \
   exec bin/store.exe store.exe exec bin/namespace.exe namespace.exe)
+./mknar session nova-session dir bin exec bin/accounts.exe accounts.exe \
+  exec bin/login.exe login.exe exec bin/shell.exe shell.exe
 ./mknar hello hello -r $greeting dir bin exec bin/hello.exe hello.exe \
   dir share link share/greeting /store/$greeting \
   link share/greeting-relative ../../$greeting \
   link share/greeting-windows C:/nix/store/$greeting
 ./mkstore store.img $services greeting.narinfo greeting.nar \
-  services.narinfo services.nar hello.narinfo hello.nar
+  services.narinfo services.nar hello.narinfo hello.nar \
+  session.narinfo session.nar
 ```
 
 `-shared` makes TinyCC write base relocations, which the firmware needs to
@@ -193,14 +212,18 @@ build gives the same bytes:
 | `hello.exe` | 20,480 | `31f37c7fce61b532e1ece9dab9d55ee49ff76ee4ed621533fac2f7cf6de4ab60` |
 | `fs.exe` | 42,496 | `180a2a8323b06b8ed933a9dbde69f616abe2b3868e4cab245ea586a6deccda13` |
 | `fstest.exe` | 32,256 | `6791c0df869ed8f5704ec3fba1076bfd54f9e78a2d5caec2632bb7057c439205` |
+| `accounts.exe` | 39,936 | `726a0c515d3919ece07865ccf57f9944899077162550b97a2f86107c20a00a8d` |
+| `login.exe` | 32,256 | `a8bb35d7f9fcf30c944e5acffda7ed04c76b5d508370eea04a4bea9b28366bfd` |
+| `shell.exe` | 26,112 | `d81501863c34bf7809c1a43503ddf658d4ce753c8f9d8fe919f2decfe1fd45f7` |
 
 The block also writes the store image, `store.img`
-([docs/spec/store-image.md](docs/spec/store-image.md)), from three
+([docs/spec/store-image.md](docs/spec/store-image.md)), from four
 store paths: `nova-services`, holding the store service and the
 namespace server, which the image's header names as the programs the
-first process starts; `greeting`, a file; and `hello`, holding the test
+first process starts; `greeting`, a file; `hello`, holding the test
 program, which records the greeting's path and so refers to it, and
-links to the greeting. `tools/mknar.c` writes each path as nova-nix
+links to the greeting; and `nova-session`, holding the accounts
+service, login and the shell. `tools/mknar.c` writes each path as nova-nix
 exports one, a NAR and a narinfo, and prints its base name;
 `tools/mkstore.c` checks each NAR against its narinfo and writes the
 image. nova-nix does not run in this build, so mknar stands in for its
@@ -213,7 +236,7 @@ block above. Each build gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `store.img` | 69,632 | `8dc8d0f59432c68be81a7b998bb5e79d0607c2a20009c926b84e622d8819a135` |
+| `store.img` | 176,128 | `e8f1cf0de750148e47b3baf7cc9c449892e676cc5e3b7ca05e5c7d3965579517` |
 
 ## Disk image
 
@@ -321,10 +344,10 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `89ba4be31d39408334451f068d5fee023a0fd000f22114947f3edddfcf024477` |
-| `disk.vhdx` | 71,303,168 | `66765abc1d92f2b25d7e2848d4291dddc7ef6d15886fd36bd0b2c03d92a1c006` |
-| `chain.img` | 67,108,864 | `faf8cb90f48cc075ba1af7e9a89f7dbcdff28ea1a4b9891e08fabf218ee8a888` |
-| `chain.vhdx` | 71,303,168 | `e16ffcb82030b399ca959330c1b57684cb72dc33f57bc02c810a4d48a1ae4f74` |
+| `disk.img` | 67,108,864 | `ff631b56ecffaca39110ba89305aa7697f0188d2e260f5cd38fbd1a5184eb801` |
+| `disk.vhdx` | 71,303,168 | `dfaa059786d49c0a8f7d7a07bb8f7450bc31e9c19008866b5cd7c9e588235ef9` |
+| `chain.img` | 67,108,864 | `5648c99d33421e5e9ed6208db132f5d3538721ad1f4e0d326bf95a1ab5a6b8f4` |
+| `chain.vhdx` | 71,303,168 | `c83dbf7514d6621aae212b2e30aa8e370a07a3a2c710f827aaf5f7fa9f7afae1` |
 | `data.img` | 67,108,864 | `fc0e119b885b341b5385e351b1f334c4da7cb921ef2dfbd994e9e20917e27804` |
 
 ## Run

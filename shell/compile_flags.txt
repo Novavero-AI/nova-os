@@ -1,0 +1,7 @@
+--target=x86_64-pc-windows-gnu
+-std=c11
+-ffreestanding
+-I../include
+-I../native
+-I../lib
+-I../kernel/random
