@@ -1,0 +1,4 @@
+--target=i686-pc-windows-gnu
+-std=c11
+-ffreestanding
+-I../include
