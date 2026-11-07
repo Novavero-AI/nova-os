@@ -64,10 +64,12 @@ compared.
 - **License:** Apache-2.0. Code is written from public documentation and
   observed behavior; nothing is copied from Microsoft, from leaked sources,
   or from GPL projects (ReactOS, Linux, stage0-uefi).
-- **First target:** x86-64, booting through UEFI in a Hyper-V Generation 2
-  virtual machine. Gen 2 firmware cannot enroll new Secure Boot keys, and an
-  image signed by Microsoft would not be reproducible from source, so the VM
-  runs with Secure Boot off.
+- **First target:** x86-64, booting through UEFI in QEMU and in a Hyper-V
+  Generation 2 virtual machine. Drivers come first for QEMU's virtio
+  devices, whose OASIS specification is open and pinned, and then for
+  Hyper-V's synthetic devices. Gen 2 firmware cannot enroll new Secure Boot
+  keys, and an image signed by Microsoft would not be reproducible from
+  source, so the VM runs with Secure Boot off.
 - **Compiler:** an x86-64 PE cross compiler that tinycc-native compiles
   from TinyCC's source. A UEFI image is linked with `-shared` so that it
   carries base relocations, which TinyCC writes only for DLL-style images.

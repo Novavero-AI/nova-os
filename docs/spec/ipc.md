@@ -7,7 +7,6 @@ back. Object types, handles, rights, signals and lifetime are specified in
 [objects.md](objects.md); the calls named here are listed with their
 registers in [syscalls.md](syscalls.md).
 
-Decisions are marked **Decided** or **Proposed** as in objects.md.
 Specifications are cited by the versions in [README.md](README.md): "SDM"
 is the Intel manual's Volume 3, "ACPI" ACPI 6.6. "seL4 8.1" is section 8.1
 of the seL4 Reference Manual, and "Liedtke 1993", "Liedtke 1995" and
@@ -18,7 +17,7 @@ Fuchsia pages are linked under [References](#references).
 ## I1. Channels
 
 **Decided:** the core carries messages between processes (DESIGN.md,
-principle 2). **Proposed:** everything below.
+principle 2). **Decided:** everything below.
 
 A channel is a pair of endpoints. A message written to one endpoint is
 queued at the other, in order. A message is up to `CHANNEL_MAX_BYTES`
@@ -69,7 +68,7 @@ queued at the other, in order. A message is up to `CHANNEL_MAX_BYTES`
 ## I2. Handle transfer
 
 **Decided:** transferring a handle needs `TRANSFER` and can only narrow
-its rights ([objects.md O5](objects.md#o5-access-rights)). **Proposed:**
+its rights ([objects.md O5](objects.md#o5-access-rights)). **Decided:**
 the rest.
 
 `channel_write` takes an array of `{handle, rights}` entries. Each handle
@@ -98,7 +97,7 @@ closes), the handles it carries are closed.
 
 ## I3. Synchronous call and asynchronous queues
 
-**Proposed.**
+**Decided.**
 
 The core provides asynchronous, bounded channels ([I1](#i1-channels)),
 ports to wait on many sources ([I4](#i4-ports)), and one synchronous
@@ -160,7 +159,7 @@ effect on the semantics above.
 
 ## I4. Ports
 
-**Proposed.**
+**Decided.**
 
 A port is a queue of fixed-size packets that one or more threads wait on
 with `port_wait`. Each packet goes to exactly one waiting thread, in the
@@ -210,7 +209,7 @@ order queued.
 
 ## I5. Bulk data
 
-**Proposed.**
+**Decided.**
 
 Channels carry requests, replies and handles. Bulk data moves through
 sections both sides map: one process creates a section, sends a handle to
@@ -234,7 +233,7 @@ then name offsets within the section.
 ## I6. Device memory and I/O ports
 
 **Decided:** drivers are user-mode processes holding handles to the devices
-and memory they serve (DESIGN.md, principle 2). **Proposed:** the
+and memory they serve (DESIGN.md, principle 2). **Decided:** the
 mechanism.
 
 At boot the kernel creates one root resource of each kind and passes them,
@@ -297,7 +296,7 @@ exits.
 ## I7. Interrupts
 
 **Decided:** interrupts reach user-mode drivers (DESIGN.md, principle 2).
-**Proposed:** the mechanism.
+**Decided:** the mechanism.
 
 1. `interrupt_create(resource, source, options)` makes an interrupt object
    for an ACPI global system interrupt the IRQ resource covers, with its
@@ -344,10 +343,14 @@ still best kept in the kernel" (2016, 3.3).
   block on an interrupt object directly ([Interrupts][zx-irq]); that second
   path is left out because a port with one bound interrupt does the same.
 
+The first set delivers message-signalled interrupts (MSI and MSI-X), which
+virtio's PCI devices use (VIRTIO 1.4, PCI transport); a level-triggered
+line shared by several devices is left out until a device needs one.
+
 ## I8. DMA
 
 **Decided:** DMA is confined only where an IOMMU confines it (DESIGN.md,
-Decisions). **Proposed:** the mechanism.
+Decisions). **Decided:** the mechanism.
 
 1. `initiator_create(resource, requester_id)` makes an initiator object for
    one bus requester ID that a DMA resource covers. For PCI the ID is 32
@@ -387,9 +390,12 @@ Decisions). **Proposed:** the mechanism.
   and two more object types, for control of I/O address layout that no
   first-stage driver needs.
 
+Where no IOMMU confines a DMA-capable driver, the kernel still runs it and
+reports it as unconfined, so the gap is visible rather than assumed away.
+
 ## I9. Asynchronous I/O requests
 
-**Proposed.** The message contents below define the mechanism; their exact
+**Decided.** The message contents below define the mechanism; their exact
 layout belongs to the I/O protocol's own specification.
 
 An I/O request is a message on a channel from a client to the server that
@@ -484,7 +490,7 @@ pages a device is still writing stay allocated because the pins hold them
 ## I10. Driver failure and restart
 
 **Decided** that a failed driver is restarted instead of stopping the
-system (DESIGN.md, principle 2). **Proposed:** how.
+system (DESIGN.md, principle 2). **Decided:** how.
 
 A supervisor starts each driver in a job of its own and keeps the driver's
 resources, initiator and job handles. When the driver's process asserts
@@ -509,37 +515,6 @@ resources, initiator and job handles. When the driver's process asserts
   replays outstanding requests to the restarted driver. Its cost is a
   supervisor that tracks every request in flight, and replayed requests
   that may already have reached the device.
-
-## Open questions for Devon
-
-1. **Backpressure.** A full channel fails the write with `ERR_SHOULD_WAIT`
-   (I1). Keep that, or follow Zircon and raise a policy exception in the
-   writer?
-2. **Limits.** 65,536 bytes and 64 handles per message, as Zircon's;
-   1,024 messages per channel queue and 4,096 user packets per port (I1,
-   I4).
-3. **Shared interrupt lines.** How a level-triggered line shared by
-   several devices is delivered and acknowledged, and whether the kernel
-   or the bus driver masks MSIs (I7).
-4. **I/O port bitmap.** The I/O permission bitmap's semantics are in SDM
-   Volume 1, Chapter 20, which is not pinned. Pin Volume 1, or use
-   per-access calls (I6)?
-5. **IOMMU.** Which IOMMU specifications to pin (Intel VT-d, AMD I/O
-   virtualization), and whether a DMA-capable driver may run unconfined by
-   default where no IOMMU exists (I8).
-6. **The first target's devices.** A Hyper-V generation 2 VM replaces the
-   PCI bus and emulated devices with synthetic ones
-   ([Generation 1 or 2][ms-gen2]); no pinned document describes their
-   transport or interrupts, which the platform driver needs.
-7. **The first process's image.** I6 has the kernel start the first user
-   process; how the kernel obtains its image is open, since
-   [boot-protocol.md](boot-protocol.md#undecided) leaves further files
-   undecided.
-8. **Principle 8 and drivers.** A driver's reads and writes of mapped
-   device memory and allowed I/O ports (I6), and its devices' DMA (I8), are
-   effects outside its address space that no handle mediates access by
-   access, so a session log cannot record them. Are drivers outside
-   principle 8's log, or must device access be mediated?
 
 ## References
 

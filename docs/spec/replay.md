@@ -34,7 +34,7 @@ the kernel.
 - **Performance counters. Decided.** CR4.PCE (bit 4) stays clear, so
   RDPMC is restricted to privilege level 0 (SDM Vol. 3, the CR4
   description).
-- **Hardware random numbers. Proposed.** The pinned SDM volume gives no
+- **Hardware random numbers. Decided.** The pinned SDM volume gives no
   way to stop RDRAND or RDSEED at CPL 3 outside VMX operation, where a
   VM-execution control can intercept them. A recorded program that
   executes them is not replayable. Programs get random bytes from the
@@ -43,14 +43,14 @@ the kernel.
   processor supports RDRAND, so whether recorded code could have bypassed
   the call. Hiding RDRAND from CPUID (CPUID faulting) is documented
   outside the pinned volume and is unverified here.
-- **CPUID. Proposed.** Its results differ between machines, so a recording
+- **CPUID. Decided.** Its results differ between machines, so a recording
   carries the CPUID results the recorded process could observe, and replay
   on a machine with different results is reported as unfaithful rather
   than attempted.
 
 ## Thread interleaving
 
-**Proposed.** The order in which threads of one process touch shared
+**Decided.** The order in which threads of one process touch shared
 memory is an input. While a process is recorded, the kernel runs at most
 one of its threads at a time and records each point at which it switches
 between them, so replay can switch at the same points. Locating a
@@ -61,11 +61,19 @@ target processors is unverified.
 
 ## Shared memory
 
-**Proposed.** A section mapped writable into a recorded process and into a
+**Decided.** A section mapped writable into a recorded process and into a
 process outside the recording delivers the other process's writes as
 inputs the kernel never sees. A recorded process therefore cannot map a
 writable section shared with a process outside the recording; read-only
 sharing, such as store paths, is unaffected.
+
+## Recordings
+
+**Decided.** A recording holds every message and system-call result its
+processes received, random bytes and the keys derived from them included,
+so it is as sensitive as the session it records. A recording is reached
+only through a handle, like any other object, and is never written where
+the recorded processes' own rights would not let it be read.
 
 ## Devices
 

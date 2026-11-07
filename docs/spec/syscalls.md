@@ -5,7 +5,6 @@ what, how errors are reported, and the first set of calls. The objects and
 rights the calls act on are specified in [objects.md](objects.md), and
 channels, ports and the driver calls in [ipc.md](ipc.md).
 
-Decisions are marked **Decided** or **Proposed** as in objects.md.
 Specifications are cited by the versions in [README.md](README.md): "SDM"
 is the Intel manual's Volume 3, "APM" the AMD manual's Volume 2, "x64
 calling convention" and "x64 stack usage" the Microsoft pages pinned there.
@@ -16,7 +15,7 @@ under [References](#references).
 
 ## S1. Entry mechanism
 
-**Proposed.**
+**Decided.**
 
 User code enters the kernel with `SYSCALL` and the kernel returns with the
 64-bit form of `SYSRET`. The kernel checks at boot that the processor has
@@ -45,7 +44,7 @@ them (CPUID.80000001H:EDX[11], SDM 6.8.8).
 
 ## S2. MSRs and descriptor tables
 
-**Proposed.**
+**Decided.**
 
 | MSR | Address | Value |
 |---|---|---|
@@ -108,7 +107,7 @@ IST stack (S3).
 
 ## S3. Entry and exit
 
-**Proposed.**
+**Decided.**
 
 Entry, at `IA32_LSTAR`:
 
@@ -169,7 +168,7 @@ top of its IST stack (S2), and leaves GS as it found it.
 **Decided:** user code follows the Microsoft x64 calling convention, as
 every nova-os image does
 ([README.md](README.md#executable-format-and-calling-convention)).
-**Proposed:** the system-call registers.
+**Decided:** the system-call registers.
 
 | Register | At `SYSCALL` | After return |
 |---|---|---|
@@ -253,7 +252,7 @@ Where the system-call convention departs from the x64 calling convention:
 ## S5. The SYSRET hazard
 
 **Decided:** the kernel never executes `SYSRET` with a non-canonical RCX
-(SDM 6.8.8). **Proposed:** how.
+(SDM 6.8.8). **Decided:** how.
 
 `SYSRET` loads RIP from RCX, and raises #GP(0) if RCX is not canonical
 (SDM 6.8.8). The #GP is a fault: the processor restores its state to what
@@ -323,7 +322,7 @@ reports the fault.
 
 ## S6. User memory
 
-**Proposed.**
+**Decided.**
 
 1. Every pointer and length a call takes, and the user-stack range
    arguments 5 to 8 are read from (S3), must describe a range inside
@@ -361,7 +360,7 @@ reports the fault.
 
 ## S7. Error reporting
 
-**Proposed.**
+**Decided.**
 
 Every call returns a 32-bit status in EAX, zero-extended into RAX. 0 is
 success; any other value is one of the codes below. A call that fails
@@ -412,7 +411,7 @@ subsystem translates them to its own codes in user mode.
 
 ## S8. The first calls
 
-**Proposed.** Numbers are the values of RAX. Number 0 is reserved and
+**Decided.** Numbers are the values of RAX. Number 0 is reserved and
 always fails with `ERR_NOT_SUPPORTED`, so a stub that never loads RAX runs
 no call. "Results" are RDX, R8 and R9 in order; "writes" in the last
 column marks an array the kernel fills in user memory.
@@ -461,6 +460,7 @@ column marks an array the kernel fills in user memory.
 | 40 | `initiator_release_quarantine` | initiator | | `RELEASE` | Same |
 | 41 | `debug_write` | resource, bytes, byte count | | `USE` on the debug-log resource | The kernel's serial console |
 | 42 | `random_read` | bytes, byte count | | | The kernel's own generator, which it needs before any server runs; results are recorded for replay ([replay.md](replay.md)), as with Zircon's `zx_cprng_draw` ([cprng_draw][zx-cprng]) |
+| 43 | `task_exception_channel` | process or job | handle | `TERMINATE` | Faults are raised by the processor and reach the kernel first ([objects.md O10](objects.md#o10-object-lifetime)) |
 
 A new thread, from `process_start` or `thread_start`, begins at `entry`
 with RCX and RDX holding its two arguments, every other general-purpose
@@ -480,7 +480,7 @@ function must not return.
 - **Why this set:** each call passes objects.md O1's test, shown in the
   last column; a call is added only when a first-stage component needs it
   and no user-mode server can provide it.
-- **Cost:** 42 calls to implement and test before the first user-mode
+- **Cost:** 43 calls to implement and test before the first user-mode
   driver runs.
 - **Not taken:** seL4's form, a handful of system calls with every object
   operation sent as a message to the object's capability (seL4 2.2). Its
@@ -491,32 +491,7 @@ The native layer's C functions are the system's programming interface;
 the numbers and the register convention are private to it. Zircon goes
 further and makes its vDSO "the only means to enter the kernel for system
 calls", enforcing that every entry comes from the vDSO's code
-([vDSO][zx-vdso]); nova-os does not enforce it (**Proposed**).
-
-## Open questions for Devon
-
-1. **Status encoding.** Small codes with 0 for success (S7), or NTSTATUS's
-   layout for continuity with NT?
-2. **Names and stability.** The C names and their prefix; whether call
-   numbers are a stable ABI or private to the native layer (S8); and
-   whether the kernel should refuse `SYSCALL` from anywhere but the native
-   layer, as Zircon does.
-3. **FRED.** Support it from the start where the processor has it, or add
-   it later (S1)?
-4. **The kernel's half.** S5 places user memory in the lower half below
-   `USER_TOP`, which needs the kernel out of the lower half;
-   [boot-protocol.md](boot-protocol.md#undecided) leaves the kernel's
-   address space open.
-5. **Vector state.** Preserve all of it across calls (S4), or only what
-   the x64 convention requires, leaving the kernel free to use vector
-   instructions later?
-6. **Speculative execution.** Which mitigations the entry and exit paths
-   carry; this specification does not cover them.
-7. **Thread-local storage.** How a user thread sets its FS or GS base: a
-   call, or the `WRFSBASE` family once CR4.FSGSBASE (bit 16, SDM 2.5) is
-   enabled.
-8. **Writable and executable.** Should `process_map` and `process_protect`
-   refuse a mapping that is both writable and executable?
+([vDSO][zx-vdso]); nova-os does not enforce it (**Decided**).
 
 ## References
 

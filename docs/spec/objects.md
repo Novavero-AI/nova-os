@@ -6,10 +6,8 @@ and object lifetime. [ipc.md](ipc.md) specifies channels, ports and how
 user-mode drivers use these objects; [syscalls.md](syscalls.md) specifies
 the system-call entry and the calls named here.
 
-Each decision is marked **Decided** (it follows from [DESIGN.md](../../DESIGN.md)
-or from the processor) or **Proposed** (it awaits Devon's decision), and
-gives why, what it costs, and the main alternative not taken with that
-alternative's cost. "seL4 4.2" is section 4.2 of the seL4 Reference Manual
+Each decision gives why, what it costs, and the main alternative not taken
+with that alternative's cost. "seL4 4.2" is section 4.2 of the seL4 Reference Manual
 and "Liedtke 1995" the paper, at the versions pinned in
 [README.md](README.md#design-references). Microsoft Learn
 and Fuchsia pages are linked under [References](#references).
@@ -45,19 +43,19 @@ a channel.
 |---|---|---|---|
 | Process | An address space and a handle table; the unit of isolation and of termination | Page tables and the handle table need privilege | Decided |
 | Thread | A schedulable processor context running in one process | Scheduling needs privilege | Decided |
-| Section | A range of pages that can be mapped into processes: zero-filled memory, or a physical range of device memory | Mapping pages needs privilege; sharing them is how bulk data moves ([ipc.md](ipc.md#i5-bulk-data)) | Proposed |
-| Event | Eight user-settable signal bits that threads wait on | Waiting across processes needs the scheduler | Proposed |
-| Channel | A pair of endpoints carrying messages of bytes and handles | Moving handles between handle tables needs the kernel; DESIGN.md keeps messages between processes in the core | Decided (in the core); Proposed (shape, [ipc.md](ipc.md)) |
-| Port | A queue of packets: user packets, signal packets from watched objects, interrupt packets | One thread must wait on many sources, including interrupts, which only the kernel can deliver | Proposed |
-| Job | A node in a tree of processes and jobs that carries a kernel-memory quota and the authority to create processes | Kernel memory is allocated by the kernel, so only the kernel can enforce a limit on it | Proposed |
-| Resource | Authority over a range of physical addresses, interrupt sources or I/O ports, or a named system privilege | Device access must not be ambient ([O6](#o6-no-ambient-authority)) | Proposed |
-| Interrupt | One interrupt source, delivered as port packets | Interrupt delivery needs privilege | Decided (in the core); Proposed (shape) |
-| Initiator | A device's authority to do DMA, used to pin sections for it | Pinning and IOMMU programming need privilege | Proposed |
-| Pin | Pages of a section held for a device's DMA | The pages' lifetime is kernel state | Proposed |
+| Section | A range of pages that can be mapped into processes: zero-filled memory, or a physical range of device memory | Mapping pages needs privilege; sharing them is how bulk data moves ([ipc.md](ipc.md#i5-bulk-data)) | Decided |
+| Event | Eight user-settable signal bits that threads wait on | Waiting across processes needs the scheduler | Decided |
+| Channel | A pair of endpoints carrying messages of bytes and handles | Moving handles between handle tables needs the kernel; DESIGN.md keeps messages between processes in the core | Decided |
+| Port | A queue of packets: user packets, signal packets from watched objects, interrupt packets | One thread must wait on many sources, including interrupts, which only the kernel can deliver | Decided |
+| Job | A node in a tree of processes and jobs that carries a kernel-memory quota and the authority to create processes | Kernel memory is allocated by the kernel, so only the kernel can enforce a limit on it | Decided |
+| Resource | Authority over a range of physical addresses, interrupt sources or I/O ports, or a named system privilege | Device access must not be ambient ([O6](#o6-no-ambient-authority)) | Decided |
+| Interrupt | One interrupt source, delivered as port packets | Interrupt delivery needs privilege | Decided |
+| Initiator | A device's authority to do DMA, used to pin sections for it | Pinning and IOMMU programming need privilege | Decided |
+| Pin | Pages of a section held for a device's DMA | The pages' lifetime is kernel state | Decided |
 
 [ipc.md](ipc.md) gives the driver-facing types (resource, interrupt,
 initiator, pin) their full rules. A process owns exactly one address space;
-there is no separate address-space object (**Proposed**): mapping calls take
+there is no separate address-space object (**Decided**): mapping calls take
 a process handle, as NT's `ZwMapViewOfSection` takes a `ProcessHandle`
 ([ZwMapViewOfSection][ms-mapview]). Zircon's alternative, address-space
 regions as handles of their own ([VMAR][zx-vmar]), lets a process delegate
@@ -68,10 +66,10 @@ regions in the kernel, which no first-stage use needs.
 
 | NT or Zircon object | Where it lives in nova-os | Status |
 |---|---|---|
-| Object directory, symbolic link | The user-mode namespace server ([O8](#o8-the-namespace)) | Proposed |
+| Object directory, symbolic link | The user-mode namespace server ([O8](#o8-the-namespace)) | Decided |
 | File, device | User-mode servers; a file is a channel to its file system ([ipc.md](ipc.md#i9-asynchronous-io-requests)) | Decided (DESIGN.md: file systems and drivers are user-mode processes) |
-| Timer | Every wait takes a deadline ([O9](#o9-waiting)); a server multiplexes its own timeouts | Proposed |
-| Mutex, semaphore | In-process locks are user-mode code; cross-process hand-off uses a port, which releases one waiter per packet ([ipc.md](ipc.md#i4-ports)) | Proposed |
+| Timer | Every wait takes a deadline ([O9](#o9-waiting)); a server multiplexes its own timeouts | Decided |
+| Mutex, semaphore | In-process locks are user-mode code; cross-process hand-off uses a port, which releases one waiter per packet ([ipc.md](ipc.md#i4-ports)) | Decided |
 | Access token, security descriptor | None: authority comes only from handles and from what they were used to set up, such as mappings ([O5](#o5-access-rights)) | Decided (DESIGN.md, principle 7) |
 
 - **Why no timer:** a server that needs timeouts waits on its port with the
@@ -90,7 +88,7 @@ regions in the kernel, which no first-stage use needs.
 ## O3. Handles
 
 **Decided** that handles are per-process references with rights
-(DESIGN.md, principle 2). **Proposed** encoding and limits.
+(DESIGN.md, principle 2). **Decided** encoding and limits.
 
 A handle is a 32-bit value that names one entry in its process's handle
 table. The entry holds a reference to an object and the rights the handle
@@ -131,12 +129,12 @@ type and rights on every call ([Kernel concepts][zx-concepts]).
 
 Each object also has a 64-bit object ID, unique since boot and never
 reused, which `handle_info` reports so that a holder can tell whether two
-handles name the same object (**Proposed**, after Zircon's koid
+handles name the same object (**Decided**, after Zircon's koid
 ([Kernel concepts][zx-concepts])).
 
 ## O4. Handle operations
 
-**Proposed.**
+**Decided.**
 
 | Call | Effect | Needs |
 |---|---|---|
@@ -160,7 +158,7 @@ one bootstrap handle into a new process ([O6](#o6-no-ambient-authority)).
 
 ## O5. Access rights
 
-**Decided:** rights only narrow (follows from O6). **Proposed:** the layout
+**Decided:** rights only narrow (follows from O6). **Decided:** the layout
 and the per-type rights.
 
 A handle's rights are a 32-bit mask. Bits 0 to 15 are specific to the
@@ -181,7 +179,7 @@ reserved and zero.
 | Section | `READ` | `WRITE` | `EXECUTE` | `PIN` |
 | Channel | `READ` | `WRITE` | | |
 | Port | `QUEUE`: `port_queue`, and naming the port in `object_wait_async` or `interrupt_bind` | `READ`: `port_wait` | | |
-| Job | `CREATE_PROCESS` | `CREATE_JOB` | `TERMINATE` | |
+| Job | `CREATE_PROCESS` | `CREATE_JOB` | `TERMINATE` | `WRITE_EXECUTE`: its processes may map pages both writable and executable |
 | Resource | `USE`: derive sub-resources and create objects over the range | | | |
 | Interrupt | `BIND` | `ACK` | | |
 | Initiator | `PIN` | `RELEASE`: release quarantined pins | | |
@@ -190,7 +188,11 @@ Events and pins have no type-specific rights. Mapping a section with a
 protection needs the matching section rights: `READ` for read, `WRITE` for
 write, `EXECUTE` for execute. A mapping records the section rights of the
 handle it was made with, and `process_protect` can change its protection
-only within them.
+only within them. No mapping is both writable and executable unless the
+process's job carries `WRITE_EXECUTE`, which a creator passes on only to a
+program whose recipe declares it (DESIGN.md, principle 7); the seed chain's
+programs, each a single readable, writable and executable section, are
+the case it exists for.
 
 Rules:
 
@@ -258,12 +260,12 @@ Authority to act on existing things always comes from a handle:
 Creating a fresh event, channel, port or zero-filled section needs no
 handle: the new object is reachable only through the handle the call
 returns, so creating it confers no authority over anything that already
-exists. Its kernel memory is charged to the caller's job (**Proposed**).
+exists. Its kernel memory is charged to the caller's job (**Decided**).
 
 A job's quota limits the handles, objects, queued message bytes and pages
 its processes hold. A job's limits are reserved from its parent's when the
 job is created, so a job can never be granted more than its parent has
-left, and charging is local to one job (**Proposed**).
+left, and charging is local to one job (**Decided**).
 
 - **Why:** principle 7 has a program's creator pass handles to exactly
   what its derivation declares; that bounds the program only if nothing
@@ -285,7 +287,7 @@ left, and charging is local to one job (**Proposed**).
 
 ## O7. Jobs
 
-**Proposed.**
+**Decided.**
 
 Jobs form a tree rooted at the root job, which the kernel gives to the
 first user process. Every process belongs to one job, fixed at creation.
@@ -307,10 +309,13 @@ destroyed when it has no processes, no child jobs and no handles.
 
 ## O8. The namespace
 
-**Proposed.**
+**Decided.**
 
 nova-os has one namespace: a single tree of names over every named object,
-kernel objects and files alike. The kernel holds no names. The tree is
+kernel objects and files alike. Names are UTF-8, compared case-sensitively,
+with `/` as the separator; the Windows compatibility layer translates NT
+and DOS paths (`\`, drive letters, UTF-16) into this form for the programs
+that use them. The kernel holds no names. The tree is
 served by a user-mode namespace server, and a directory is a channel to a
 server that speaks the directory protocol. Every lookup is relative to a
 directory handle the caller holds:
@@ -363,7 +368,7 @@ only the channel's `READ` and `WRITE`.
 
 ## O9. Waiting
 
-**Proposed.**
+**Decided.**
 
 Every waitable object has a 32-bit signal set. Bits 0 to 22 are defined by
 the object's type, bit 23 is the synthetic `HANDLE_CLOSED`, and bits 24 to
@@ -425,7 +430,7 @@ user signals, set and cleared with `object_signal`.
 
 ## O10. Object lifetime
 
-**Proposed.**
+**Decided.**
 
 1. Objects are reference counted. Every handle holds a reference, and so
    do kernel uses: a mapping holds its section, a message in a channel
@@ -453,8 +458,12 @@ user signals, set and cleared with `object_signal`.
 
 3. A process terminates when it calls `process_exit`, when its last thread
    exits (exit code 0), when a holder of `TERMINATE` kills it or its job,
-   or when one of its threads faults in user mode (exit code from the
-   exception vector). Termination stops its threads, closes every handle
+   or when one of its threads faults in user mode and no handler resolves
+   the fault (exit code from the exception vector). A fault is first sent
+   as a message on the process's exception channel, if a holder of
+   `TERMINATE` on the process or its job opened one with
+   `task_exception_channel`; the receiver, a debugger or a supervisor,
+   resumes the thread or lets the process terminate. Termination stops its threads, closes every handle
    in its table, removes its mappings, records the exit code and asserts
    `TERMINATED`. The process object lives on while handles to it exist, so
    its creator can read the code with `process_info`.
@@ -484,30 +493,6 @@ user signals, set and cleared with `object_signal`.
   capability. Its cost here is a capability derivation tree in the core;
   nova-os has no revocation, and access a holder might lose is given
   through a server that can cut it off.
-
-## Open questions for Devon
-
-1. **Namespace in user mode.** Principle 2 says "kernel objects in one
-   namespace". This specification serves that namespace from a user-mode
-   server (O8). Is that the intended reading, or should the kernel keep
-   object directories as NT's does?
-2. **Name syntax.** Path separator (`\` as NT, or `/`), case sensitivity,
-   and encoding (NT's object names are Unicode strings,
-   [Object Names][ms-objnames]).
-3. **Creation without a handle.** Should creating events, channels, ports
-   and sections stay quota-charged but handle-free (O6), or need an
-   allocation handle as seL4's untyped memory does?
-4. **Jobs in the first set.** Keep the job (O7), or start with per-process
-   quotas and add jobs later?
-5. **Revocation.** Accept that handles cannot be revoked once given (O10),
-   or plan seL4-style revocation?
-6. **NT synchronization objects.** Leave mutexes, semaphores and auto-reset
-   events to a later subsystem (O2, O9), or add them to the core for
-   parity with NT?
-7. **User exceptions.** A user-mode fault terminates the process (O10).
-   Should faults instead be delivered to a handler, as NT dispatches
-   structured exceptions to user mode, or to a supervisor through a
-   channel?
 
 ## References
 
