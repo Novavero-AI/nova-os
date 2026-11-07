@@ -1,7 +1,7 @@
 /* init as the platform driver (docs/spec/ipc.md I6, I10): it holds the
    root device resources, enumerates PCI, starts the virtio block and
    input drivers with resources covering only their functions, and
-   supervises them and the input driver's client, the console. */
+   supervises them and the input drivers' client, the console. */
 
 #ifndef NOVA_PLATFORM_H
 #define NOVA_PLATFORM_H
@@ -20,21 +20,22 @@ typedef struct {
 
 /* Find the first virtio block function and run its driver,
    \nova\virtblk.exe, to its end, then stop the function and reset its
-   device. Then find the first virtio input function and start its
-   driver, \nova\virtinp.exe, and, once the driver reports, its client,
-   the console, \nova\console.exe, leaving both running. A driver that fails is
+   device. Then start a driver, \nova\virtinp.exe, for each virtio input
+   function, up to INPUT_DEVICES_MAX, one after another as each reports,
+   and, once the first reports, their client, the console,
+   \nova\console.exe, leaving them running. A driver that fails is
    started again as the restart policy allows (platform.c). Returns 1 if
    the block driver ended with VIRTIO_BLK_EXIT_DONE, or if there is no
    block function or no driver file; 0, logged, if it was given up, and
-   then before the input driver starts, so that init can end with no
+   then before any input driver starts, so that init can end with no
    driver this function started left running unsupervised; 0, logged,
    too if waiting on the supervisor's port fails. The data disk's driver
    and file system service, which data.c starts before this and nothing
    supervises, outlive such an end and wind down on their own: the
    service once init's end of its root closes, the driver once the
-   service's end of its channel does. The input driver does not
-   count: a system without a keyboard runs on, as one whose keyboard
-   driver failed does. */
+   service's end of its channel does. The input drivers do not count: a
+   system without a keyboard or a pointer runs on, as one whose input
+   drivers failed does. */
 int platform_start(const PLATFORM *platform);
 
 /* The data disk, the second virtio block function in the order of the

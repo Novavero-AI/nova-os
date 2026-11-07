@@ -13,9 +13,10 @@
 
 /* Once its device is live, the driver writes one message on its
    bootstrap channel: VIRTIO_INPUT_REPORT_SIZE bytes, a transaction ID
-   of 0 (ipc.md I3), and one handle, the endpoint a client reads key
-   events from (input_protocol.h), with VIRTIO_INPUT_CLIENT_RIGHTS. It
-   then closes the channel. */
+   of 0 (ipc.md I3), and one handle, the endpoint a client reads the
+   device's description and then key events or pointer reports from
+   (input_protocol.h), with VIRTIO_INPUT_CLIENT_RIGHTS. It then closes
+   the channel. */
 #define VIRTIO_INPUT_REPORT_SIZE 4
 #define VIRTIO_INPUT_CLIENT_RIGHTS                                       \
     (CHANNEL_RIGHT_READ | RIGHT_WAIT | RIGHT_TRANSFER)

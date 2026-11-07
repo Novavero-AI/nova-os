@@ -1,16 +1,18 @@
 # Console
 
 The console: a user-mode service that draws a text panel over the
-desktop background, reads the keyboard, and serves programs text output
-and line input (`console/`). This document gives how it gets the screen
-from the kernel through the first process, how the first process starts
-it and gives it sessions (`init/console.c`), what the keyboard does in
-it, the session protocol a program speaks (`include/console_protocol.h`)
-and what it draws.
+desktop background, reads the keyboard and the pointer, and serves
+programs text output and line input (`console/`). This document gives
+how it gets the screen from the kernel through the first process, how
+the first process starts it and gives it sessions (`init/console.c`),
+what the keyboard does in it, the session protocol a program speaks
+(`include/console_protocol.h`), what it draws, and what it logs of the
+pointer.
 
 Specifications are cited by the versions in [README.md](README.md):
 "evdev" is the Linux input documents pinned under
-[Devices](README.md#devices), "SDM" the Intel manual's Volume 3.
+[Devices](README.md#devices), "QEMU" the device models pinned there,
+and "SDM" the Intel manual's Volume 3.
 
 ## C1. The display handoff
 
@@ -141,8 +143,8 @@ coverage as its cover, and the rest of the panel with a cover of 0.
   shows text with no compositor, and the shell's whole interface is its
   session protocol, so one program keeps one font, one line editor and
   one set of keys, and the fallback is code that runs every day.
-- **Cost:** without a keyboard the platform driver starts no client, so
-  there is no console; two drawing paths in the console.
+- **Cost:** without an input device the platform driver starts no
+  client, so there is no console; two drawing paths in the console.
 - **Not taken:** the console publishing itself in the namespace for
   programs to open. Its cost is a namespace that serves for the life of
   the system, which the first milestone's does not; a session handed by
@@ -291,3 +293,47 @@ tall as it is wide, and its width is the screen's height divided by
   same text at the same size.
 - **Cost:** the boot protocol passes no physical size, so a large
   screen of low density shows larger text than it needs.
+
+## C6. The pointer
+
+**Decided.**
+
+The console takes the description that opens each endpoint
+([input.md K3](input.md#k3-the-report-and-the-client)) and logs it,
+`nova-console: input from a keyboard`, or `input from a pointer` with
+each absolute axis's range, which is the device's and not the user's.
+It then takes a keyboard's key events (C3) or a pointer's reports
+([input.md K2](input.md#k2-key-events-and-pointer-reports)), and logs
+what each report does, a line for each:
+
+| Report | Line |
+|---|---|
+| Sets `x` or `y` | `nova-console: pointer moved, absolute x and y`, naming the axes it sets |
+| Moves `dx` or `dy` | `nova-console: pointer moved, relative x and y`, naming the axes it moves |
+| Presses or releases a button | `nova-console: pointer left button pressed`, or `released`, by evdev's name from `BTN_LEFT` to `BTN_TASK`, `left`, `right`, `middle`, `side`, `extra`, `forward`, `back` and `task`; another button, `BTN_MISC` (256) or above, as `button` and its code; a keyboard's key, below it, as `key`, with no code |
+| Turns the wheel | `nova-console: pointer wheel turned up`, or `down` |
+
+A positive `wheel` is a turn up, as QEMU sends a turn of its wheel up
+(QEMU, `virtio-input-hid.c`). Each line is built whole and written with
+one call, which the kernel writes in one piece. A motion of the kind the
+pointer line logged last noted, absolute or relative, whatever its axes,
+and a line the same as that one, are left out, so that a run of motion,
+or of turns one way, is one line, naming the axes of the run's first
+report. The console draws no pointer.
+
+- **Why no position:** a position is what a click chooses, as a key's
+  code is what it types, and the console logs neither. Once anything on
+  the screen takes a click, a position logged beside a press would name
+  the choice, and the log leaves the machine through the serial port.
+  What a report does, a press or a turn, tells no more than that a key
+  was pressed.
+- **Why a run is one line:** the kernel writes the debug log to the
+  serial port a byte at a time, waiting for each with interrupts off
+  (`kernel/x86_64/serial.c`, `debug_write`), and a moving pointer ends
+  each motion with a `SYN_REPORT` of its own (evdev, `EV_SYN`), so a
+  line a report would hold up the console and fill the log.
+- **Why no pointer drawn:** the console computes Limb's pixels only
+  under its panel (C5), and a pointer drawn outside it would need the
+  background beneath, read back from the framebuffer, which the console
+  never reads, or computed for the whole screen.
+- **Cost:** the log shows that the pointer moved, not where.

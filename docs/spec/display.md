@@ -718,11 +718,15 @@ change.
    high-resolution wheel codes count (evdev, `REL_WHEEL_HI_RES`), so a
    device with a finer wheel needs no change of protocol; QEMU's
    `REL_WHEEL` of 1 is 120.
-6. **A relative mouse, later.** `EV_REL` `REL_X` and `REL_Y` move the
-   same pointer by the setting `pointer.speed`, clamped to the screen.
-   A window may ask to lock the pointer, receiving motion without a
-   position while the pointer is hidden; the compositor grants it only
-   to the window with the focus and ends it when the focus leaves.
+6. **Relative motion.** A mouse's `EV_REL` `REL_X` and `REL_Y` reach
+   the client now, as the device's own deltas summed over each report
+   ([input.md K2](input.md#k2-key-events-and-pointer-reports)). How far
+   they move the pointer, by the setting `pointer.speed` and any
+   acceleration, clamped to the screen, is the compositor's, later, as
+   is the pointer lock: a window may ask to lock the pointer, receiving
+   motion without a position while the pointer is hidden, and the
+   compositor grants it only to the window with the focus and ends it
+   when the focus leaves.
 7. **The image.** The compositor draws the pointer's image last, from
    the theme's outlines at the screen's scale, the shape the window
    under it asks for with `WINDOW_CURSOR` from the theme's set. A
@@ -747,8 +751,12 @@ change.
 - **Why a tablet first:** QEMU counts the pointer absolute when the
   device that takes its events declares absolute axes (QEMU,
   `ui/input.c`, `qemu_input_is_absolute`), as the tablet does, which is
-  what the README's `usb-tablet` is there for; and an absolute position
+  why the README's Run command attaches one; and an absolute position
   needs no acceleration curve.
+- **Why relative motion now:** real mice report relative motion, and
+  QEMU's virtio mouse does today; the driver passes the deltas on as the
+  device gives them, so the policy that turns them into the pointer's
+  motion can come with the compositor without a change of protocol.
 - **Cost:** two message formats on one kind of endpoint; a driver per
   input function.
 - **Not taken:** the pointer's events one message each, as keys are.

@@ -634,7 +634,7 @@ driver's process asserts `TERMINATED`:
    the namespace.
 4. Clients open the device again by name. A device not yet published by
    name gets its new endpoint to its clients through the supervisor, on
-   the channel each client keeps to it, as the input driver's client does
+   the channel each client keeps to it, as the input drivers' client does
    ([input.md K3](input.md#k3-the-report-and-the-client)).
 
 The supervisor first clears the function's Bus Master Enable, so it

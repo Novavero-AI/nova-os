@@ -17,7 +17,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [replay.md](replay.md) | Every nondeterministic input a process can receive, and how a recording captures or excludes it |
 | [compat.md](compat.md) | How a 32-bit Windows program runs: its process, ntdll, paths and the stand-in file protocol |
 | [storage.md](storage.md) | The directory protocol and per-process views, the native file system, the store at `/store`, its builds and garbage collection, and the first milestone |
-| [input.md](input.md) | The virtio input driver, the key events it sends a client, its report to the platform driver and how that supervises it |
+| [input.md](input.md) | The virtio input driver, the description, key events and pointer reports it sends a client, its report to the platform driver and how that supervises it |
 | [console.md](console.md) | The console: how it takes the display from the kernel, how the first process starts it, its keys, the session protocol programs write text and read lines with, and its panel and font |
 | [store-image.md](store-image.md) | The store image the first milestone boots from: its header, registrations, nodes, blobs and their hash trees |
 | [pool-format.md](pool-format.md) | A data disk's pool: its partition, superblock rings, block pointers, node table and directories, and its commit |
@@ -495,9 +495,16 @@ defers to them for the meaning of an input event.
   (header) and
   `09e7dab4c380a6554133553114fcf805c3c3be0df4bf2ea991ebe729fcee5d36`
   (documentation)
-- Used by: [input.md](input.md): the event type `EV_KEY` (1) and the key
-  codes (the header); a key event's values, 0 released, 1 pressed and 2
-  repeated (the documentation, `EV_KEY`). [display.md](display.md): the
+- Used by: [input.md](input.md): the event types `EV_SYN` (0),
+  `EV_KEY` (1), `EV_REL` (2) and `EV_ABS` (3) and the last, `EV_MAX`
+  (0x1f), the codes `SYN_REPORT` and `SYN_DROPPED`, `ABS_X`, `ABS_Y`,
+  `REL_X`, `REL_Y` and `REL_WHEEL`, and the key codes (the header); a
+  key event's values, 0 released, 1 pressed and 2 repeated (the
+  documentation, `EV_KEY`), what a report and a dropped report are
+  (`EV_SYN`), and the wheel's detents (`EV_REL`).
+  [console.md](console.md): the names `BTN_LEFT` to `BTN_TASK` (the
+  header), and a report ending each motion (`EV_SYN`).
+  [display.md](display.md): the
   types `EV_SYN` (0), `EV_REL` (2) and `EV_ABS` (3), `SYN_REPORT` (0)
   and `SYN_DROPPED` (3), `ABS_X` and `ABS_Y`, `REL_X`, `REL_Y` and
   `REL_WHEEL`, the buttons from `BTN_LEFT` (0x110) and the keys of the
@@ -518,22 +525,35 @@ upstream release of the QEMU that CI installs from Ubuntu 24.04
 | [`ui/input.c`][qemu-input-c] | `v11.1.3` | `619089241c78af002e296ce54627ae2a30cb3421dc8684e8d879471e3af43b83` |
 | [`qapi/ui.json`][qemu-qapi] | `v11.1.3` | `87ac10949caa0da383eaba3d0676f078915bed9ea96025a6c7fb1c08135548ba` |
 | [`hw/input/virtio-input-hid.c`][qemu-hid-8] | `v8.2.2` | `ed8537556bba0b21814c010bd6b73b1b9338d807bd3592e6a37576b53b9b14ee` |
+| [`hw/input/virtio-input.c`][qemu-virtio-input] | `v11.1.3` | `0c3cecb7be4b5a115358643ca95788fa111d17efe41ecb3c0124bf73c7d4aad5` |
+| [`hw/input/virtio-input.c`][qemu-virtio-input-8] | `v8.2.2` | `ccb9cb16a9e180a9edede42b534dca80131dcdea317cb04d9db6e555ee4355d4` |
+| [`ui/input.c`][qemu-input-c-8] | `v8.2.2` | `e67241a5d54df6b19397f31172b0143ea0d5590676c6d6bd5e11e458f7d5e1f4` |
+| [`include/ui/input.h`][qemu-input-8] | `v8.2.2` | `69efe9f954bf6937994eead227ce21b9ead6dd90b0ea610eace70849e8b3c4f4` |
 
 [qemu-hid]: https://gitlab.com/qemu-project/qemu/-/raw/v11.1.3/hw/input/virtio-input-hid.c
 [qemu-input]: https://gitlab.com/qemu-project/qemu/-/raw/v11.1.3/include/ui/input.h
 [qemu-input-c]: https://gitlab.com/qemu-project/qemu/-/raw/v11.1.3/ui/input.c
 [qemu-qapi]: https://gitlab.com/qemu-project/qemu/-/raw/v11.1.3/qapi/ui.json
 [qemu-hid-8]: https://gitlab.com/qemu-project/qemu/-/raw/v8.2.2/hw/input/virtio-input-hid.c
+[qemu-virtio-input]: https://gitlab.com/qemu-project/qemu/-/raw/v11.1.3/hw/input/virtio-input.c
+[qemu-virtio-input-8]: https://gitlab.com/qemu-project/qemu/-/raw/v8.2.2/hw/input/virtio-input.c
+[qemu-input-c-8]: https://gitlab.com/qemu-project/qemu/-/raw/v8.2.2/ui/input.c
+[qemu-input-8]: https://gitlab.com/qemu-project/qemu/-/raw/v8.2.2/include/ui/input.h
 
 - Access: free. `virtio-input-hid.c` is under the GPL, version 2 or
-  later; [display.md](display.md) cites what the files declare and
-  copies none of their code.
+  later; [display.md](display.md), [console.md](console.md) and
+  `ci/boot.py` cite what the files declare and copy none of their code.
 - Used by: [display.md](display.md): the virtio tablet's axes, their
   range of 0 to `0x7FFF`, its buttons and wheel, and its reports
   (`virtio-input-hid.c`, `input.h`), the same in 8.2.2 while the
   tablet's `wheel-axis` property is on, its default; when QEMU counts
   the pointer absolute (`input.c`); QMP's `screendump` and
-  `input-send-event` (`ui.json`).
+  `input-send-event` (`ui.json`). [console.md](console.md): the wheel
+  turned up sent as `REL_WHEEL` 1 (`virtio-input-hid.c`). `ci/boot.py`:
+  the tablet's range (`input.h`), the one `SYN_REPORT` that ends each
+  `input-send-event` and the device a button is sent to (`input.c`),
+  the one whose driver set `DRIVER_OK` last (`virtio-input.c`), each
+  the same in 8.2.2.
 
 **eXtensible Host Controller Interface for Universal Serial Bus (xHCI)
 Requirements Specification**, revision 2.0, October 2025, document

@@ -9,6 +9,7 @@ typedef unsigned char UINT8;       /**< an unsigned 8-bit integer */
 typedef unsigned short UINT16;     /**< an unsigned 16-bit integer */
 typedef unsigned int UINT32;       /**< an unsigned 32-bit integer */
 typedef unsigned long long UINT64; /**< an unsigned 64-bit integer */
+typedef int INT32;                 /**< a signed 32-bit integer */
 typedef long long INT64;           /**< a signed 64-bit integer */
 /** UEFI's unsigned integer of native width, 64 bits here in every
     build. */
