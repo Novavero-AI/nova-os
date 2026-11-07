@@ -10,3 +10,6 @@ vars.fd
 mkimage
 disk.img
 disk.vhdx
+
+# What Python writes when the background prototypes run.
+__pycache__/
