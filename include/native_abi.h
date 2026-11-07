@@ -70,6 +70,7 @@
 #define CALL_PIN_RELEASE 39
 #define CALL_INITIATOR_RELEASE_QUARANTINE 40
 #define CALL_DEBUG_WRITE 41
+#define CALL_RANDOM_READ 42
 #define CALL_THREAD_SET_TLS_BASE 44
 
 /* The vector of the 32-bit lane's gate, which a thread of a 32-bit
@@ -245,6 +246,12 @@
    before it writes any, so a call that fails on its buffer writes
    nothing (S7). */
 #define DEBUG_WRITE_MAX_BYTES 256
+
+/* The most bytes one random_read gives: eight 256-bit keys, more than
+   any one key or salt needs, and few enough to generate on the kernel
+   stack, which random_read fills since it generates with interrupts
+   disabled and so cannot take a page fault on a user buffer. */
+#define RANDOM_READ_MAX_BYTES 256
 
 #ifndef __ASSEMBLER__
 

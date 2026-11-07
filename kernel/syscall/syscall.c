@@ -14,6 +14,8 @@
 #include "../object/interrupt.h"
 #include "../object/process.h"
 #include "../object/resource.h"
+#include "../random/random.h"
+#include "../random/wipe.h"
 #include "../x86_64/clock.h"
 #include "../x86_64/serial.h"
 #include "../x86_64/user.h"
@@ -749,6 +751,26 @@ static STATUS debug_write_call(const UINT64 *arguments, UINT64 *results)
     return status;
 }
 
+/* random_read(bytes, byte count): the generator's next bytes, generated
+   on the kernel stack, copied out and wiped there. ERR_BAD_STATE while
+   no source of real entropy has seeded the generator, as random_init
+   logs at boot. */
+static STATUS random_read_call(const UINT64 *arguments, UINT64 *results)
+{
+    UINT8 bytes[RANDOM_READ_MAX_BYTES];
+    UINT64 count = arguments[1];
+    STATUS status;
+
+    (void)results;
+    if (count > RANDOM_READ_MAX_BYTES)
+        return ERR_OUT_OF_RANGE;
+    if (!random_read(bytes, count))
+        return ERR_BAD_STATE;
+    status = copy_to_user(arguments[0], bytes, count);
+    wipe(bytes, sizeof bytes);
+    return status;
+}
+
 /* thread_set_tls_base(base): 0 or a user address (S10). */
 static STATUS thread_set_tls_base_call(const UINT64 *arguments,
                                        UINT64 *results)
@@ -798,6 +820,7 @@ static const CALL_ENTRY calls[CALL_COUNT] = {
     [CALL_INITIATOR_RELEASE_QUARANTINE] = {initiator_release_quarantine_call,
                                            1, 0},
     [CALL_DEBUG_WRITE] = {debug_write_call, 3, 1},
+    [CALL_RANDOM_READ] = {random_read_call, 2, 0},
     [CALL_THREAD_SET_TLS_BASE] = {thread_set_tls_base_call, 1, 1},
 };
 
