@@ -183,8 +183,8 @@ once its driver runs, keeps QEMU from capturing the mouse.
 - The API reference documents the public headers. Doxygen generates it:
   `doxygen` at the repository's root writes it to
   `reference/html/index.html`.
-- The specifications and the design are also published at
-  [novavero.ai/docs/nova-os](https://novavero.ai/docs/nova-os/).
+- The specifications, the design and the API reference are also
+  published at [novavero.ai/docs/nova-os](https://novavero.ai/docs/nova-os/).
 
 ## License
 
