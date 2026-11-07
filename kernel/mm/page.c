@@ -17,7 +17,23 @@
    image with BOOT_INFO, and the memory map, so they stay reserved with
    every other type; so do the kernel's stack and page tables, which
    nova-boot allocates as EfiLoaderData. Within general memory, page 0
-   stays reserved, since page_alloc returns 0 for no page. */
+   stays reserved, since page_alloc returns 0 for no page.
+
+   A page is zeroed as it is handed out rather than while it is free, so
+   the cost falls on the allocation that needs the page, not on the boot.
+   The firmware can leave what it worked on in the memory it hands over,
+   copies of the random seeds it gave nova-boot among it
+   (docs/spec/boot-protocol.md, Random seeds), and an owner leaves its
+   data in a page it frees. page_alloc and page_alloc_run are the only
+   ways a page leaves the allocator, and each zeroes every page it
+   returns after taking it and before returning it, so no owner receives
+   the firmware's data or an earlier owner's. Until then a free page
+   keeps what was left in it, mapped like all memory by the direct map:
+   code that reads memory it does not hold can see it, which takes a
+   kernel bug or, on a processor open to rogue data cache load, a process
+   whose page tables map the direct map (docs/spec/speculation.md, M11).
+   Either also reaches the random generator's current key; the firmware's
+   copies add part of what it was seeded from. */
 
 #include "page.h"
 #include "cpu.h"
@@ -171,26 +187,9 @@ static void release_general(const BOOT_INFO *info)
     }
 }
 
-/* The firmware leaves what it worked on in the memory it hands over,
-   copies of the random seeds it gave nova-boot among it
-   (docs/spec/boot-protocol.md, Random seeds), so every free page is
-   zeroed before anything is allocated. page_init zeroes the bitmap's
-   pages past the bitmap for the same reason. */
-static void zero_free_pages(void)
-{
-    UINT64 page, i;
-
-    for (page = 1; page < limit_page; page++) {
-        UINT64 *words;
-
-        if (is_set(page))
-            continue;
-        words = direct_map(page * PAGE_SIZE);
-        for (i = 0; i < WORDS_PER_PAGE; i++)
-            words[i] = 0;
-    }
-}
-
+/* The rest of the bitmap's last page is zeroed too: the bitmap's pages
+   are never handed out, so nothing else clears what the firmware left
+   there. */
 int page_init(const BOOT_INFO *info)
 {
     UINT64 end = general_end(info);
@@ -208,12 +207,30 @@ int page_init(const BOOT_INFO *info)
         bitmap[i] = i < words ? ALL_SET : 0;
     release_general(info);
     hold_run(home, pages);
-    zero_free_pages();
     return 1;
 }
 
 /* ------------------------------------------------------------------------
-   Allocation. */
+   Allocation. A page is zeroed after the bitmap holds it, so nothing else
+   can take it meanwhile, and after interrupts are restored, so an
+   interrupt waits on the stores only where the caller has disabled
+   interrupts itself. */
+
+/* REP STOSQ is the fastest way to initialize a large block of memory (SDM
+   Vol. 1 7.3.9.2). It stores upward: DF is clear at the kernel's entry
+   (docs/spec/boot-protocol.md, Flags and floating point), and the
+   interrupt entries and SYSCALL clear it (entry.S, docs/spec/syscalls.md
+   S2). */
+static void zero(UINT64 address, UINT64 pages)
+{
+    VOID *start = direct_map(address);
+    UINT64 words = pages * WORDS_PER_PAGE;
+
+    __asm__ volatile("rep stosq"
+                     : "+D"(start), "+c"(words)
+                     : "a"(0ULL)
+                     : "memory");
+}
 
 /* bsf gives the lowest set bit of its source, which must not be 0, so
    word must have a clear bit. */
@@ -241,6 +258,8 @@ UINT64 page_alloc(void)
         address = page * PAGE_SIZE;
     }
     restore_interrupts(flags);
+    if (address)
+        zero(address, 1);
     return address;
 }
 
@@ -263,6 +282,8 @@ UINT64 page_alloc_run(UINT64 pages)
         }
     }
     restore_interrupts(flags);
+    if (address)
+        zero(address, pages);
     return address;
 }
 
@@ -288,14 +309,8 @@ int page_free(UINT64 address)
 VOID *page_alloc_mapped(void)
 {
     UINT64 address = page_alloc();
-    UINT64 *page, i;
 
-    if (!address)
-        return 0;
-    page = direct_map(address);
-    for (i = 0; i < PAGE_SIZE / sizeof(UINT64); i++)
-        page[i] = 0;
-    return page;
+    return address ? direct_map(address) : 0;
 }
 
 void page_free_mapped(VOID *page)
@@ -304,5 +319,19 @@ void page_free_mapped(VOID *page)
 }
 
 UINT64 page_free_count(void) { return free_pages; }
+
+UINT64 page_next_free(UINT64 address)
+{
+    UINT64 flags = save_and_disable_interrupts();
+    UINT64 page = address / PAGE_SIZE + 1;
+    UINT64 found = 0;
+
+    while (page < limit_page && is_set(page))
+        page++;
+    if (page < limit_page)
+        found = page * PAGE_SIZE;
+    restore_interrupts(flags);
+    return found;
+}
 
 UINT64 page_total_count(void) { return total_pages; }

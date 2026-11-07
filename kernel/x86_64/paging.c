@@ -91,21 +91,17 @@ static int uncached_bits(UINT64 *bits)
     return 0;
 }
 
-/* Point entry at a new, empty table. Like nova-boot's, the entry grants
+/* Point entry at a new, empty table: page_alloc's page reads as zero, so
+   every entry in it is not present. Like nova-boot's, the entry grants
    write and leaves restrictions to the entries below; user_bit is
    PTE_USER for a table of user mappings, whose every level must allow
    user access, else 0. */
 static int add_table(UINT64 *entry, UINT64 user_bit)
 {
     UINT64 page = page_alloc();
-    UINT64 *table;
-    UINT64 i;
 
     if (!page)
         return 0;
-    table = direct_map(page);
-    for (i = 0; i < PAGE_TABLE_ENTRIES; i++)
-        table[i] = 0;
     *entry = page | PTE_PRESENT | PTE_WRITABLE | user_bit;
     return 1;
 }
@@ -229,6 +225,7 @@ static UINT64 protection_bits(USER_PROTECTION protection)
     return PTE_NO_EXECUTE;
 }
 
+/* page_alloc's page reads as zero, so the lower half maps nothing. */
 UINT64 paging_space_create(void)
 {
     UINT64 page = page_alloc();
@@ -238,9 +235,7 @@ UINT64 paging_space_create(void)
     if (!page)
         return 0;
     table = direct_map(page);
-    for (i = 0; i < LOWER_HALF_ENTRIES; i++)
-        table[i] = 0;
-    for (; i < PAGE_TABLE_ENTRIES; i++)
+    for (i = LOWER_HALF_ENTRIES; i < PAGE_TABLE_ENTRIES; i++)
         table[i] = top_table[i];
     return page;
 }

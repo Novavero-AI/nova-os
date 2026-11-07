@@ -59,7 +59,9 @@ static void chain_free(PIXEL_PAGE *page)
 }
 
 /* Allocate a chain of pages for count pixels into *chain. Returns 0, with
-   every page it took freed, if the allocator runs out. */
+   every page it took freed, if the allocator runs out. A page reads as
+   zero when allocated, so its next is 0 until the page after it is
+   linked. */
 static int chain_alloc(INT64 count, PIXEL_PAGE **chain)
 {
     PIXEL_PAGE **link = chain;
@@ -75,7 +77,6 @@ static int chain_alloc(INT64 count, PIXEL_PAGE **chain)
             return 0;
         }
         *link = direct_map(physical);
-        (*link)->next = 0;
         link = &(*link)->next;
     }
     return 1;

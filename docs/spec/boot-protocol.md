@@ -265,8 +265,8 @@ QEMU's default processor the firmware offers a seed only with
 The drivers leave copies of what they return in boot-services memory:
 `VirtioRngGetRNG` reads into a pool buffer and frees it without
 clearing it, and RngDxe's `RngGetBytes` passes its values through a
-stack array. The kernel's page allocator zeroes every free page when it
-starts, before the kernel reads the seeds.
+stack array. The kernel's page allocator zeroes every page as it hands
+it out, so no such copy reaches a page's owner (`kernel/mm/page.c`).
 
 ## Machine state at entry
 

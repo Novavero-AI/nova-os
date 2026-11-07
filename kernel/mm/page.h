@@ -1,8 +1,10 @@
 /* The physical page allocator: the 4 KiB pages the UEFI memory map gives
    the OS once boot services have exited, handed out by physical address,
-   one at a time or in runs. The kernel reaches a page through the direct
-   map (memory_layout.h). Allocating and freeing may be called from any
-   thread: each runs with interrupts disabled. */
+   one at a time or in runs, every page zeroed as it is handed out. The
+   kernel reaches a page through the direct map (memory_layout.h).
+   Allocating and freeing may be called from any thread: each changes the
+   allocator's record with interrupts disabled, and allocating zeroes the
+   pages after, with interrupts as the caller had them. */
 
 #ifndef NOVA_PAGE_H
 #define NOVA_PAGE_H
@@ -14,12 +16,13 @@
    memory can hold the allocator's own bitmap. */
 int page_init(const BOOT_INFO *info);
 
-/* A free page's physical address, now allocated, or 0 if none is free. */
+/* A free page's physical address, now allocated and zeroed, or 0 if none
+   is free. */
 UINT64 page_alloc(void);
 
 /* The physical address of the first of pages consecutive free pages, now
-   allocated, or 0 if no such run is free or pages is 0. page_free frees
-   them one at a time. */
+   allocated and zeroed, or 0 if no such run is free or pages is 0.
+   page_free frees them one at a time. */
 UINT64 page_alloc_run(UINT64 pages);
 
 /* Free an allocated page. Returns 1, or 0 with nothing changed if address
@@ -35,6 +38,12 @@ VOID *page_alloc_mapped(void);
 void page_free_mapped(VOID *page);
 
 UINT64 page_free_count(void);
+
+/* The lowest free page above the page that holds address, or 0 if there
+   is none; from 0, the lowest free page. It reads only the allocator's
+   own record, so the self-test can check every free page against the
+   memory map before allocating one, which writes to it. */
+UINT64 page_next_free(UINT64 address);
 
 /* Pages of the memory types the OS owns as general memory, whether free
    now or not. */
