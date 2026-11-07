@@ -1,8 +1,8 @@
 /* The console's demo client, \nova\conecho.exe, which the first process
    starts on the console at the end of startup (docs/spec/console.md C2):
-   it writes a greeting, then reads lines and writes each back, and
-   reads a line without echo when asked to. It ends once the console
-   closes its session. */
+   it writes a greeting, then reads lines and writes each back, logging
+   each line's length but never its bytes, and reads a line without echo
+   when asked to. It ends once the console closes its session. */
 
 #include "console_protocol.h"
 #include "log.h"
@@ -192,5 +192,8 @@ _Noreturn void console_echo_main(UINT32 bootstrap, UINT64 argument)
         }
         write_bytes(in.line, length);
         write_text("\n");
+        say("nova-console-echo: echoed a line of ");
+        say_number(length);
+        say(" bytes\r\n");
     }
 }
