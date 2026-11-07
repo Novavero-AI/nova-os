@@ -9,9 +9,9 @@
    allocator, checks it and reports on the first serial port; reads the
    ACPI tables; starts its clock, the scheduler and the timer; seeds the
    random number generator; starts a thread that keeps the boot screen's
-   spinner turning and a startup thread that tests the kernel's objects,
-   runs the first user process, tests the threads, then stops the spinner
-   and fades the boot screen into the desktop background; and becomes the
+   spinner turning and a startup thread that tests the kernel's objects
+   and threads, runs the first user process, then stops the spinner and
+   fades the boot screen into the desktop background; and becomes the
    idle thread. */
 
 #include "background.h"
@@ -98,20 +98,20 @@ static void spin(void *argument)
     }
 }
 
-/* Test the kernel's objects, run the first process to its end and test
-   the threads, then stop the spinner and, once its thread has ended so
-   that nothing else draws, fade into the desktop background. The thread
+/* Test the kernel's objects and threads, run the first process to its
+   end, then stop the spinner and, once its thread has ended so that
+   nothing else draws, fade into the desktop background. The thread
    self-test counts free pages, so no other thread may allocate or free
-   any while it runs; it starts once the first process has ended, and so
-   also shows the scheduler intact after whatever that process did. */
+   any while it runs; it runs before the first process, since processes
+   that process starts, such as drivers, outlive it. */
 static void startup(void *argument)
 {
     BOOT_INFO *info = argument;
     UINT32 observed;
 
     object_self_test(info);
-    first_process_run(info);
     sched_self_test(&spinner_thread);
+    first_process_run(info);
     event_signal(&startup_done, 0, STARTUP_DONE);
     wait_one(&spinner_thread.waitable, THREAD_TERMINATED, DEADLINE_INFINITE,
              &observed);
