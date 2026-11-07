@@ -37,7 +37,11 @@ job of its own, with the bootstrap message every PCI device driver gets
    per descriptor, on MSI-X table entry 0, and leaves the status queue
    unused (5.8.2). It gives every buffer to the device, sets DRIVER_OK
    and only then notifies (3.1.1).
-4. On each interrupt packet ([ipc.md I7](ipc.md#i7-interrupts))
+4. Creates the client's endpoint and registers a watch of it for
+   `PEER_CLOSED` on the port its interrupt is bound to, with
+   `object_wait_async` ([ipc.md I4](ipc.md#i4-ports)), then reports
+   (K3).
+5. On each interrupt packet ([ipc.md I7](ipc.md#i7-interrupts))
    acknowledges it and takes the buffers the used ring returned, in
    order (2.7.14). More buffers returned than the queue holds, one the
    device does not hold, or the same one twice, ends the driver as a
@@ -81,8 +85,10 @@ The endpoint queues up to 32 messages. When it is full the driver waits
 for `WRITABLE`, and gives no buffer back meanwhile, so the device runs
 out of buffers and may drop events (5.8.6.2) instead of the kernel
 queueing them without bound. The driver learns that the client has
-closed the endpoint when it next sends an event; it then resets the
-device, releases its pin (3.3.1) and exits.
+closed the endpoint from its watch's signal packet, at once and with
+no key pressed, or from a send that fails with `ERR_PEER_CLOSED`,
+whichever comes first; it then resets the device, releases its pin
+(3.3.1) and exits.
 
 - **Why evdev's fields as they come:** VIRTIO 1.4 fills `type`, `code`
   and `value` according to evdev (5.8.6), so the client reads the same
@@ -91,12 +97,12 @@ device, releases its pin (3.3.1) and exits.
   buffer used until the driver acknowledges it, so the packet's time
   ([ipc.md I4](ipc.md#i4-ports)) would date events the device wrote
   after the interrupt fired before they happened.
+- **Why a watch:** the driver waits on its port for interrupts, and a
+  watch puts the client's close on the same port, so the device is
+  reset as soon as nobody reads it rather than at the next key.
 - **Cost:** a message for every press and every release, each holding
   two pages of kernel memory while it is queued, one for the message and
-  one for its bytes (`kernel/object/channel.c`). A driver whose client has
-  gone keeps its device live until the next key: the driver waits on its
-  port, and the kernel offers no watch that would queue a packet there
-  when the endpoint's peer closes.
+  one for its bytes (`kernel/object/channel.c`).
 - **Not taken:** a message per evdev report, the events up to an
   `EV_SYN`. Its cost is a variable-length format for a keyboard that
   reports one key at a time.
@@ -110,8 +116,8 @@ writes one message on its bootstrap channel: 4 bytes, a transaction ID
 of 0, and one handle, the client's endpoint, with `READ`, `WAIT` and
 `TRANSFER`. It then closes the bootstrap channel. The platform driver
 takes the report only if it is exactly that; otherwise it logs it and
-closes the channel, which destroys the endpoint, and the driver's next
-event finds the client gone and stops it (K2).
+closes the channel, which destroys the endpoint, and the driver's watch
+finds the client gone and stops it (K2).
 
 The platform driver starts the client, `\nova\inputlog.exe`, in the root
 job with a bootstrap message of 4 bytes, a transaction ID of 0, and two

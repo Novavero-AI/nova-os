@@ -189,7 +189,12 @@ order queued.
 3. The packet for each watch and each bound interrupt is allocated when the
    watch is registered or the interrupt bound, so delivering it never
    fails for lack of memory. A registration that cannot be charged to the
-   caller's job fails with `ERR_NO_MEMORY`.
+   caller's job fails with `ERR_NO_MEMORY`. This kernel does not charge
+   kernel memory to jobs ([objects.md O6](objects.md#o6-no-ambient-authority));
+   in the quota's place a port takes at most `PORT_WATCHES_MAX`
+   watches, registered or with a packet queued, one for each handle a
+   process can hold (`kernel/object/port.h`), and a registration past
+   them fails with `ERR_NO_MEMORY` too.
 4. Closing the watched handle ends its watch; packets already queued stay.
 5. A thread blocked in `port_wait` whose port handle closes, or leaves
    its table in a message, wakes with `ERR_CANCELED`, as a wait on a

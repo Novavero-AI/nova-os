@@ -2,10 +2,11 @@
    before the first process, so that every object it makes is gone
    before any process could see it. It checks that interrupt vectors are
    charged to a job's quota (docs/spec/objects.md O6), that closing a
-   handle ends the waits made through it (O9), that a device page takes
-   one memory type (docs/spec/ipc.md I6), and that process_unmap removes
-   whole mappings only (docs/spec/syscalls.md S8); it logs each result
-   to the serial port and halts with the reason at the first failure. */
+   handle ends the waits made through it (O9), that a watch queues its
+   one packet and ends as ipc.md I4 has it, that a device page takes one
+   memory type (docs/spec/ipc.md I6), and that process_unmap removes whole
+   mappings only (docs/spec/syscalls.md S8); it logs each result to the
+   serial port and halts with the reason at the first failure. */
 
 #include "boot_info.h"
 #include "channel.h"
@@ -46,6 +47,12 @@
    one for each mapping. */
 #define TEST_UNMAPPED_REFERENCES 1
 #define TEST_MAPPED_REFERENCES (TEST_UNMAPPED_REFERENCES + 2)
+
+/* The keys of the watch test's watches. */
+#define KEY_LATER 1
+#define KEY_AT_ONCE 2
+#define KEY_HANDLE_CLOSED 3
+#define KEY_PORT_CLOSED 4
 
 /* A thread waiting through a handle in the cancel test's table, and how
    its wait ended. */
@@ -213,6 +220,89 @@ static void test_canceled_waits(void)
                  "when their handles closed\r\n");
 }
 
+/* Place object's handle, which the caller holds, in table with rights,
+   and return its value. */
+static UINT32 place(HANDLE_TABLE *table, OBJECT *object, UINT32 rights)
+{
+    UINT32 index;
+
+    check(handle_reserve(table, &index) == OK, "a test table was full");
+    return handle_place(table, index, object, rights);
+}
+
+/* Read and discard the packet at the head of port, as port_wait does,
+   which must be key's, from a watch that asked for PEER_CLOSED and saw
+   it active. */
+static void take_signal(PORT *port, UINT64 key)
+{
+    PACKET_NODE *node = port->first;
+
+    check(node && node->packet.type == PACKET_SIGNAL &&
+              node->packet.key == key &&
+              (UINT32)node->packet.payload[0] == CHANNEL_PEER_CLOSED &&
+              (node->packet.payload[0] >> PACKET_SIGNAL_ACTIVE_SHIFT &
+               CHANNEL_PEER_CLOSED),
+          "a watch's packet did not carry its key and signals");
+    port_discard(port, node);
+}
+
+/* A watch through a handle in a table of the test's own queues one
+   packet once a signal it asks for is active, or at once if one is
+   already; it ends with no packet when its handle closes, and when its
+   port's last handle closes; a port takes no more than PORT_WATCHES_MAX;
+   and no watch leaves a page behind, its packet read or never queued. */
+static void test_watches(void)
+{
+    UINT64 free_pages = page_free_count();
+    HANDLE_TABLE *table = handle_table_create();
+    ENDPOINT *watched, *peer, *other, *other_peer;
+    PORT *port;
+    UINT32 handle, other_handle, i;
+
+    check(table != 0, "no memory for the watch test's table");
+    check(port_create(1, &port) == OK, "no memory for the watch test's port");
+    check(channel_create(1, &watched, &peer) == OK,
+          "no memory for the watch test's channel");
+    check(channel_create(1, &other, &other_peer) == OK,
+          "no memory for the watch test's second channel");
+    handle = place(table, &watched->object, CHANNEL_RIGHTS);
+    other_handle = place(table, &other->object, CHANNEL_RIGHTS);
+    check(port_watch(port, &watched->object, &watched->waitable, table,
+                     handle, KEY_LATER, CHANNEL_PEER_CLOSED) == OK &&
+              !port->first,
+          "a watch queued a packet before its signal was active");
+    object_close(&peer->object);
+    take_signal(port, KEY_LATER);
+    check(!port->first, "a watch queued more than one packet");
+    check(port_watch(port, &watched->object, &watched->waitable, table,
+                     handle, KEY_AT_ONCE, CHANNEL_PEER_CLOSED) == OK,
+          "a watch was refused");
+    take_signal(port, KEY_AT_ONCE);
+    check(port_watch(port, &watched->object, &watched->waitable, table,
+                     handle, KEY_HANDLE_CLOSED, CHANNEL_READABLE) == OK,
+          "a watch was refused");
+    handle_close(table, handle);
+    check(!port->first, "a watch whose handle closed queued a packet");
+    for (i = 0; i < PORT_WATCHES_MAX; i++)
+        check(port_watch(port, &other->object, &other->waitable, table,
+                         other_handle, KEY_PORT_CLOSED,
+                         CHANNEL_PEER_CLOSED) == OK,
+              "a watch within a port's bound was refused");
+    check(port_watch(port, &other->object, &other->waitable, table,
+                     other_handle, KEY_PORT_CLOSED,
+                     CHANNEL_PEER_CLOSED) == ERR_NO_MEMORY,
+          "a port took a watch past PORT_WATCHES_MAX");
+    object_close(&port->object);
+    object_close(&other_peer->object);
+    handle_table_destroy(table);
+    check(page_free_count() == free_pages,
+          "a watch, or what it held, was not freed");
+    serial_write("nova: objects: watches queued one packet each, at once "
+                 "for a signal already active, none once their handle or "
+                 "port closed, no more than a port's bound, and left no "
+                 "page behind\r\n");
+}
+
 /* The framebuffer's page, which the direct map maps write-combining for
    the kernel's drawing, takes only a write-combining section; a page of
    PCI configuration space, which the direct map leaves out, takes the
@@ -354,6 +444,7 @@ void object_self_test(void *boot_info)
 {
     test_vector_quota();
     test_canceled_waits();
+    test_watches();
     test_memory_types(boot_info);
     test_unmap();
     serial_write("nova: object self-test passed\r\n");

@@ -20,8 +20,8 @@
 #define VIRTIO_INPUT_CLIENT_RIGHTS                                       \
     (CHANNEL_RIGHT_READ | RIGHT_WAIT | RIGHT_TRANSFER)
 
-/* The driver ends with VIRTIO_INPUT_EXIT_DONE once a send has found
-   its client's endpoint closed and it has reset the device and released
+/* The driver ends with VIRTIO_INPUT_EXIT_DONE once its client has
+   closed its endpoint and the driver has reset the device and released
    its pin, else with VIRTIO_INPUT_EXIT_FAILED. Both lie above the exception
    vectors a faulting process ends with (docs/spec/objects.md O10). */
 #define VIRTIO_INPUT_EXIT_DONE 100

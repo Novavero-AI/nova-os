@@ -7,8 +7,10 @@
    key events from (docs/spec/input.md). From then on each used-buffer
    notification, an interrupt packet, has it take the events the device
    wrote, send each key event as a message on that endpoint and give the
-   buffers back (5.8.6). Once a send finds the client's endpoint closed
-   the driver resets the device, releases its pin and exits. */
+   buffers back (5.8.6). A watch of the endpoint queues a packet on the
+   same port once the client has closed its end, and a send can find it
+   closed too; either way the driver resets the device, releases its pin
+   and exits, with no key needed to tell it. */
 
 #include "virtio_input.h"
 #include "input_protocol.h"
@@ -81,7 +83,10 @@ _Static_assert(QUEUE_SIZE * VIRTQ_DESCRIPTOR_SIZE <= AVAIL_OFFSET &&
    it to read: each message holds kernel memory until it is read. */
 #define CLIENT_QUEUE_CAPACITY 32
 
+/* The keys of the port's packets: the event queue's interrupt, and the
+   watch of the client's endpoint. */
 #define QUEUE_KEY 1
+#define CLIENT_KEY 2
 
 typedef struct {
     VIRTIO_DRIVER virtio;
@@ -380,10 +385,15 @@ _Noreturn void virtio_input_main(UINT32 bootstrap, UINT64 argument)
     start_device(bootstrap);
     check(channel_create(CLIENT_QUEUE_CAPACITY, &device.events, &client),
           "channel_create");
+    check(object_wait_async(device.events, device.virtio.port, CLIENT_KEY,
+                            CHANNEL_PEER_CLOSED),
+          "cannot watch the client's endpoint");
     report(bootstrap, client);
     for (;;) {
         check(port_wait(device.virtio.port, DEADLINE_INFINITE, &packet),
               "port_wait");
+        if (packet.type == PACKET_SIGNAL && packet.key == CLIENT_KEY)
+            stop();
         if (packet.type != PACKET_INTERRUPT || packet.key != QUEUE_KEY)
             fail("an unexpected packet came", packet.type);
         check(interrupt_ack(device.virtio.interrupt), "interrupt_ack");

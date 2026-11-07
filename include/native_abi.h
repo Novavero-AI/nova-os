@@ -41,6 +41,7 @@
 #define CALL_HANDLE_DUPLICATE 2
 #define CALL_OBJECT_WAIT_ONE 6
 #define CALL_OBJECT_WAIT_MANY 7
+#define CALL_OBJECT_WAIT_ASYNC 8
 #define CALL_CHANNEL_CREATE 10
 #define CALL_CHANNEL_WRITE 11
 #define CALL_CHANNEL_READ 12
@@ -293,8 +294,12 @@ typedef struct {
 } BOOTSTRAP_PLATFORM;
 
 /* A port packet (ipc.md I4). An interrupt packet's payload starts with
-   the interrupt's time on the monotonic clock in nanoseconds. */
+   the interrupt's time on the monotonic clock in nanoseconds. A signal
+   packet's first word holds the signals its watch asked for in its low
+   32 bits and the signals active when it fired in its high 32, the
+   payload's first and second 4 bytes. */
 #define PACKET_PAYLOAD_WORDS 4
+#define PACKET_SIGNAL_ACTIVE_SHIFT 32
 
 typedef struct {
     UINT64 key;

@@ -20,6 +20,9 @@
 #define EXIT_CHECKS_PASSED 42
 #define EXIT_CHECK_FAILED 1
 
+/* The key of the watches check_watches registers. */
+#define CHECK_KEY 1
+
 /* The handles the bootstrap message carries (native_abi.h): the root
    system resource, the process itself, the root job, the root MMIO, IRQ
    and DMA resources, the store image, then the boot files. */
@@ -223,6 +226,39 @@ static void check_errors(UINT32 bootstrap)
     check(handle_close(section) == OK, "a section did not close");
 }
 
+/* A watch queues one signal packet, carrying its key and the signals
+   asked for and active, at once for a signal already active, and none
+   once its handle has closed; a port is not waitable (O9, ipc.md I4). */
+static void check_watches(void)
+{
+    PORT_PACKET packet;
+    UINT32 port, first, second;
+
+    check(port_create(1, &port) == OK, "no port for the watch checks");
+    check(channel_create(1, &first, &second) == OK,
+          "no channel for the watch checks");
+    check(object_wait_async(port, port, CHECK_KEY, CHANNEL_READABLE) ==
+              ERR_NOT_SUPPORTED,
+          "object_wait_async watched a port");
+    check(object_wait_async(first, port, CHECK_KEY, CHANNEL_READABLE) ==
+                  OK &&
+              handle_close(first) == OK &&
+              port_wait(port, 0, &packet) == ERR_TIMED_OUT,
+          "a watch outlived its handle");
+    check(object_wait_async(second, port, CHECK_KEY, CHANNEL_PEER_CLOSED) ==
+                  OK &&
+              port_wait(port, 0, &packet) == OK &&
+              packet.type == PACKET_SIGNAL && packet.key == CHECK_KEY &&
+              (UINT32)packet.payload[0] == CHANNEL_PEER_CLOSED &&
+              (packet.payload[0] >> PACKET_SIGNAL_ACTIVE_SHIFT &
+               CHANNEL_PEER_CLOSED),
+          "a watch of a signal already active queued no packet");
+    check(port_wait(port, 0, &packet) == ERR_TIMED_OUT,
+          "a watch queued a second packet");
+    handle_close(second);
+    handle_close(port);
+}
+
 static void check_clock(void)
 {
     UINT64 first, second;
@@ -240,6 +276,7 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     job = read_bootstrap(bootstrap);
     say("nova-init: running in user mode, bootstrap message read\r\n");
     check_errors(bootstrap);
+    check_watches();
     check_clock();
     check(store_run(job, debug_log, &store_image),
           "the test program did not pass from /store");

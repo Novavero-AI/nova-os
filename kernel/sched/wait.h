@@ -4,7 +4,9 @@
    soon as any signal it asks for is active, including at the call, when
    its deadline passes, or when a handle it waits through closes. Waits
    are made by threads other than the boot thread, never from an
-   interrupt handler. */
+   interrupt handler. A watch (object_wait_async, port.h) is a wait with
+   no thread: it is linked on the object's list as a thread's wait is,
+   and what ends a thread's wait runs its notify instead. */
 
 #ifndef NOVA_WAIT_H
 #define NOVA_WAIT_H
@@ -35,14 +37,27 @@ typedef struct {
    the object asserted while it watched, active at the end or not, so the
    signal that ended a wait is there even if another thread cleared it
    before the waiter ran again, and HANDLE_CLOSED if waitable_cancel
-   reached it. The other fields are the wait's own while it watches. */
+   reached it. The other fields are the wait's own while it watches.
+
+   A watch's item has async set and no waiter: its owner sets notify,
+   which runs with interrupts disabled where a waiter would be woken,
+   with OK once a signal it asks for is active and with ERR_CANCELED once
+   the handle it was made through closes. notify takes its own item off
+   the object's list and changes no other item there. The waiter and
+   notify share their place, with async in what would otherwise be
+   padding, so that the WAIT_MANY_MAX items of a wait stay within one
+   frame (object.c). */
 struct WAIT_ITEM {
     WAITABLE *object;
     UINT32 signals;
     UINT32 observed;
     const void *handle_table;
     UINT32 handle;
-    struct THREAD *waiter;
+    UINT32 async;
+    union {
+        struct THREAD *waiter;
+        void (*notify)(WAIT_ITEM *item, STATUS status);
+    } end;
     WAIT_ITEM *next;
     WAIT_ITEM *previous;
 };
@@ -66,6 +81,11 @@ void waitable_update(WAITABLE *object, UINT32 clear, UINT32 set);
    ERR_CANCELED (docs/spec/objects.md O9). */
 void waitable_cancel(WAITABLE *object, const void *handle_table,
                      UINT32 handle);
+
+/* Link item, a watch's, with end.notify set, on its object's list, and
+   take it off again. With interrupts disabled. */
+void waitable_watch(WAIT_ITEM *item);
+void waitable_unwatch(WAIT_ITEM *item);
 
 /* Wait until a signal of interest is active on any of count objects or
    the deadline passes. Returns OK; ERR_TIMED_OUT; ERR_CANCELED if a

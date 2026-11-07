@@ -149,15 +149,15 @@ build gives the same bytes:
 | Image | Size | sha256 |
 |---|---|---|
 | `BOOTX64.EFI` | 29,184 | `4a30a01cfd4237a0de0be3d693e5231fcdfc4ff050e65ca81bd262b89eed8228` |
-| `kernel.exe` | 199,168 | `8b29d6c9e3bc715f59222f1a25082aa5637c77eb075828c6e852f323bbc12132` |
-| `init.exe` | 71,680 | `41c43c7eed4ca6749e47bed5e2ecabe31298643a7b34033e5af338d6bca2dc3a` |
-| `virtblk.exe` | 15,872 | `59c816ba8f18f11fb8a5fc074edd1a01220ffefa20b2ad869f40067128fea25d` |
-| `virtinp.exe` | 15,872 | `673fd9ee39db1fafabdfffeaa5cf6985e9a5d64bca9e01b1e325794065850d0b` |
-| `inputlog.exe` | 5,632 | `6d9b2064373ec4747f5b5847c8d7aaf47899379cab9894de5f0c38fd9d41f0e0` |
+| `kernel.exe` | 202,752 | `b90305f540a5cf367821850178f45bfae5922863f7cd13cfe661f378ffa1440d` |
+| `init.exe` | 72,704 | `edb9ffd9b9ddb8c4c589d108db3e39f51029e5fd1c57058208cb836998261a1b` |
+| `virtblk.exe` | 15,872 | `a8eeec9d33961612a7b6a8dd5def8b9f5484ed438b07dad934c34727868cd7d0` |
+| `virtinp.exe` | 15,872 | `6eeae2fd7f9aa438f70d64b15875303de4c8a742a833d0a0da8dfd2af6258993` |
+| `inputlog.exe` | 5,632 | `6af5774a4870b83978b5a63f6a5413252d681a69c8a87216725eef54f2491f32` |
 | `ntdll.dll` | 10,240 | `9a43b4e3b773c1b5a3b6eb541fd0de9c3f3675d2867d1193b707118648853d10` |
-| `store.exe` | 28,160 | `421b3a7ba764c0e93044091e8dbc92bb21f4ddf2f027086e62c13d57607c3e53` |
-| `namespace.exe` | 10,752 | `e9aa3385240379482d7bc4c4e72cd7308139b8e74e5d65aaaa7e860f03732bb2` |
-| `hello.exe` | 19,456 | `e9972bfd82e6d1096d9e734824edab75f18678e5fc2244eb53f5cfc970f7c29f` |
+| `store.exe` | 28,160 | `6c2004434bd1aa91c9e797d04398c8baf6353bbb7541687c2fd8c763d7a226a1` |
+| `namespace.exe` | 10,752 | `82b0360f1e11f9c0a36256ab6bfd14c1b11bdacf561d06b33c7a1074229ae026` |
+| `hello.exe` | 19,456 | `07e52f7cdde3866d48a6703d95db36b43db212fb9a134922d7ac46c5230762d4` |
 
 The block also writes the store image, `store.img`
 ([docs/spec/store-image.md](docs/spec/store-image.md)), from three
@@ -178,7 +178,7 @@ block above. Each build gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `store.img` | 69,632 | `a55d1e28742fa9d339196bd9538b9e2a8f4d5c4a8f9d42362b1408a83d5b621f` |
+| `store.img` | 69,632 | `7d6166b15c54ef3244804885051d71f56322f3bbcdda32725a9deb3fd8229975` |
 
 ## Disk image
 
@@ -275,10 +275,10 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `42f2bc084e888973cb31ca34e277883811dce70446e1daaf7036a0ca677d7926` |
-| `disk.vhdx` | 71,303,168 | `a5b72f8a856b2fbddc217435bac6079f07d7fb2d6da20588cc73ed4eef327783` |
-| `chain.img` | 67,108,864 | `265220b927e8c933a79385b1c4e59c8b64acbfae2eafe80d403909334ab4f4ad` |
-| `chain.vhdx` | 71,303,168 | `3d5ad409c8101c2b8c3626f2b91aa2c19f0aa00280c2d2d4b51fe93143b94b7f` |
+| `disk.img` | 67,108,864 | `7de51019e0741da75b8446b2e67bad33ff29c83945b3e5c978339483c3673e05` |
+| `disk.vhdx` | 71,303,168 | `0e4ac9d10f233ce859a1615abecac0db4c206b3e49e9c03a5accf8eaa101aa79` |
+| `chain.img` | 67,108,864 | `8329d993050ccaa885fd9ac0bf3d181744270134fdc97185be5a3f6f2a7b14c5` |
+| `chain.vhdx` | 71,303,168 | `588f11c7f4ad658e5acd1d0b4d31407ccd773a484e8e1526cc8a5f30a86495e9` |
 
 ## Run
 

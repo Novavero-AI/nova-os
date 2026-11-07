@@ -1,7 +1,9 @@
 /* Signals and waits. A waiting thread links one WAIT_ITEM per object into
    that object's list of watchers and blocks; a change of signals walks
    the list and wakes the waiters it satisfies, and the waiter unlinks its
-   items when it runs again. Every step runs with interrupts disabled, so
+   items when it runs again. A watch's item is on the same list, and its
+   notify unlinks it as the walk reaches it, so each walk takes the next
+   item before it ends one. Every step runs with interrupts disabled, so
    on one processor no signal can change between a wait's check of the
    signals and its blocking, and no wakeup is lost. */
 
@@ -16,16 +18,27 @@ void waitable_init(WAITABLE *object)
     object->watchers = 0;
 }
 
+/* End item's wait with status: wake its thread, or run a watch's
+   notify. */
+static void end_item(WAIT_ITEM *item, STATUS status)
+{
+    if (item->async)
+        item->end.notify(item, status);
+    else
+        sched_end_wait(item->end.waiter, status);
+}
+
 void waitable_update(WAITABLE *object, UINT32 clear, UINT32 set)
 {
     UINT64 flags = save_and_disable_interrupts();
-    WAIT_ITEM *item;
+    WAIT_ITEM *item, *next;
 
     object->signals = (object->signals & ~clear) | set;
-    for (item = object->watchers; item; item = item->next) {
+    for (item = object->watchers; item; item = next) {
+        next = item->next;
         item->observed |= object->signals;
         if (object->signals & item->signals)
-            sched_end_wait(item->waiter, OK);
+            end_item(item, OK);
     }
     restore_interrupts(flags);
 }
@@ -36,13 +49,15 @@ void waitable_cancel(WAITABLE *object, const void *handle_table,
                      UINT32 handle)
 {
     UINT64 flags = save_and_disable_interrupts();
-    WAIT_ITEM *item;
+    WAIT_ITEM *item, *next;
 
-    for (item = object->watchers; item; item = item->next)
+    for (item = object->watchers; item; item = next) {
+        next = item->next;
         if (item->handle_table == handle_table && item->handle == handle) {
             item->observed |= HANDLE_CLOSED;
-            sched_end_wait(item->waiter, ERR_CANCELED);
+            end_item(item, ERR_CANCELED);
         }
+    }
     restore_interrupts(flags);
 }
 
@@ -66,11 +81,10 @@ static int handle_closed(const WAIT_ITEM *items, UINT32 count)
     return 0;
 }
 
-static void watch(WAIT_ITEM *item, THREAD *waiter)
+static void link_item(WAIT_ITEM *item)
 {
     WAITABLE *object = item->object;
 
-    item->waiter = waiter;
     item->previous = 0;
     item->next = object->watchers;
     if (object->watchers)
@@ -78,7 +92,13 @@ static void watch(WAIT_ITEM *item, THREAD *waiter)
     object->watchers = item;
 }
 
-static void unwatch(WAIT_ITEM *item)
+void waitable_watch(WAIT_ITEM *item)
+{
+    item->async = 1;
+    link_item(item);
+}
+
+void waitable_unwatch(WAIT_ITEM *item)
 {
     if (item->previous)
         item->previous->next = item->next;
@@ -104,11 +124,14 @@ STATUS wait_many(WAIT_ITEM *items, UINT32 count, UINT64 deadline)
     } else if (deadline <= clock_monotonic()) {
         status = ERR_TIMED_OUT;
     } else {
-        for (i = 0; i < count; i++)
-            watch(&items[i], thread_current());
+        for (i = 0; i < count; i++) {
+            items[i].async = 0;
+            items[i].end.waiter = thread_current();
+            link_item(&items[i]);
+        }
         status = sched_block(deadline);
         for (i = 0; i < count; i++) {
-            unwatch(&items[i]);
+            waitable_unwatch(&items[i]);
             items[i].observed |= items[i].object->signals;
         }
         if (handle_closed(items, count))

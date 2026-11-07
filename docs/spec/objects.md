@@ -456,8 +456,9 @@ user signals, set and cleared with `object_signal`.
 1. Objects are reference counted. Every handle holds a reference, and so
    do kernel uses: a mapping holds its section, a message in a channel
    holds the handles it carries, a registered watch holds its object and
-   port, a bound interrupt holds its port, a pin holds its section's pages,
-   and a running thread holds its process. An object is destroyed when its
+   port, and so does its packet until the packet is read or discarded, a
+   bound interrupt holds its port, a pin holds its section's pages, and a
+   running thread holds its process. An object is destroyed when its
    last reference goes. NT and Zircon likewise count references and open
    handles separately ([Life Cycle of an Object][ms-lifecycle],
    [Kernel object lifetime][zx-lifetime]).

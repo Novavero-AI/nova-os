@@ -100,6 +100,36 @@ static STATUS object_wait_many_call(const UINT64 *arguments, UINT64 *results)
     return status;
 }
 
+/* object_wait_async(handle, port, key, signals). Interrupts stay disabled
+   from the handles' checks through the watch's registration, so neither
+   handle can leave the table in between, where its close would find no
+   watch to end (O9). */
+static STATUS object_wait_async_call(const UINT64 *arguments,
+                                     UINT64 *results)
+{
+    HANDLE_TABLE *table = caller_handles();
+    UINT32 value = (UINT32)arguments[0];
+    OBJECT *object, *port;
+    WAITABLE *waitable;
+    UINT64 flags = save_and_disable_interrupts();
+    STATUS status =
+        handle_get_waitable(table, value, RIGHT_WAIT, &object, &waitable);
+
+    (void)results;
+    if (status == OK) {
+        status = handle_get(table, (UINT32)arguments[1], TYPE_PORT,
+                            PORT_RIGHT_QUEUE, &port);
+        if (status == OK) {
+            status = port_watch((PORT *)port, object, waitable, table, value,
+                                arguments[2], (UINT32)arguments[3]);
+            object_release(port);
+        }
+        object_release(object);
+    }
+    restore_interrupts(flags);
+    return status;
+}
+
 /* channel_create(capacity): two handles. */
 static STATUS channel_create_call(const UINT64 *arguments, UINT64 *results)
 {
@@ -732,6 +762,7 @@ static const CALL_ENTRY calls[CALL_COUNT] = {
     [CALL_HANDLE_DUPLICATE] = {handle_duplicate_call, 2, 0},
     [CALL_OBJECT_WAIT_ONE] = {object_wait_one_call, 3, 1},
     [CALL_OBJECT_WAIT_MANY] = {object_wait_many_call, 3, 1},
+    [CALL_OBJECT_WAIT_ASYNC] = {object_wait_async_call, 4, 0},
     [CALL_CHANNEL_CREATE] = {channel_create_call, 1, 1},
     [CALL_CHANNEL_WRITE] = {channel_write_call, 5, 1},
     [CALL_CHANNEL_READ] = {channel_read_call, 5, 1},

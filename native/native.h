@@ -56,6 +56,13 @@ UINT32 object_wait_one(UINT32 handle, UINT32 signals, UINT64 deadline,
    cancelled. */
 UINT32 object_wait_many(WAIT_ENTRY *items, UINT32 count, UINT64 deadline);
 
+/* Watch the object handle names, which needs RIGHT_WAIT, once: when any
+   of signals is active, now or later, queue one PACKET_SIGNAL carrying
+   key on port, which needs PORT_RIGHT_QUEUE. Closing handle first ends
+   the watch with no packet. */
+UINT32 object_wait_async(UINT32 handle, UINT32 port, UINT64 key,
+                         UINT32 signals);
+
 /* A new channel whose endpoints each queue up to capacity messages. */
 UINT32 channel_create(UINT32 capacity, UINT32 *first, UINT32 *second);
 

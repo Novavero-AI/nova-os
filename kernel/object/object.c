@@ -319,11 +319,17 @@ STATUS handle_duplicate(HANDLE_TABLE *table, UINT32 value, UINT32 rights,
     return status;
 }
 
+/* TinyCC calls __chkstk, which no runtime here provides, from a function
+   whose frame reaches this many bytes (random.c). */
+#define CHKSTK_FRAME 4096
+
+_Static_assert(sizeof(WAIT_ITEM) * WAIT_MANY_MAX < CHKSTK_FRAME,
+               "a wait's items fit one frame below __chkstk's");
+
 /* Check each entry's handle, then wait through them all; objects
    receives the object of each handle checked, *taken their count, for
    the caller to release. The WAIT_ITEMs live in this frame and the
-   objects in the caller's, so that neither frame reaches the 4096 bytes
-   at which TinyCC calls __chkstk (random.c). */
+   objects in the caller's, so that neither frame reaches CHKSTK_FRAME. */
 static STATUS check_and_wait(HANDLE_TABLE *table, WAIT_ENTRY *entries,
                              UINT32 count, UINT64 deadline, OBJECT **objects,
                              UINT32 *taken)

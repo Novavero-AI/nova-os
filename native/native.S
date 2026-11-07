@@ -119,6 +119,15 @@ object_wait_many:
     syscall
     ret
 
+/* UINT32 object_wait_async(UINT32 handle, UINT32 port, UINT64 key,
+                            UINT32 signals) */
+    .globl object_wait_async
+object_wait_async:
+    movq %rcx, %r10
+    movl $CALL_OBJECT_WAIT_ASYNC, %eax
+    syscall
+    ret
+
 /* UINT32 channel_create(UINT32 capacity, UINT32 *first, UINT32 *second) */
     .globl channel_create
 channel_create:
