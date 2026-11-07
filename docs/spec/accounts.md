@@ -336,6 +336,10 @@ spaces and runs the command:
 | `ls [path]` | Lists a directory, the current one if none is given |
 | `cat path` | Shows a file |
 | `cd [path]` | Changes the current directory, to the home if none is given |
+| `mkdir path` | Creates a directory |
+| `write path` | Creates or replaces a file with the lines typed after it, each echoed, up to one holding only `.` |
+| `rm path` | Removes a file or an empty directory |
+| `mv from to` | Moves a file or a directory to `to`, where nothing may be |
 | `run path [args]` | Runs a program from `/store` (A7) and shows its exit code |
 | `user create` | Asks for a name and a password twice, without echo, and creates the account; refused in a session without the administrator channel |
 | `logout` | Ends the session |
@@ -346,17 +350,40 @@ above `/`, and every lookup goes through the view. A refusal shows the
 command, the path and the status, by its name in
 [syscalls.md S7](syscalls.md#s7-error-reporting).
 
+`mkdir`, `write`, `rm` and `mv` open the directory each change is in
+with write before they make it, and flush the volume through it before
+they return, so a change they do not refuse is durable
+([storage.md F1](storage.md#f1-the-directory-protocol)). The session's
+`/store` carries no write, so a change below it is refused with
+`ERR_ACCESS_DENIED`; a change in a directory no handle of the view
+covers, `/`, `/users` or another user's home, is not found. `write`
+makes every check that can refuse it, a directory at the path among
+them, before it asks for the lines, so a refusal reads none; once it
+asks, it reads every line up to the one holding only `.`, whatever
+fails. It writes each line and a newline to `.<name>.new` in the same
+directory, created only where nothing is, and once every write is
+answered renames it over the path in one request, as a record is
+written (A3, item 2). A write that fails removes the temporary name;
+one a crash left is kept, and refuses a write of its file until it is
+removed.
+
 - **Why:** these are the commands a person needs to see who they are,
-  look around their files and the store, run a program and, for an
-  administrator, add a user, and each shows what the session can and
-  cannot reach.
-- **Cost:** no writing, quoting, pipes or scripts. The console has no
+  look around their files and the store, make and change their own
+  files, run a program and, for an administrator, add a user, and each
+  shows what the session can and cannot reach. A file written under
+  another name and renamed over the old one in one request holds its
+  old bytes or all the new ones, to whoever opens it and after a
+  crash.
+- **Cost:** no quoting, pipes or scripts; `write` replaces a whole file,
+  with no editing, and cannot write a line holding only `.`; `mv`
+  replaces nothing. The console has no
   key that only login answers, so a file the shell shows can draw what
   looks like login's prompt, and a person who
   takes it for one types a password into the shell; the shell logs the
-  name of a command it knows, a refusal's status and the store path of a
-  program it started, never other text typed, so such a password
-  reaches no log.
+  name of a command it knows, the status a refusal or a command that
+  reads or changes a file ends with, and the store path of a program it
+  started, never other text typed, a path or a line `write` reads among
+  it, so such a password reaches no log.
 - **Not taken:** a POSIX shell. Its cost is a POSIX layer under it,
   which DESIGN.md, principle 2, makes a subsystem for later.
 

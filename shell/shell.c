@@ -6,7 +6,9 @@
    service's administrator channel. A path outside those two prefixes
    reaches nothing, since no handle in the shell's view covers it, and
    user create is refused in a session without the administrator
-   channel. */
+   channel. mkdir, write, rm and mv open the directory each change is
+   in with write before they make it, which the session's /store does
+   not carry, and flush the volume through it before they return. */
 
 #include "accounts_protocol.h"
 #include "console.h"
@@ -39,6 +41,23 @@
 
 #define DECIMAL_DIGITS_MAX 20
 
+/* What mkdir and write create: a directory, or write's temporary file,
+   where nothing is. */
+#define MAKE_DIRECTORY (IO_OPEN_CREATE | IO_OPEN_DIRECTORY | IO_OPEN_EXCLUSIVE)
+#define MAKE_FILE (IO_OPEN_CREATE | IO_OPEN_EXCLUSIVE)
+
+/* write's temporary name for a file, in the file's directory: the
+   prefix, the file's name, the suffix, as an account's record is
+   written (accounts.md A3). */
+#define TEMPORARY_PREFIX "."
+#define TEMPORARY_SUFFIX ".new"
+#define TEMPORARY_EXTRA                                                   \
+    (sizeof TEMPORARY_PREFIX - 1 + sizeof TEMPORARY_SUFFIX - 1)
+
+/* The line that ends write's lines, as it ends ed's input and a mail
+   message typed to mail. */
+#define END_OF_LINES "."
+
 typedef struct {
     UINT8 bytes[PASSWORD_LINE];
     UINT32 length;
@@ -56,8 +75,13 @@ static ACCOUNTS_USER user;
 static char home[sizeof SESSION_USERS_PREFIX + ACCOUNT_NAME_MAX];
 static char cwd[IO_PATH_MAX + 1];
 static char resolved[IO_PATH_MAX + 1];
+static char destination[IO_PATH_MAX + 1];
+static char both[2 * IO_PATH_MAX + 2];
+static char directory_path[IO_PATH_MAX + 1];
+static char temporary[IO_PATH_MAX + TEMPORARY_EXTRA + 1];
 static char joined[2 * IO_PATH_MAX + 2];
 static char line[LINE_MAX + 1];
+static UINT8 file_line[LINE_MAX + 1];
 static char *words[WORDS_MAX];
 static UINT32 word_count;
 static UINT8 listing[LISTING_MAX];
@@ -167,9 +191,22 @@ static void show_status(UINT32 status)
         show_number(status);
 }
 
-/* "command: what: STATUS" on the console; the debug log gets the
-   command and the status alone, since what may be a path typed, and so
-   the rest of a password typed at a prompt a file drew. */
+/* The debug log's line for how a command ended: the command and the
+   status alone, never what it was given, since that may be a path typed,
+   and so the rest of a password typed at a prompt a file drew, or a
+   line typed for write. */
+static void log_status(const char *command, UINT32 status)
+{
+    say("nova-shell: ");
+    say_printable(user.name, user.name_length);
+    say(": ");
+    say(command);
+    say(" gives status ");
+    say_number(status);
+    say("\r\n");
+}
+
+/* "command: what: STATUS" on the console, and the status in the log. */
 static void refuse(const char *command, const char *what, UINT32 status)
 {
     show(command);
@@ -178,13 +215,17 @@ static void refuse(const char *command, const char *what, UINT32 status)
     show(": ");
     show_status(status);
     show("\n");
-    say("nova-shell: ");
-    say_printable(user.name, user.name_length);
-    say(": ");
-    say(command);
-    say(" gives status ");
-    say_number(status);
-    say("\r\n");
+    log_status(command, status);
+}
+
+/* The end of a command that reads or changes a file: its refusal, or
+   for OK the log's line alone, with no message on the console. */
+static void finish(const char *command, const char *what, UINT32 status)
+{
+    if (status != OK)
+        refuse(command, what, status);
+    else
+        log_status(command, status);
 }
 
 /* ------------------------------------------------------------------------
@@ -225,8 +266,9 @@ static int normalize(const char *text, char *out, UINT32 capacity)
 }
 
 /* path, absolute or relative to the current directory, in normal form
-   at resolved. Returns 0, having said why, if it is too long. */
-static int resolve(const char *command, const char *path)
+   at out, of IO_PATH_MAX + 1 bytes. Returns 0, having said why, if it
+   is too long. */
+static int resolve(const char *command, const char *path, char *out)
 {
     UINT32 n = length_of(path), c = length_of(cwd);
 
@@ -237,12 +279,65 @@ static int resolve(const char *command, const char *path)
         joined[c] = '/';
         copy((UINT8 *)joined + c + 1, (const UINT8 *)path, n + 1);
     }
-    if (n > IO_PATH_MAX ||
-        !normalize(joined, resolved, sizeof resolved)) {
+    if (n > IO_PATH_MAX || !normalize(joined, out, IO_PATH_MAX + 1)) {
         refuse(command, path, ERR_INVALID_ARGS);
         return 0;
     }
     return 1;
+}
+
+/* Where the last component of the normal form path starts: after its
+   last '/', which is at that offset less one. */
+static UINT32 last_component(const char *path)
+{
+    UINT32 at = length_of(path);
+
+    while (at > 0 && path[at - 1] != '/')
+        at--;
+    return at;
+}
+
+/* The length of the deepest directory both normal form paths, of their
+   lengths, are or are below: their longest common prefix that ends a
+   component in each. 0 is the root. */
+static UINT32 shared_length(const char *a, UINT32 a_length, const char *b,
+                            UINT32 b_length)
+{
+    UINT32 i = 0, shared = 0;
+
+    for (;;) {
+        if ((i == a_length || a[i] == '/') && (i == b_length || b[i] == '/'))
+            shared = i;
+        if (i == a_length || i == b_length || a[i] != b[i])
+            return shared;
+        i++;
+    }
+}
+
+/* Open the directory at the first length bytes of the normal form path,
+   the root for none, with write: the check that the session may change
+   what it holds, and the channel the change is flushed through. The
+   session's /store carries no write, so a directory there or below is
+   refused with ERR_ACCESS_DENIED, and one no handle of the view covers,
+   as "/" and "/users" are not, is not found; a file is not found
+   either, as a server finds nothing below one. */
+static UINT32 open_directory(const char *path, UINT32 length,
+                             UINT32 *channel)
+{
+    IO_ATTRIBUTES attributes;
+    UINT32 status;
+
+    copy((UINT8 *)directory_path, (const UINT8 *)path, length);
+    if (length == 0)
+        directory_path[length++] = '/';
+    directory_path[length] = 0;
+    status = view_open(&view, directory_path, IO_RIGHT_WRITE, channel,
+                       &attributes);
+    if (status == OK && attributes.kind != IO_KIND_DIRECTORY) {
+        handle_close(*channel);
+        status = ERR_NOT_FOUND;
+    }
+    return status;
 }
 
 /* ------------------------------------------------------------------------
@@ -255,6 +350,10 @@ static void help(void)
          "ls [path]         list a directory\n"
          "cat path          show a file\n"
          "cd [path]         change directory; home if no path\n"
+         "mkdir path        make a directory\n"
+         "write path        write a file of the lines typed; a lone . ends\n"
+         "rm path           remove a file or an empty directory\n"
+         "mv from to        move or rename to a path where nothing is\n"
          "run path [args]   run a program from /store\n"
          "user create       create an account (administrators only)\n"
          "logout            end the session\n");
@@ -305,7 +404,7 @@ static void list(void)
     LISTING l;
     UINT32 status;
 
-    if (!resolve("ls", word_count > 1 ? words[1] : cwd))
+    if (!resolve("ls", word_count > 1 ? words[1] : cwd, resolved))
         return;
     l.at = 0;
     l.cut = 0;
@@ -329,7 +428,7 @@ static void cat(void)
         show("cat path\n");
         return;
     }
-    if (!resolve("cat", words[1]))
+    if (!resolve("cat", words[1], resolved))
         return;
     status = view_open(&view, resolved, IO_RIGHT_READ, &channel, &attributes);
     if (status == OK && attributes.kind != IO_KIND_FILE) {
@@ -337,7 +436,7 @@ static void cat(void)
         status = ERR_NOT_SUPPORTED;
     }
     if (status != OK) {
-        refuse("cat", resolved, status);
+        finish("cat", resolved, status);
         return;
     }
     do {
@@ -347,8 +446,7 @@ static void cat(void)
         at += count;
     } while (status == OK && count > 0);
     handle_close(channel);
-    if (status != OK)
-        refuse("cat", resolved, status);
+    finish("cat", resolved, status);
 }
 
 static void count_entry(void *context, const UINT8 *name, UINT32 length,
@@ -366,7 +464,7 @@ static void change_directory(void)
 {
     UINT32 status;
 
-    if (!resolve("cd", word_count > 1 ? words[1] : home))
+    if (!resolve("cd", word_count > 1 ? words[1] : home, resolved))
         return;
     status = view_list(&view, resolved, count_entry, 0);
     if (status != OK) {
@@ -374,6 +472,224 @@ static void change_directory(void)
         return;
     }
     copy((UINT8 *)cwd, (const UINT8 *)resolved, length_of(resolved) + 1);
+}
+
+static void make_directory(void)
+{
+    IO_ATTRIBUTES attributes;
+    UINT32 directory, made, status;
+
+    if (word_count != 2) {
+        show("mkdir path\n");
+        return;
+    }
+    if (!resolve("mkdir", words[1], resolved))
+        return;
+    status = open_directory(resolved, last_component(resolved) - 1,
+                            &directory);
+    if (status == OK) {
+        status = view_create(&view, resolved, 0, MAKE_DIRECTORY, &made,
+                             &attributes);
+        if (status == OK) {
+            handle_close(made);
+            status = io_flush(directory);
+        }
+        handle_close(directory);
+    }
+    finish("mkdir", resolved, status);
+}
+
+/* write's temporary path, at temporary, for the file at resolved whose
+   name starts at name. */
+static void temporary_for(UINT32 name)
+{
+    UINT32 n = length_of(resolved + name), at = name;
+
+    copy((UINT8 *)temporary, (const UINT8 *)resolved, name);
+    copy((UINT8 *)temporary + at, (const UINT8 *)TEMPORARY_PREFIX,
+         sizeof TEMPORARY_PREFIX - 1);
+    at += sizeof TEMPORARY_PREFIX - 1;
+    copy((UINT8 *)temporary + at, (const UINT8 *)resolved + name, n);
+    at += n;
+    copy((UINT8 *)temporary + at, (const UINT8 *)TEMPORARY_SUFFIX,
+         sizeof TEMPORARY_SUFFIX - 1);
+    at += sizeof TEMPORARY_SUFFIX - 1;
+    temporary[at] = 0;
+}
+
+/* Remove write's temporary file, whose name starts at name, from
+   directory after a write that failed, and say so if it stays. */
+static void discard(UINT32 directory, UINT32 name)
+{
+    UINT32 status = io_remove(directory, (const UINT8 *)temporary + name,
+                              length_of(temporary + name));
+
+    if (status == OK)
+        status = io_flush(directory);
+    if (status != OK)
+        refuse("write", temporary, status);
+}
+
+/* Write the lines typed after the command to the file at resolved:
+   under a temporary name, created where nothing is, then renamed over
+   the file in one request once every write is answered, so that an
+   open of the path finds its old bytes or all the new ones
+   (accounts.md A3). Every check that can refuse the command comes
+   before it asks for the lines, so a refusal reads none, as a command
+   that fails does; once it asks, every line is read up to the one that
+   ends them, whatever fails, so that none is taken for a command. */
+static void write_lines(void)
+{
+    IO_ATTRIBUTES attributes;
+    UINT32 name, n, directory, file, length, status, written = 0;
+    UINT64 at = 0;
+
+    if (word_count != 2) {
+        show("write path\n");
+        return;
+    }
+    if (!resolve("write", words[1], resolved))
+        return;
+    name = last_component(resolved);
+    n = length_of(resolved + name);
+    status = open_directory(resolved, name - 1, &directory);
+    if (status != OK) {
+        finish("write", resolved, status);
+        return;
+    }
+    /* A directory at the path would fail the rename, so it is refused
+       before a line is typed for it, as cat refuses one. */
+    status = view_open(&view, resolved, 0, &file, &attributes);
+    if (status == OK) {
+        handle_close(file);
+        status = attributes.kind == IO_KIND_FILE ? OK : ERR_NOT_SUPPORTED;
+    } else if (status == ERR_NOT_FOUND) {
+        status = OK;
+    }
+    if (status != OK) {
+        handle_close(directory);
+        finish("write", resolved, status);
+        return;
+    }
+    temporary_for(name);
+    status = view_create(&view, temporary, IO_RIGHT_WRITE, MAKE_FILE, &file,
+                         &attributes);
+    if (status != OK) {
+        handle_close(directory);
+        finish("write", temporary, status);
+        return;
+    }
+    show("Type the lines, then a line holding only a dot.\n");
+    for (;;) {
+        if (console_read_line(console, CONSOLE_ECHO, file_line, LINE_MAX,
+                              &length) != OK) {
+            handle_close(file);
+            discard(directory, name);
+            process_exit(EXIT_FAILED);
+        }
+        if (length == sizeof END_OF_LINES - 1 &&
+            same(file_line, (const UINT8 *)END_OF_LINES, length))
+            break;
+        file_line[length++] = '\n';
+        if (status == OK)
+            status = io_write(file, at, file_line, length, &written);
+        if (status == OK && written != length)
+            status = ERR_BAD_STATE;
+        at += length;
+    }
+    handle_close(file);
+    if (status == OK)
+        status = io_rename(directory, (const UINT8 *)temporary + name,
+                           n + TEMPORARY_EXTRA, (const UINT8 *)resolved + name,
+                           n, IO_RENAME_REPLACE);
+    if (status == OK)
+        status = io_flush(directory);
+    else
+        discard(directory, name);
+    handle_close(directory);
+    finish("write", resolved, status);
+}
+
+static void remove_node(void)
+{
+    UINT32 name, directory, status;
+
+    if (word_count != 2) {
+        show("rm path\n");
+        return;
+    }
+    if (!resolve("rm", words[1], resolved))
+        return;
+    name = last_component(resolved);
+    status = open_directory(resolved, name - 1, &directory);
+    if (status == OK) {
+        status = io_remove(directory, (const UINT8 *)resolved + name,
+                           length_of(resolved + name));
+        if (status == OK)
+            status = io_flush(directory);
+        handle_close(directory);
+    }
+    finish("rm", resolved, status);
+}
+
+/* mv's two paths, from and to, as one text at both: a refusal the
+   rename itself gives may be either's. */
+static const char *both_paths(void)
+{
+    UINT32 n = length_of(resolved);
+
+    copy((UINT8 *)both, (const UINT8 *)resolved, n);
+    both[n] = ' ';
+    copy((UINT8 *)both + n + 1, (const UINT8 *)destination,
+         length_of(destination) + 1);
+    return both;
+}
+
+/* A rename's two paths are resolved against one directory, here the
+   deepest that holds both. Each path's own directory is opened with
+   write first, so that a refusal names the path refused: one under
+   /store, which the session cannot change, or one outside the view.
+   The view's two prefixes, /store and the home, are disjoint, so once
+   both directories are writable, both are in the home, and so is the
+   one that holds both. A node already at the destination is kept: the
+   rename does not replace. */
+static void move_node(void)
+{
+    UINT32 from, to, shared, directory, status;
+
+    if (word_count != 3) {
+        show("mv from to\n");
+        return;
+    }
+    if (!resolve("mv", words[1], resolved) ||
+        !resolve("mv", words[2], destination))
+        return;
+    from = last_component(resolved) - 1;
+    to = last_component(destination) - 1;
+    status = open_directory(resolved, from, &directory);
+    if (status != OK) {
+        finish("mv", resolved, status);
+        return;
+    }
+    handle_close(directory);
+    status = open_directory(destination, to, &directory);
+    if (status != OK) {
+        finish("mv", destination, status);
+        return;
+    }
+    handle_close(directory);
+    shared = shared_length(resolved, from, destination, to);
+    status = open_directory(resolved, shared, &directory);
+    if (status == OK) {
+        status = io_rename(directory, (const UINT8 *)resolved + shared + 1,
+                           length_of(resolved) - shared - 1,
+                           (const UINT8 *)destination + shared + 1,
+                           length_of(destination) - shared - 1, 0);
+        if (status == OK)
+            status = io_flush(directory);
+        handle_close(directory);
+    }
+    finish("mv", both_paths(), status);
 }
 
 /* Ask the launcher to run the program at resolved with the words after
@@ -391,7 +707,7 @@ static void run(void)
         show("run path [args]\n");
         return;
     }
-    if (!resolve("run", words[1]))
+    if (!resolve("run", words[1], resolved))
         return;
     path_length = length_of(resolved);
     copy(data, (const UINT8 *)resolved, path_length);
@@ -582,6 +898,10 @@ static const COMMAND commands[] = {
     {"ls", list},
     {"cat", cat},
     {"cd", change_directory},
+    {"mkdir", make_directory},
+    {"write", write_lines},
+    {"rm", remove_node},
+    {"mv", move_node},
     {"run", run},
     {"user", user_create},
     {"logout", logout},
