@@ -12,10 +12,10 @@
 
    init logs the size and sha256 of each output and checks each link
    against the sha256 nova-nix's Stage0 (Windows) CI job pins for it
-   (.github/workflows/ci.yml), so the chain on nova-os is held to the
-   chain on Windows byte for byte. M2 is the first link built on the C
-   library of libc-core.M1, and nothing pins the file it writes, so the
-   chain runs on to M1, whose link is pinned.
+   (in nova-nix's own .github/workflows/ci.yml), so the chain on nova-os
+   is held to the chain on Windows byte for byte. M2 is the first link
+   built on the C library of libc-core.M1, and nothing pins the file it
+   writes, so the chain runs on to M1, whose link is pinned.
 
    The chain, the bootstrap check, runs when the boot volume holds all
    of its inputs, as the test disk does. A volume that holds none, the
