@@ -25,7 +25,7 @@ sha256 identifies the exact copy the pin was taken from.
 - Access: free download.
 - sha256: `a64b8e442004b91becc3de9afaf8ca61b259a9a3b436accb6b3711ab5400cee9`
 - Used by: nova-boot (`boot/efi.h`, `boot/nova-boot.c`), the boot
-  protocol, the disk layout.
+  protocol, including its random seeds (37.5), the disk layout.
 
 **Advanced Configuration and Power Interface (ACPI) Specification**,
 Release 6.6, May 13, 2025 (UEFI Forum).
@@ -45,7 +45,8 @@ BSD-2-Clause-Patent).
 - Source: <https://github.com/tianocore/edk2/tree/edk2-stable202608>
 - Access: open source.
 - Used by: the boot protocol, for firmware behaviour UEFI leaves to the
-  implementation. The firmware QEMU bundles is an EDK II build.
+  implementation, and the firmware's random number generators. The
+  firmware QEMU bundles is an EDK II build.
 
 **Should I create a generation 1 or 2 virtual machine in Hyper-V?**
 (Microsoft Learn), dated June 18, 2025, updated February 16, 2026.
@@ -66,7 +67,8 @@ BSD-2-Clause-Patent).
 - Access: free download.
 - sha256: `77919be320f35da2782771ef2cb65a868cf68e62c8f8279f2ca61199cb70d1f8`
 - Used by: nova-boot (paging) and the kernel (paging, GDT, TSS, IDT,
-  Local APIC, TSC); the system-call entry ([syscalls.md](syscalls.md)).
+  Local APIC, TSC, the interrupt flag); the system-call entry
+  ([syscalls.md](syscalls.md)).
 
 **Intel 64 and IA-32 Architectures Software Developer's Manual, Volume 1:
 Basic Architecture**, order number 253665-093US, September 2026, the same
@@ -76,7 +78,19 @@ release as Volume 3.
 - Access: free download.
 - sha256: `f6ffc430dfa2dada4f791b1ecb462810e59827befe9a9c23f9160941eea642f9`
 - Used by: user-mode drivers' I/O-port access ([ipc.md](ipc.md), I6), for
-  the I/O permission bitmap (20.5.2).
+  the I/O permission bitmap (20.5.2); the kernel's random number
+  generator, for RDRAND and RDSEED and their retries (7.3.17) and CPUID's
+  leaf range (21.1.3).
+
+**Intel 64 and IA-32 Architectures Software Developer's Manual, Volume 2
+(2A, 2B, 2C and 2D): Instruction Set Reference, A-Z**, order number
+325383-093US, September 2026, the same release.
+
+- Document: <https://cdrdv2.intel.com/v1/dl/getContent/671110>
+- Access: free download.
+- sha256: `d137a7887787bbb06c1a8b8bafd51958d8d2e16b4dff987a03226c845cca1516`
+- Used by: the kernel's encodings of RDRAND and RDSEED (Volume 2B), which
+  TinyCC's assembler lacks.
 
 **AMD64 Architecture Programmer's Manual, Volume 2: System Programming**,
 publication 24593, revision 3.46, October 2026.
@@ -114,6 +128,41 @@ Specification**, revision 5.20, April 2026, order number D51397-019.
 - Used by: DMA confinement on AMD platforms ([ipc.md](ipc.md), I8): the
   Device Table and I/O page tables (2.2), commands (2.4) and the IVRS
   table (5.2); the IOMMU registers kept out of `RESOURCE_MMIO` (I6).
+
+## Cryptography
+
+**ChaCha20 and Poly1305 for IETF Protocols**, RFC 8439, June 2018
+(IRTF).
+
+- Document: <https://www.rfc-editor.org/rfc/rfc8439.txt>
+- Access: free.
+- sha256: `25bef70fbf7a07ff45c2fe4cb7c6ce954eac687413d8610603268b4e4415324c`
+- Used by: the kernel's ChaCha20 block function (2.3) and its boot-time
+  test (2.3.2, A.1).
+
+**Secure Hash Standard (SHS)**, FIPS PUB 180-4, August 2015 (NIST), and
+**US Secure Hash Algorithms (SHA and SHA-based HMAC and HKDF)**, RFC 6234,
+May 2011 (IETF).
+
+- Documents: <https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf>,
+  <https://www.rfc-editor.org/rfc/rfc6234.txt>
+- Access: free.
+- sha256: `0455b406d89648d20cbde375561e19c245b9815e894164c2670772e3d54deb82`
+  (FIPS 180-4) and
+  `8f39f02a57bfd1da15634706724a585766e6223f77ecdaf243cad16cd3a1aa1b`
+  (RFC 6234)
+- Used by: the kernel's SHA-256 (FIPS 180-4) and its boot-time test
+  (RFC 6234, 8.5).
+
+**Fast-key-erasure random-number generators**, D. J. Bernstein, the
+cr.yp.to blog, July 23, 2017.
+
+- Document: <https://blog.cr.yp.to/20170723-random.html>
+- Access: free web page. The page lists the blog's newer posts, so a
+  later copy has another sha256.
+- sha256: `5e20540f869e04a3b776aa4bb54a73ec00a948e67d932ad1341956890ebaadf3`
+- Used by: the kernel's random number generator
+  (`kernel/random/generator.c`).
 
 ## Executable format and calling convention
 
@@ -224,7 +273,9 @@ memory-mapped configuration space (ECAM):
 
 - **Processor Programming Reference for AMD Family 1Ah Model 02h,
   Revision C1**, publication 57238, revision 0.49, March 6, 2026.
-  `MmioCfgBaseAddr` (MSRC001_0058) gives the base and bus range.
+  `MmioCfgBaseAddr` (MSRC001_0058) gives the base and bus range;
+  `CPUID_Fn00000001_ECX` and `CPUID_Fn00000007_EBX_x00` give AMD's
+  RDRAND and RDSEED bits, which `kernel/x86_64/entropy.c` reads.
   <https://docs.amd.com/api/khub/documents/X_EXZ3uavMHFQe8qvjfHcw/content>,
   a zip archive, sha256
   `e91d9fe3ae32df3d6c88012cdac261440cc06e089a0d83d191247a06c8c91e99`.

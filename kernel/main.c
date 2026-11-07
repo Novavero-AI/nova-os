@@ -7,13 +7,15 @@
    own descriptor tables and exception handlers and removes the lower-half
    mapping nova-boot left for the switch; builds the physical page
    allocator, checks it and reports on the first serial port; starts its
-   clock, the scheduler and the timer; starts a thread that keeps the boot
-   screen's spinner turning and one that tests the threads; and becomes
-   the idle thread. */
+   clock, the scheduler and the timer; seeds the random number
+   generator; starts a thread that keeps the boot screen's spinner
+   turning and one that tests the threads; and becomes the idle
+   thread. */
 
 #include "boot_info.h"
 #include "cpu.h"
 #include "mm/page.h"
+#include "random/random.h"
 #include "sched/thread.h"
 #include "x86_64/arch.h"
 #include "x86_64/clock.h"
@@ -124,6 +126,7 @@ VOID kernel_main(BOOT_INFO *info)
     serial_write("nova: scheduler running, time slice ");
     serial_number(TIME_SLICE_MS);
     serial_write(" ms\r\n");
+    random_init(info);
     start_thread(&spinner_thread, spin, info);
     start_thread(&test_thread, sched_self_test, &spinner_thread);
     sched_idle();

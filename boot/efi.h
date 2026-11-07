@@ -6,8 +6,9 @@
    (Stall, SetWatchdogTimer), 9.1 (EFI_LOADED_IMAGE_PROTOCOL), 12.9
    (EFI_GRAPHICS_OUTPUT_PROTOCOL, EFI_EDID_DISCOVERED_PROTOCOL,
    EFI_EDID_ACTIVE_PROTOCOL), 13.4 and 13.5 (simple file system, file
-   protocol). Members nova-boot never calls are VOID * so the offsets of
-   those it does call stay right; the static assertions pin them. */
+   protocol), 37.5 (EFI_RNG_PROTOCOL). Members nova-boot never calls are
+   VOID * so the offsets of those it does call stay right; the static
+   assertions pin them. */
 
 #ifndef NOVA_EFI_H
 #define NOVA_EFI_H
@@ -225,5 +226,14 @@ typedef struct {
 } EFI_EDID_ACTIVE_PROTOCOL;
 
 typedef EFI_EDID_ACTIVE_PROTOCOL EFI_EDID_DISCOVERED_PROTOCOL;
+
+typedef struct EFI_RNG_PROTOCOL EFI_RNG_PROTOCOL;
+
+/* A null RNGAlgorithm asks for the driver's default algorithm. */
+struct EFI_RNG_PROTOCOL {
+    VOID *GetInfo;
+    EFI_STATUS (*GetRNG)(EFI_RNG_PROTOCOL *This, EFI_GUID *RNGAlgorithm,
+                         UINTN RNGValueLength, UINT8 *RNGValue);
+};
 
 #endif

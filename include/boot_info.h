@@ -14,7 +14,21 @@
 #define BOOT_INFO_MAGIC 0x544F4F4241564F4EULL
 
 /* The layout below and the machine state that comes with it. */
-#define BOOT_INFO_VERSION 1
+#define BOOT_INFO_VERSION 2
+
+/* The EFI_RNG_PROTOCOL instances nova-boot asks for a seed, at most, and
+   the bytes it asks each for: 256 bits, the security level UEFI 37.5
+   sets for a deterministic generator over an entropy source, and the
+   size of the kernel generator's key. OVMF installs an instance where
+   the processor has RDRAND and one for each virtio-rng device, so four
+   covers the first and three devices. */
+#define BOOT_RANDOM_SEEDS 4
+#define BOOT_RANDOM_SEED_SIZE 32
+
+typedef struct {
+    UINT64 status; /* the EFI_STATUS of asking; bytes is a seed only if 0 */
+    UINT8 bytes[BOOT_RANDOM_SEED_SIZE];
+} BOOT_RANDOM_SEED;
 
 typedef struct {
     UINT64 magic;
@@ -25,6 +39,8 @@ typedef struct {
     UINT8 *memory_map; /* UEFI memory descriptors, descriptor_size apart */
     UINTN memory_map_size;
     UINTN descriptor_size;
+    UINT64 random_seed_count; /* entries of random_seeds filled in */
+    BOOT_RANDOM_SEED random_seeds[BOOT_RANDOM_SEEDS];
 } BOOT_INFO;
 
 #endif

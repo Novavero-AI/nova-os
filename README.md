@@ -36,9 +36,11 @@ cc -o x86_64-win32-tcc -I cfg -I tinycc-$rev \
   -o kernel.exe kernel/main.c kernel/x86_64/arch.c kernel/x86_64/gdt.c \
   kernel/x86_64/idt.c kernel/x86_64/apic.c kernel/x86_64/paging.c \
   kernel/x86_64/serial.c kernel/x86_64/clock.c kernel/x86_64/context.c \
-  kernel/x86_64/entry.S kernel/x86_64/switch.S kernel/mm/page.c \
-  kernel/mm/page_test.c kernel/sched/thread.c kernel/sched/wait.c \
-  kernel/sched/sched_test.c gfx/gfx.c
+  kernel/x86_64/entry.S kernel/x86_64/switch.S kernel/x86_64/entropy.c \
+  kernel/mm/page.c kernel/mm/page_test.c kernel/sched/thread.c \
+  kernel/sched/wait.c kernel/sched/sched_test.c kernel/random/chacha20.c \
+  kernel/random/sha256.c kernel/random/generator.c kernel/random/random.c \
+  kernel/random/random_test.c gfx/gfx.c
 ```
 
 `-shared` makes TinyCC write base relocations, which the firmware needs to
@@ -51,8 +53,8 @@ gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `BOOTX64.EFI` | 22,528 | `18cdff4d1b68ac995a9f0fa98d7338ba38e53084b332740769a9cb434d047808` |
-| `kernel.exe` | 35,840 | `1c9042e21376020f5d9a469febfeef57583bf2a3179b129f9a835b92075b05a7` |
+| `BOOTX64.EFI` | 23,040 | `e6c75ca8b843d83ed5c370281004f9640f68d0cb4cb0732c6001825adc6d2b9f` |
+| `kernel.exe` | 50,176 | `6c7fdd5de41f8a8d2a8de4d5f9f55134c77994f6fa4f6e405e5a0b8a5b9cab28` |
 
 ## Disk image
 
@@ -72,8 +74,8 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `a848aeeda1b7d73ef12ec980af2dfc38f8baf646b9fd4e1ebf0f1b06f433dbf9` |
-| `disk.vhdx` | 71,303,168 | `e79a72220dd88703dcb423cb02ee2be68dcfc2ee1af60b17a7dda0e9cb200c32` |
+| `disk.img` | 67,108,864 | `383e386a45a9d9e9d01d22acf53cbe3467dc6ef6d5520b11d50a29ccefb83790` |
+| `disk.vhdx` | 71,303,168 | `2b10365cc12619416edcb7567f868ba1a4776285e41c1007bdb63818a3604171` |
 
 To boot either file in QEMU, replace the `fat:esp` drive in the command
 below with `-drive if=virtio,format=raw,file=disk.img` or
@@ -94,15 +96,20 @@ qemu-system-x86_64 -machine q35 -m 256M \
   -drive if=pflash,format=raw,readonly=on,file=$fw/edk2-x86_64-code.fd \
   -drive if=pflash,format=raw,file=vars.fd \
   -drive if=virtio,format=raw,file=fat:esp,readonly=on \
-  -net none -device qemu-xhci -device usb-tablet -serial stdio
+  -net none -device virtio-rng-pci -device qemu-xhci -device usb-tablet \
+  -serial stdio
 ```
 
 The kernel prints its lines to the terminal through the serial port. The
 firmware's variable store needs a writable copy, and the folder is attached
 as a read-only virtio disk, since QEMU's default IDE disk cannot be
-read-only. The USB tablet gives the window an absolute pointer, so QEMU does
-not capture the mouse; on a Mac, `-display cocoa,zoom-to-fit=on
--full-screen` gives it a full-screen Space.
+read-only. The virtio-rng device gives the firmware a random number
+generator, which nova-boot asks for the seed of the kernel's generator:
+QEMU's default processor has neither RDRAND nor RDSEED, so without the
+device the kernel's generator has no seed and says so. The USB tablet
+gives the window an absolute pointer, so QEMU does not capture the
+mouse; on a Mac, `-display cocoa,zoom-to-fit=on -full-screen` gives it a
+full-screen Space.
 
 nova-boot draws in the display's native mode. For a demo pixel for
 pixel, give the VM a display the size of the host's screen by adding

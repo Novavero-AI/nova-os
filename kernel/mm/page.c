@@ -5,11 +5,10 @@
 
    A bitmap rather than a free list threaded through the free pages: at
    one bit per page (32 KiB per GiB of address space) it sits in one
-   place, so building it writes to no page but its own and nothing needs
-   the free pages mapped, page_free can refuse a page that is already
-   free, and consecutive free pages are a run of clear bits. page_alloc
-   scans from the lowest word that can hold a free page, so the lowest
-   free page goes first.
+   place, so building it writes to no page but its own, page_free can
+   refuse a page that is already free, and consecutive free pages are a
+   run of clear bits. page_alloc scans from the lowest word that can
+   hold a free page, so the lowest free page goes first.
 
    General memory is EfiConventionalMemory, EfiBootServicesCode and
    EfiBootServicesData, which the OS owns once boot services have exited
@@ -28,6 +27,7 @@ _Static_assert(PAGE_SIZE == EFI_PAGE_SIZE, "a page is a memory map page");
 
 #define BITS_PER_WORD 64
 #define ALL_SET 0xFFFFFFFFFFFFFFFFULL
+#define WORDS_PER_PAGE (PAGE_SIZE / sizeof(UINT64))
 
 /* One past the last page a descriptor may reach: no page of one starts
    above 0xfffffffffffff000 (UEFI 2.11, 7.2.3). */
@@ -171,6 +171,26 @@ static void release_general(const BOOT_INFO *info)
     }
 }
 
+/* The firmware leaves what it worked on in the memory it hands over,
+   copies of the random seeds it gave nova-boot among it
+   (docs/spec/boot-protocol.md, Random seeds), so every free page is
+   zeroed before anything is allocated. page_init zeroes the bitmap's
+   pages past the bitmap for the same reason. */
+static void zero_free_pages(void)
+{
+    UINT64 page, i;
+
+    for (page = 1; page < limit_page; page++) {
+        UINT64 *words;
+
+        if (is_set(page))
+            continue;
+        words = direct_map(page * PAGE_SIZE);
+        for (i = 0; i < WORDS_PER_PAGE; i++)
+            words[i] = 0;
+    }
+}
+
 int page_init(const BOOT_INFO *info)
 {
     UINT64 end = general_end(info);
@@ -184,10 +204,11 @@ int page_init(const BOOT_INFO *info)
     bitmap = direct_map(home * PAGE_SIZE);
     bitmap_words = words;
     limit_page = end;
-    for (i = 0; i < words; i++)
-        bitmap[i] = ALL_SET;
+    for (i = 0; i < pages * WORDS_PER_PAGE; i++)
+        bitmap[i] = i < words ? ALL_SET : 0;
     release_general(info);
     hold_run(home, pages);
+    zero_free_pages();
     return 1;
 }
 

@@ -37,12 +37,14 @@ nova-boot, in order:
 4. Allocates the kernel's stack and builds the kernel's page tables
    ([Paging](#paging)).
 5. Measures the timestamp counter against `Stall(50000)`.
-6. Takes the memory map into a buffer it allocates with room for four
+6. Asks up to four `EFI_RNG_PROTOCOL` instances for a seed each
+   ([Random seeds](#random-seeds)).
+7. Takes the memory map into a buffer it allocates with room for four
    more descriptors, growing the buffer if the map outgrows it, and calls
    `ExitBootServices` with the map's key. A refused key means the map
    changed after it was taken; nova-boot retakes it and tries again, three
    calls in all (UEFI 7.4.6).
-7. Clears the interrupt flag, completes `BOOT_INFO`, sets IA32_EFER.NXE
+8. Clears the interrupt flag, completes `BOOT_INFO`, sets IA32_EFER.NXE
    if the processor has NX and sets CR0.WP. Then `boot_switch`
    (`boot/switch.S`) loads CR3 with the kernel's tables, moves RSP to the
    kernel's stack and calls the kernel's entry.
@@ -138,7 +140,7 @@ x86-64 PE.
 | Offset | Field | Type | Meaning |
 |---|---|---|---|
 | 0 | `magic` | `UINT64` | `BOOT_INFO_MAGIC`, 0x544F4F4241564F4E: "NOVABOOT" in memory order |
-| 8 | `version` | `UINT64` | `BOOT_INFO_VERSION`, 1 for the record and entry state this document describes |
+| 8 | `version` | `UINT64` | `BOOT_INFO_VERSION`, 2 for the record and entry state this document describes |
 | 16 | `screen.pixels` | `UINT32 *` | The direct-map address of `FrameBufferBase` of the graphics mode in use (UEFI 12.9.2) |
 | 24 | `screen.width` | `INT64` | `HorizontalResolution` |
 | 32 | `screen.height` | `INT64` | `VerticalResolution` |
@@ -149,8 +151,11 @@ x86-64 PE.
 | 104 | `memory_map` | `UINT8 *` | The direct-map address of the memory map `ExitBootServices` accepted |
 | 112 | `memory_map_size` | `UINTN` | Size of the map in bytes |
 | 120 | `descriptor_size` | `UINTN` | Distance between descriptors in bytes |
+| 128 | `random_seed_count` | `UINT64` | Entries of `random_seeds` filled in, at most `BOOT_RANDOM_SEEDS` (4) |
+| 136 + 40i | `random_seeds[i].status` | `UINT64` | The `EFI_STATUS` of asking instance i for a seed; the seed is valid only if it is 0 (`EFI_SUCCESS`) |
+| 144 + 40i | `random_seeds[i].bytes` | `UINT8[32]` | The seed |
 
-The record is 128 bytes and lives in nova-boot's `.data` section; `info`
+The record is 296 bytes and lives in nova-boot's `.data` section; `info`
 is its direct-map address. The kernel reads `magic` and `version` before
 any other field and halts, logging both, on a value it was not built
 for. Another layout, or another machine state at entry, takes another
@@ -168,6 +173,45 @@ The memory map is an array of `EFI_MEMORY_DESCRIPTOR` (UEFI 7.2.3) of
 `descriptor_size`, never by `sizeof(EFI_MEMORY_DESCRIPTOR)`: EDK II reports
 48 bytes for the 40-byte structure (`MdeModulePkg/Core/Dxe/Mem/Page.c`,
 `CoreGetMemoryMap`). Addresses in it are physical.
+
+### Random seeds
+
+nova-boot finds every handle with `EFI_RNG_PROTOCOL` with
+`LocateHandleBuffer(ByProtocol)` (UEFI 7.3.15) and asks the first four,
+in the order returned, for 32 bytes from the default algorithm,
+`GetRNG` with a null `RNGAlgorithm` (UEFI 37.5.3). It asks each
+instance it finds, not only the one `LocateProtocol` returns, since
+that one can be the processor's RDRAND, which the kernel reads itself. A failure leaves
+its status in the entry; no seed, or no instance, does not stop the
+boot. nova-boot does not judge the seeds. The kernel hashes the valid
+ones with its own sources, then zeroes every entry.
+
+QEMU 11.1.3 builds its `edk2-x86_64-code.fd` from
+`OvmfPkg/OvmfPkgX64.dsc` (`roms/edk2-build.config`) at EDK II commit
+`4dfdca63a93497203f197ec98ba20e2327e4afe4`, which its `roms/edk2` pins.
+That build has two kinds of instance, from
+`OvmfPkg/Include/Dsc/OvmfRngComponents.dsc.inc`; the sources below are
+the same at the tag pinned in [README.md](README.md), apart from
+comments and a TPL raise in `VirtioRngGetRNG`:
+
+| Driver | Present when | Algorithms, default first |
+|---|---|---|
+| `SecurityPkg/RandomNumberGenerator/RngDxe` | The processor has RDRAND: its entry installs nothing unless `BaseRngLib` reads a value (`Rand/RngDxe.c`, `GetAvailableAlgorithms`) | `EFI_RNG_ALGORITHM_SP800_90_CTR_256_GUID`, RDRAND's output; `EFI_RNG_ALGORITHM_RAW` |
+| `OvmfPkg/VirtioRngDxe` | A virtio-rng device is present, one instance per device | `EFI_RNG_ALGORITHM_RAW` |
+
+Booted in QEMU with `-machine q35`, the observed instances were: none with
+QEMU's default processor, which has neither RDRAND nor RDSEED; one,
+VirtioRngDxe's, with `-device virtio-rng-pci`; one, RngDxe's, with
+`-cpu max`; two with both, RngDxe's first, which is also the one
+`LocateProtocol` returns. Each virtio-rng device added one more. So with
+QEMU's default processor the firmware offers a seed only with
+`-device virtio-rng-pci`.
+
+The drivers leave copies of what they return in boot-services memory:
+`VirtioRngGetRNG` reads into a pool buffer and frees it without
+clearing it, and RngDxe's `RngGetBytes` passes its values through a
+stack array. The kernel's page allocator zeroes every free page when it
+starts, before the kernel reads the seeds.
 
 ## Machine state at entry
 

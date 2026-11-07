@@ -1,7 +1,8 @@
 /* nova-boot: the UEFI loader. It draws the boot screen, loads the kernel
    from \nova\kernel.exe on the volume it was booted from, builds the
    kernel's page tables, measures the timestamp counter against Stall,
-   takes the final memory map, exits boot services, loads the kernel's
+   asks the firmware's random number generators for seeds, takes the
+   final memory map, exits boot services, loads the kernel's
    tables and jumps to the kernel's entry on the kernel's stack with a
    BOOT_INFO record. */
 
@@ -768,6 +769,43 @@ static EFI_STATUS build_address_space(
 }
 
 /* ------------------------------------------------------------------------
+   Random seeds */
+
+static EFI_GUID rng_guid = {0x3152bca5, 0xeade, 0x433d,
+                            {0x86, 0x2e, 0xc0, 0x1c, 0xdc, 0x29, 0x1f, 0x44}};
+
+/* Ask each EFI_RNG_PROTOCOL instance (UEFI 37.5), up to
+   BOOT_RANDOM_SEEDS of them, for a seed from its default algorithm, into
+   BOOT_INFO. Every instance is asked, not just the first LocateProtocol
+   finds, since an instance can be the processor's RDRAND, which the
+   kernel reads itself. The kernel hashes the seeds with its own sources;
+   nova-boot records what each call returned and boots with or without a
+   seed. */
+static void take_random_seeds(EFI_BOOT_SERVICES *boot)
+{
+    EFI_HANDLE *handles;
+    UINTN count, i;
+
+    if (boot->LocateHandleBuffer(BY_PROTOCOL, &rng_guid, 0, &count,
+                                 &handles) != EFI_SUCCESS)
+        return;
+    if (count > BOOT_RANDOM_SEEDS)
+        count = BOOT_RANDOM_SEEDS;
+    for (i = 0; i < count; i++) {
+        BOOT_RANDOM_SEED *seed = &boot_info.random_seeds[i];
+        EFI_RNG_PROTOCOL *rng;
+
+        seed->status =
+            boot->HandleProtocol(handles[i], &rng_guid, (VOID **)&rng);
+        if (seed->status == EFI_SUCCESS)
+            seed->status =
+                rng->GetRNG(rng, 0, sizeof(seed->bytes), seed->bytes);
+    }
+    boot_info.random_seed_count = count;
+    boot->FreePool(handles);
+}
+
+/* ------------------------------------------------------------------------
    Leaving the firmware */
 
 /* Take the final memory map into boot_info and exit boot services. If the
@@ -877,6 +915,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     boot->Stall(CALIBRATION_MICROSECONDS);
     boot_info.tsc_per_ms = (rdtsc() - t0) / (CALIBRATION_MICROSECONDS / 1000);
 
+    take_random_seeds(boot);
     status = exit_boot_services(ImageHandle, boot);
     if (status != EFI_SUCCESS) {
         free_address_space(boot, &space);
