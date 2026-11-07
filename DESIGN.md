@@ -70,6 +70,15 @@ compared.
   Hyper-V's synthetic devices. Gen 2 firmware cannot enroll new Secure Boot
   keys, and an image signed by Microsoft would not be reproducible from
   source, so the VM runs with Secure Boot off.
+- **Storage:** one tree with no drive letters and no `/dev`. `/store` holds
+  every program, library and the OS itself, read-only and
+  content-addressed; `/system` is the running system, a pointer into the
+  store switched atomically; `/users/<name>` holds each user's files and
+  profile; `/data` holds services' state. Store paths hash the store
+  directory as `/nix/store` on every host, so each is named alike
+  everywhere. The native file system is copy-on-write with SHA-256
+  checksums, and only the store service writes the store
+  ([docs/spec/storage.md](docs/spec/storage.md)).
 - **Compiler:** an x86-64 PE cross compiler that tinycc-native compiles
   from TinyCC's source. A UEFI image is linked with `-shared` so that it
   carries base relocations, which TinyCC writes only for DLL-style images.

@@ -16,6 +16,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [speculation.md](speculation.md) | The speculative-execution mitigations on entry from and exit to user mode and at a process switch, and how the kernel detects which apply |
 | [replay.md](replay.md) | Every nondeterministic input a process can receive, and how a recording captures or excludes it |
 | [compat.md](compat.md) | How a 32-bit Windows program runs: its process, ntdll, paths and the stand-in file protocol |
+| [storage.md](storage.md) | The directory protocol and per-process views, the native file system, the store at `/store`, its builds and garbage collection, and the first milestone |
 
 ## Firmware and platform
 
@@ -254,7 +255,8 @@ May 2011 (IETF).
   `8f39f02a57bfd1da15634706724a585766e6223f77ecdaf243cad16cd3a1aa1b`
   (RFC 6234)
 - Used by: the kernel's SHA-256 (FIPS 180-4) and its boot-time test
-  (RFC 6234, 8.5).
+  (RFC 6234, 8.5); the checksums and digests of
+  [storage.md](storage.md).
 
 **Fast-key-erasure random-number generators**, D. J. Bernstein, the
 cr.yp.to blog, July 23, 2017.
@@ -361,7 +363,8 @@ December 6, 2000; legal agreement updated March 30, 2011.
 - Access: free download under the agreement printed in the document,
   whose licence covers products used in the boot process (clause 1(e)).
 - sha256: `07db52dfd7c81d712dfaaa844eb64db5ce6cd439a435f0d2a414539d07e23c1d`
-- Used by: the disk layout and the image tool's FAT32 writer.
+- Used by: the disk layout and the image tool's FAT32 writer;
+  [storage.md](storage.md), for the licence's limit to the boot process.
 - Microsoft also serves an earlier save with the same technical text at
   <https://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/fatgen103.doc>,
   sha256 `b17d66c796d9cd3070adf4ccbc00add5a8b6b6f5491fe8ea949df778fce60172`.
@@ -384,7 +387,8 @@ December 6, 2000; legal agreement updated March 30, 2011.
   to review and cite the document and grants no licence to implement it.
 - sha256: `fe7647532c06859f2952d9db1f90165aa3e9375343d588d5444253f7dbb2c9bd`
   and `2f6dc41d529c03e0596219fb2a734221ba3261837e14bab61168cde5a3226c30`
-- Used by: an NVMe storage driver for real hardware.
+- Used by: an NVMe storage driver for real hardware;
+  [storage.md](storage.md), for the Flush command (7.2).
 
 ## Devices
 
@@ -397,7 +401,8 @@ April 8, 2026 (OASIS).
 - sha256: `497b7b989b5161444e87866c264a46be90911b8f4738eadf4dd4f52eb37c8727`
 - Used by: drivers for QEMU's virtio devices: the virtio block driver
   (`drivers/virtio_blk.c`), for the PCI transport (4.1), split
-  virtqueues (2.7) and the block device (5.2).
+  virtqueues (2.7) and the block device (5.2); [storage.md](storage.md),
+  for when a block write is stable (5.2.6.2).
 
 **eXtensible Host Controller Interface for Universal Serial Bus (xHCI)
 Requirements Specification**, revision 2.0, October 2025, document
@@ -507,6 +512,74 @@ Computer Systems 34(1), April 2016, DOI 10.1145/2893177.
 - sha256: `4375964e2eac58ba2f185c04412b8eeba749ebe700550f1ed519e7034819a635`
 - Used by: [ipc.md](ipc.md).
 
+## Storage design references
+
+Papers and reference documents [storage.md](storage.md) compares nova-os
+with. Its page numbers are the ones each copy pinned here prints.
+
+**The Purely Functional Software Deployment Model**, Eelco Dolstra, PhD
+thesis, Utrecht University, defended January 18, 2006.
+
+- Document: <https://edolstra.github.io/pubs/phd-thesis.pdf>, the
+  author's copy
+- Access: free download; no terms stated.
+- sha256: `f2bd78a82fb615ce2f3145d5418733bc65e09121147ecb814eba54eaf59875e4`
+- Used by: [storage.md](storage.md). The PDF's page is the printed page
+  plus 8.
+
+**The Design and Implementation of a Log-Structured File System**, Mendel
+Rosenblum and John K. Ousterhout, the preprint dated July 24, 1991, of the
+paper in the 13th ACM Symposium on Operating Systems Principles and ACM
+Transactions on Computer Systems 10(1), February 1992.
+
+- Document: <https://people.eecs.berkeley.edu/~brewer/cs262/LFS.pdf>, a
+  course copy
+- Access: free download; no terms stated. Its page numbers are the
+  preprint's, not the journal's.
+- sha256: `cc6a7d7e52cd9182368f42024188bfbcf899f3fc47ce8b87c33a1aabffa286b7`
+- Used by: [storage.md](storage.md).
+
+**The Zettabyte File System**, Jeff Bonwick, Matt Ahrens, Val Henson, Mark
+Maybee and Mark Shellenbaum, Sun Microsystems, 2003; the paper names no
+venue.
+
+- Document: <https://web.mit.edu/6.033/2019/wwwdocs/papers/zfs.pdf>, a
+  course copy
+- Access: free download; no terms stated.
+- sha256: `27beda48b1e8bdcc6018b9858b1e55e5b5c596e25d9ff61115be3509a05f5615`
+- Used by: [storage.md](storage.md).
+
+**ZFS On-Disk Specification, Draft**, Sun Microsystems, 2006.
+
+- Document: <https://people.cs.umass.edu/~liberato/courses/2020-spring-compsci590k/files/ondiskformat0822.pdf>,
+  a course copy; no copy from Sun or Oracle was found.
+- Access: free download. It states that it is distributed under licences
+  restricting its use, copying and distribution; storage.md cites it by
+  section and copies none of its text.
+- sha256: `9c67ac514b02fe46ba1958322e9b3870995bda64ac73150bc82c9eb19e341ce0`
+- Used by: [storage.md](storage.md).
+
+**File System Design for an NFS File Server Appliance**, Dave Hitz, James
+Lau and Michael Malcolm, USENIX Winter 1994 Technical Conference, as
+Network Appliance Technical Report 3002, Rev. C 3/95.
+
+- Document: <https://rcs.uwaterloo.ca/~ali/cs350-f19/papers/wafl.pdf>, a
+  course copy of the report, which carries USENIX's permission to
+  reproduce it. USENIX serves the paper as text, without page numbers, at
+  <https://static.usenix.org/publications/library/proceedings/sf94/full_papers/hitz.a>.
+- Access: free download.
+- sha256: `e254a24f5d540bc68bdabe235405520961ddc9b2e9cf4ebeb304965c27e656d2`
+- Used by: [storage.md](storage.md).
+
+**Apple File System Reference**, Apple Inc., June 22, 2020.
+
+- Document: <https://developer.apple.com/support/downloads/Apple-File-System-Reference.pdf>
+- Access: free download. Its notice permits storing it for personal use
+  and grants no licence to the technology it describes; storage.md cites
+  it by page and copies none of its text.
+- sha256: `74c3db584971aea2b11549ca25799ead824e1bd8994e94cd3f8665ce5aea79cc`
+- Used by: [storage.md](storage.md).
+
 ## Not pinned
 
 - **VESA Enhanced Extended Display Identification Data Standard**
@@ -527,3 +600,13 @@ Computer Systems 34(1), April 2016, DOI 10.1145/2893177.
   white papers under [Speculative execution](#speculative-execution).
   Used by: [speculation.md](speculation.md) M10, which logs SRSO as
   unconfirmed on those processors until the list is pinned.
+- **BTRFS: The Linux B-Tree Filesystem**, O. Rodeh and others, ACM
+  Transactions on Storage, August 2013, as the Btrfs documentation cites
+  it. The ACM Digital Library answered every request with a bot check,
+  and no open copy was found. [storage.md](storage.md) cites the Btrfs
+  documentation instead.
+- **The Linux implementation of a log-structured file system**, Ryusuke
+  Konishi and others, ACM SIGOPS Operating Systems Review 40(3), pages
+  102 to 107, 2006, as the NILFS project's links page cites it. The ACM
+  Digital Library answered with a bot check. [storage.md](storage.md)
+  cites the NILFS project's documentation instead.
