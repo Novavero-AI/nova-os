@@ -1,0 +1,180 @@
+# Specifications
+
+The specifications nova-os is written against. A section number in
+nova-os's documents or source refers to the version pinned here; the
+sha256 identifies the exact copy the pin was taken from.
+
+## nova-os
+
+| Document | Defines |
+|---|---|
+| [boot-protocol.md](boot-protocol.md) | The kernel image, `BOOT_INFO` and the machine state nova-boot hands the kernel on x86-64 |
+| [disk-layout.md](disk-layout.md) | The boot disk: GPT, the EFI System Partition, its FAT32 file system and file names |
+
+## Firmware and platform
+
+**Unified Extensible Firmware Interface (UEFI) Specification**, Release
+2.11, November 21, 2024 (UEFI Forum).
+
+- Document: <https://uefi.org/sites/default/files/resources/UEFI_Spec_Final_2.11.pdf>,
+  also as HTML at <https://uefi.org/specs/UEFI/2.11/>
+- Access: free download.
+- sha256: `a64b8e442004b91becc3de9afaf8ca61b259a9a3b436accb6b3711ab5400cee9`
+- Used by: nova-boot (`boot/efi.h`, `boot/nova-boot.c`), the boot
+  protocol, the disk layout.
+
+**Advanced Configuration and Power Interface (ACPI) Specification**,
+Release 6.6, May 13, 2025 (UEFI Forum).
+
+- Document: <https://uefi.org/sites/default/files/resources/ACPI_Spec_6.6.pdf>,
+  also as HTML at <https://uefi.org/specs/ACPI/6.6/>
+- Access: free download.
+- sha256: `8c7542dd4de974ae47bba71bb0336637fe1e3838daad7692370ab4cf218efd35`
+- Used by: the boot protocol (finding the RSDP, 5.2.5.2); the kernel's
+  hardware discovery (MADT, 5.2.12).
+
+**EDK II**, tag `edk2-stable202608`, commit
+`2970e5699ba6267f3384ffab20f96647578aebc8` (TianoCore,
+BSD-2-Clause-Patent).
+
+- Source: <https://github.com/tianocore/edk2/tree/edk2-stable202608>
+- Access: open source.
+- Used by: the boot protocol, for firmware behaviour UEFI leaves to the
+  implementation. The firmware QEMU bundles is an EDK II build.
+
+**Should I create a generation 1 or 2 virtual machine in Hyper-V?**
+(Microsoft Learn), dated June 18, 2025, updated February 16, 2026.
+
+- Document: <https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/plan/should-i-create-a-generation-1-or-2-virtual-machine-in-hyper-v>
+- Access: free web page.
+- sha256: `9dea282509000aac23281aad2ed2046f01d30b5c910bcdf30919fe5f51ccdd45`
+- Used by: the first target. A generation 2 VM boots from a SCSI VHDX or
+  an ISO, has UEFI firmware, no PIC, PIT or PCI bus, and an optional UART.
+
+## Processors
+
+**Intel 64 and IA-32 Architectures Software Developer's Manual, Volume 3
+(3A, 3B, 3C and 3D): System Programming Guide**, order number
+325384-093US, September 2026.
+
+- Document: <https://cdrdv2.intel.com/v1/dl/getContent/671447>
+- Access: free download.
+- sha256: `77919be320f35da2782771ef2cb65a868cf68e62c8f8279f2ca61199cb70d1f8`
+- Used by: the kernel (paging, GDT, IDT, Local APIC, TSC).
+
+**AMD64 Architecture Programmer's Manual, Volume 2: System Programming**,
+publication 24593, revision 3.46, October 2026.
+
+- Document: <https://docs.amd.com/api/khub/documents/LNBl5evreogi0r25VIFF2g/content>
+- Access: free download.
+- sha256: `e4130d5aa26227b6a116d75af9e0f6e5adb4c034ff0d49a3c0fe73c3f49794cf`
+- Used by: the kernel on AMD processors, for the same areas as the Intel
+  manual.
+
+## Executable format and calling convention
+
+**PE Format** (Microsoft Learn), updated September 10, 2026.
+
+- Document: <https://learn.microsoft.com/en-us/windows/win32/debug/pe-format>
+- Access: free web page.
+- sha256: `ed7487e49f94c1ad7a4ff99e5859aafcf83c822c23196eb8a88d2db161e7357b`
+- Used by: nova-boot's kernel loader; the kernel image format in the boot
+  protocol; the images TinyCC writes.
+
+**x64 calling convention** (Microsoft Learn), dated March 19, 2025,
+updated May 21, 2026, with **x64 stack usage**, dated December 17, 2018,
+updated November 5, 2025.
+
+- Documents: <https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention>,
+  <https://learn.microsoft.com/en-us/cpp/build/stack-usage>
+- Access: free web pages.
+- sha256: `963a36365ace6d4148e5c2d63688b1c89663479c3fa9c951606e9a7861ad1317`
+  and `d22c63e02a6b73c9ecb0c073489e0f2e964bda13ce50fe9a6d6f321a3d4cef37`
+- Used by: every nova-os image (TinyCC's x86_64-win32 target), firmware
+  calls (UEFI 2.3.4.2) and the kernel entry.
+
+## Storage and file systems
+
+**Microsoft Extensible Firmware Initiative FAT32 File System
+Specification, FAT: General Overview of On-Disk Format**, version 1.03,
+December 6, 2000; legal agreement updated March 30, 2011.
+
+- Document: <https://download.microsoft.com/download/0/8/4/084c452b-b772-4fe5-89bb-a0cbf082286a/fatgen103.doc>
+- Access: free download under the agreement printed in the document,
+  whose licence covers products used in the boot process (clause 1(e)).
+- sha256: `07db52dfd7c81d712dfaaa844eb64db5ce6cd439a435f0d2a414539d07e23c1d`
+- Used by: the disk layout and the image tool's FAT32 writer.
+- Microsoft also serves an earlier save with the same technical text at
+  <https://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/fatgen103.doc>,
+  sha256 `b17d66c796d9cd3070adf4ccbc00add5a8b6b6f5491fe8ea949df778fce60172`.
+
+**[MS-VHDX]: Virtual Hard Disk v2 (VHDX) File Format**, protocol revision
+8.0, April 23, 2024.
+
+- Document: <https://winprotocoldocs-bhdugrdyduf5h2e4.b02.azurefd.net/MS-VHDX/%5bMS-VHDX%5d.pdf>,
+  listed at <https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-vhdx/83e061f8-f6e2-4de1-91bd-5d518a43d477>
+- Access: free download under Microsoft's Open Specifications terms.
+- sha256: `1419e02e8dd2f6f223b44230e88518c90f6e6af09f902b17f86576fb548d46f4`
+- Used by: the image tool's VHDX container.
+
+**NVM Express Base Specification**, revision 2.4, July 31, 2026, and
+**NVMe over PCIe Transport Specification**, revision 1.4, July 31, 2026.
+
+- Documents: <https://nvmexpress.org/wp-content/uploads/NVM-Express-Base-Specification-Revision-2.4-Ratified-2026.07.31.pdf>,
+  <https://nvmexpress.org/wp-content/uploads/NVM-Express-NVMe-over-PCIe-Transport-Specification-Revision-1.4-Ratified-2026.07.31.pdf>
+- Access: free download. The notice in each gives non-members the right
+  to review and cite the document and grants no licence to implement it.
+- sha256: `fe7647532c06859f2952d9db1f90165aa3e9375343d588d5444253f7dbb2c9bd`
+  and `2f6dc41d529c03e0596219fb2a734221ba3261837e14bab61168cde5a3226c30`
+- Used by: an NVMe storage driver for real hardware.
+
+## Devices
+
+**Virtual I/O Device (VIRTIO)**, version 1.4, Committee Specification 01,
+April 8, 2026 (OASIS).
+
+- Document: <https://docs.oasis-open.org/virtio/virtio/v1.4/cs01/virtio-v1.4-cs01.pdf>
+- Access: free download, under the Non-Assertion Mode of the OASIS IPR
+  Policy.
+- sha256: `497b7b989b5161444e87866c264a46be90911b8f4738eadf4dd4f52eb37c8727`
+- Used by: drivers for QEMU's virtio devices.
+
+**eXtensible Host Controller Interface for Universal Serial Bus (xHCI)
+Requirements Specification**, revision 2.0, October 2025, document
+868296 (Intel). Revision 1.2c, October 2025, document 868295, is the
+current revision of the 1.x line.
+
+- Documents: <https://cdrdv2.intel.com/v1/dl/getContent/868296>,
+  <https://cdrdv2.intel.com/v1/dl/getContent/868295>
+- Access: free download. Each states that it grants no licence to
+  Intel's intellectual property.
+- sha256: `6b671c4cf9f396a70a5fb993316cbf1cea9e1fd55ce464b5dea0ab6fcd6e4cf0`
+  (2.0) and `0b06318005c3e0c8b896f2a002c2a3c78426b5fdacac4ad1cc02ffec15835190`
+  (1.2c)
+- Used by: a USB host-controller driver (QEMU's `qemu-xhci`).
+
+## PCI Express configuration space
+
+The PCI Express Base Specification and the PCI Firmware Specification
+(which defines the MCFG table that ACPI 6.6 reserves in Table 5.6) are
+published by PCI-SIG and are not pinned: their current revisions and
+access terms are unverified. These public documents describe
+memory-mapped configuration space (ECAM):
+
+- **Processor Programming Reference for AMD Family 1Ah Model 02h,
+  Revision C1**, publication 57238, revision 0.49, March 6, 2026.
+  `MmioCfgBaseAddr` (MSRC001_0058) gives the base and bus range.
+  <https://docs.amd.com/api/khub/documents/X_EXZ3uavMHFQe8qvjfHcw/content>,
+  a zip archive, sha256
+  `e91d9fe3ae32df3d6c88012cdac261440cc06e089a0d83d191247a06c8c91e99`.
+- **12th Generation Intel Core Processors Datasheet, Volume 2 of 2**,
+  document 655259, revision 003, April 2022: "PCI Express Configuration
+  Address Space" and the `PCIEXBAR` register.
+  <https://cdrdv2.intel.com/v1/dl/getContent/655259>, sha256
+  `8b13b3db5530561e3e252910a17b7f088b5ad04164d5fdca750124e93e868189`.
+
+## Not pinned
+
+- **16550 UART.** `kernel/main.c` drives COM1 through the 16550 register
+  interface (line status register at offset 5, transmitter-empty bit
+  0x20). The register reference, a 16550 datasheet, is not pinned.
