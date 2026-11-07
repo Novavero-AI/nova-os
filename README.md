@@ -6,42 +6,25 @@ a small kernel core, written in C and built entirely from source down to a
 seed and compared.
 
 It boots in a UEFI virtual machine. nova-boot, the loader, draws the boot
-screen, loads the kernel from `\nova\kernel.exe` and reads the other files
-in `\nova\`, the first process's `init.exe` and the store image among
-them, exits the firmware's boot services and jumps to the kernel, which
-runs the first process in user mode, reports itself on the first serial
-port and, once the first process reports that its startup is done, fades
-the boot screen into the desktop background. The first process starts the
-store service and the namespace server from the store image as user-mode
-processes, publishes the store as `/store`, and runs a test program from
-`/store` with a view of its own closure and nothing else
-([docs/spec/storage.md](docs/spec/storage.md), F16). From the test disk,
-which holds the inputs of stage0-pe32's chain, the first process runs the
-bootstrap check: the chain, from its hex0 seed to M1, as 32-bit Windows
-programs, with each link checked against the one nova-nix builds on
-Windows ([docs/spec/compat.md](docs/spec/compat.md)). It then enumerates
-PCI and starts the virtio block driver, `virtblk.exe`, as a user-mode
-process of its own, which reads the boot disk's partition table and the
-EFI System Partition's boot sector through its virtqueue, and the virtio
-input driver, `virtinp.exe`, which sends each key pressed and released as
-a message to its client, the console, `console.exe`
-([docs/spec/input.md](docs/spec/input.md)). It stays as their supervisor,
-and restarts a driver or the console if one ends
-([docs/spec/ipc.md](docs/spec/ipc.md), I10). Once the fade has drawn its
-last frame the kernel releases the display, and the first process hands
-it to the console, which draws a translucent panel over the background
-and serves programs text output and lines typed at the keyboard
-([docs/spec/console.md](docs/spec/console.md)). With a data disk attached
-as a second virtio drive, the first process starts first the block
-driver serving that disk and the file system service, `fs.exe`, over it,
-publishes the disk's `/data` and `/users` beside `/store`, and runs
-`fstest.exe`, which checks them
-([docs/spec/storage.md](docs/spec/storage.md), F18). It then starts the
-accounts service and login from `/store` and supervises them: on a
-first boot login creates the administrator's account, and afterwards
-asks for a name and a password, and starts a shell that holds the
-user's home, `/store` to read, and nothing else
-([docs/spec/accounts.md](docs/spec/accounts.md)).
+screen and starts the kernel, which runs the first process in user mode.
+The first process starts the rest as user-mode processes: the store
+service and the namespace server, from the store image, through which it
+publishes the store as `/store`
+([docs/spec/storage.md](docs/spec/storage.md), F16); the virtio
+block and input drivers ([docs/spec/input.md](docs/spec/input.md)); the
+console, which takes the display once the boot screen fades and serves
+programs text output and lines typed at the keyboard
+([docs/spec/console.md](docs/spec/console.md)); with a data disk, the
+file system service, which serves `/data` and `/users` from it
+([docs/spec/storage.md](docs/spec/storage.md), F18); and the accounts
+service and login, which start each user's shell
+([docs/spec/accounts.md](docs/spec/accounts.md)). It restarts a driver
+or the console if one ends ([docs/spec/ipc.md](docs/spec/ipc.md), I10).
+From a test disk it also runs stage0-pe32's bootstrap chain, from its
+hex0 seed to M1, as 32-bit Windows programs, and checks each link against
+the one nova-nix builds on Windows
+([docs/spec/compat.md](docs/spec/compat.md)).
+[docs/spec](docs/spec/README.md) lists the specifications, and
 [DESIGN.md](DESIGN.md) holds the principles, the decisions made so far and
 the stages; [design/backgrounds](design/backgrounds/README.md) holds the
 background's prototypes and the check that `gfx/limb.c` draws Limb's
@@ -50,7 +33,7 @@ prototype and the check that `gfx/font.c` draws its glyphs.
 
 ## Build
 
-The fifteen images are compiled by TinyCC at commit
+The images are compiled by TinyCC at commit
 cb41cbfe717e4c00d7bb70035cda5ee5f0ff9341, built twice: as a cross
 compiler that writes x86-64 PE, and as one that writes i386 PE for ntdll.
 The archive's sha256 is
@@ -216,7 +199,7 @@ build gives the same bytes:
 | `shell.exe` | 26,112 | `d81501863c34bf7809c1a43503ddf658d4ce753c8f9d8fe919f2decfe1fd45f7` |
 
 The block also writes the store image, `store.img`
-([docs/spec/store-image.md](docs/spec/store-image.md)), from four
+([docs/spec/store-image.md](docs/spec/store-image.md)), from these
 store paths: `nova-services`, holding the store service and the
 namespace server, which the image's header names as the programs the
 first process starts; `greeting`, a file; `hello`, holding the test
@@ -248,13 +231,12 @@ Partition, formatted FAT32, holding `\EFI\BOOT\BOOTX64.EFI` and in
 with only the standard library, so the host compiler or TinyCC builds it.
 
 The block below writes two boot disks and a data disk. The system's,
-`disk.img` and `disk.vhdx`, holds in `\NOVA\` the kernel, `INIT.EXE`,
-`NTDLL.DLL`, `VIRTBLK.EXE`, `VIRTINP.EXE`, `CONSOLE.EXE`, `STORE.IMG`,
-`FS.EXE` and `FSTEST.EXE`. The test disk, `chain.img` and
-`chain.vhdx`, holds the same files and the inputs of stage0-pe32's chain
-up to M1, which the bootstrap check reads: its seed and the files of
-stage0-pe32 and of the M2libc, M2-Planet and mescc-tools trees it builds
-from, at the commits nova-nix's stage0-pe32 package pins.
+`disk.img` and `disk.vhdx`, holds the files its `mkimage` line names.
+The test disk, `chain.img` and `chain.vhdx`, holds the same files and
+the inputs of stage0-pe32's chain up to M1, which the bootstrap check
+reads: its seed and the files of stage0-pe32 and of the M2libc,
+M2-Planet and mescc-tools trees it builds from, at the commits nova-nix's
+stage0-pe32 package pins.
 `tools/mkdata.c` writes the data disk, `data.img`, raw, of the size given
 in MiB: a GPT with one pool partition holding an empty data volume
 ([docs/spec/pool-format.md](docs/spec/pool-format.md)). It is C99 too,
@@ -367,47 +349,30 @@ qemu-system-x86_64 -machine q35 -m 256M \
   -device qemu-xhci -device usb-tablet -serial stdio
 ```
 
-The kernel prints its lines to the terminal through the serial port,
-among them the first process's, the data disk's and the test program's
-from `/store`, which say `nova-fs: pool at lba 2048` and what the file
-system service opened, `nova-init: /data and /users published from the
-data disk`, `nova-fstest: checks passed`, `nova-hello: checks passed`,
-`nova-init: the bootstrap check is not on this disk` and
-`nova-init: checks passed`, after which the kernel says
-`nova: first process reports startup done`, fades into the desktop and
-says `nova: display released to the first process`. The console then
-logs how it lays out its panel, in which login runs.
+The kernel prints its lines, and those of the programs it runs, to the
+terminal through the serial port; the first process says
+`nova-init: checks passed` once its checks pass. Login then runs in the
+console's panel.
 
-On a fresh data disk login says that nova-os has no accounts yet and
-asks for a name and a password, twice, for the administrator's account;
-each password is typed without echo. A name is 1 to 32 lowercase
-letters, digits and `-`, starting with a letter, and a password has 8
-to 128 characters. Login then shows `Creating the account...` while the
-accounts service hashes the password, which takes 9 to 13 seconds
-under QEMU's emulation on an Apple M2, and starts the shell, whose
-`help` lists its commands; `logout` returns to login. Booted again, the
-same `data-run.img` keeps the account, and login asks for a name and a
-password, showing `Checking...` while it checks them. The administrator
-adds users with `user create`.
+On a fresh data disk login creates the administrator's account and
+starts the shell, whose `help` lists its commands. Booted again, the
+same `data-run.img` keeps the account and the files the last boot
+wrote, and login asks for a name and a password
+([docs/spec/accounts.md](docs/spec/accounts.md)).
 
-For the bootstrap check, boot `chain.img` in place of `disk.img`. The
-first process then gives the size and sha256 of what each of the
-chain's 20 steps wrote, each link's the one nova-nix pins, and says
-`nova-init: the chain built nova-nix's hex0, hex1, hex2, catm, M0,
-cc_x86, M2 and M1` before `nova-init: checks passed`.
-Under QEMU's emulation, without hardware acceleration, the chain takes
-about 11 minutes on an Apple M2. With `format=vhdx`, the same drive
-boots `disk.vhdx` or `chain.vhdx`.
+For the bootstrap check, boot `chain.img` in place of `disk.img`: the
+first process logs what each step of the chain wrote and checks each
+link against the one nova-nix pins
+([docs/spec/compat.md](docs/spec/compat.md)). Under QEMU's emulation,
+without hardware acceleration, the chain takes about 11 minutes on an
+Apple M2. With `format=vhdx`, the same drive boots `disk.vhdx` or
+`chain.vhdx`.
 
-`fstest.exe` counts the data disk's boots, writes a file at the first
-and reads it back byte for byte at each after; booted again, the same
-`data-run.img` keeps what the last boot wrote. Without the data disk's
-drive the first process says `nova-init: no data disk: no second virtio
-block function` and goes on. A system disk whose `\NOVA\` also holds a
-file named `FSLOOP` has `fstest.exe` commit generations of its crash
-state until the machine stops, so that a test can kill QEMU at any
-moment and check, at the next boot, that the disk holds the generation
-last committed or the one after it, whole.
+A system disk whose `\NOVA\` also holds a file named `FSLOOP` has
+`fstest.exe` commit generations of its crash state until the machine
+stops, so that a test can kill QEMU at any moment and check, at the next
+boot, that the disk holds the generation last committed or the one after
+it, whole.
 
 The firmware's variable store needs a writable copy. The disk is attached
 through virtio, so that the virtio block driver has the boot disk to

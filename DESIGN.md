@@ -80,8 +80,7 @@ compared.
   checksums, and only the store service writes the store
   ([docs/spec/storage.md](docs/spec/storage.md)).
 - **Compiler:** an x86-64 PE cross compiler that tinycc-native compiles
-  from TinyCC's source. A UEFI image is linked with `-shared` so that it
-  carries base relocations, which TinyCC writes only for DLL-style images.
+  from TinyCC's source.
 
 ## Stages
 
@@ -121,18 +120,12 @@ CI checks every pull request and every push to main:
 - **Boot** boots the reproduced `disk.img` under QEMU with Ubuntu 24.04's
   OVMF, with a copy of `data.img` as its data disk: on QEMU's default
   processor, on Skylake-Client, which needs page-table isolation, on
-  `-cpu max`, and under KVM. The serial log must show the kernel's
-  self-tests, the store, the data disk's pool opened, `/data` and
-  `/users` published and their check passing, the test program, the
-  virtio block driver reading the GPT, init's checks, startup done, the
-  background and the console; then, typed through QEMU's monitor, the
-  first boot's account is created on the fresh data disk and the shell
-  runs `whoami`. A further boot of the same data disk logs in with that
-  account, which it must still hold. Five more boots change
-  the data disk's GPT, a byte of its header's CRC or of its entry array,
-  or, with the CRCs made to match, its pool entry moved below the usable
-  LBAs, or with them over the table, or a second entry over it, and the
-  log must show the file system service refusing the disk.
+  `-cpu max`, and under KVM. The serial log must show each part starting
+  and its checks passing; then, typed through QEMU's monitor, the first
+  boot's account is created on the fresh data disk and the shell runs
+  `whoami`. A further boot of the same data disk logs in with that
+  account, which it must still hold. Other boots corrupt the data disk's
+  GPT, and the log must show the file system service refusing the disk.
 - **Chain** boots `chain.img` and checks that each step of the bootstrap
   chain runs and each pinned link matches.
 
