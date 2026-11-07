@@ -14,8 +14,7 @@ build it, with what CI checks at each step.
 them.
 
 DESIGN.md, principle 2, makes networking user-mode processes; that much
-is **Decided** there. Items the owner has ruled on are marked
-**Decided**; every other item is **Proposed**.
+is **Decided** there, and every item below is **Decided**.
 
 Each item gives the design, why, what it costs, and the main
 alternative not taken with that alternative's cost. Specifications are
@@ -29,7 +28,7 @@ references](README.md#network-design-references) and cited by name.
 
 ## N1. The parts
 
-**Proposed.**
+**Decided.**
 
 | Part | What it is | What it holds |
 |---|---|---|
@@ -65,7 +64,7 @@ process starts the accounts service and login from `nova-session`
 
 ### N2. The virtio network driver
 
-**Proposed.** The platform driver starts `\nova\virtnet.exe` for the
+**Decided.** The platform driver starts `\nova\virtnet.exe` for the
 first virtio network function it finds, PCI 1AF4:1041 or the
 transitional 1AF4:1000 (VIRTIO 1.4 4.1.2, 5.1.1), in a job of its own,
 with the bootstrap message every PCI device driver gets
@@ -140,7 +139,7 @@ the device sits behind a PCI Express port (QEMU,
 
 ### N3. Buffers, ownership and DMA
 
-**Proposed.** The service creates one section of `FRAME_SECTION_SIZE`
+**Decided.** The service creates one section of `FRAME_SECTION_SIZE`
 (256 KiB) and attaches it to the driver, which pins it whole for the
 device to read and write ([ipc.md I8](ipc.md#i8-dma)), as the file
 system service attaches a section to the block driver
@@ -217,7 +216,7 @@ Every slot belongs to one party at a time:
 
 ### N4. The frame protocol
 
-**Proposed.** `include/frame_protocol.h`, between a network driver and
+**Decided.** `include/frame_protocol.h`, between a network driver and
 its one client, the network service, on the channel the driver reports.
 Every message is a `FRAME_MESSAGE`, its transaction, operation and an
 entry count, followed by that many `FRAME_ENTRY`s, each a slot and a
@@ -270,7 +269,7 @@ and carries at most `FRAME_BATCH_MAX` (64) entries. The channel queues
 
 ### N5. Supervision
 
-**Proposed.** The first process starts the service and the resolver at
+**Decided.** The first process starts the service and the resolver at
 startup, from the `nova-network` store path, whether or not the machine
 has a network function, so that loopback and grants work without one,
 and keeps both running under
@@ -443,7 +442,7 @@ Weighed on what the stack must be:
 
 ### N7. What v1 implements
 
-**Proposed.**
+**Decided.**
 
 | Layer | Implemented from | v1 does | v1 leaves out |
 |---|---|---|---|
@@ -532,7 +531,7 @@ specifies.
 
 ### N9. One thread, one port, time and randomness
 
-**Proposed.** The service runs on one thread that waits on one port.
+**Decided.** The service runs on one thread that waits on one port.
 Every channel it serves has a one-shot watch on that port, re-armed once
 the channel is drained ([ipc.md I4](ipc.md#i4-ports)); `port_wait`'s
 deadline is the earliest of its timers (retransmission, delayed ACK,
@@ -580,7 +579,7 @@ and "a server multiplexes its own timeouts"
 ### N10. DHCP and the interface
 
 **Decided** (by the owner): the DHCP client stays in the service.
-**Proposed:** the rest.
+**Decided:** the rest.
 
 The service configures its one interface by DHCP, as RFC
 2131's client (4.4):
@@ -627,7 +626,7 @@ The control channel's status request reports the same
 ### N11. Names and the resolver
 
 **Decided** (by the owner): the resolver is a process of its own.
-**Proposed:** the rest.
+**Decided:** the rest.
 
 Names are resolved for programs, never by them. A program
 connects to a name ([N13](#n13-the-socket-protocol)); the service checks
@@ -685,7 +684,7 @@ to the resolver, a process of its own, which answers with addresses.
 
 **Decided** (by the owner): `*` covers every address but loopback, and
 local access is written explicitly; what the service logs is a setting
-of the network service. **Proposed:** the rest.
+of the network service. **Decided:** the rest.
 
 No call opens a socket from nothing. The network is reached only
 through a grant: a channel to the network service that the service
@@ -841,7 +840,7 @@ settings handle changes it.
 ### N13. The socket protocol
 
 **Decided** (by the owner): socket data travels inline in messages
-only, in v1. **Proposed:** the rest.
+only, in v1. **Decided:** the rest.
 
 `include/network_protocol.h`. Every kind of network object is a channel
 to the service. Every message starts with an `IO_REQUEST` and every
@@ -941,7 +940,7 @@ with three more that only completions carry, as codes 16 to 19 are:
 
 ### N14. Rights on a network handle
 
-**Proposed.** Every network object is a channel, so its handle carries
+**Decided.** Every network object is a channel, so its handle carries
 the kernel's channel rights: `READ`, `WRITE`, `WAIT` and `TRANSFER`,
 and never `DUPLICATE` ([ipc.md I1](ipc.md#i1-channels)), so each has
 one holder. A client needs `READ` and `WRITE` on any of them, since
@@ -974,7 +973,7 @@ directory protocol's rights narrow at each open
 
 **Decided** (by the owner): a session's network is set per account in
 the system recipe, and an account it names none for gets outbound only
-(item 4). **Proposed:** the rest.
+(item 4). **Decided:** the rest.
 
 Every grant comes from a control channel, and every control channel
 from the one above it, so each level can only narrow the one above.
@@ -1087,7 +1086,7 @@ has no network, as today.
 
 ### N16. Replay
 
-**Proposed,** as a refinement of [replay.md](replay.md), whose model
+**Decided,** as a refinement of [replay.md](replay.md), whose model
 the outside world strains: a peer on the network is outside every
 recording and behaves as it pleases.
 
@@ -1148,7 +1147,7 @@ recording and behaves as it pleases.
 
 ### N17. The threat model
 
-**Proposed.** What each part can do if it is compromised, and what a
+**Decided.** What each part can do if it is compromised, and what a
 hostile peer can do.
 
 | Who | Can | Cannot |
@@ -1193,7 +1192,7 @@ parser is checked on malformed input on the host
 
 ### N18. Limits on clients
 
-**Proposed.** The service divides what it holds among its clients, as
+**Decided.** The service divides what it holds among its clients, as
 [storage.md F17](storage.md#f17-limits-on-clients) divides a service's
 channels, so that no client can take what another holds.
 
@@ -1309,7 +1308,7 @@ decide.
 
 ### N20. The order of work
 
-**Proposed.** Each step is demonstrable on its own, and the CI checks
+**Decided.** Each step is demonstrable on its own, and the CI checks
 it ([N21](#n21-the-ci-test-plan)).
 
 **1. A link and a ping.** The driver ([N2](#n2-the-virtio-network-driver)
@@ -1384,7 +1383,7 @@ session does.
 
 **Decided** (by the owner): no boot looks a name up across the network
 in v1; the resolver is checked on the host, and `localhost` in the
-boot. **Proposed:** the rest.
+boot. **Decided:** the rest.
 
 The Boot job's machine (`ci/boot.py`, `DEVICES`) gains a network device
 on QEMU's user network, in place of `-net none`:

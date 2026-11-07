@@ -20,8 +20,7 @@ handle or a message (principle 8). Principle 7 names only the recipe's
 part; [Changes elsewhere](#changes-elsewhere) adds the user's.
 
 Each item gives the design, why, what it costs, and the main alternative
-not taken. Items the owner has ruled on are marked **Decided**; every
-other item is **Proposed**.
+not taken. Every item is **Decided**.
 
 Sources are pinned under [Shell design
 references](README.md#shell-design-references) and cited by these names:
@@ -120,7 +119,7 @@ and a script file's extension is `.nvo`.
 
 ## L1. Source and tokens
 
-**Proposed.**
+**Decided.**
 
 1. Source text is UTF-8 (RFC 3629); a byte sequence that is not UTF-8
    is a `parse` error at its offset. Identifiers (variable, parameter
@@ -192,7 +191,7 @@ and a script file's extension is `.nvo`.
 
 ## L2. Grammar
 
-**Proposed.** In this notation `=` defines a rule, `|` separates
+**Decided.** In this notation `=` defines a rule, `|` separates
 alternatives, `[ x ]` is optional, `{ x }` repeats zero or more times,
 `( )` groups, terminals are quoted, and `(* *)` is a comment. Names in
 capitals are tokens, defined after the syntax.
@@ -363,7 +362,7 @@ path meant to be granted is its own word (`-I ./include`).
 
 ## L3. Values and types
 
-**Proposed.**
+**Decided.**
 
 | Type | What it is |
 |---|---|
@@ -449,7 +448,7 @@ of a decimal fraction such as 1.1" (CBOR 3.4.4).
 
 ## L4. Words, quoting and expansion
 
-**Proposed.**
+**Decided.**
 
 1. **Input is scanned once.** A value is never parsed again: what a
    variable, a capture or an interpolation produces stays one value, as
@@ -505,7 +504,7 @@ of a decimal fraction such as 1.1" (CBOR 3.4.4).
 
 ## L5. Globs
 
-**Proposed.**
+**Decided.**
 
 1. A glob is a path literal with an unquoted `*` (any characters but
    `/`), `?` (one character but `/`) or `**` (any characters, `/`
@@ -552,7 +551,7 @@ of a decimal fraction such as 1.1" (CBOR 3.4.4).
 
 ## L6. Variables and scope
 
-**Proposed.**
+**Decided.**
 
 1. `let x = <expr>` binds a name that cannot change. `var x = <expr>`
    binds one that can, and `set x = <expr>` (or `+=`, `-=`, `++=`)
@@ -598,7 +597,7 @@ of a decimal fraction such as 1.1" (CBOR 3.4.4).
 
 ## L7. Pipelines
 
-**Decided** (by the owner): the value encoding, rule 9. **Proposed:** the
+**Decided** (by the owner): the value encoding, rule 9. **Decided:** the
 rest.
 
 1. **A stream is a sequence of values.** Built-ins and functions write
@@ -713,7 +712,7 @@ rest.
 
 ## L8. Control flow
 
-**Proposed.**
+**Decided.**
 
 1. `if <bool> { } else if <bool> { } else { }`, `for x in <list or
    stream> { }`, `while <bool> { }`, with `break` and `continue`, and
@@ -749,7 +748,7 @@ rest.
 
 ## L9. Functions and signatures
 
-**Proposed.**
+**Decided.**
 
 ```
 # Copy a tree into a dated backup.
@@ -808,7 +807,7 @@ status 0 alone.
 
 ## L10. Modules
 
-**Proposed.**
+**Decided.**
 
 1. `use ./lib/net.nvo` binds the module to `net`, its base name;
    `use ./lib/net.nvo as n` binds it to `n`. A path is resolved against
@@ -834,7 +833,7 @@ status 0 alone.
 
 ## L11. Errors
 
-**Proposed.**
+**Decided.**
 
 An error is a value with these fields:
 
@@ -909,7 +908,7 @@ An error is a value with these fields:
 
 ## L12. Exit status and the outcome of a pipeline
 
-**Proposed.**
+**Decided.**
 
 1. A program's exit code is the 32-bit value `process_info` reports
    ([syscalls.md S8](syscalls.md#s8-the-first-calls)). Without a
@@ -958,7 +957,7 @@ An error is a value with these fields:
 
 ## L13. Command resolution
 
-**Proposed.** A bare command name resolves, first match wins:
+**Decided.** A bare command name resolves, first match wins:
 
 1. a keyword, which is never a command;
 2. a built-in ([L25](#l25-built-ins));
@@ -999,7 +998,7 @@ signature.
 ## L14. Running from the store
 
 **Decided** (by the owner): rule 3, that a program file outside `/store`
-is refused in the first version. **Proposed:** the rest.
+is refused in the first version. **Decided:** the rest.
 
 1. **By store path.** `run /store/<hash>-hello-2.12.1/bin/hello
    <arguments>` runs that program without installing it. The shell names
@@ -1051,7 +1050,7 @@ is refused in the first version. **Proposed:** the rest.
 
 ## L15. Grants from arguments
 
-**Proposed.** For each path that reaches an external program as one
+**Decided.** For each path that reaches an external program as one
 argument (a path literal, a glob's match, a path-typed variable or
 field, a spread list's element), the shell:
 
@@ -1123,7 +1122,7 @@ settings and no network reach it unless one of these names them.
 ## L16. Designation
 
 **Decided** (by the owner): the bound of `into path` is `$cwd` when
-`--within` is not given. **Proposed:** the rest.
+`--within` is not given. **Decided:** the rest.
 
 Every path value carries a bound: the subtree within
 which the shell will grant it. Granting a path outside its bound raises
@@ -1168,7 +1167,7 @@ names `/users/bob/notes`, outside `~`, and is refused.
 
 **Decided** (by the owner): rule 2, that a signature's `path(write)`
 grants write where the user names the path, and that highlighting shows
-the write before Enter. **Proposed:** the rest.
+the write before Enter. **Decided:** the rest.
 
 | Written | A file gets | A directory gets |
 |---|---|---|
@@ -1223,7 +1222,7 @@ the write before Enter. **Proposed:** the rest.
 
 ## L18. Asking for more: the powerbox
 
-**Proposed.**
+**Decided.**
 
 1. A program whose recipe declares it receives a powerbox channel to the
    shell. On it the program asks to open a file, to save a file, or to
@@ -1277,7 +1276,7 @@ the write before Enter. **Proposed:** the rest.
 
 ## L19. Scripts
 
-**Proposed.** A script is a `.nvo` file run as a program; `main` gives
+**Decided.** A script is a `.nvo` file run as a program; `main` gives
 its parameters.
 
 ```
@@ -1344,7 +1343,7 @@ def main(src: path, dest: path(write)) {
 
 ## L20. The recipe and the command line
 
-**Decided** (by the owner): consent, rule 3. **Proposed:** the rest.
+**Decided** (by the owner): consent, rule 3. **Decided:** the rest.
 
 What an external program holds when it starts is the union of:
 
@@ -1437,7 +1436,7 @@ What an external program holds when it starts is the union of:
 
 ## L21. Interactive behaviour
 
-**Decided** (by the owner): Ctrl+L, rule 10. **Proposed:** the rest.
+**Decided** (by the owner): Ctrl+L, rule 10. **Decided:** the rest.
 
 The console edits the line where it draws it
 ([console.md C4](console.md#c4-sessions)); the shell assists through the
@@ -1495,7 +1494,7 @@ console protocol:
 
 ## L22. History
 
-**Proposed.**
+**Decided.**
 
 1. Each entered line is kept as a record: the line, `$cwd`, the time,
    the outcome's kind and how long it took. Duplicates are removed.
@@ -1515,7 +1514,7 @@ console protocol:
 
 ## L23. Replay
 
-**Proposed.**
+**Decided.**
 
 1. The kernel records what the shell receives as for any process
    ([replay.md](replay.md#inputs-through-the-kernel)): the console's
@@ -1556,7 +1555,7 @@ console protocol:
 in one interface description language, and a generator makes from that
 description the service's C protocol header, its nvo commands, its
 Settings forms and its documentation. New services start on it, and
-existing protocols move over to it one by one. **Proposed:** the rest.
+existing protocols move over to it one by one. **Decided:** the rest.
 
 Settings are served by a settings service whose keys each have a name
 (`desktop.background`), a schema (type, allowed values, default,
@@ -1623,7 +1622,7 @@ setting watch desktop.background        # one record per change, until interrupt
 ## L25. Built-ins
 
 **Decided** (by the owner): `clear`, which clears the console's panel.
-**Proposed:** the rest.
+**Decided:** the rest.
 
 A command is built in only if it changes the shell's own
 state (S), transforms values in a pipeline, where an external process

@@ -25,12 +25,11 @@ input driver), [accounts.md](accounts.md) (login and the session),
 powerbox and its settings).
 
 Each item gives the design, why, what it costs, and the main alternative
-not taken. Items the owner has ruled on are marked **Decided**; every
-other item is **Proposed**. Specifications are cited by the versions in
-[README.md](README.md): "VIRTIO 1.4" by section, "evdev" for the Linux
-input documents and "SDM" for the Intel manual's Volume 3, as the other
-specifications do; "QEMU" for QEMU's source at the tag pinned there; and
-the systems and papers under [Display and interface design
+not taken. Every item is **Decided**. Specifications are cited by the
+versions in [README.md](README.md): "VIRTIO 1.4" by section, "evdev" for
+the Linux input documents and "SDM" for the Intel manual's Volume 3, as
+the other specifications do; "QEMU" for QEMU's source at the tag pinned
+there; and the systems and papers under [Display and interface design
 references](README.md#display-and-interface-design-references) by the
 names given there.
 
@@ -51,7 +50,7 @@ C1 gives, and login asks for a name on it.
 
 ## D1. The parts
 
-**Proposed.**
+**Decided.**
 
 | Part | What it is | What it holds |
 |---|---|---|
@@ -87,7 +86,7 @@ of the three only login can be what the secure attention key shows.
 
 ## D2. Who holds the display
 
-**Proposed.** From power-on to the desktop the screen has one writer at
+**Decided.** From power-on to the desktop the screen has one writer at
 a time:
 
 | From | Until | Writer | How it holds the screen |
@@ -144,7 +143,7 @@ a time:
 ## D3. The compositor's supervision, its restart and what a crash shows
 
 **Decided** (by the owner): programs survive a restart of the compositor
-by reconnecting through login's grant channel (rule 4). **Proposed:** the
+by reconnecting through login's grant channel (rule 4). **Decided:** the
 rest.
 
 The first process supervises the compositor as it
@@ -220,7 +219,7 @@ its exit from the process handle it holds
 
 ## D4. The console in a window and as the fallback
 
-**Proposed.** The console keeps its session protocol
+**Decided.** The console keeps its session protocol
 ([console.md C4](console.md#c4-sessions)), its keys, its panel and its
 font, and gains a second place to draw:
 
@@ -255,7 +254,7 @@ itself in direct mode.
 
 ## D5. Connections, labels and layers
 
-**Proposed.** A program draws only through a display connection: a
+**Decided.** A program draws only through a display connection: a
 channel to the compositor, whose client end carries `READ`, `WRITE`,
 `WAIT` and `TRANSFER`. The compositor keeps, for each connection, what
 its issuer gave it, and nothing on the connection can change that:
@@ -360,7 +359,7 @@ display, and its label is its name, whatever it calls itself.
 ## D6. Windows and buffers
 
 **Decided** (by the owner): a buffer larger than a section is held in
-bands of sections, with no kernel change. **Proposed:** the rest.
+bands of sections, with no kernel change. **Decided:** the rest.
 
 A window is a channel. To make one, a client creates a
 channel of `WINDOW_CAPACITY` (64) messages and sends one end in a
@@ -450,7 +449,7 @@ screen's order, `PIXEL_RGB` or `PIXEL_BGR`, as it writes.
 
 ## D7. Presenting and pacing
 
-**Decided** (by the owner): the scale, rule 5. **Proposed:** the rest.
+**Decided** (by the owner): the scale, rule 5. **Decided:** the rest.
 
 A client shows a frame with `WINDOW_PRESENT`: the buffer
 and up to `WINDOW_DAMAGE_MAX` (16) rectangles, in the buffer's pixels,
@@ -518,7 +517,7 @@ it stopped reading. A client draws only into a released buffer.
 **Decided** (by the owner): the strip is always shown, and true full
 screen waits until a game needs it, when it comes with a system
 overlay; the compositor draws every window's frame and label.
-**Proposed:** the rest.
+**Decided:** the rest.
 
 Translucency is over a static wallpaper, precomputed, and
 there is no full-screen blur, since all drawing is on the CPU, as the
@@ -620,7 +619,7 @@ does.
 
 ## D9. Budgets
 
-**Proposed.** The compositor composes damage, not frames, so its cost
+**Decided.** The compositor composes damage, not frames, so its cost
 follows what changes. The measurements below are the kernel's own log
 of its fade, from CI run 42404427121 at commit `efd8296` on GitHub's
 `ubuntu-24.04` runners at 1280 x 800, compiled by TinyCC: a fade frame
@@ -684,7 +683,7 @@ change.
 
 ## D10. The pointer
 
-**Proposed.**
+**Decided.**
 
 1. **The device.** QEMU's `virtio-tablet-pci` replaces `qemu-xhci` and
    `usb-tablet` in the README's Run command and in `ci/boot.py`, since
@@ -758,7 +757,7 @@ change.
 
 ## D11. Routing input
 
-**Proposed.** The compositor sends each input event to one window's
+**Decided.** The compositor sends each input event to one window's
 channel, and to no other:
 
 1. **The keyboard** goes to the window with the focus. A window takes
@@ -842,7 +841,7 @@ channel, and to no other:
 
 **Decided** (by the owner): the secure attention key is Ctrl+Alt+Delete,
 the keypad's Delete included; the HUD key is Super tapped alone and
-Alt+Space, both settings. **Proposed:** the rest.
+Alt+Space, both settings. **Decided:** the rest.
 
 Some keys belong to the system and never reach a window:
 
@@ -922,7 +921,7 @@ the keyboard.
 ## D13. The graphical login
 
 **Decided** (by the owner): login shows a list of the accounts.
-**Proposed:** the rest.
+**Decided:** the rest.
 
 1. Login's screen is a `SYSTEM` window over the wallpaper, drawn with
    the toolkit ([ui.md U12](ui.md#u12-the-first-programs)): the accounts'
@@ -975,7 +974,7 @@ network login a later design adds.
 
 ## D14. What a program cannot do
 
-**Proposed.** Each of the following follows from the handles a program
+**Decided.** Each of the following follows from the handles a program
 holds and the compositor's rules, not from a check a program could
 pass:
 
@@ -1005,7 +1004,7 @@ pass:
 
 ## D15. Capture, copy and paste
 
-**Proposed.**
+**Decided.**
 
 **Capture.** A capture is a channel to the compositor that delivers
 frames of the screen or of one window into two buffers the compositor
@@ -1071,7 +1070,7 @@ labels, never the content.
 
 ## D16. Trusted interface and the powerbox
 
-**Proposed.** The trusted interface is what `SYSTEM` and `TRUSTED`
+**Decided.** The trusted interface is what `SYSTEM` and `TRUSTED`
 windows show: login's screens on `SYSTEM`, which only login's
 connection reaches, and the powerbox's dialogs on `TRUSTED`. Four things
 tell them apart from a program's windows, and a program can forge none
@@ -1157,7 +1156,7 @@ the reason's text or a file's contents.
 
 ## D17. Replay and audit
 
-**Proposed.**
+**Decided.**
 
 1. **A client is recorded as any process**
    ([replay.md](replay.md#inputs-through-the-kernel)):
@@ -1199,7 +1198,7 @@ the reason's text or a file's contents.
 
 ## D18. The GPU path
 
-**Proposed.** Nothing in a program's protocol names the framebuffer, so
+**Decided.** Nothing in a program's protocol names the framebuffer, so
 a GPU changes the compositor's output and nothing above it.
 
 1. **virtio-gpu in 2D** (VIRTIO 1.4 5.7), PCI 1AF4:1050, gets a
@@ -1249,7 +1248,7 @@ a GPU changes the compositor's output and nothing above it.
 
 ## D19. The build plan
 
-**Proposed.** Each phase ships on its own and is checked in CI by
+**Decided.** Each phase ships on its own and is checked in CI by
 `ci/boot.py`, which drives the pointer and keys through QMP and takes
 the screen with QMP's `screendump` (QEMU, `qapi/ui.json`). A
 `screendump` in its default format, PPM, is the pixels as QEMU shows

@@ -27,7 +27,7 @@ Sources are pinned in [README.md](README.md) and cited by these names:
 
 ## U1. The layers
 
-**Proposed.** Each layer is a library in C, integer arithmetic only, that
+**Decided.** Each layer is a library in C, integer arithmetic only, that
 a program links or leaves; each uses only the layers above it in the
 table.
 
@@ -268,7 +268,7 @@ unpositioned.
 
 **Decided** (by the owner): the interface as data, drawn by a renderer,
 with the raw window of [display.md D6](display.md#d6-windows-and-buffers)
-as the escape. **Proposed:** the rest.
+as the escape. **Decided:** the rest.
 
 A program describes its interface as a value in the shell's value model
 ([shell.md L3](shell.md#l3-values-and-types)): a record whose `kind`
@@ -313,11 +313,10 @@ Three ways to build interfaces, against what nova-os needs:
 
 [Prior art](#prior-art) gives each system this draws on.
 
-The raw window is the escape for what the vocabulary cannot say. This
-document proposes a renderer process of its own for each program
-([U6](#u6-the-renderer)), from its first use in phase 7, the trusted
-programs drawing their own with the same library, and no immediate-mode
-library in the system.
+The raw window is the escape for what the vocabulary cannot say. Each
+program has a renderer process of its own ([U6](#u6-the-renderer)),
+from its first use in phase 7; the trusted programs draw their own with
+the same library, and the system has no immediate-mode library.
 
 - **Why:** it is the only one of the three in which the system, not the
   program, knows what each window shows and what the user did there,
@@ -344,7 +343,7 @@ library in the system.
 
 ## U6. The renderer
 
-**Proposed.**
+**Decided.**
 
 1. **Its start.** When login starts a program whose recipe declares an
    interface, it creates a job for the program and starts there both
@@ -412,7 +411,7 @@ library in the system.
 
 ## U7. Widgets
 
-**Proposed.** The first vocabulary, each a record with `kind` and the
+**Decided.** The first vocabulary, each a record with `kind` and the
 fields below; every node can carry an `id`, which actions name, and a
 `label` a screen reader speaks.
 
@@ -443,7 +442,7 @@ value; the focused node carries the theme's focus mark.
 
 ## U8. Layout
 
-**Proposed.** Layout is two passes over the value: each node's
+**Decided.** Layout is two passes over the value: each node's
 preferred size, from its leaves up, then each node's place, from the
 root down.
 
@@ -478,7 +477,7 @@ root down.
 language. The recommended direction, Horizon, keeps Limb as a sharp
 wallpaper, marks the focus with a small horizon glow, and has no
 full-screen blur; the visuals are designed apart from this document,
-which depends on none of them. **Proposed:** the rest.
+which depends on none of them. **Decided:** the rest.
 
 A theme is a value of tokens, served by the settings service as the keys
 under `theme.` ([shell.md
@@ -517,7 +516,7 @@ token changes every window the next time it draws.
 
 ## U10. Accessibility
 
-**Proposed.**
+**Decided.**
 
 1. Every node has a role, from its kind, and a name, its `label` or its
    text, and every action a node reports can be done from the keyboard.
@@ -547,7 +546,7 @@ token changes every window the next time it draws.
 **Decided** (by the owner): a central HUD command bar launches
 programs, finds files, opens settings and runs nvo commands with
 structured results, one API for the interface and the shell.
-**Proposed:** the rest.
+**Decided:** the rest.
 
 1. **Its place.** `hud.exe` is the session's, started by login with an
    `OVERLAY` connection and its end of a shell's session; the HUD key
@@ -597,7 +596,7 @@ structured results, one API for the interface and the shell.
 
 ## U12. The first programs
 
-**Proposed.** Each draws with [U5](#u5-the-interface-as-data), and each
+**Decided.** Each draws with [U5](#u5-the-interface-as-data), and each
 action it offers is an nvo command the shell can run.
 
 | Program | What it shows | Its actions |
