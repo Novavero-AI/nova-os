@@ -4,11 +4,11 @@ nova-boot (`\EFI\BOOT\BOOTX64.EFI`) is the UEFI application that loads
 the kernel (`\nova\kernel.exe`), builds its page tables, exits the
 firmware's boot services and calls the kernel's entry with a `BOOT_INFO`
 record. This document is the contract between the two as
-`boot/nova-boot.c`, `include/boot_info.h`, `include/memory_layout.h` and
-`kernel/main.c` implement it. Specifications are cited by the versions in
-[README.md](README.md): "UEFI 7.4.6" is section 7.4.6 of UEFI 2.11, "SDM"
-the Intel manual's Volume 3, "EDK II" the tag pinned there, "E-EDID" the
-VESA standard listed there.
+`boot/nova-boot.c`, `include/boot_info.h`, `include/memory_layout.h`,
+`include/page_table.h` and `kernel/main.c` implement it. Specifications
+are cited by the versions in [README.md](README.md): "UEFI 7.4.6" is
+section 7.4.6 of UEFI 2.11, "SDM" the Intel manual's Volume 3, "EDK II"
+the tag pinned there, "E-EDID" the VESA standard listed there.
 
 ## Sequence
 
@@ -35,7 +35,8 @@ nova-boot, in order:
    screen. It fails if no mode it can draw to is in use.
 3. Reads and places the kernel image ([Kernel image](#kernel-image)).
 4. Allocates the kernel's stack and builds the kernel's page tables
-   ([Paging](#paging)).
+   ([Paging](#paging)). It fails with `EFI_UNSUPPORTED` if the processor
+   does not report the PAT ([Memory types](#memory-types)).
 5. Measures the timestamp counter against `Stall(50000)`.
 6. Asks up to four `EFI_RNG_PROTOCOL` instances for a seed each
    ([Random seeds](#random-seeds)).
@@ -44,10 +45,12 @@ nova-boot, in order:
    `ExitBootServices` with the map's key. A refused key means the map
    changed after it was taken; nova-boot retakes it and tries again, three
    calls in all (UEFI 7.4.6).
-8. Clears the interrupt flag, completes `BOOT_INFO`, sets IA32_EFER.NXE
-   if the processor has NX and sets CR0.WP. Then `boot_switch`
-   (`boot/switch.S`) loads CR3 with the kernel's tables, moves RSP to the
-   kernel's stack and calls the kernel's entry.
+8. Clears the interrupt flag, completes `BOOT_INFO`, programs IA32_PAT,
+   sets IA32_EFER.NXE if the processor has NX and sets CR0.WP. Then
+   `boot_switch` (`boot/switch.S`) loads CR3 with the kernel's tables,
+   invalidates every translation, writes back and invalidates the caches
+   ([Memory types](#memory-types)), moves RSP to the kernel's stack and
+   calls the kernel's entry.
 
 Until it first calls `ExitBootServices`, nova-boot meets a failure by
 freeing what it allocated (UEFI 7.2), the kernel's tables and stack
@@ -140,7 +143,7 @@ x86-64 PE.
 | Offset | Field | Type | Meaning |
 |---|---|---|---|
 | 0 | `magic` | `UINT64` | `BOOT_INFO_MAGIC`, 0x544F4F4241564F4E: "NOVABOOT" in memory order |
-| 8 | `version` | `UINT64` | `BOOT_INFO_VERSION`, 2 for the record and entry state this document describes |
+| 8 | `version` | `UINT64` | `BOOT_INFO_VERSION`, 3 for the record and entry state this document describes |
 | 16 | `screen.pixels` | `UINT32 *` | The direct-map address of `FrameBufferBase` of the graphics mode in use (UEFI 12.9.2) |
 | 24 | `screen.width` | `INT64` | `HorizontalResolution` |
 | 32 | `screen.height` | `INT64` | `VerticalResolution` |
@@ -217,7 +220,7 @@ starts, before the kernel reads the seeds.
 
 UEFI defines the processor state during boot services (UEFI 2.3.4) and what
 `ExitBootServices` changes (UEFI 7.4.6). Between `ExitBootServices`
-returning and the call nova-boot changes the interrupt flag,
+returning and the call nova-boot changes the interrupt flag, IA32_PAT,
 IA32_EFER.NXE, CR0.WP, CR3, RSP and RBP, so the kernel starts in the
 boot-services state with the changes below.
 
@@ -260,15 +263,9 @@ the stack's guard, nor the page at `KERNEL_STACK_TOP`.
   them (SDM 5.1.4) and 2 MiB pages, each where a range's alignment and
   length allow. The kernel image, the stack and `boot_switch`'s pages are
   4 KiB pages.
-- **Memory types.** No entry sets PAT, PCD or PWT, so a page gets the
-  memory type that PAT entry 0 and the MTRRs select together (SDM 5.9.2,
-  Table 14-7), provided the MTRRs give a large page one type throughout;
-  a large page over several types is undefined (SDM 14.11.9), and
-  nova-boot does not read the MTRRs to rule it out. EDK II's identity
-  map, of 2 MiB and 1 GiB pages, sets none of the three bits either
-  (`MdeModulePkg/Core/DxeIplPeim/X64/VirtualMemory.c`) and sets memory
-  types through the MTRRs (`UefiCpuPkg/CpuDxe/CpuDxe.c`,
-  `CpuSetMemoryAttributes`).
+- **Memory types.** The framebuffer's pages are write-combining and
+  every other page has the type the MTRRs give it
+  ([Memory types](#memory-types)).
 - **The direct map's source.** nova-boot takes the memory map it maps
   before the final one. UEFI has the map describe all memory present,
   however it is used (UEFI 7.2.3), so the allocations after it change
@@ -281,11 +278,85 @@ the stack's guard, nor the page at `KERNEL_STACK_TOP`.
   with `EFI_UNSUPPORTED`.
 - **The tables' memory.** Every table is an `EfiLoaderData` page
   nova-boot allocates before `ExitBootServices`.
-- **Cached translations.** The TLBs may still hold translations from the
-  firmware's tables, global ones among them if the firmware set CR4.PGE.
-  The kernel clears the top table's lower-half entries, then invalidates
-  every translation: by changing CR4.PGE if it is set, and otherwise by
-  loading CR3 (SDM 5.10.4.1).
+- **Cached translations.** `boot_switch` invalidates every translation
+  after it loads CR3 ([Memory types](#memory-types)), so the TLBs hold
+  none from the firmware's tables, only translations of nova-boot's
+  tables made since. The kernel clears the top table's lower-half
+  entries, then invalidates every translation: by changing CR4.PGE if it
+  is set, and otherwise by loading CR3 (SDM 5.10.4.1).
+
+### Memory types
+
+nova-boot programs IA32_PAT (MSR 277H, SDM 14.12.2) with `NOVA_PAT`
+(`include/page_table.h`), 0x0001040600070406. The entry that maps a page
+selects PAT entry 4 PAT + 2 PCD + PWT (SDM 14.12.3, Table 14-11), with
+PWT at bit 3 and PCD at bit 4 of the entry, and PAT at bit 7 of a PTE
+but at bit 12 of an entry that maps a 2 MiB or 1 GiB page, whose bit 7
+is PS (SDM Tables 5-16, 5-18 and 5-20).
+
+| Entry | PAT, PCD, PWT | Type | Type after reset (SDM Table 14-12) |
+|---|---|---|---|
+| 0 | 0, 0, 0 | WB | WB |
+| 1 | 0, 0, 1 | WT | WT |
+| 2 | 0, 1, 0 | UC- | UC- |
+| 3 | 0, 1, 1 | UC | UC |
+| 4 | 1, 0, 0 | WB | WB |
+| 5 | 1, 0, 1 | WT | WT |
+| 6 | 1, 1, 0 | WC | UC- |
+| 7 | 1, 1, 1 | UC | UC |
+
+Only entry 6 differs from reset, and its reset type, UC-, is entry 2's
+too. Entries 0 to 3 keep the types PCD and PWT select on a processor
+without the PAT (SDM 14.12.5), and they are the only entries a paging
+structure is read through, since an entry that points to a table selects
+with PCD and PWT alone (SDM 5.9.2).
+
+- **The framebuffer.** Its pages, from `FrameBufferBase` rounded down to
+  `FrameBufferBase + FrameBufferSize` rounded up to 4 KiB, set PAT and
+  PCD and clear PWT: entry 6, WC, the type for framebuffers (SDM 14.3).
+  WC in the PAT gives WC whatever type the MTRRs give the range (SDM
+  Table 14-7).
+- **Everything else.** No other entry sets PAT, PCD or PWT, so a page
+  gets entry 0, WB, which with any MTRR type gives that type (SDM 5.9.2,
+  Table 14-7). EDK II's identity map, of 2 MiB and 1 GiB pages, sets none
+  of the three bits either
+  (`MdeModulePkg/Core/DxeIplPeim/X64/VirtualMemory.c`) and sets memory
+  types through the MTRRs (`UefiCpuPkg/CpuDxe/CpuDxe.c`,
+  `CpuSetMemoryAttributes`). The kernel maps the Local APIC's page
+  through a PAT entry that holds UC, entry 3.
+- **Large pages.** A large page over memory the MTRRs give several types
+  is undefined (SDM 14.11.9), the framebuffer's included, and nova-boot
+  does not read the MTRRs to rule it out.
+- **The change.** nova-boot writes IA32_PAT after `ExitBootServices`,
+  with interrupts disabled, before it loads its tables, so none of its
+  own mappings is in use before entry 6 holds WC. The firmware's tables
+  are still loaded then; EDK II's set none of PAT, PCD and PWT, so they
+  select only entry 0, which keeps its type. Changing the PAT requires
+  invalidating every translation that used a changed entry, global ones
+  included, and every paging-structure cache entry (SDM 14.12.4). The
+  framebuffer also changes type: the firmware's mapping gave it the
+  MTRRs' type, which can be cacheable, and a WC page must never alias a
+  cacheable one, since WC writes need not check the caches. Remapping a
+  page from a cacheable type to WC takes removing the old mapping,
+  invalidating its translations, creating the new one, then flushing the
+  caches (SDM 14.12.4; AMD APM Volume 2, 7.8.7, Table 7-12). In
+  `boot_switch` the CR3 load removes the firmware's mapping and makes
+  nova-boot's live at once; changing CR4.PGE and changing it back then
+  invalidates every TLB and paging-structure cache entry for every PCID
+  (SDM 5.10.4.1), and WBINVD flushes the caches. No instruction between
+  the CR3 load and the kernel's entry accesses the framebuffer, so
+  neither mapping is used before the flushes.
+- **The owner.** nova-boot programs the PAT rather than the kernel,
+  since its tables select entry 6 from the CR3 load, before the kernel
+  runs. The kernel keeps the layout: each application processor it
+  starts needs `NOVA_PAT` before it loads the kernel's tables, since INIT
+  leaves the PAT unchanged (SDM 14.12.4) and the processors' PATs must
+  agree (AMD APM Volume 2, 7.8.6).
+- **No PAT.** CPUID.01H:EDX[16] reports the PAT (SDM 14.12.1). Every
+  processor with 4-level or 5-level paging has it (SDM 5.9.1), but a
+  virtual processor can clear the bit, as QEMU's `-cpu qemu64,-pat`
+  does, and then IA32_PAT is not promised. nova-boot then returns
+  `EFI_UNSUPPORTED` to the firmware before `ExitBootServices`.
 
 ### Segments and descriptor tables
 
@@ -323,8 +394,14 @@ stack, which nova-boot ran on, is mapped only in the direct map.
 
 ### Other processors
 
-The application processors stay where the firmware left them. At
-`ExitBootServices` EDK II moves them into a loop whose code it places in
+The application processors stay where the firmware left them, with the
+PAT the firmware gave them, which can differ from `NOVA_PAT` in entry 6
+although the processors' PATs must agree (AMD APM Volume 2, 7.8.6). Until
+the kernel starts them they touch only the firmware's loop, in memory the
+kernel does not use (below), so no memory is accessed under both PATs;
+each needs `NOVA_PAT` before it uses the kernel's tables
+([Memory types](#memory-types)). At `ExitBootServices` EDK II moves them
+into a loop whose code it places in
 `EfiReservedMemoryType` pages (`UefiCpuPkg/Library/MpInitLib/DxeMpLib.c`,
 `AllocateApLoopCodeBuffer` and `MpInitChangeApLoopCallback`). Without AMD
 SEV-ES they run it on a page table of its own, also in

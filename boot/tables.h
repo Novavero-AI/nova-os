@@ -18,15 +18,18 @@ typedef struct {
 } PAGE_TABLES;
 
 /* Allocate an empty top table for the paging depth in use and note the
-   page sizes and the execute-disable bit the processor supports. */
+   page sizes and the execute-disable bit the processor supports. Fails
+   with EFI_UNSUPPORTED if the processor does not report the PAT. */
 EFI_STATUS tables_create(EFI_BOOT_SERVICES *boot, PAGE_TABLES *tables);
 
 /* Map size bytes at linear to physical, each a multiple of 4 KiB, with
-   the entry bits in flags (PTE_WRITABLE, PTE_NO_EXECUTE), in the largest
-   pages their alignment and size allow, up to those an entry at
-   largest_level maps and the processor supports. PTE_NO_EXECUTE is left
-   out where the processor has no NX. Fails if a table cannot be allocated
-   or the range overlaps one already mapped. */
+   the entry bits in flags as a PTE holds them (PTE_WRITABLE,
+   PTE_NO_EXECUTE, PTE_WRITE_COMBINING), in the largest pages their
+   alignment and size allow, up to those an entry at largest_level maps
+   and the processor supports; a large page's entry carries the PAT bit
+   at 12. PTE_NO_EXECUTE is left out where the processor has no NX. Fails
+   if a table cannot be allocated or the range overlaps one already
+   mapped. */
 EFI_STATUS tables_map(PAGE_TABLES *tables, UINT64 linear, UINT64 physical,
                       UINT64 size, UINT64 flags, int largest_level);
 

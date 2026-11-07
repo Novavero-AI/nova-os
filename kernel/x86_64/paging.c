@@ -47,7 +47,7 @@ static void flush_translations(void)
 }
 
 /* The lower half holds only boot_switch's pages, which nova-boot mapped
-   for the CR3 load, and translations the firmware's tables left cached. */
+   for the CR3 load. */
 void paging_init(void)
 {
     UINT64 i;

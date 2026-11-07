@@ -39,6 +39,46 @@
    top table's address in the same bits (SDM Vol. 3A Table 5-12). */
 #define PTE_ADDRESS 0x000FFFFFFFFFF000ULL
 
+/* IA32_PAT (SDM Vol. 3A 14.12.2): eight one-byte entries, each a memory
+   type in its low three bits (Table 14-10). The entry that maps a page
+   selects PAT entry 4 PAT + 2 PCD + PWT (Table 14-11), whose type the
+   MTRRs' type for the page combines with (Table 14-7). An entry that
+   points to a table selects with PCD and PWT alone, so tables are read
+   through entries 0 to 3 (5.9.2). Every processor with 4-level or
+   5-level paging has the PAT (5.9.1). */
+#define IA32_PAT 0x277u
+#define PAT_ENTRY_BITS 8
+#define PAT_INDEX_PWT 1
+#define PAT_INDEX_PCD 2
+#define PAT_INDEX_PAT 4
+#define PAT_UNCACHEABLE 0x0
+#define PAT_WRITE_COMBINING 0x1
+#define PAT_WRITE_THROUGH 0x4
+#define PAT_WRITE_BACK 0x6
+#define PAT_UNCACHED 0x7 /* UC-: UC, except that an MTRR of WC makes it WC */
+
+/* IA32_PAT's bits that put type in entry index. */
+#define PAT_FIELD(index, type) ((UINT64)(type) << ((index) * PAT_ENTRY_BITS))
+
+/* The entry nova-boot sets to WC, and the bits of a PTE that select it:
+   PAT and PCD, without PWT. Its reset type, UC-, is entry 2's too, so no
+   type is lost, and an entry that drops the PAT bit, whose place differs
+   between a PTE and a large page's entry, falls back to entry 2, still
+   uncached, rather than to WB as entry 4 would. */
+#define PAT_WRITE_COMBINING_ENTRY (PAT_INDEX_PAT | PAT_INDEX_PCD)
+#define PTE_WRITE_COMBINING (PTE_PAT | PTE_CACHE_DISABLE)
+
+/* IA32_PAT as nova-boot programs it, 0x0001040600070406: every entry's
+   reset type (Table 14-12) but WC in PAT_WRITE_COMBINING_ENTRY. Entries 0
+   to 3 keep their reset types, so PCD and PWT alone select what they
+   select on a processor without the PAT (14.12.5). */
+#define NOVA_PAT                                                          \
+    (PAT_FIELD(0, PAT_WRITE_BACK) | PAT_FIELD(1, PAT_WRITE_THROUGH) |     \
+     PAT_FIELD(2, PAT_UNCACHED) | PAT_FIELD(3, PAT_UNCACHEABLE) |         \
+     PAT_FIELD(4, PAT_WRITE_BACK) | PAT_FIELD(5, PAT_WRITE_THROUGH) |     \
+     PAT_FIELD(PAT_WRITE_COMBINING_ENTRY, PAT_WRITE_COMBINING) |          \
+     PAT_FIELD(7, PAT_UNCACHEABLE))
+
 #define PAGE_TABLE_ENTRIES 512
 #define PAGE_OFFSET_BITS 12
 #define PAGE_INDEX_BITS 9

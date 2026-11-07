@@ -57,7 +57,8 @@ typedef struct {
     UINT32 section_count;
 } KERNEL_IMAGE;
 
-/* switch.S: loads cr3, moves to stack_top and calls entry with info. */
+/* switch.S: loads cr3, invalidates every translation and the caches,
+   moves to stack_top and calls entry with info. */
 _Noreturn void boot_switch(UINT64 cr3, UINT64 stack_top, UINT64 entry,
                            BOOT_INFO *info);
 extern const UINT8 boot_switch_end[];
@@ -602,22 +603,45 @@ static UINTN merge_ranges(RANGE *ranges, UINTN count)
    SDM Vol. 3A 14.11.9 advises large pages only from 4 MiB up. */
 #define LARGE_PAGES_START 0x400000ULL
 
-/* One merged range of the direct map, in 4 KiB pages below
-   LARGE_PAGES_START and the largest pages that fit above it. */
-static EFI_STATUS map_direct_range(PAGE_TABLES *tables, UINT64 start,
-                                   UINT64 end)
+/* The direct map from start to end, with the PTE bits memory_type for
+   its memory type, in 4 KiB pages below LARGE_PAGES_START and the
+   largest pages that fit above it. */
+static EFI_STATUS map_direct_pages(PAGE_TABLES *tables, UINT64 start,
+                                   UINT64 end, UINT64 memory_type)
 {
     UINT64 split = start > LARGE_PAGES_START  ? start
                    : end < LARGE_PAGES_START ? end
                                              : LARGE_PAGES_START;
+    UINT64 flags = PTE_WRITABLE | PTE_NO_EXECUTE | memory_type;
     EFI_STATUS status;
 
     status = tables_map(tables, DIRECT_MAP_BASE + start, start, split - start,
-                        PTE_WRITABLE | PTE_NO_EXECUTE, PAGE_TABLE_LEVEL);
+                        flags, PAGE_TABLE_LEVEL);
     if (status == EFI_SUCCESS)
         status = tables_map(tables, DIRECT_MAP_BASE + split, split,
-                            end - split, PTE_WRITABLE | PTE_NO_EXECUTE,
-                            PDPT_LEVEL);
+                            end - split, flags, PDPT_LEVEL);
+    return status;
+}
+
+static UINT64 clamp(UINT64 value, UINT64 low, UINT64 high)
+{
+    return value < low ? low : value > high ? high : value;
+}
+
+/* One merged range of the direct map: write-combining where it covers
+   the framebuffer's pages and with no memory-type bits elsewhere. */
+static EFI_STATUS map_direct_range(PAGE_TABLES *tables, const RANGE *range,
+                                   const RANGE *framebuffer)
+{
+    UINT64 start = clamp(framebuffer->start, range->start, range->end);
+    UINT64 end = clamp(framebuffer->end, range->start, range->end);
+    EFI_STATUS status;
+
+    status = map_direct_pages(tables, range->start, start, 0);
+    if (status == EFI_SUCCESS)
+        status = map_direct_pages(tables, start, end, PTE_WRITE_COMBINING);
+    if (status == EFI_SUCCESS)
+        status = map_direct_pages(tables, end, range->end, 0);
     return status;
 }
 
@@ -634,18 +658,23 @@ static EFI_STATUS map_direct_range(PAGE_TABLES *tables, UINT64 start,
    descriptor UEFI does not allow, unaligned or empty, is skipped, as the
    kernel's allocator skips it.
 
-   The entries leave PAT, PCD and PWT clear, as EDK II's identity map does
-   (MdeModulePkg/Core/DxeIplPeim/X64/VirtualMemory.c), so a page gets the
-   memory type PAT entry 0 and the MTRRs select together (SDM Vol. 3A
-   5.9.2, Table 14-7). Above LARGE_PAGES_START that holds only where the
-   variable MTRRs give each large page one type, which nova-boot does not
-   check; EDK II's identity map, of 2 MiB and 1 GiB pages, assumes the
-   same. */
+   The framebuffer's pages, its base and size rounded out to whole pages,
+   select PAT_WRITE_COMBINING_ENTRY, which NOVA_PAT makes WC, and WC with
+   any MTRR type is WC (SDM Vol. 3A Table 14-7): the type SDM Vol. 3A 14.3
+   gives framebuffers, which combines writes to reduce memory accesses.
+   The other entries leave PAT, PCD and PWT clear, as EDK II's identity map
+   does (MdeModulePkg/Core/DxeIplPeim/X64/VirtualMemory.c), so a page gets
+   the memory type PAT entry 0 and the MTRRs select together (SDM Vol. 3A
+   5.9.2, Table 14-7). Above LARGE_PAGES_START either holds only where the
+   variable MTRRs give each large page one type (SDM Vol. 3A 14.11.9),
+   which nova-boot does not check; EDK II's identity map, of 2 MiB and
+   1 GiB pages, assumes the same. */
 static EFI_STATUS map_direct(EFI_BOOT_SERVICES *boot, PAGE_TABLES *tables,
                              const EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *screen)
 {
     MEMORY_MAP map;
     RANGE *ranges = 0;
+    RANGE framebuffer;
     UINTN offset, count = 0, i;
     EFI_STATUS status;
 
@@ -674,10 +703,13 @@ static EFI_STATUS map_direct(EFI_BOOT_SERVICES *boot, PAGE_TABLES *tables,
     if (status == EFI_SUCCESS)
         status = add_range(ranges, &count, screen->FrameBufferBase,
                            screen->FrameBufferSize);
-    if (status == EFI_SUCCESS)
+    if (status == EFI_SUCCESS) {
+        framebuffer.start = ranges[count - 1].start;
+        framebuffer.end = ranges[count - 1].end;
         count = merge_ranges(ranges, count);
+    }
     for (i = 0; status == EFI_SUCCESS && i < count; i++)
-        status = map_direct_range(tables, ranges[i].start, ranges[i].end);
+        status = map_direct_range(tables, &ranges[i], &framebuffer);
     if (ranges)
         boot->FreePool(ranges);
     if (map.buffer)
@@ -843,13 +875,16 @@ static EFI_STATUS exit_boot_services(EFI_HANDLE image,
     halt();
 }
 
-/* Fill in what BOOT_INFO still lacks, turn on the protections the
-   kernel's tables rely on and switch to them. UEFI leaves the interrupt
-   flag after ExitBootServices unstated (7.4.6), and the firmware's IDT and
-   handlers are in memory the kernel owns, which its tables do not map at
-   those addresses. XD is reserved until IA32_EFER.NXE is set (SDM Vol. 3A
-   5.5.4), and read-only pages bind supervisor writes only with CR0.WP
-   (SDM Vol. 3A 5.1.3). */
+/* Fill in what BOOT_INFO still lacks, program the PAT and turn on the
+   protections the kernel's tables rely on, and switch to them. UEFI
+   leaves the interrupt flag after ExitBootServices unstated (7.4.6), and
+   the firmware's IDT and handlers are in memory the kernel owns, which
+   its tables do not map at those addresses. The framebuffer's entries
+   select the PAT's WC entry, so IA32_PAT takes NOVA_PAT before the tables
+   are loaded, and boot_switch then invalidates the translations and
+   caches the change can leave stale (SDM Vol. 3A 14.12.4). XD is reserved
+   until IA32_EFER.NXE is set (SDM Vol. 3A 5.5.4), and read-only pages
+   bind supervisor writes only with CR0.WP (SDM Vol. 3A 5.1.3). */
 _Noreturn static void enter_kernel(const KERNEL_IMAGE *kernel,
                                    const PAGE_TABLES *tables)
 {
@@ -857,6 +892,7 @@ _Noreturn static void enter_kernel(const KERNEL_IMAGE *kernel,
     boot_info.magic = BOOT_INFO_MAGIC;
     boot_info.version = BOOT_INFO_VERSION;
     boot_info.screen.pixels = direct_map((UINT64)boot_info.screen.pixels);
+    wrmsr(IA32_PAT, NOVA_PAT);
     if (tables->no_execute)
         wrmsr(IA32_EFER, rdmsr(IA32_EFER) | EFER_NO_EXECUTE);
     write_cr0(read_cr0() | CR0_WRITE_PROTECT);

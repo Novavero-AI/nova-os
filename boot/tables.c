@@ -16,6 +16,10 @@ _Static_assert(PAGE_SIZE == EFI_PAGE_SIZE, "a table is one UEFI page");
 #define CPUID_NO_EXECUTE (1u << 20)
 #define CPUID_PAGES_1GB (1u << 26)
 
+/* CPUID.01H:EDX reports the PAT in bit 16 (SDM Vol. 3A 14.12.1). */
+#define CPUID_FEATURES 0x1u
+#define CPUID_PAT (1u << 16)
+
 static EFI_STATUS new_table(PAGE_TABLES *tables, UINT64 *table)
 {
     EFI_STATUS status;
@@ -41,6 +45,12 @@ EFI_STATUS tables_create(EFI_BOOT_SERVICES *boot, PAGE_TABLES *tables)
     tables->levels = paging_levels();
     tables->largest_level = PAGE_DIRECTORY_LEVEL;
     tables->no_execute = 0;
+    /* The PAT comes with 4-level paging (SDM Vol. 3A 5.9.1), but a virtual
+       processor can report it absent, and then IA32_PAT, which nova-boot
+       programs for the framebuffer's WC entry, is not promised. */
+    cpuid(CPUID_FEATURES, &a, &b, &c, &d);
+    if (!(d & CPUID_PAT))
+        return EFI_UNSUPPORTED;
     cpuid(CPUID_EXTENDED_MAX, &a, &b, &c, &d);
     if (a >= CPUID_EXTENDED_FEATURES) {
         cpuid(CPUID_EXTENDED_FEATURES, &a, &b, &c, &d);
@@ -50,6 +60,18 @@ EFI_STATUS tables_create(EFI_BOOT_SERVICES *boot, PAGE_TABLES *tables)
             tables->largest_level = PDPT_LEVEL;
     }
     return new_table(tables, &tables->top);
+}
+
+/* The bits of an entry that maps a page at level, from flags as a PTE
+   holds them. An entry that maps a 2 MiB or 1 GiB page has PS at bit 7,
+   where a PTE has its PAT bit, and its PAT bit at 12 (SDM Vol. 3A
+   14.12.3, Tables 5-16, 5-18 and 5-20). */
+static UINT64 page_bits(UINT64 flags, int level)
+{
+    if (level == PAGE_TABLE_LEVEL)
+        return flags;
+    return (flags & ~PTE_PAT) | PTE_LARGE |
+           ((flags & PTE_PAT) ? PTE_LARGE_PAT : 0);
 }
 
 /* Map one page of level's size. The entries on the way down grant write
@@ -80,8 +102,7 @@ static EFI_STATUS map_page(PAGE_TABLES *tables, UINT64 linear,
     entry = &table[table_index(linear, level)];
     if (*entry & PTE_PRESENT)
         return EFI_LOAD_ERROR;
-    *entry = physical | flags | PTE_PRESENT |
-             (level > PAGE_TABLE_LEVEL ? PTE_LARGE : 0);
+    *entry = physical | page_bits(flags, level) | PTE_PRESENT;
     return EFI_SUCCESS;
 }
 

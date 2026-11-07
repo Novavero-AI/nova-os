@@ -14,7 +14,7 @@
 #define BOOT_INFO_MAGIC 0x544F4F4241564F4EULL
 
 /* The layout below and the machine state that comes with it. */
-#define BOOT_INFO_VERSION 2
+#define BOOT_INFO_VERSION 3
 
 /* The EFI_RNG_PROTOCOL instances nova-boot asks for a seed, at most, and
    the bytes it asks each for: 256 bits, the security level UEFI 37.5
