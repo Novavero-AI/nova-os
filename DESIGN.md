@@ -36,6 +36,19 @@ compared.
    machine's signed boot record shows it runs the code built from the seed.
 6. **Self-hosting.** nova-os runs the seed ladder and nova-nix and rebuilds
    itself; the result must equal the Windows-hosted build byte for byte.
+7. **A program's authority is its derivation.** No process has ambient
+   authority: it starts with only the handles its creator passes it. A
+   program's creator passes handles to exactly what its nova-nix derivation
+   declares, the store paths of its closure and the services and devices
+   the derivation names. The declaration that confines the build is the
+   one that bounds the running program, and the kernel enforces it, so what
+   a program can reach is read from its recipe before it runs.
+8. **Accountable by construction.** Every effect a program has outside its
+   own address space goes through a handle to a kernel object or a message
+   to another process, so a session can be logged and replayed. With
+   environments reproducible from the seed and authority bounded by the
+   derivation, what a program, an AI agent included, could and could not
+   do is a fact that can be checked, not a policy to trust.
 
 ## Decisions
 
