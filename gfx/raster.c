@@ -126,12 +126,34 @@ INT64 gfx_cross_fade(INT64 from, INT64 to, INT64 weight, INT64 total)
 /* ------------------------------------------------------------------------
    Strokes */
 
+/* a x b for vectors in the screen's coordinates: positive where b lies
+   clockwise of a by less than half a turn. */
+static INT64 cross(INT64 ax, INT64 ay, INT64 bx, INT64 by)
+{
+    return ax * by - ay * bx;
+}
+
+/* Whether the direction (qx, qy) from an ARC's centre lies in its sweep,
+   from (sx, sy) clockwise to (ex, ey), ends included. A sweep of more
+   than half a turn is every direction outside the gap from the end
+   clockwise to the start. */
+static int in_sweep(const SHAPE *s, INT64 qx, INT64 qy)
+{
+    if (cross(s->sx, s->sy, s->ex, s->ey) < 0)
+        return !(cross(s->ex, s->ey, qx, qy) > 0 &&
+                 cross(qx, qy, s->sx, s->sy) > 0);
+    return cross(s->sx, s->sy, qx, qy) >= 0 &&
+           cross(qx, qy, s->ex, s->ey) >= 0;
+}
+
 /* Whether (px, py) lies inside s with its radius r, and an ARCH's cut,
    moved outward by grow eighths, or inward where grow is negative. For a
    distance d, a point within d of the shape lies inside it grown by d,
    and a point within d of one inside it shrunk by d lies inside the
    shape: r bounds the distance to a segment or a circle, which changes no
-   more than the point moves, and the cut bounds y alone. */
+   more than the point moves, and the cut bounds y alone. An ARC's cut
+   is not moved: grown, it is left out, which keeps every point within d;
+   shrunk, the ARC holds no point, so its pixels are always sampled. */
 static int inside(const SHAPE *s, INT64 px, INT64 py, INT64 grow)
 {
     INT64 qx = px - s->ax, qy = py - s->ay, r = s->r + grow;
@@ -157,6 +179,9 @@ static int inside(const SHAPE *s, INT64 px, INT64 py, INT64 grow)
         INT64 lo = s->bx - r, hi = s->bx + r;
 
         if (s->kind == ARCH && py > s->ay + grow)
+            return 0;
+        if (s->kind == ARC &&
+            (grow < 0 || (grow == 0 && !in_sweep(s, qx, qy))))
             return 0;
         if (lo < 0)
             lo = 0;
