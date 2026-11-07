@@ -88,4 +88,65 @@ UINT32 section_create(UINT64 size, UINT32 options, UINT32 *section);
 UINT32 process_map(UINT32 process, UINT32 section, UINT64 offset,
                    UINT64 address, UINT64 size, UINT32 protection);
 
+/* A second handle to handle's object, with rights, RIGHTS_SAME or a
+   subset of handle's rights. Needs RIGHT_DUPLICATE. */
+UINT32 handle_duplicate(UINT32 handle, UINT32 rights, UINT32 *duplicate);
+
+/* A new port that holds up to capacity user packets. */
+UINT32 port_create(UINT32 capacity, UINT32 *port);
+
+/* Take the next packet from port into packet, waiting for one until the
+   deadline, an absolute time on the monotonic clock. Needs
+   PORT_RIGHT_READ. */
+UINT32 port_wait(UINT32 port, UINT64 deadline, PORT_PACKET *packet);
+
+/* A resource covering [base, base + size) of parent's range, of parent's
+   kind. Needs RESOURCE_RIGHT_USE. */
+UINT32 resource_create(UINT32 parent, UINT64 base, UINT64 size,
+                       UINT32 *resource);
+
+/* A section over the device memory [base, base + size), page aligned,
+   that the MMIO resource covers, mapped with cache, CACHE_UNCACHED or
+   CACHE_WRITE_COMBINING. Its handle has SECTION_RIGHT_READ and _WRITE,
+   never _EXECUTE or _PIN. Needs RESOURCE_RIGHT_USE. */
+UINT32 section_create_physical(UINT32 resource, UINT64 base, UINT64 size,
+                               UINT32 cache, UINT32 *section);
+
+/* An interrupt for source, which the IRQ resource covers; options must
+   be 0. For a message-signalled source, address and data receive the
+   message the device is to write. Needs RESOURCE_RIGHT_USE. */
+UINT32 interrupt_create(UINT32 resource, UINT64 source, UINT32 options,
+                        UINT32 *interrupt, UINT64 *address, UINT32 *data);
+
+/* Deliver interrupt as PACKET_INTERRUPT packets carrying key to port.
+   Needs INTERRUPT_RIGHT_BIND and PORT_RIGHT_QUEUE. */
+UINT32 interrupt_bind(UINT32 interrupt, UINT32 port, UINT64 key);
+
+/* The device is serviced: let interrupt deliver its next packet. Needs
+   INTERRUPT_RIGHT_ACK. */
+UINT32 interrupt_ack(UINT32 interrupt);
+
+/* An initiator for bus requester ID requester, which the DMA resource
+   covers. Needs RESOURCE_RIGHT_USE. */
+UINT32 initiator_create(UINT32 resource, UINT32 requester,
+                        UINT32 *initiator);
+
+/* Pin size bytes of section from offset for initiator's device, which
+   options, PIN_DEVICE_READ, PIN_DEVICE_WRITE or both, says reads or
+   writes them, and write the device address of each page to addresses.
+   Needs
+   INITIATOR_RIGHT_PIN, SECTION_RIGHT_PIN and the section rights options
+   needs. */
+UINT32 section_pin(UINT32 initiator, UINT32 section, UINT64 offset,
+                   UINT64 size, UINT32 options, UINT64 *addresses,
+                   UINT32 *pin);
+
+/* End pin, asserting that the device no longer uses its pages, and close
+   the handle. A pin whose last handle closes otherwise is quarantined. */
+UINT32 pin_release(UINT32 pin);
+
+/* Free initiator's quarantined pins, once its device is reset. Needs
+   INITIATOR_RIGHT_RELEASE. */
+UINT32 initiator_release_quarantine(UINT32 initiator);
+
 #endif

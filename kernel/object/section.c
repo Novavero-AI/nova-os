@@ -1,7 +1,12 @@
-/* Sections. Each page comes from page_alloc_mapped, so it starts zeroed,
-   and goes back to the allocator when the section is destroyed. */
+/* Sections. A memory section's pages come from page_alloc_mapped, so they
+   start zeroed, and go back to the allocator when the section is
+   destroyed. A device section maps the same physical addresses for its
+   whole life and frees none. */
 
 #include "section.h"
+#include "cpu.h"
+#include "../acpi/acpi.h"
+#include "../mm/memory_map.h"
 #include "../mm/page.h"
 
 #define PAGE_LIST_CAPACITY (PAGE_SIZE / sizeof(UINT64))
@@ -9,14 +14,29 @@
 _Static_assert(SECTION_MAX_SIZE == PAGE_LIST_CAPACITY * PAGE_SIZE,
                "a section's page list fills one page");
 
+/* The range message-signalled interrupts are written to, which the local
+   APIC receives (SDM Vol. 3A 13.11.1), and IA32_APIC_BASE, whose bits
+   from 12 up give the local APIC's register page (SDM Vol. 3A 13.4.4). */
+#define MSI_RANGE_BASE 0xfee00000ULL
+#define MSI_RANGE_SIZE 0x100000ULL
+#define IA32_APIC_BASE 0x1b
+#define APIC_BASE_ADDRESS (~0xfffULL)
+
+/* The memory types a device section may share with the memory map. */
+#define DEVICE_TYPES                                                     \
+    (MEMORY_TYPE(EFI_MEMORY_MAPPED_IO) |                                 \
+     MEMORY_TYPE(EFI_MEMORY_MAPPED_IO_PORT_SPACE))
+
 static void destroy(OBJECT *object)
 {
     SECTION *section = (SECTION *)object;
     UINT64 i;
 
-    for (i = 0; i < section->pages; i++)
-        page_free_mapped(direct_map(section->physical[i]));
-    page_free_mapped(section->physical);
+    if (section->kind == SECTION_MEMORY) {
+        for (i = 0; i < section->pages; i++)
+            page_free_mapped(direct_map(section->physical[i]));
+        page_free_mapped(section->physical);
+    }
     page_free_mapped(section);
 }
 
@@ -40,6 +60,8 @@ STATUS section_create(UINT64 size, SECTION **out)
         page_free_mapped(section);
         return ERR_NO_MEMORY;
     }
+    section->kind = SECTION_MEMORY;
+    section->memory_type = USER_WRITE_BACK;
     for (i = 0; i < pages; i++) {
         UINT8 *page = page_alloc_mapped();
 
@@ -55,6 +77,64 @@ STATUS section_create(UINT64 size, SECTION **out)
     }
     *out = section;
     return OK;
+}
+
+static int overlaps(UINT64 base, UINT64 size, UINT64 other, UINT64 other_size)
+{
+    return other < base + size && base < other + other_size;
+}
+
+/* Whether the range reaches memory or registers the kernel keeps (ipc.md
+   I6). The configuration space is the one range the memory map may
+   describe as reserved: firmware reserves it there so that no OS takes
+   it for RAM, and acpi.c accepted it only where it overlaps nothing
+   else. */
+static int kept_from_sections(UINT64 base, UINT64 size)
+{
+    UINT64 apic = rdmsr(IA32_APIC_BASE) & APIC_BASE_ADDRESS;
+
+    if (overlaps(base, size, MSI_RANGE_BASE, MSI_RANGE_SIZE) ||
+        overlaps(base, size, apic, PAGE_SIZE) ||
+        acpi_kernel_registers(base, size))
+        return 1;
+    if (acpi_ecam_contains(base, size))
+        return 0;
+    return memory_map_overlaps_other(base, size, DEVICE_TYPES);
+}
+
+STATUS section_create_device(const RESOURCE *resource, UINT64 base,
+                             UINT64 size, UINT32 cache, SECTION **out)
+{
+    SECTION *section;
+
+    if (size == 0 || base % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 ||
+        base + size < base ||
+        (cache != CACHE_UNCACHED && cache != CACHE_WRITE_COMBINING))
+        return ERR_INVALID_ARGS;
+    if (size > SECTION_MAX_SIZE ||
+        !resource_covers(resource, RESOURCE_MMIO, base, size))
+        return ERR_OUT_OF_RANGE;
+    if (kept_from_sections(base, size))
+        return ERR_ACCESS_DENIED;
+    section = page_alloc_mapped();
+    if (!section)
+        return ERR_NO_MEMORY;
+    object_init(&section->object, &section_type);
+    section->kind = SECTION_DEVICE;
+    section->memory_type =
+        cache == CACHE_UNCACHED ? USER_UNCACHED : USER_WRITE_COMBINING;
+    section->pages = size / PAGE_SIZE;
+    section->physical = 0;
+    section->base = base;
+    *out = section;
+    return OK;
+}
+
+UINT64 section_page(const SECTION *section, UINT64 index)
+{
+    if (section->kind == SECTION_DEVICE)
+        return section->base + index * PAGE_SIZE;
+    return section->physical[index];
 }
 
 void section_fill(SECTION *section, const UINT8 *data, UINT64 size)

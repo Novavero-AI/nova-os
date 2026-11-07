@@ -26,6 +26,15 @@
 #define PAT_ENTRIES 8
 #define PAT_TYPE_MASK 0x7
 
+/* CPUID.80000008H:EAX[7:0] gives the physical-address width; without
+   that leaf it is 36 where CPUID.01H:EDX.PAE[6] is set (SDM Vol. 3A
+   5.1.4), as on every processor with long mode. CPUID.80000000H:EAX
+   gives the highest extended leaf. */
+#define CPUID_EXTENDED_MAX 0x80000000u
+#define CPUID_ADDRESS_SIZES 0x80000008u
+#define PHYSICAL_BITS_MASK 0xff
+#define PHYSICAL_BITS_DEFAULT 36
+
 static UINT64 kernel_space; /* the kernel's top table, physical */
 static UINT64 *top_table;
 static int levels;
@@ -227,6 +236,30 @@ static UINT64 protection_bits(USER_PROTECTION protection)
     return PTE_NO_EXECUTE;
 }
 
+/* The PWT, PCD and PAT bits of a PTE that select type in NOVA_PAT
+   (page_table.h): entry 0 for WB, entry 3 for UC, entry 6 for WC (SDM
+   Vol. 3A Table 14-11). */
+static UINT64 memory_type_bits(USER_MEMORY_TYPE type)
+{
+    switch (type) {
+    case USER_UNCACHED:
+        return PTE_CACHE_DISABLE | PTE_WRITE_THROUGH;
+    case USER_WRITE_COMBINING:
+        return PTE_WRITE_COMBINING;
+    case USER_WRITE_BACK:
+        break;
+    }
+    return 0;
+}
+
+_Static_assert(((NOVA_PAT >> (PAT_ENTRY_BITS *
+                              (PAT_INDEX_PCD | PAT_INDEX_PWT))) &
+                PAT_TYPE_MASK) == PAT_UNCACHEABLE,
+               "PCD and PWT select UC");
+_Static_assert(((NOVA_PAT >> (PAT_ENTRY_BITS * PAT_WRITE_COMBINING_ENTRY)) &
+                PAT_TYPE_MASK) == PAT_WRITE_COMBINING,
+               "PAT and PCD select WC");
+
 /* page_alloc's page reads as zero, so the lower half maps nothing. */
 UINT64 paging_space_create(void)
 {
@@ -279,10 +312,12 @@ int paging_map_user(UINT64 space, UINT64 linear, UINT64 physical,
 }
 
 int paging_map_user_borrowed(UINT64 space, UINT64 linear, UINT64 physical,
-                             USER_PROTECTION protection)
+                             USER_PROTECTION protection,
+                             USER_MEMORY_TYPE type)
 {
     return map_user(space, linear,
-                    physical | protection_bits(protection) | PTE_BORROWED);
+                    physical | protection_bits(protection) |
+                        memory_type_bits(type) | PTE_BORROWED);
 }
 
 int paging_user_mapped(UINT64 space, UINT64 linear)
@@ -309,6 +344,17 @@ void paging_unmap_user_borrowed(UINT64 space, UINT64 linear)
     if ((read_cr3() & PTE_ADDRESS) == space)
         write_cr3(space);
     restore_interrupts(flags);
+}
+
+UINT32 paging_physical_bits(void)
+{
+    UINT32 a, b, c, d;
+
+    cpuid(CPUID_EXTENDED_MAX, &a, &b, &c, &d);
+    if (a < CPUID_ADDRESS_SIZES)
+        return PHYSICAL_BITS_DEFAULT;
+    cpuid(CPUID_ADDRESS_SIZES, &a, &b, &c, &d);
+    return a & PHYSICAL_BITS_MASK;
 }
 
 /* Free the pages table maps at level and below, other than borrowed

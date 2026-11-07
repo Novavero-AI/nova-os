@@ -243,30 +243,47 @@ with the root job, to the first user process in its bootstrap message:
 
 | Kind | Range |
 |---|---|
-| `RESOURCE_MMIO` | All physical addresses outside RAM ([boot-protocol.md](boot-protocol.md#memory)), except the registers of devices the kernel drives itself: the local APIC and the range FEE0_0000h to FEEF_FFFFh that message-signalled interrupts are written to (SDM 13.11.1), the I/O APICs (ACPI 5.2.12), and any IOMMU (VT-d 8.3, AMD IOMMU 5.2.2.1) |
-| `RESOURCE_IRQ` | All interrupt sources: ACPI global system interrupts (ACPI 5.2.13) and message-signalled vectors |
+| `RESOURCE_MMIO` | All physical addresses outside RAM ([boot-protocol.md](boot-protocol.md#memory)), except the registers of devices the kernel drives itself: the local APIC and the range FEE0_0000h to FEEF_FFFFh that message-signalled interrupts are written to (SDM 13.11.1), the I/O APICs (ACPI 5.2.12), and any IOMMU (VT-d 8.3, AMD IOMMU 5.2.2.1). Its range is 0 to 2 to the power of the physical-address width (SDM 5.1.4); `section_create_physical` keeps RAM and those registers out |
+| `RESOURCE_IRQ` | All interrupt sources: ACPI global system interrupts (ACPI 5.2.13) and message-signalled vectors. Global system interrupt g is source g, and the message-signalled interrupts of requester ID r ([I8](#i8-dma)) are source 2^32 + r |
 | `RESOURCE_IOPORT` | I/O ports 0 to 65,535, except those of the serial port the kernel logs to (COM1, from 0x3F8) |
-| `RESOURCE_DMA` | All bus requester IDs ([I8](#i8-dma)) |
+| `RESOURCE_DMA` | All bus requester IDs ([I8](#i8-dma)), 0 to 2^32 |
 | `RESOURCE_SYSTEM` | Named privileges; in the first set only the debug log |
 
 The first process passes them to a platform driver, which enumerates ACPI
 and PCI in user mode and gives each device driver resources covering only
-its device. `resource_create` derives a resource covering a subrange of
-its parent's; a resource's range never changes.
+its device; in the first set the first process is the platform driver.
+`resource_create` derives a resource covering a subrange of its parent's;
+a resource's range never changes.
 
 The kernel also creates a section over the boot framebuffer that nova-boot
 reports in `BOOT_INFO` and passes it in the same message, for the
 compositor.
 
+The kernel reads the ACPI tables that name registers it keeps (the MADT
+for the I/O APICs, the DMAR and IVRS for IOMMUs) and the MCFG, and passes
+the PCI Express configuration space ranges the MCFG describes in the
+bootstrap message's bytes, so that the platform driver can enumerate PCI
+before it reads ACPI itself. The MCFG's layout is the PCI Firmware
+Specification's, which is not pinned
+([README.md](README.md#pci-express-configuration-space)). `native_abi.h`
+gives the message's handles in order and its bytes.
+
 **Device memory.** `section_create_physical(resource, base, size, cache)`
 makes a section over physical addresses that an MMIO resource covers. It
 fails if the range overlaps any memory the memory map describes as RAM or
 as preserved, so a device section can never alias memory the kernel
-allocates. `cache` is uncached (`UC`), which the SDM recommends for
-memory-mapped I/O (SDM 14.3), or write-combining (`WC`) for framebuffers;
-the kernel programs it through the page attribute table (SDM 14.12). A
-device section's handle carries `READ` and `WRITE` but never `EXECUTE` or
-`PIN`, so device memory is never executed or used as a DMA buffer.
+allocates: any descriptor other than `EfiMemoryMappedIO` and
+`EfiMemoryMappedIOPortSpace`. The one exception is configuration space the
+MCFG describes, which firmware reserves in the map
+(`EfiReservedMemoryType`, as EDK II does) so that no OS takes it for RAM;
+the kernel accepts an MCFG range only where it overlaps nothing else in
+the map. It also fails over the registers the kernel keeps: the local
+APIC's page, the MSI range, the I/O APICs and the IOMMUs above. `cache` is
+uncached (`UC`), which the SDM recommends for memory-mapped I/O (SDM
+14.3), or write-combining (`WC`) for framebuffers; the kernel programs it
+through the page attribute table (SDM 14.12). A device section's handle
+carries `READ` and `WRITE` but never `EXECUTE` or `PIN`, so device memory
+is never executed or used as a DMA buffer.
 
 **I/O ports.** `ioport_set(resource, base, count, allow)` allows or
 denies the calling process `IN` and `OUT` on ports an I/O-port resource
@@ -355,6 +372,15 @@ The first set delivers message-signalled interrupts (MSI and MSI-X), which
 virtio's PCI devices use (VIRTIO 1.4, PCI transport); a level-triggered
 line shared by several devices is left out until a device needs one.
 
+An IRQ resource covers interrupt sources as `RESOURCE_IRQ`'s row in
+[I6](#i6-device-memory-and-io-ports) numbers them, so a resource covering
+2^32 + r grants the message-signalled interrupts of one requester ID. Each
+`interrupt_create` for such a source takes a vector of its own, `options`
+0. The kernel cannot mask a message-signalled interrupt at its device,
+whose MSI or MSI-X registers the bus driver writes; closing its last
+handle frees the vector, and a message the device still sends there
+reaches whichever interrupt takes the vector next, as a spurious packet.
+
 A message-signalled interrupt is a memory write to an architectural
 address range, so without interrupt remapping any device that can do DMA
 can raise any interrupt with any attributes (VT-d 2.5.2.1). Where the
@@ -390,9 +416,10 @@ Decisions). **Decided:** the mechanism.
    stay allocated for the life of the system: the device may still write
    them, and nobody is left to reset it.
 5. Without an IOMMU, device addresses are physical addresses, and a
-   driver that can start DMA can reach all memory. With one, the kernel
-   maps the pinned pages into the initiator's IOMMU domain, returns I/O
-   virtual addresses, and unmaps them when the pin ends.
+   driver that can start DMA can reach all memory; the kernel logs each
+   initiator it creates as unconfined. With one, the kernel maps the
+   pinned pages into the initiator's IOMMU domain, returns I/O virtual
+   addresses, and unmaps them when the pin ends.
 
 With an IOMMU, confinement rests on three things its specification
 defines.

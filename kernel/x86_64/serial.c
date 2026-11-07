@@ -41,16 +41,29 @@ void serial_number(UINT64 n)
     serial_write(digits + i);
 }
 
-void serial_hex(UINT64 n)
+#define HEX_DIGITS_MAX 16
+
+/* n in hexadecimal, at least width digits, without a prefix. */
+static void hex_digits(UINT64 n, UINT32 width)
 {
-    char digits[17];
-    int i = 16;
+    char digits[HEX_DIGITS_MAX + 1];
+    UINT32 i = HEX_DIGITS_MAX;
 
     digits[i] = 0;
     do {
         digits[--i] = "0123456789abcdef"[n & 0xf];
         n >>= 4;
-    } while (n);
-    serial_write("0x");
+    } while (n || (i > 0 && HEX_DIGITS_MAX - i < width));
     serial_write(digits + i);
+}
+
+void serial_hex(UINT64 n)
+{
+    serial_write("0x");
+    hex_digits(n, 1);
+}
+
+void serial_hex_width(UINT64 n, UINT32 width)
+{
+    hex_digits(n, width);
 }

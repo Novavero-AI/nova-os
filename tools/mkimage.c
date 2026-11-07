@@ -2,14 +2,15 @@
    VHDX file. The disk carries a protective MBR and a GPT with one EFI
    System Partition, formatted FAT32, which holds \EFI\BOOT\BOOTX64.EFI
    (the file firmware boots when no boot option names one), and in
-   \NOVA\ the kernel, the first process, the 32-bit ntdll, and
-   stage0-pe32's seed and the source it assembles, which nova-boot reads
-   with every other file there. Every GUID, serial number, timestamp and
-   sequence number is a constant, and the disk is assembled in a zeroed
-   buffer in a fixed order, so the same inputs give the same bytes.
+   \NOVA\ the kernel, the first process, the 32-bit ntdll, stage0-pe32's
+   seed and the source it assembles, and the virtio block driver, which
+   nova-boot reads with every other file there. Every GUID, serial
+   number, timestamp and sequence number is a constant, and the disk is
+   assembled in a zeroed buffer in a fixed order, so the same inputs
+   give the same bytes.
 
    usage: mkimage DISK.IMG DISK.VHDX BOOTX64.EFI KERNEL.EXE INIT.EXE
-          NTDLL.DLL HEX0SEED.EXE HEX0_X86.HEX
+          NTDLL.DLL HEX0SEED.EXE HEX0_X86.HEX VIRTBLK.EXE
 
    Formats: UEFI 2.10 chapter 5 (MBR and GPT), section 13.3 (the EFI
    System Partition's file system) and appendix A (GUIDs); Microsoft's
@@ -42,6 +43,7 @@ enum {
     INPUT_NTDLL,
     INPUT_SEED,
     INPUT_SOURCE,
+    INPUT_DRIVER,
     INPUT_COUNT
 };
 
@@ -313,6 +315,7 @@ enum {
     NODE_NTDLL,
     NODE_SEED,
     NODE_SOURCE,
+    NODE_DRIVER,
     NODE_COUNT
 };
 
@@ -334,6 +337,7 @@ static const struct node {
     [NODE_NTDLL] = {"NTDLL   DLL", NODE_NOVA, INPUT_NTDLL},
     [NODE_SEED] = {"HEX0SEEDEXE", NODE_NOVA, INPUT_SEED},
     [NODE_SOURCE] = {"HEX0_X86HEX", NODE_NOVA, INPUT_SOURCE},
+    [NODE_DRIVER] = {"VIRTBLK EXE", NODE_NOVA, INPUT_DRIVER},
 };
 
 struct fat_layout {
@@ -778,7 +782,7 @@ int main(int argc, char **argv)
     if (argc != FIRST_INPUT_ARGUMENT + INPUT_COUNT) {
         fprintf(stderr, "usage: mkimage DISK.IMG DISK.VHDX BOOTX64.EFI "
                         "KERNEL.EXE INIT.EXE NTDLL.DLL HEX0SEED.EXE "
-                        "HEX0_X86.HEX\n");
+                        "HEX0_X86.HEX VIRTBLK.EXE\n");
         return EXIT_FAILURE;
     }
     for (i = 0; i < INPUT_COUNT; i++) {

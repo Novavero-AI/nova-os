@@ -1,12 +1,12 @@
 /* nova-boot: the UEFI loader. It draws the boot screen, loads the kernel
    from \nova\kernel.exe on the volume it was booted from and reads every
    other file in \nova\, the first process's image init.exe among them,
-   builds the
-   kernel's page tables, measures the timestamp counter against Stall,
-   asks the firmware's random number generators for seeds, takes the
-   final memory map, exits boot services, loads the kernel's
-   tables and jumps to the kernel's entry on the kernel's stack with a
-   BOOT_INFO record. */
+   builds the kernel's page tables, measures the timestamp counter
+   against Stall, asks the firmware's random number generators for seeds,
+   takes the ACPI RSDP's address from the configuration table, takes the
+   final memory map, exits boot services, loads the kernel's tables and
+   jumps to the kernel's entry on the kernel's stack with a BOOT_INFO
+   record. */
 
 #include "efi.h"
 #include "boot_info.h"
@@ -30,6 +30,15 @@ static EFI_GUID loaded_image_guid = {
 static EFI_GUID simple_file_system_guid = {
     0x964e5b22, 0x6459, 0x11d2,
     {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
+
+/* The configuration-table GUIDs of an ACPI 2.0 or later RSDP and of an
+   ACPI 1.0 one (UEFI 4.6.1.1, ACPI 6.6 5.2.5.2). */
+static EFI_GUID acpi_20_guid = {
+    0x8868e871, 0xe4f1, 0x11d3,
+    {0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81}};
+static EFI_GUID acpi_10_guid = {
+    0xeb9d2d30, 0x2d88, 0x11d3,
+    {0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d}};
 
 static CHAR16 kernel_path[] = L"\\nova\\kernel.exe";
 static CHAR16 nova_path[] = L"\\nova";
@@ -986,6 +995,46 @@ static void take_random_seeds(EFI_BOOT_SERVICES *boot)
 }
 
 /* ------------------------------------------------------------------------
+   ACPI */
+
+static int same_guid(const EFI_GUID *a, const EFI_GUID *b)
+{
+    UINT32 i;
+
+    if (a->Data1 != b->Data1 || a->Data2 != b->Data2 || a->Data3 != b->Data3)
+        return 0;
+    for (i = 0; i < sizeof(a->Data4); i++)
+        if (a->Data4[i] != b->Data4[i])
+            return 0;
+    return 1;
+}
+
+/* The VendorTable of the configuration table's entry for guid, or 0. The
+   table holds at most one entry of each GUID (UEFI 4.6). */
+static UINT64 configuration_table(const EFI_SYSTEM_TABLE *system,
+                                  const EFI_GUID *guid)
+{
+    UINTN i;
+
+    for (i = 0; i < system->NumberOfTableEntries; i++)
+        if (same_guid(&system->ConfigurationTable[i].VendorGuid, guid))
+            return (UINT64)system->ConfigurationTable[i].VendorTable;
+    return 0;
+}
+
+/* The RSDP's physical address for the kernel: the ACPI 2.0 or later
+   entry, else the ACPI 1.0 one, as ACPI 6.6 5.2.5.2 has the OS loader
+   search, before ExitBootServices. The addresses in these entries are
+   physical (UEFI 4.6.1.1). nova-boot does not read the RSDP; the kernel
+   checks it. */
+static void take_acpi_rsdp(const EFI_SYSTEM_TABLE *system)
+{
+    boot_info.acpi_rsdp = configuration_table(system, &acpi_20_guid);
+    if (!boot_info.acpi_rsdp)
+        boot_info.acpi_rsdp = configuration_table(system, &acpi_10_guid);
+}
+
+/* ------------------------------------------------------------------------
    Leaving the firmware */
 
 /* Take the final memory map into boot_info and exit boot services. If the
@@ -1114,6 +1163,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     boot_info.tsc_per_ms = (rdtsc() - t0) / (CALIBRATION_MICROSECONDS / 1000);
 
     take_random_seeds(boot);
+    take_acpi_rsdp(SystemTable);
     status = exit_boot_services(ImageHandle, boot);
     if (status != EFI_SUCCESS) {
         free_address_space(boot, &space);

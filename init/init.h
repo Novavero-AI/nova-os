@@ -1,10 +1,11 @@
-/* What init's parts share: its debug log, the files nova-boot read from
-   \nova\, which the kernel passed as read-only sections, and the mapping
-   of sections into init's own address space. */
+/* What init's parts share: its debug log (log.h), the files nova-boot
+   read from \nova\, which the kernel passed as read-only sections, and
+   the mapping of sections into init's own address space. */
 
 #ifndef NOVA_INIT_H
 #define NOVA_INIT_H
 
+#include "log.h"
 #include "native.h"
 
 /* A boot file, mapped read-only into init. */
@@ -14,12 +15,6 @@ typedef struct {
     UINT64 size;
     const UINT8 *data;
 } BOOT_FILE_VIEW;
-
-/* Write line to the kernel's debug log. */
-void say(const char *line);
-
-/* Write n to the debug log, in decimal. */
-void say_number(UINT64 n);
 
 /* Whether two ASCII names are the same regardless of case, as FAT's
    are. */

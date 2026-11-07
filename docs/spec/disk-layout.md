@@ -82,6 +82,7 @@ The partition holds a FAT32 file system (UEFI 13.3; FAT):
 \NOVA\NTDLL.DLL          ntdll for 32-bit processes
 \NOVA\HEX0SEED.EXE       stage0-pe32's seed, hex0-seed.exe
 \NOVA\HEX0_X86.HEX       the source the seed assembles, hex0_x86.hex0
+\NOVA\VIRTBLK.EXE        the virtio block driver
 ```
 
 `\EFI\BOOT\BOOTX64.EFI` is the file the firmware starts when a boot option
@@ -113,6 +114,7 @@ uppercase (UEFI 13.3.1.2), with no long-name entries:
 | `\NOVA\NTDLL.DLL` | `NTDLL   DLL` |
 | `\NOVA\HEX0SEED.EXE` | `HEX0SEEDEXE` |
 | `\NOVA\HEX0_X86.HEX` | `HEX0_X86HEX` |
+| `\NOVA\VIRTBLK.EXE` | `VIRTBLK EXE` |
 
 FAT matches names without regard to case ("Name Matching In Short & Long
 Names"), so `\nova\kernel.exe`, `\nova\init.exe` and `BOOTx64.EFI`

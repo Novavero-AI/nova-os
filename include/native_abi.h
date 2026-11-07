@@ -30,11 +30,14 @@
 /* The numbers of the calls this kernel implements (S8). Number 0 is
    reserved and names no call. */
 #define CALL_HANDLE_CLOSE 1
+#define CALL_HANDLE_DUPLICATE 2
 #define CALL_OBJECT_WAIT_ONE 6
 #define CALL_OBJECT_WAIT_MANY 7
 #define CALL_CHANNEL_CREATE 10
 #define CALL_CHANNEL_WRITE 11
 #define CALL_CHANNEL_READ 12
+#define CALL_PORT_CREATE 14
+#define CALL_PORT_WAIT 16
 #define CALL_CLOCK_MONOTONIC 17
 #define CALL_PROCESS_CREATE 19
 #define CALL_PROCESS_START 20
@@ -44,6 +47,15 @@
 #define CALL_THREAD_EXIT 25
 #define CALL_SECTION_CREATE 27
 #define CALL_PROCESS_MAP 28
+#define CALL_RESOURCE_CREATE 31
+#define CALL_SECTION_CREATE_PHYSICAL 32
+#define CALL_INTERRUPT_CREATE 33
+#define CALL_INTERRUPT_BIND 34
+#define CALL_INTERRUPT_ACK 35
+#define CALL_INITIATOR_CREATE 37
+#define CALL_SECTION_PIN 38
+#define CALL_PIN_RELEASE 39
+#define CALL_INITIATOR_RELEASE_QUARANTINE 40
 #define CALL_DEBUG_WRITE 41
 #define CALL_THREAD_SET_TLS_BASE 44
 
@@ -66,8 +78,12 @@
 #define TYPE_THREAD 2
 #define TYPE_SECTION 3
 #define TYPE_CHANNEL 5
+#define TYPE_PORT 6
 #define TYPE_JOB 7
 #define TYPE_RESOURCE 8
+#define TYPE_INTERRUPT 9
+#define TYPE_INITIATOR 10
+#define TYPE_PIN 11
 
 /* Rights (O5): bits 16 to 19 are common to every type, bits 0 to 15
    specific to one. RIGHTS_SAME keeps a source's rights. */
@@ -93,12 +109,21 @@
 #define CHANNEL_RIGHT_READ 0x1
 #define CHANNEL_RIGHT_WRITE 0x2
 
+#define PORT_RIGHT_QUEUE 0x1
+#define PORT_RIGHT_READ 0x2
+
 #define JOB_RIGHT_CREATE_PROCESS 0x1
 #define JOB_RIGHT_CREATE_JOB 0x2
 #define JOB_RIGHT_TERMINATE 0x4
 #define JOB_RIGHT_WRITE_EXECUTE 0x8
 
 #define RESOURCE_RIGHT_USE 0x1
+
+#define INTERRUPT_RIGHT_BIND 0x1
+#define INTERRUPT_RIGHT_ACK 0x2
+
+#define INITIATOR_RIGHT_PIN 0x1
+#define INITIATOR_RIGHT_RELEASE 0x2
 
 /* Signals (O9): a process's and a thread's, and a channel endpoint's. */
 #define PROCESS_TERMINATED 0x1
@@ -133,6 +158,37 @@
 #define CHANNEL_MAX_HANDLES 64
 #define CHANNEL_MAX_CAPACITY 1024
 
+/* The most user packets a port holds (ipc.md I4), and the packet types. */
+#define PORT_MAX_CAPACITY 4096
+#define PACKET_USER 0
+#define PACKET_SIGNAL 1
+#define PACKET_INTERRUPT 2
+
+/* The memory types section_create_physical offers (ipc.md I6): strong
+   uncacheable, for registers, and write-combining, for framebuffers. */
+#define CACHE_UNCACHED 0
+#define CACHE_WRITE_COMBINING 1
+
+/* What a device does with pinned pages (ipc.md I8), for section_pin. */
+#define PIN_DEVICE_READ 0x1
+#define PIN_DEVICE_WRITE 0x2
+
+/* Interrupt sources as interrupt_create names them and an IRQ resource
+   covers them (ipc.md I7): ACPI global system interrupt g is source g,
+   and the message-signalled interrupts of bus requester ID r (ipc.md I8)
+   are source INTERRUPT_SOURCE_MSI + r. */
+#define INTERRUPT_SOURCE_MSI 0x100000000
+#define INTERRUPT_SOURCE_LIMIT 0x200000000
+
+/* The named system privileges a system resource's range counts, from 0
+   (ipc.md I6); in the first set only the debug log. */
+#define SYSTEM_PRIVILEGE_DEBUG_LOG 0
+#define SYSTEM_PRIVILEGES 1
+
+/* The page size: every section's size, every offset into one and every
+   address a section is mapped at is a multiple of it (syscalls.md S8). */
+#define PAGE_SIZE 4096
+
 /* The most objects one object_wait_many watches (O9). */
 #define WAIT_MANY_MAX 64
 
@@ -141,11 +197,16 @@
 #define SECTION_MAX_SIZE 0x200000
 
 /* The first process's bootstrap message (ipc.md I6): the root system
-   resource, the process itself, the root job, then one read-only section
-   for each file nova-boot read from \nova\, in the order of the
-   message's bytes, which are a BOOTSTRAP_FILE for each. A name is ASCII,
+   resource, the process itself, the root job, the root MMIO, IRQ and DMA
+   resources, then one read-only section for each file nova-boot read
+   from \nova\. Its bytes are a BOOTSTRAP_PLATFORM, then a BOOTSTRAP_FILE
+   for each file, in the order of the sections. A name is ASCII,
    NUL-terminated, as the firmware reported it. */
-#define BOOTSTRAP_FIRST_FILE 3
+#define BOOTSTRAP_ROOT_MMIO 3
+#define BOOTSTRAP_ROOT_IRQ 4
+#define BOOTSTRAP_ROOT_DMA 5
+#define BOOTSTRAP_FIRST_FILE 6
+#define BOOTSTRAP_ECAM_RANGES_MAX 8
 #define BOOT_FILES_MAX 8
 #define BOOT_FILE_NAME_SIZE 32
 
@@ -188,6 +249,34 @@ typedef struct {
     UINT64 size;
     char name[BOOT_FILE_NAME_SIZE];
 } BOOTSTRAP_FILE;
+
+/* The PCI Express configuration space the ACPI MCFG table describes, one
+   range per segment group and bus range: bus b's configuration space
+   lies 1 MiB per bus from base, the space of bus start_bus. */
+typedef struct {
+    UINT64 base;
+    UINT16 segment;
+    UINT8 start_bus;
+    UINT8 end_bus;
+    UINT32 reserved;
+} ECAM_RANGE;
+
+typedef struct {
+    UINT32 ecam_count;
+    UINT32 reserved;
+    ECAM_RANGE ecam[BOOTSTRAP_ECAM_RANGES_MAX];
+} BOOTSTRAP_PLATFORM;
+
+/* A port packet (ipc.md I4). An interrupt packet's payload starts with
+   the interrupt's time on the monotonic clock in nanoseconds. */
+#define PACKET_PAYLOAD_WORDS 4
+
+typedef struct {
+    UINT64 key;
+    UINT32 type;
+    UINT32 status;
+    UINT64 payload[PACKET_PAYLOAD_WORDS];
+} PORT_PACKET;
 
 #endif
 #endif

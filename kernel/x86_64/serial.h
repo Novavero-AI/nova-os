@@ -16,4 +16,8 @@ void serial_number(UINT64 n);
 /* n in hexadecimal, with a 0x prefix. */
 void serial_hex(UINT64 n);
 
+/* n in hexadecimal, zero-padded to at least width digits, with no
+   prefix. */
+void serial_hex_width(UINT64 n, UINT32 width);
+
 #endif

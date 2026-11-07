@@ -287,6 +287,31 @@ void handle_take(HANDLE_TABLE *table, UINT32 value)
     free_entry(entry_of(table, value));
 }
 
+STATUS handle_duplicate(HANDLE_TABLE *table, UINT32 value, UINT32 rights,
+                        UINT32 *duplicate)
+{
+    UINT64 flags = save_and_disable_interrupts();
+    HANDLE_ENTRY *entry = entry_of(table, value);
+    STATUS status = OK;
+    UINT32 index;
+
+    if (!entry)
+        status = ERR_BAD_HANDLE;
+    else if (!(entry->rights & RIGHT_DUPLICATE) ||
+             (rights != RIGHTS_SAME && (rights & entry->rights) != rights))
+        status = ERR_ACCESS_DENIED;
+    else
+        status = handle_reserve(table, &index);
+    if (status == OK) {
+        object_add_handle(entry->object);
+        *duplicate = handle_place(table, index, entry->object,
+                                  rights == RIGHTS_SAME ? entry->rights
+                                                        : rights);
+    }
+    restore_interrupts(flags);
+    return status;
+}
+
 STATUS handle_close(HANDLE_TABLE *table, UINT32 value)
 {
     UINT64 flags = save_and_disable_interrupts();

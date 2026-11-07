@@ -36,18 +36,14 @@
    copies add part of what it was seeded from. */
 
 #include "page.h"
+#include "memory_map.h"
 #include "cpu.h"
-#include "efi.h"
 
 _Static_assert(PAGE_SIZE == EFI_PAGE_SIZE, "a page is a memory map page");
 
 #define BITS_PER_WORD 64
 #define ALL_SET 0xFFFFFFFFFFFFFFFFULL
 #define WORDS_PER_PAGE (PAGE_SIZE / sizeof(UINT64))
-
-/* One past the last page a descriptor may reach: no page of one starts
-   above 0xfffffffffffff000 (UEFI 2.11, 7.2.3). */
-#define MAP_END_PAGE 0x10000000000000ULL
 
 static UINT64 *bitmap;
 static UINT64 bitmap_words;
@@ -57,31 +53,7 @@ static UINT64 total_pages;
 static UINT64 search_word; /* no free page lies in a word below it */
 
 /* ------------------------------------------------------------------------
-   The memory map. Descriptors are descriptor_size apart, which may exceed
-   the structure (UEFI 2.11, 7.2.3). */
-
-static UINT64 descriptor_count(const BOOT_INFO *info)
-{
-    if (info->descriptor_size < sizeof(EFI_MEMORY_DESCRIPTOR))
-        return 0;
-    return info->memory_map_size / info->descriptor_size;
-}
-
-static const EFI_MEMORY_DESCRIPTOR *descriptor_at(const BOOT_INFO *info,
-                                                  UINT64 index)
-{
-    return (const EFI_MEMORY_DESCRIPTOR *)(info->memory_map +
-                                           index * info->descriptor_size);
-}
-
-/* A descriptor the page loops can trust: page-aligned, not empty, and
-   within the address space UEFI allows. A 64-bit start always lies below
-   MAP_END_PAGE, so only the length needs bounding. */
-static int well_formed(const EFI_MEMORY_DESCRIPTOR *d)
-{
-    return d->PhysicalStart % PAGE_SIZE == 0 && d->NumberOfPages != 0 &&
-           d->NumberOfPages <= MAP_END_PAGE - d->PhysicalStart / PAGE_SIZE;
-}
+   The memory map (memory_map.h). */
 
 static int general(const EFI_MEMORY_DESCRIPTOR *d)
 {
@@ -104,10 +76,10 @@ static UINT64 general_end(const BOOT_INFO *info)
 {
     UINT64 i, end = 0;
 
-    for (i = 0; i < descriptor_count(info); i++) {
-        const EFI_MEMORY_DESCRIPTOR *d = descriptor_at(info, i);
+    for (i = 0; i < memory_map_count(info); i++) {
+        const EFI_MEMORY_DESCRIPTOR *d = memory_map_at(info, i);
 
-        if (general(d) && well_formed(d) && end_page(d) > end)
+        if (general(d) && memory_map_well_formed(d) && end_page(d) > end)
             end = end_page(d);
     }
     return end;
@@ -124,11 +96,11 @@ static UINT64 find_run(const BOOT_INFO *info, UINT64 pages)
 {
     UINT64 i;
 
-    for (i = 0; i < descriptor_count(info); i++) {
-        const EFI_MEMORY_DESCRIPTOR *d = descriptor_at(info, i);
+    for (i = 0; i < memory_map_count(info); i++) {
+        const EFI_MEMORY_DESCRIPTOR *d = memory_map_at(info, i);
         UINT64 run = first_page(d) == 0 ? 1 : first_page(d);
 
-        if (d->Type == EFI_CONVENTIONAL_MEMORY && well_formed(d) &&
+        if (d->Type == EFI_CONVENTIONAL_MEMORY && memory_map_well_formed(d) &&
             pages <= end_page(d) - run)
             return run;
     }
@@ -175,10 +147,10 @@ static void release_general(const BOOT_INFO *info)
 {
     UINT64 i, page;
 
-    for (i = 0; i < descriptor_count(info); i++) {
-        const EFI_MEMORY_DESCRIPTOR *d = descriptor_at(info, i);
+    for (i = 0; i < memory_map_count(info); i++) {
+        const EFI_MEMORY_DESCRIPTOR *d = memory_map_at(info, i);
 
-        if (!general(d) || !well_formed(d))
+        if (!general(d) || !memory_map_well_formed(d))
             continue;
         total_pages += d->NumberOfPages;
         for (page = first_page(d); page < end_page(d); page++)

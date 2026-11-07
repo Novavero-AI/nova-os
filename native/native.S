@@ -22,6 +22,7 @@
 #define HOME_RDX 0x10
 #define HOME_R8 0x18
 #define HOME_R9 0x20
+#define ARGUMENT_5 0x28
 #define ARGUMENT_6 0x30
 #define ARGUMENT_7 0x38
 
@@ -190,5 +191,132 @@ section_create:
 process_map:
     movq %rcx, %r10
     movl $CALL_PROCESS_MAP, %eax
+    syscall
+    ret
+
+/* UINT32 handle_duplicate(UINT32 handle, UINT32 rights, UINT32 *duplicate) */
+    .globl handle_duplicate
+handle_duplicate:
+    movq %r8, HOME_R8(%rsp)
+    movq %rcx, %r10
+    movl $CALL_HANDLE_DUPLICATE, %eax
+    syscall
+    movq HOME_R8(%rsp), %rcx
+    movl %edx, (%rcx)
+    ret
+
+/* UINT32 port_create(UINT32 capacity, UINT32 *port) */
+    .globl port_create
+port_create:
+    movq %rdx, HOME_RDX(%rsp)
+    movq %rcx, %r10
+    movl $CALL_PORT_CREATE, %eax
+    syscall
+    movq HOME_RDX(%rsp), %rcx
+    movl %edx, (%rcx)
+    ret
+
+/* UINT32 port_wait(UINT32 port, UINT64 deadline, PORT_PACKET *packet) */
+    .globl port_wait
+port_wait:
+    movq %rcx, %r10
+    movl $CALL_PORT_WAIT, %eax
+    syscall
+    ret
+
+/* UINT32 resource_create(UINT32 parent, UINT64 base, UINT64 size,
+                          UINT32 *resource) */
+    .globl resource_create
+resource_create:
+    movq %r9, HOME_R9(%rsp)
+    movq %rcx, %r10
+    movl $CALL_RESOURCE_CREATE, %eax
+    syscall
+    movq HOME_R9(%rsp), %rcx
+    movl %edx, (%rcx)
+    ret
+
+/* UINT32 section_create_physical(UINT32 resource, UINT64 base,
+                                  UINT64 size, UINT32 cache,
+                                  UINT32 *section) */
+    .globl section_create_physical
+section_create_physical:
+    movq %rcx, %r10
+    movl $CALL_SECTION_CREATE_PHYSICAL, %eax
+    syscall
+    movq ARGUMENT_5(%rsp), %rcx
+    movl %edx, (%rcx)
+    ret
+
+/* UINT32 interrupt_create(UINT32 resource, UINT64 source, UINT32 options,
+                           UINT32 *interrupt, UINT64 *address,
+                           UINT32 *data) */
+    .globl interrupt_create
+interrupt_create:
+    movq %r9, HOME_R9(%rsp)
+    movq %rcx, %r10
+    movl $CALL_INTERRUPT_CREATE, %eax
+    syscall
+    movq HOME_R9(%rsp), %rcx
+    movl %edx, (%rcx)
+    movq ARGUMENT_5(%rsp), %rcx
+    movq %r8, (%rcx)
+    movq ARGUMENT_6(%rsp), %rcx
+    movl %r9d, (%rcx)
+    ret
+
+/* UINT32 interrupt_bind(UINT32 interrupt, UINT32 port, UINT64 key) */
+    .globl interrupt_bind
+interrupt_bind:
+    movq %rcx, %r10
+    movl $CALL_INTERRUPT_BIND, %eax
+    syscall
+    ret
+
+/* UINT32 interrupt_ack(UINT32 interrupt) */
+    .globl interrupt_ack
+interrupt_ack:
+    movq %rcx, %r10
+    movl $CALL_INTERRUPT_ACK, %eax
+    syscall
+    ret
+
+/* UINT32 initiator_create(UINT32 resource, UINT32 requester,
+                           UINT32 *initiator) */
+    .globl initiator_create
+initiator_create:
+    movq %r8, HOME_R8(%rsp)
+    movq %rcx, %r10
+    movl $CALL_INITIATOR_CREATE, %eax
+    syscall
+    movq HOME_R8(%rsp), %rcx
+    movl %edx, (%rcx)
+    ret
+
+/* UINT32 section_pin(UINT32 initiator, UINT32 section, UINT64 offset,
+                      UINT64 size, UINT32 options, UINT64 *addresses,
+                      UINT32 *pin) */
+    .globl section_pin
+section_pin:
+    movq %rcx, %r10
+    movl $CALL_SECTION_PIN, %eax
+    syscall
+    movq ARGUMENT_7(%rsp), %rcx
+    movl %edx, (%rcx)
+    ret
+
+/* UINT32 pin_release(UINT32 pin) */
+    .globl pin_release
+pin_release:
+    movq %rcx, %r10
+    movl $CALL_PIN_RELEASE, %eax
+    syscall
+    ret
+
+/* UINT32 initiator_release_quarantine(UINT32 initiator) */
+    .globl initiator_release_quarantine
+initiator_release_quarantine:
+    movq %rcx, %r10
+    movl $CALL_INITIATOR_RELEASE_QUARANTINE, %eax
     syscall
     ret

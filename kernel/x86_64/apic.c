@@ -26,6 +26,7 @@
 #define APIC_BASE_ADDRESS (~0xfffULL)
 
 /* Register offsets from the APIC's base (SDM Vol. 3A, Table 13-1). */
+#define APIC_ID 0x20
 #define APIC_TPR 0x80
 #define APIC_EOI 0xb0
 #define APIC_SVR 0xf0
@@ -49,6 +50,16 @@
 
 #define CALIBRATION_MS 10
 #define MS_PER_SECOND 1000
+
+/* The local APIC ID is in bits 31:24 of its register (SDM Vol. 3A
+   13.4.6, Figure 13-6). An MSI's address is 0FEEH in bits 31:20 and the
+   destination's APIC ID in bits 19:12, with redirection hint and
+   destination mode 0 for that one processor; its data is the vector in
+   bits 7:0, with fixed delivery (000B in bits 10:8) and edge trigger
+   (bit 15 clear) (SDM Vol. 3A 13.11.1, 13.11.2). */
+#define APIC_ID_SHIFT 24
+#define MSI_ADDRESS_BASE 0xfee00000u
+#define MSI_DESTINATION_SHIFT 12
 
 /* Where the kernel reaches the register block: its direct-map address,
    mapped strong uncacheable, which correct APIC operation requires (SDM
@@ -144,7 +155,20 @@ void apic_timer_start(UINT64 tsc_per_ms)
 void apic_timer_interrupt(void)
 {
     ticks++;
+    apic_eoi();
+}
+
+void apic_eoi(void)
+{
     apic_write(APIC_EOI, 0);
+}
+
+void apic_msi_message(UINT32 vector, UINT64 *address, UINT32 *data)
+{
+    UINT32 id = apic_read(APIC_ID) >> APIC_ID_SHIFT;
+
+    *address = MSI_ADDRESS_BASE | id << MSI_DESTINATION_SHIFT;
+    *data = vector;
 }
 
 UINT64 timer_ticks(void)

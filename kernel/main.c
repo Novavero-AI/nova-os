@@ -6,16 +6,18 @@
    It checks that BOOT_INFO is the record it was built for; installs its
    own descriptor tables and exception handlers and removes the lower-half
    mapping nova-boot left for the switch; builds the physical page
-   allocator, checks it and reports on the first serial port; starts its
-   clock, the scheduler and the timer; seeds the random number
-   generator; starts a thread that keeps the boot screen's spinner
-   turning and a startup thread that runs the first user process, tests
-   the threads, then stops the spinner and fades the boot screen into the
-   desktop background; and becomes the idle thread. */
+   allocator, checks it and reports on the first serial port; reads the
+   ACPI tables; starts its clock, the scheduler and the timer; seeds the
+   random number generator; starts a thread that keeps the boot screen's
+   spinner turning and a startup thread that runs the first user process,
+   tests the threads, then stops the spinner and fades the boot screen
+   into the desktop background; and becomes the idle thread. */
 
 #include "background.h"
 #include "boot_info.h"
 #include "cpu.h"
+#include "acpi/acpi.h"
+#include "mm/memory_map.h"
 #include "mm/page.h"
 #include "object/process.h"
 #include "random/random.h"
@@ -151,6 +153,8 @@ VOID kernel_main(BOOT_INFO *info)
         halt_forever();
     }
     report_memory(info);
+    memory_map_init(info);
+    acpi_init(info);
     start_clock(info->tsc_per_ms);
     sched_init();
     arch_start_timer(info->tsc_per_ms);

@@ -6,6 +6,7 @@
 #include "x86_64.h"
 #include "cpu.h"
 #include "serial.h"
+#include "../object/interrupt.h"
 #include "../sched/thread.h"
 
 #define VECTOR_COUNT 256
@@ -41,6 +42,10 @@ _Static_assert(sizeof(IDT_GATE) == 16, "an IDT gate is 16 bytes");
    naming the vector (SDM Vol. 2A, INT n, IA-32e mode; Vol. 3A 7.13). */
 static IDT_GATE idt[VECTOR_COUNT];
 
+_Static_assert(MSI_VECTOR_FIRST > TIMER_VECTOR &&
+                   MSI_VECTOR_FIRST + MSI_VECTOR_COUNT <= COMPAT_GATE_VECTOR,
+               "the message-signalled vectors take no vector of another use");
+
 /* ist 0 keeps the interrupted stack, or takes RSP0 from the TSS on a
    change to CPL 0; 1 to 7 switch to that IST slot's stack (SDM Vol. 3A
    7.14.4, 7.14.5). */
@@ -71,6 +76,9 @@ void idt_load(void)
     set_gate(TIMER_VECTOR, (UINT64)timer_stub, 0, 0);
     set_gate(SPURIOUS_VECTOR, (UINT64)spurious_stub, 0, 0);
     set_gate(COMPAT_GATE_VECTOR, (UINT64)compat_gate_stub, 0, GATE_DPL_USER);
+    for (vector = 0; vector < MSI_VECTOR_COUNT; vector++)
+        set_gate(MSI_VECTOR_FIRST + vector,
+                 (UINT64)msi_stubs + vector * MSI_STUB_SIZE, 0, 0);
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (UINT64)idt;
     __asm__ volatile("lidt %0" : : "m"(idtr) : "memory");
@@ -147,6 +155,10 @@ void interrupt_dispatch(INTERRUPT_FRAME *frame)
         compat_syscall_dispatch(frame);
         break;
     default:
-        exception_halt(frame);
+        if (frame->vector >= MSI_VECTOR_FIRST &&
+            frame->vector - MSI_VECTOR_FIRST < MSI_VECTOR_COUNT)
+            interrupt_fired((UINT32)frame->vector);
+        else
+            exception_halt(frame);
     }
 }

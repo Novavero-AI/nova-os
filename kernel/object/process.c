@@ -244,7 +244,8 @@ STATUS process_map(PROCESS *process, SECTION *section, UINT64 offset,
     for (i = 0; status == OK && i < pages; i++)
         if (!paging_map_user_borrowed(
                 process->space, address + i * PAGE_SIZE,
-                section->physical[offset / PAGE_SIZE + i], user_protection))
+                section_page(section, offset / PAGE_SIZE + i),
+                user_protection, section->memory_type))
             status = ERR_NO_MEMORY;
     if (status == ERR_NO_MEMORY)
         while (i-- > 0)

@@ -120,6 +120,14 @@ STATUS handle_get_waitable(HANDLE_TABLE *table, UINT32 value, UINT32 rights,
    ERR_BAD_HANDLE. */
 STATUS handle_close(HANDLE_TABLE *table, UINT32 value);
 
+/* handle_duplicate (O4): a second handle in table to the object value
+   names, with rights, RIGHTS_SAME or a subset of the handle's (O5).
+   Returns OK and the new handle's value; ERR_BAD_HANDLE;
+   ERR_ACCESS_DENIED if the handle lacks DUPLICATE or rights is not
+   within its rights; or ERR_NO_MEMORY if the table is full. */
+STATUS handle_duplicate(HANDLE_TABLE *table, UINT32 value, UINT32 rights,
+                        UINT32 *duplicate);
+
 /* For moving handles out of a table into a message, with interrupts
    disabled across both so that nothing changes between them: the object
    and rights of the handle value names, or ERR_BAD_HANDLE, taking no

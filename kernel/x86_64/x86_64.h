@@ -33,6 +33,13 @@
    kernel never routes an interrupt source to that vector, so an event on
    it is always the INT. */
 
+/* The vectors message-signalled interrupts are given, one each, from
+   priority class 3 up to the 32-bit lane's gate (SDM Vol. 3A 13.8.3).
+   Their stubs in entry.S are MSI_STUB_SIZE bytes apart. */
+#define MSI_VECTOR_FIRST 0x30
+#define MSI_VECTOR_COUNT 0x50
+#define MSI_STUB_SIZE 16
+
 /* The vector slot of a frame built by the system-call entry, a value no
    interrupt or exception has. */
 #define SYSCALL_FRAME_VECTOR 0x100
@@ -129,6 +136,10 @@ void timer_stub(void);
 void spurious_stub(void);
 void compat_gate_stub(void);
 
+/* The stub for message-signalled vector v is at msi_stubs + (v -
+   MSI_VECTOR_FIRST) * MSI_STUB_SIZE. */
+extern const UINT8 msi_stubs[];
+
 /* syscall.S: where SYSCALL from 64-bit and from compatibility mode
    enters the kernel. */
 void syscall_entry(void);
@@ -138,6 +149,14 @@ void gdt_load(void);
 void idt_load(void);
 void apic_timer_start(UINT64 tsc_per_ms);
 void apic_timer_interrupt(void);
+
+/* Signal the end of the interrupt being handled to the local APIC (SDM
+   Vol. 3A 13.8.5). */
+void apic_eoi(void);
+
+/* The message address and data that raise vector, edge-triggered with
+   fixed delivery, at this processor's local APIC (SDM Vol. 3A 13.11). */
+void apic_msi_message(UINT32 vector, UINT64 *address, UINT32 *data);
 void interrupt_dispatch(INTERRUPT_FRAME *frame);
 
 /* entry.S hands an NMI, double fault or machine check here, on its own

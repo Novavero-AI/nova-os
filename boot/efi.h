@@ -1,9 +1,10 @@
 /* The UEFI interfaces nova-boot calls, written out from the UEFI
    Specification 2.11: 2.3 (data types, x64 calling convention), 4.3.1
-   (EFI_SYSTEM_TABLE), 4.4.1 (EFI_BOOT_SERVICES), 7.2 (AllocatePages,
-   FreePages, GetMemoryMap, AllocatePool, FreePool), 7.3
-   (HandleProtocol, LocateHandleBuffer), 7.4.6 (ExitBootServices), 7.5
-   (Stall, SetWatchdogTimer), 9.1 (EFI_LOADED_IMAGE_PROTOCOL), 12.9
+   (EFI_SYSTEM_TABLE), 4.4.1 (EFI_BOOT_SERVICES), 4.6.1
+   (EFI_CONFIGURATION_TABLE), 7.2 (AllocatePages, FreePages,
+   GetMemoryMap, AllocatePool, FreePool), 7.3 (HandleProtocol,
+   LocateHandleBuffer), 7.4.6 (ExitBootServices), 7.5 (Stall,
+   SetWatchdogTimer), 9.1 (EFI_LOADED_IMAGE_PROTOCOL), 12.9
    (EFI_GRAPHICS_OUTPUT_PROTOCOL, EFI_EDID_DISCOVERED_PROTOCOL,
    EFI_EDID_ACTIVE_PROTOCOL), 13.4 and 13.5 (simple file system, file
    protocol), 37.5 (EFI_RNG_PROTOCOL). Members nova-boot never calls are
@@ -31,11 +32,17 @@ typedef UINT16 CHAR16;
 
 /* EFI_ALLOCATE_TYPE and EFI_MEMORY_TYPE values. */
 #define ALLOCATE_ANY_PAGES 0
+#define EFI_RESERVED_MEMORY_TYPE 0
 #define EFI_LOADER_CODE 1
 #define EFI_LOADER_DATA 2
 #define EFI_BOOT_SERVICES_CODE 3
 #define EFI_BOOT_SERVICES_DATA 4
+#define EFI_RUNTIME_SERVICES_DATA 6
 #define EFI_CONVENTIONAL_MEMORY 7
+#define EFI_ACPI_RECLAIM_MEMORY 9
+#define EFI_ACPI_MEMORY_NVS 10
+#define EFI_MEMORY_MAPPED_IO 11
+#define EFI_MEMORY_MAPPED_IO_PORT_SPACE 12
 
 #define EFI_PAGE_SIZE 4096
 #define EFI_MEMORY_DESCRIPTOR_VERSION 1
@@ -49,6 +56,12 @@ typedef struct {
     UINT16 Data3;
     UINT8 Data4[8];
 } EFI_GUID;
+
+/* A GUID and the table it names (4.6.1). */
+typedef struct {
+    EFI_GUID VendorGuid;
+    VOID *VendorTable;
+} EFI_CONFIGURATION_TABLE;
 
 typedef struct {
     UINT64 Signature;
@@ -140,7 +153,7 @@ typedef struct {
     VOID *RuntimeServices;
     EFI_BOOT_SERVICES *BootServices;
     UINTN NumberOfTableEntries;
-    VOID *ConfigurationTable;
+    EFI_CONFIGURATION_TABLE *ConfigurationTable;
 } EFI_SYSTEM_TABLE;
 
 typedef struct {

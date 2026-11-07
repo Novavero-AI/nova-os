@@ -8,12 +8,16 @@
    2. a handle to the process itself with MAP and CREATE_THREAD, which a
       creator normally includes (O6);
    3. the root job, with which it creates processes;
-   4. from BOOTSTRAP_FIRST_FILE on, each file nova-boot read from \nova\,
-      as a section holding its bytes that the process may only read, with
-      the files' names and sizes in the message's bytes (native_abi.h).
+   4. the root MMIO, IRQ and DMA resources, the authority over every
+      device it gives drivers a part of (I6);
+   5. from BOOTSTRAP_FIRST_FILE on, each file nova-boot read from \nova\,
+      as a section holding its bytes that the process may only read.
 
-   The other root resources that I6 lists join the message as the kernel
-   implements their objects. The kernel's own end of the channel is
+   The message's bytes are a BOOTSTRAP_PLATFORM naming the PCI Express
+   configuration space the ACPI MCFG table describes, then the files'
+   names and sizes (native_abi.h). The root I/O-port resource and the
+   framebuffer's section that I6 lists join the message as the kernel
+   implements their calls. The kernel's own end of the channel is
    closed once the message is written; a message already queued stays
    readable after its writer closes (I1). The first process itself is
    not created with PROCESS_OPTION_WRITE_EXECUTE: the root job's handle
@@ -23,12 +27,15 @@
    The kernel then waits for the process to end, logs the exit code
    process_info reports and closes its handle to the process. */
 
+#include <stddef.h>
+
 #include "process.h"
 #include "boot_info.h"
 #include "channel.h"
 #include "cpu.h"
 #include "image.h"
 #include "resource.h"
+#include "../acpi/acpi.h"
 #include "../mm/page.h"
 #include "../x86_64/paging.h"
 #include "../x86_64/serial.h"
@@ -47,8 +54,18 @@
    without regard to case, and the firmware reports the name as stored. */
 #define INIT_NAME "init.exe"
 
-#define ROOT_RESOURCE_RIGHTS                                          \
-    (RESOURCE_RIGHT_USE | RIGHT_DUPLICATE | RIGHT_TRANSFER)
+/* The root DMA resource's range: every 32-bit bus requester ID (ipc.md
+   I8). The MMIO resource spans the physical-address width; the memory
+   map and the kernel's own registers are kept out of it when a section
+   is made (section.h). */
+#define REQUESTER_IDS 0x100000000ULL
+
+/* The message's bytes: the platform record, then a name per file. */
+typedef struct {
+    BOOTSTRAP_PLATFORM platform;
+    BOOTSTRAP_FILE files[BOOT_FILES_MAX];
+} BOOTSTRAP_BYTES;
+
 #define SELF_RIGHTS                                                   \
     (PROCESS_RIGHT_MAP | PROCESS_RIGHT_CREATE_THREAD | RIGHT_DUPLICATE | \
      RIGHT_TRANSFER | RIGHT_WAIT)
@@ -56,8 +73,10 @@
 
 _Static_assert(BOOTSTRAP_HANDLES <= CHANNEL_MAX_HANDLES,
                "the bootstrap message holds every handle");
-_Static_assert(sizeof(BOOTSTRAP_FILE) * BOOT_FILES_MAX <= CHANNEL_MAX_BYTES,
+_Static_assert(sizeof(BOOTSTRAP_BYTES) <= CHANNEL_MAX_BYTES,
                "the bootstrap message holds every file's name");
+_Static_assert(offsetof(BOOTSTRAP_BYTES, files) == sizeof(BOOTSTRAP_PLATFORM),
+               "the names follow the platform record directly");
 
 static void fail(const char *what, STATUS status)
 {
@@ -138,32 +157,65 @@ static SECTION *file_section(const BOOT_FILE *file, BOOTSTRAP_FILE *entry)
     return section;
 }
 
+static OBJECT *root_resource(RESOURCE_KIND kind, UINT64 base, UINT64 size)
+{
+    RESOURCE *resource = resource_create_root(kind, base, size);
+
+    if (!resource)
+        fail("no memory for a root resource", ERR_NO_MEMORY);
+    return &resource->object;
+}
+
+static void describe_platform(BOOTSTRAP_PLATFORM *platform)
+{
+    UINT32 i;
+
+    platform->ecam_count = acpi_ecam_count();
+    for (i = 0; i < platform->ecam_count; i++) {
+        const ECAM_RANGE *range = acpi_ecam(i);
+
+        platform->ecam[i].base = range->base;
+        platform->ecam[i].segment = range->segment;
+        platform->ecam[i].start_bus = range->start_bus;
+        platform->ecam[i].end_bus = range->end_bus;
+    }
+}
+
 static void send_bootstrap(PROCESS *process, JOB *job, ENDPOINT *kernel_end,
                            const BOOT_INFO *info)
 {
-    static BOOTSTRAP_FILE files[BOOT_FILES_MAX];
-    RESOURCE *root = resource_create_root_system();
+    static BOOTSTRAP_BYTES bytes;
     CARRIED_HANDLE handles[BOOTSTRAP_HANDLES];
     UINT32 count = BOOTSTRAP_FIRST_FILE;
     UINT64 i;
 
-    if (!root)
-        fail("no memory for the root resource", ERR_NO_MEMORY);
+    describe_platform(&bytes.platform);
     object_add_handle(&process->object);
-    handles[0].object = &root->object;
-    handles[0].rights = ROOT_RESOURCE_RIGHTS;
+    handles[0].object = root_resource(RESOURCE_SYSTEM, 0, SYSTEM_PRIVILEGES);
+    handles[0].rights = RESOURCE_RIGHTS;
     handles[1].object = &process->object;
     handles[1].rights = SELF_RIGHTS;
     handles[2].object = &job->object;
     handles[2].rights = ROOT_JOB_RIGHTS;
+    handles[BOOTSTRAP_ROOT_MMIO].object =
+        root_resource(RESOURCE_MMIO, 0, 1ULL << paging_physical_bits());
+    handles[BOOTSTRAP_ROOT_MMIO].rights = RESOURCE_RIGHTS;
+    handles[BOOTSTRAP_ROOT_IRQ].object =
+        root_resource(RESOURCE_IRQ, 0, INTERRUPT_SOURCE_LIMIT);
+    handles[BOOTSTRAP_ROOT_IRQ].rights = RESOURCE_RIGHTS;
+    handles[BOOTSTRAP_ROOT_DMA].object =
+        root_resource(RESOURCE_DMA, 0, REQUESTER_IDS);
+    handles[BOOTSTRAP_ROOT_DMA].rights = RESOURCE_RIGHTS;
     for (i = 0; i < info->file_count; i++) {
-        handles[count].object = &file_section(&info->files[i], &files[i])->object;
+        handles[count].object =
+            &file_section(&info->files[i], &bytes.files[i])->object;
         handles[count].rights = FILE_RIGHTS;
         count++;
     }
-    check(channel_write_kernel(kernel_end, (const UINT8 *)files,
-                               (UINT32)(info->file_count *
-                                        sizeof(BOOTSTRAP_FILE)),
+    check(channel_write_kernel(kernel_end, (const UINT8 *)&bytes,
+                               (UINT32)(sizeof bytes.platform +
+                                        info->file_count *
+                                            sizeof(BOOTSTRAP_FILE)),
                                handles, count),
           "the bootstrap message was refused");
     object_close(&kernel_end->object);

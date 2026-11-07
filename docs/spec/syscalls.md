@@ -480,6 +480,19 @@ like `offset` and `size`, and a protection of `MAP_READ` (1) with
 partly mapped already fails with `ERR_BAD_STATE`, and its result is the
 address. A mapping holds its section until the process terminates.
 
+`section_create_physical`'s cache policy is `CACHE_UNCACHED` (0) or
+`CACHE_WRITE_COMBINING` (1), and its limit is `SECTION_MAX_SIZE` too, so
+mapping a device section takes no longer than mapping a memory one; a
+larger range takes several sections. `section_pin`'s options are
+`PIN_DEVICE_READ` (1), `PIN_DEVICE_WRITE` (2) or both, and it writes one
+`UINT64` device address per page. `interrupt_create` takes `options` 0
+for a message-signalled source, numbered as
+[ipc.md I6](ipc.md#i6-device-memory-and-io-ports) gives, and fails with
+`ERR_NOT_SUPPORTED` for a global system interrupt, which this kernel does
+not route yet. `pin_release` ends the pin and removes its handle
+together, so no other thread of the process can quarantine it between
+the two.
+
 A new thread, from `process_start` or `thread_start`, begins at `entry`
 with RCX and RDX holding its two arguments, every other general-purpose
 register zero, RFLAGS 0x202 (IF and bit 1), and RSP equal to `stack`.

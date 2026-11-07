@@ -395,7 +395,9 @@ April 8, 2026 (OASIS).
 - Access: free download, under the Non-Assertion Mode of the OASIS IPR
   Policy.
 - sha256: `497b7b989b5161444e87866c264a46be90911b8f4738eadf4dd4f52eb37c8727`
-- Used by: drivers for QEMU's virtio devices.
+- Used by: drivers for QEMU's virtio devices: the virtio block driver
+  (`drivers/virtio_blk.c`), for the PCI transport (4.1), split
+  virtqueues (2.7) and the block device (5.2).
 
 **eXtensible Host Controller Interface for Universal Serial Bus (xHCI)
 Requirements Specification**, revision 2.0, October 2025, document
@@ -445,9 +447,18 @@ memory-mapped configuration space (ECAM):
   `e91d9fe3ae32df3d6c88012cdac261440cc06e089a0d83d191247a06c8c91e99`.
 - **12th Generation Intel Core Processors Datasheet, Volume 2 of 2**,
   document 655259, revision 003, April 2022: "PCI Express Configuration
-  Address Space" and the `PCIEXBAR` register.
+  Address Space" and the `PCIEXBAR` register, which give a function's
+  configuration space address; its register descriptions, for the
+  configuration header's fields, the Device Command bits and a bridge's
+  bus numbers; and the Volume Management Device's MSI-X table (8.2.2 to
+  8.2.4), for a table entry's layout.
   <https://cdrdv2.intel.com/v1/dl/getContent/655259>, sha256
   `8b13b3db5530561e3e252910a17b7f088b5ad04164d5fdca750124e93e868189`.
+
+The MCFG's allocation structures and the MSI-X capability's layout (its
+ID, message control and table offset) are in none of these; the kernel's
+MCFG reader (`kernel/acpi/acpi.c`) and `drivers/pci.h` follow the layout
+QEMU's firmware and devices were observed to use.
 
 ## Design references
 

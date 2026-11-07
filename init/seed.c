@@ -43,7 +43,6 @@
 /* The view's directory channel queues one open at a time. */
 #define DIRECTORY_CAPACITY 1
 
-#define PAGE_SIZE 4096
 #define PAGES(n) (((n) + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE)
 
 /* PE Format: the PE signature's offset at 0x3C, the COFF header after

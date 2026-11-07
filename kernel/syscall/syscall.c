@@ -10,6 +10,8 @@
 #include "syscall.h"
 #include "cpu.h"
 #include "../object/channel.h"
+#include "../object/initiator.h"
+#include "../object/interrupt.h"
 #include "../object/process.h"
 #include "../object/resource.h"
 #include "../x86_64/clock.h"
@@ -45,6 +47,18 @@ static STATUS handle_close_call(const UINT64 *arguments, UINT64 *results)
 {
     (void)results;
     return handle_close(caller_handles(), (UINT32)arguments[0]);
+}
+
+/* handle_duplicate(handle, rights): a handle. */
+static STATUS handle_duplicate_call(const UINT64 *arguments, UINT64 *results)
+{
+    UINT32 duplicate;
+    STATUS status = handle_duplicate(caller_handles(), (UINT32)arguments[0],
+                                     (UINT32)arguments[1], &duplicate);
+
+    if (status == OK)
+        results[0] = duplicate;
+    return status;
 }
 
 /* object_wait_one(handle, signals, deadline): observed signals. */
@@ -167,6 +181,39 @@ static STATUS channel_read_call(const UINT64 *arguments, UINT64 *results)
     object_release(channel);
     results[0] = byte_count;
     results[1] = handle_count;
+    return status;
+}
+
+/* port_create(capacity): a handle. */
+static STATUS port_create_call(const UINT64 *arguments, UINT64 *results)
+{
+    HANDLE_TABLE *table = caller_handles();
+    PORT *port;
+    UINT32 index;
+    STATUS status = handle_reserve(table, &index);
+
+    if (status != OK)
+        return status;
+    status = port_create((UINT32)arguments[0], &port);
+    if (status == OK)
+        give(index, &port->object, PORT_RIGHTS, &results[0]);
+    else
+        handle_unreserve(table, index);
+    return status;
+}
+
+/* port_wait(port, deadline, packet). */
+static STATUS port_wait_call(const UINT64 *arguments, UINT64 *results)
+{
+    OBJECT *port;
+    STATUS status = handle_get(caller_handles(), (UINT32)arguments[0],
+                               TYPE_PORT, PORT_RIGHT_READ, &port);
+
+    (void)results;
+    if (status != OK)
+        return status;
+    status = port_wait((PORT *)port, arguments[1], arguments[2]);
+    object_release(port);
     return status;
 }
 
@@ -352,6 +399,236 @@ static STATUS process_map_call(const UINT64 *arguments, UINT64 *results)
     return status;
 }
 
+/* ------------------------------------------------------------------------
+   Device access (docs/spec/ipc.md I6 to I8). Each call that creates an
+   object takes a resource or initiator handle first, then reserves the
+   entry for the new handle. */
+
+/* resource_create(parent, base, size): a handle. */
+static STATUS resource_create_call(const UINT64 *arguments, UINT64 *results)
+{
+    HANDLE_TABLE *table = caller_handles();
+    RESOURCE *child;
+    OBJECT *parent;
+    UINT32 index;
+    STATUS status = handle_get(table, (UINT32)arguments[0], TYPE_RESOURCE,
+                               RESOURCE_RIGHT_USE, &parent);
+
+    if (status != OK)
+        return status;
+    status = handle_reserve(table, &index);
+    if (status == OK) {
+        status = resource_derive((RESOURCE *)parent, arguments[1],
+                                 arguments[2], &child);
+        if (status == OK)
+            give(index, &child->object, RESOURCE_RIGHTS, &results[0]);
+        else
+            handle_unreserve(table, index);
+    }
+    object_release(parent);
+    return status;
+}
+
+/* section_create_physical(resource, base, size, cache): a handle. */
+static STATUS section_create_physical_call(const UINT64 *arguments,
+                                           UINT64 *results)
+{
+    HANDLE_TABLE *table = caller_handles();
+    SECTION *section;
+    OBJECT *resource;
+    UINT32 index;
+    STATUS status = handle_get(table, (UINT32)arguments[0], TYPE_RESOURCE,
+                               RESOURCE_RIGHT_USE, &resource);
+
+    if (status != OK)
+        return status;
+    status = handle_reserve(table, &index);
+    if (status == OK) {
+        status = section_create_device((RESOURCE *)resource, arguments[1],
+                                       arguments[2], (UINT32)arguments[3],
+                                       &section);
+        if (status == OK)
+            give(index, &section->object, DEVICE_SECTION_RIGHTS,
+                 &results[0]);
+        else
+            handle_unreserve(table, index);
+    }
+    object_release(resource);
+    return status;
+}
+
+/* interrupt_create(resource, source, options): a handle, the MSI address
+   and the MSI data. */
+static STATUS interrupt_create_call(const UINT64 *arguments, UINT64 *results)
+{
+    HANDLE_TABLE *table = caller_handles();
+    INTERRUPT *interrupt;
+    OBJECT *resource;
+    UINT64 address;
+    UINT32 data, index;
+    STATUS status = handle_get(table, (UINT32)arguments[0], TYPE_RESOURCE,
+                               RESOURCE_RIGHT_USE, &resource);
+
+    if (status != OK)
+        return status;
+    status = handle_reserve(table, &index);
+    if (status == OK) {
+        status = interrupt_create((RESOURCE *)resource, arguments[1],
+                                  (UINT32)arguments[2], &interrupt, &address,
+                                  &data);
+        if (status == OK) {
+            give(index, &interrupt->object, INTERRUPT_RIGHTS, &results[0]);
+            results[1] = address;
+            results[2] = data;
+        } else {
+            handle_unreserve(table, index);
+        }
+    }
+    object_release(resource);
+    return status;
+}
+
+/* interrupt_bind(interrupt, port, key). */
+static STATUS interrupt_bind_call(const UINT64 *arguments, UINT64 *results)
+{
+    HANDLE_TABLE *table = caller_handles();
+    OBJECT *interrupt, *port;
+    STATUS status = handle_get(table, (UINT32)arguments[0], TYPE_INTERRUPT,
+                               INTERRUPT_RIGHT_BIND, &interrupt);
+
+    (void)results;
+    if (status != OK)
+        return status;
+    status = handle_get(table, (UINT32)arguments[1], TYPE_PORT,
+                        PORT_RIGHT_QUEUE, &port);
+    if (status == OK) {
+        status = interrupt_bind((INTERRUPT *)interrupt, (PORT *)port,
+                                arguments[2]);
+        object_release(port);
+    }
+    object_release(interrupt);
+    return status;
+}
+
+/* interrupt_ack(interrupt). */
+static STATUS interrupt_ack_call(const UINT64 *arguments, UINT64 *results)
+{
+    OBJECT *interrupt;
+    STATUS status =
+        handle_get(caller_handles(), (UINT32)arguments[0], TYPE_INTERRUPT,
+                   INTERRUPT_RIGHT_ACK, &interrupt);
+
+    (void)results;
+    if (status != OK)
+        return status;
+    status = interrupt_ack((INTERRUPT *)interrupt);
+    object_release(interrupt);
+    return status;
+}
+
+/* initiator_create(resource, requester ID): a handle. */
+static STATUS initiator_create_call(const UINT64 *arguments, UINT64 *results)
+{
+    HANDLE_TABLE *table = caller_handles();
+    INITIATOR *initiator;
+    OBJECT *resource;
+    UINT32 index;
+    STATUS status = handle_get(table, (UINT32)arguments[0], TYPE_RESOURCE,
+                               RESOURCE_RIGHT_USE, &resource);
+
+    if (status != OK)
+        return status;
+    status = handle_reserve(table, &index);
+    if (status == OK) {
+        status = initiator_create((RESOURCE *)resource, (UINT32)arguments[1],
+                                  &initiator);
+        if (status == OK)
+            give(index, &initiator->object, INITIATOR_RIGHTS, &results[0]);
+        else
+            handle_unreserve(table, index);
+    }
+    object_release(resource);
+    return status;
+}
+
+/* section_pin(initiator, section, offset, size, options, addresses): a
+   handle. The section handle needs the rights the options do (ipc.md
+   I8). */
+static STATUS section_pin_call(const UINT64 *arguments, UINT64 *results)
+{
+    HANDLE_TABLE *table = caller_handles();
+    UINT32 options = (UINT32)arguments[4];
+    OBJECT *initiator, *section;
+    PIN *pin;
+    UINT32 index;
+    STATUS status = handle_get(table, (UINT32)arguments[0], TYPE_INITIATOR,
+                               INITIATOR_RIGHT_PIN, &initiator);
+
+    if (status != OK)
+        return status;
+    status = handle_get(table, (UINT32)arguments[1], TYPE_SECTION,
+                        initiator_pin_rights(options), &section);
+    if (status == OK) {
+        status = handle_reserve(table, &index);
+        if (status == OK) {
+            status = initiator_pin((INITIATOR *)initiator, (SECTION *)section,
+                                   arguments[2], arguments[3], options,
+                                   arguments[5], &pin);
+            if (status == OK)
+                give(index, &pin->object, PIN_RIGHTS, &results[0]);
+            else
+                handle_unreserve(table, index);
+        }
+        object_release(section);
+    }
+    object_release(initiator);
+    return status;
+}
+
+/* pin_release(pin): the pin ends and its handle closes. The pin ends
+   and the handle leaves the table with interrupts disabled across both,
+   so no other thread can close the handle between them, which would
+   quarantine the pin first; the handle, out of the table, then closes
+   on a released pin. */
+static STATUS pin_release_call(const UINT64 *arguments, UINT64 *results)
+{
+    HANDLE_TABLE *table = caller_handles();
+    UINT32 value = (UINT32)arguments[0];
+    OBJECT *pin;
+    UINT32 rights;
+    UINT64 flags = save_and_disable_interrupts();
+    STATUS status = handle_peek(table, value, &pin, &rights);
+
+    (void)results;
+    if (status == OK && pin->type->number != TYPE_PIN)
+        status = ERR_WRONG_TYPE;
+    if (status == OK) {
+        pin_release((PIN *)pin);
+        handle_take(table, value);
+    }
+    restore_interrupts(flags);
+    if (status == OK)
+        object_close(pin);
+    return status;
+}
+
+/* initiator_release_quarantine(initiator). */
+static STATUS initiator_release_quarantine_call(const UINT64 *arguments,
+                                                UINT64 *results)
+{
+    OBJECT *initiator;
+    STATUS status =
+        handle_get(caller_handles(), (UINT32)arguments[0], TYPE_INITIATOR,
+                   INITIATOR_RIGHT_RELEASE, &initiator);
+
+    (void)results;
+    if (status != OK)
+        return status;
+    initiator_release_quarantine((INITIATOR *)initiator);
+    object_release(initiator);
+    return OK;
+}
+
 /* debug_write(resource, bytes, byte count). The bytes are copied whole
    before any is written, so a call that fails writes nothing (S7). */
 static STATUS debug_write_call(const UINT64 *arguments, UINT64 *results)
@@ -365,7 +642,8 @@ static STATUS debug_write_call(const UINT64 *arguments, UINT64 *results)
     (void)results;
     if (status != OK)
         return status;
-    if (!resource_covers((RESOURCE *)resource, SYSTEM_PRIVILEGE_DEBUG_LOG))
+    if (!resource_covers((RESOURCE *)resource, RESOURCE_SYSTEM,
+                         SYSTEM_PRIVILEGE_DEBUG_LOG, 1))
         status = ERR_ACCESS_DENIED;
     else if (count > DEBUG_WRITE_MAX_BYTES)
         status = ERR_OUT_OF_RANGE;
@@ -394,11 +672,14 @@ static STATUS thread_set_tls_base_call(const UINT64 *arguments,
 
 static const CALL_ENTRY calls[CALL_COUNT] = {
     [CALL_HANDLE_CLOSE] = {handle_close_call, 1, 1},
+    [CALL_HANDLE_DUPLICATE] = {handle_duplicate_call, 2, 0},
     [CALL_OBJECT_WAIT_ONE] = {object_wait_one_call, 3, 1},
     [CALL_OBJECT_WAIT_MANY] = {object_wait_many_call, 3, 1},
     [CALL_CHANNEL_CREATE] = {channel_create_call, 1, 1},
     [CALL_CHANNEL_WRITE] = {channel_write_call, 5, 1},
     [CALL_CHANNEL_READ] = {channel_read_call, 5, 1},
+    [CALL_PORT_CREATE] = {port_create_call, 1, 0},
+    [CALL_PORT_WAIT] = {port_wait_call, 3, 0},
     [CALL_CLOCK_MONOTONIC] = {clock_monotonic_call, 0, 0},
     [CALL_PROCESS_CREATE] = {process_create_call, 2, 0},
     [CALL_PROCESS_START] = {process_start_call, 6, 0},
@@ -408,6 +689,16 @@ static const CALL_ENTRY calls[CALL_COUNT] = {
     [CALL_THREAD_EXIT] = {thread_exit_call, 0, 1},
     [CALL_SECTION_CREATE] = {section_create_call, 2, 0},
     [CALL_PROCESS_MAP] = {process_map_call, 6, 0},
+    [CALL_RESOURCE_CREATE] = {resource_create_call, 3, 0},
+    [CALL_SECTION_CREATE_PHYSICAL] = {section_create_physical_call, 4, 0},
+    [CALL_INTERRUPT_CREATE] = {interrupt_create_call, 3, 0},
+    [CALL_INTERRUPT_BIND] = {interrupt_bind_call, 3, 0},
+    [CALL_INTERRUPT_ACK] = {interrupt_ack_call, 1, 0},
+    [CALL_INITIATOR_CREATE] = {initiator_create_call, 2, 0},
+    [CALL_SECTION_PIN] = {section_pin_call, 6, 0},
+    [CALL_PIN_RELEASE] = {pin_release_call, 1, 0},
+    [CALL_INITIATOR_RELEASE_QUARANTINE] = {initiator_release_quarantine_call,
+                                           1, 0},
     [CALL_DEBUG_WRITE] = {debug_write_call, 3, 1},
     [CALL_THREAD_SET_TLS_BASE] = {thread_set_tls_base_call, 1, 1},
 };

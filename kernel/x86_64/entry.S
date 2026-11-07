@@ -101,6 +101,21 @@ INTERRUPT(spurious_stub, SPURIOUS_VECTOR)
    takes the external interrupt's stub. */
 INTERRUPT(compat_gate_stub, COMPAT_GATE_VECTOR)
 
+/* One stub per message-signalled vector, each MSI_STUB_SIZE bytes from
+   the last: two pushes and a jump take at most 12 bytes (a PUSH of an
+   immediate above 0x7f needs 5), and .balign pads the rest. */
+    .balign MSI_STUB_SIZE
+    .globl msi_stubs
+msi_stubs:
+    .set msi_vector, MSI_VECTOR_FIRST
+    .rept MSI_VECTOR_COUNT
+    .balign MSI_STUB_SIZE
+    pushq $0
+    pushq $msi_vector
+    jmp interrupt_common
+    .set msi_vector, msi_vector + 1
+    .endr
+
 /* The CPU aligns RSP to 16 bytes before it pushes its frame (SDM Vol. 3A
    7.14.2), and INTERRUPT_FRAME is a multiple of 16 bytes, so RSP is
    aligned at the call, as the convention requires.

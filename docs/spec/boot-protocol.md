@@ -42,7 +42,8 @@ nova-boot, in order:
    does not report the PAT ([Memory types](#memory-types)).
 5. Measures the timestamp counter against `Stall(50000)`.
 6. Asks up to four `EFI_RNG_PROTOCOL` instances for a seed each
-   ([Random seeds](#random-seeds)).
+   ([Random seeds](#random-seeds)), and takes the ACPI RSDP's address
+   from the configuration table ([ACPI](#acpi)).
 7. Takes the memory map into a buffer it allocates with room for four
    more descriptors, growing the buffer if the map outgrows it, and calls
    `ExitBootServices` with the map's key. A refused key means the map
@@ -204,7 +205,7 @@ x86-64 PE.
 | Offset | Field | Type | Meaning |
 |---|---|---|---|
 | 0 | `magic` | `UINT64` | `BOOT_INFO_MAGIC`, 0x544F4F4241564F4E: "NOVABOOT" in memory order |
-| 8 | `version` | `UINT64` | `BOOT_INFO_VERSION`, 5 for the record and entry state this document describes |
+| 8 | `version` | `UINT64` | `BOOT_INFO_VERSION`, 6 for the record and entry state this document describes |
 | 16 | `screen.pixels` | `UINT32 *` | The direct-map address of `FrameBufferBase` of the graphics mode in use (UEFI 12.9.2) |
 | 24 | `screen.width` | `INT64` | `HorizontalResolution` |
 | 32 | `screen.height` | `INT64` | `VerticalResolution` |
@@ -222,8 +223,9 @@ x86-64 PE.
 | 304 + 48i | `files[i].name` | `char[32]` | The file's name in `\nova\`, ASCII and NUL-terminated, as the firmware reported it |
 | 336 + 48i | `files[i].data` | `UINT8 *` | The direct-map address of the file's contents |
 | 344 + 48i | `files[i].size` | `UINTN` | Its size in bytes |
+| 688 | `acpi_rsdp` | `UINT64` | The physical address of the ACPI RSDP, or 0 ([ACPI](#acpi)) |
 
-The record is 688 bytes and lives in nova-boot's `.data` section; `info`
+The record is 696 bytes and lives in nova-boot's `.data` section; `info`
 is its direct-map address. The kernel reads `magic` and `version` before
 any other field and halts, logging both, on a value it was not built
 for. Another layout, or another machine state at entry, takes another
@@ -241,6 +243,24 @@ The memory map is an array of `EFI_MEMORY_DESCRIPTOR` (UEFI 7.2.3) of
 `descriptor_size`, never by `sizeof(EFI_MEMORY_DESCRIPTOR)`: EDK II reports
 48 bytes for the 40-byte structure (`MdeModulePkg/Core/Dxe/Mem/Page.c`,
 `CoreGetMemoryMap`). Addresses in it are physical.
+
+### ACPI
+
+nova-boot takes the `VendorTable` of the configuration table's entry for
+`EFI_ACPI_20_TABLE_GUID` (8868E871-E4F1-11D3-BC22-0080C73C8881), or
+failing that for `ACPI_TABLE_GUID` (EB9D2D30-2D88-11D3-9A16-0090273FC14D),
+as ACPI 6.6 5.2.5.2 has the OS loader search, before `ExitBootServices`;
+UEFI 4.6.1.1 gives the GUIDs and makes the addresses physical. nova-boot
+does not read the RSDP, and passes 0 where neither entry exists.
+
+The kernel reads the tables only through an RSDP of revision 2 or later
+whose 20-byte and extended checksums hold, and its XSDT (ACPI 6.6
+5.2.5.3, 5.2.8). Every table must lie in memory the map describes as
+`EfiACPIReclaimMemory`, `EfiACPIMemoryNVS`, `EfiReservedMemoryType` or
+`EfiRuntimeServicesData`, which the direct map maps and the page
+allocator never hands out ([Memory](#memory)), and its checksum must hold
+(5.2.6). With QEMU 11.1.3's EDK II, the RSDP was observed in
+`EfiACPIReclaimMemory`.
 
 ### Random seeds
 
@@ -480,7 +500,9 @@ the firmware's boot-services tables.
 Boot services are gone. Of the system table only `Hdr`, `FirmwareVendor`,
 `FirmwareRevision`, `RuntimeServices`, `NumberOfTableEntries` and
 `ConfigurationTable` stay valid (UEFI 4.3), and nova-boot passes none of
-them. The watchdog is disabled (UEFI 7.5.1).
+them; it passes the RSDP's address, taken from `ConfigurationTable`
+before `ExitBootServices` ([ACPI](#acpi)). The watchdog is disabled (UEFI
+7.5.1).
 
 ### Serial port
 
@@ -499,7 +521,7 @@ except what the types below reserve (UEFI 7.2, Table 7.10 and its note):
 | `EfiBootServicesCode`, `EfiBootServicesData` | 3, 4 | Free, once the kernel has moved off them (below) |
 | `EfiLoaderCode`, `EfiLoaderData` | 1, 2 | The kernel's to use; they hold the kernel image, nova-boot and `BOOT_INFO`, the memory map, the boot files, and the kernel's page tables and stack |
 | `EfiPersistentMemory` | 14 | Usable like conventional memory, contents non-volatile |
-| `EfiACPIReclaimMemory` | 9 | Preserve until the ACPI tables are read |
+| `EfiACPIReclaimMemory` | 9 | Preserve until the ACPI tables are read; the kernel reads them at boot and keeps this memory |
 | `EfiRuntimeServicesCode`, `EfiRuntimeServicesData` | 5, 6 | Preserve |
 | `EfiACPIMemoryNVS` | 10 | Preserve |
 | `EfiPalCode` | 13 | Preserve |
@@ -529,10 +551,8 @@ needs from `BOOT_INFO` and the map before it reuses `EfiLoaderCode` or
 
 This version leaves open:
 
-- **ACPI.** ACPI 6.6 5.2.5.2 has the OS loader take the RSDP pointer from
-  the configuration table (`EFI_ACPI_20_TABLE_GUID`, UEFI 4.6) before
-  `ExitBootServices` and hand it to the OS. `BOOT_INFO` carries no RSDP
-  pointer, and no SMBIOS pointer either.
+- **SMBIOS.** `BOOT_INFO` carries no SMBIOS pointer
+  (`SMBIOS3_TABLE_GUID`, UEFI 4.6.1.1).
 - **Runtime services.** Whether the kernel uses UEFI runtime services, and
   so whether `BOOT_INFO` carries `RuntimeServices` and whether the loader
   or kernel calls `SetVirtualAddressMap`.

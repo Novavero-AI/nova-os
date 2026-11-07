@@ -8,11 +8,11 @@
 #ifndef NOVA_MEMORY_LAYOUT_H
 #define NOVA_MEMORY_LAYOUT_H
 
+#include "native_abi.h"
 #include "types.h"
 
-/* The x86-64 base page, and the unit of the UEFI memory map (UEFI 2.11,
-   7.2.3). */
-#define PAGE_SIZE 4096
+/* PAGE_SIZE (native_abi.h) is the x86-64 base page and the unit of the
+   UEFI memory map (UEFI 2.11, 7.2.3). */
 
 /* Physical address p is mapped at DIRECT_MAP_BASE + p, for every range
    the UEFI memory map describes and the framebuffer, read-write and not

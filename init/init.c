@@ -3,12 +3,14 @@
    message, writes to the kernel's debug log with the root system
    resource the message carries, checks the answers of the calls it has
    to the cases their contracts name, runs stage0-pe32's seed as a 32-bit
-   process when the boot volume holds it (seed.c), and exits with
+   process when the boot volume holds it (seed.c), starts the virtio
+   block driver as the platform driver (platform.c), and exits with
    EXIT_CHECKS_PASSED, which the kernel reads with process_info and logs.
    A failed check is logged, if the log is reachable, and ends the
    process with EXIT_CHECK_FAILED. */
 
 #include "init.h"
+#include "platform.h"
 
 /* A nonzero code, so that the kernel's log shows the value process_exit
    passed and not a default. */
@@ -16,8 +18,8 @@
 #define EXIT_CHECK_FAILED 1
 
 /* The handles the bootstrap message carries (native_abi.h): the root
-   system resource, the process itself, the root job, then the boot
-   files. */
+   system resource, the process itself, the root job, the root MMIO, IRQ
+   and DMA resources, then the boot files. */
 #define BOOTSTRAP_HANDLES (BOOTSTRAP_FIRST_FILE + BOOT_FILES_MAX)
 #define BOOTSTRAP_RESOURCE 0
 #define BOOTSTRAP_SELF 1
@@ -31,41 +33,21 @@
 /* Where init maps sections into itself: above its image and below its
    stack, each mapping at the next free address. */
 #define SCRATCH_BASE 0x0000000200000000ULL
-#define PAGE_SIZE 4096
-#define DECIMAL_DIGITS 20
+
+/* The bootstrap message's bytes: the platform record, then the files'
+   names (native_abi.h). */
+typedef struct {
+    BOOTSTRAP_PLATFORM platform;
+    BOOTSTRAP_FILE names[BOOT_FILES_MAX];
+} BOOTSTRAP_BYTES;
 
 static UINT32 debug_log = HANDLE_INVALID;
 static UINT32 self = HANDLE_INVALID;
+static BOOTSTRAP_BYTES bytes;
+static PLATFORM platform;
 static UINT64 scratch = SCRATCH_BASE;
 static BOOT_FILE_VIEW files[BOOT_FILES_MAX];
 static UINT32 file_count;
-
-static UINT64 length(const char *s)
-{
-    UINT64 n = 0;
-
-    while (s[n])
-        n++;
-    return n;
-}
-
-void say(const char *line)
-{
-    debug_write(debug_log, line, length(line));
-}
-
-void say_number(UINT64 n)
-{
-    char digits[DECIMAL_DIGITS + 1];
-    UINT32 at = DECIMAL_DIGITS;
-
-    digits[at] = 0;
-    do {
-        digits[--at] = (char)('0' + n % 10);
-        n /= 10;
-    } while (n);
-    say(digits + at);
-}
 
 static int lower(int c)
 {
@@ -112,34 +94,47 @@ static void check(int passed, const char *what)
     process_exit(EXIT_CHECK_FAILED);
 }
 
-/* Take the debug log's resource, the process's own handle, the root job
-   and the boot files from the bootstrap message, checking that a buffer
-   too small for its handles leaves it queued and reports how much it
-   holds; that read whole it holds them in that order, with a name and
-   size for each file; and that once it is read the queue is empty and
-   the kernel's end closed. */
+/* Take the debug log's resource, the process's own handle, the root job,
+   the root device resources and the boot files from the bootstrap
+   message, checking that a buffer too small for its handles leaves it
+   queued and reports how much it holds; that read whole it holds them in
+   that order, with the platform record and a name and size for each
+   file; and that once it is read the queue is empty and the kernel's end
+   closed. */
 static UINT32 read_bootstrap(UINT32 bootstrap)
 {
-    static BOOTSTRAP_FILE names[BOOT_FILES_MAX];
+    BOOTSTRAP_FILE *names = bytes.names;
     RECEIVED_HANDLE handles[BOOTSTRAP_HANDLES];
     UINT32 byte_count, handle_count, i;
 
-    if (channel_read(bootstrap, names, sizeof names, handles, 0, &byte_count,
-                     &handle_count) != ERR_BUFFER_TOO_SMALL ||
+    if (channel_read(bootstrap, &bytes, sizeof bytes, handles, 0,
+                     &byte_count, &handle_count) != ERR_BUFFER_TOO_SMALL ||
         handle_count < BOOTSTRAP_FIRST_FILE)
         process_exit(EXIT_CHECK_FAILED);
-    if (channel_read(bootstrap, names, sizeof names, handles,
+    if (channel_read(bootstrap, &bytes, sizeof bytes, handles,
                      BOOTSTRAP_HANDLES, &byte_count, &handle_count) != OK ||
         handle_count < BOOTSTRAP_FIRST_FILE ||
-        byte_count != (handle_count - BOOTSTRAP_FIRST_FILE) *
-                          sizeof(BOOTSTRAP_FILE) ||
+        byte_count != sizeof bytes.platform +
+                          (handle_count - BOOTSTRAP_FIRST_FILE) *
+                              sizeof(BOOTSTRAP_FILE) ||
         handles[BOOTSTRAP_RESOURCE].type != TYPE_RESOURCE ||
         !(handles[BOOTSTRAP_RESOURCE].rights & RESOURCE_RIGHT_USE) ||
         handles[BOOTSTRAP_SELF].type != TYPE_PROCESS ||
-        handles[BOOTSTRAP_JOB].type != TYPE_JOB)
+        handles[BOOTSTRAP_JOB].type != TYPE_JOB ||
+        handles[BOOTSTRAP_ROOT_MMIO].type != TYPE_RESOURCE ||
+        handles[BOOTSTRAP_ROOT_IRQ].type != TYPE_RESOURCE ||
+        handles[BOOTSTRAP_ROOT_DMA].type != TYPE_RESOURCE)
         process_exit(EXIT_CHECK_FAILED);
     debug_log = handles[BOOTSTRAP_RESOURCE].handle;
+    say_open(debug_log);
     self = handles[BOOTSTRAP_SELF].handle;
+    platform.debug_log = debug_log;
+    platform.self = self;
+    platform.job = handles[BOOTSTRAP_JOB].handle;
+    platform.mmio = handles[BOOTSTRAP_ROOT_MMIO].handle;
+    platform.irq = handles[BOOTSTRAP_ROOT_IRQ].handle;
+    platform.dma = handles[BOOTSTRAP_ROOT_DMA].handle;
+    platform.boot = &bytes.platform;
     for (i = BOOTSTRAP_FIRST_FILE; i < handle_count; i++) {
         BOOT_FILE_VIEW *file = &files[file_count++];
         const BOOTSTRAP_FILE *name = &names[i - BOOTSTRAP_FIRST_FILE];
@@ -159,7 +154,7 @@ static UINT32 read_bootstrap(UINT32 bootstrap)
                                 : (const UINT8 *)0;
         check(!name->size || file->data, "a boot file did not map");
     }
-    check(channel_read(bootstrap, names, sizeof names, handles,
+    check(channel_read(bootstrap, &bytes, sizeof bytes, handles,
                        BOOTSTRAP_HANDLES, &byte_count,
                        &handle_count) == ERR_PEER_CLOSED,
           "a drained bootstrap channel is not peer-closed");
@@ -222,6 +217,7 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     check_errors(bootstrap);
     check_clock();
     check(seed_run(job), "the seed did not reproduce itself");
+    check(platform_run(&platform), "the virtio block driver failed");
     say("nova-init: checks passed\r\n");
     process_exit(EXIT_CHECKS_PASSED);
 }

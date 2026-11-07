@@ -43,6 +43,14 @@ typedef enum {
     USER_READ_WRITE_EXECUTE
 } USER_PROTECTION;
 
+/* The memory type a user mapping gives its page: write-back, as RAM is
+   mapped, or the two section_create_physical offers (ipc.md I6). */
+typedef enum {
+    USER_WRITE_BACK,
+    USER_UNCACHED,
+    USER_WRITE_COMBINING
+} USER_MEMORY_TYPE;
+
 /* A new address space: a top table whose upper half is the kernel's and
    whose lower half maps nothing. Returns its physical address, for CR3,
    or 0 if no page is free. */
@@ -56,11 +64,12 @@ int paging_map_user(UINT64 space, UINT64 linear, UINT64 physical,
                     USER_PROTECTION protection);
 
 /* Map the 4 KiB page at physical at user address linear in space, as
-   paging_map_user does, but leave the page its owner's, a section's: the
-   space never frees it. Returns 0 if a table is needed and no page is
-   free. */
+   paging_map_user does, with the memory type type, but leave the page
+   its owner's, a section's: the space never frees it. Returns 0 if a
+   table is needed and no page is free. */
 int paging_map_user_borrowed(UINT64 space, UINT64 linear, UINT64 physical,
-                             USER_PROTECTION protection);
+                             USER_PROTECTION protection,
+                             USER_MEMORY_TYPE type);
 
 /* Whether anything is mapped at the user page linear in space. */
 int paging_user_mapped(UINT64 space, UINT64 linear);
@@ -68,6 +77,10 @@ int paging_user_mapped(UINT64 space, UINT64 linear);
 /* Remove the borrowed page paging_map_user_borrowed mapped at linear in
    space, leaving the page to its owner. */
 void paging_unmap_user_borrowed(UINT64 space, UINT64 linear);
+
+/* The physical-address width, MAXPHYADDR (SDM Vol. 3A 5.1.4): entries
+   map only addresses below 2 to its power. */
+UINT32 paging_physical_bits(void);
 
 /* Remove every lower-half mapping of space, freeing the pages it owns
    and the tables that mapped them. The space stays usable as a kernel
