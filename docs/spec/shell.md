@@ -1,14 +1,14 @@
 # The shell language
 
-nova-script, a working name ([Open decisions](#open-decisions-for-devon)),
-is the language of nova-os's shell: typed at the console first, kept in
-script files second. It is a shell language, not a general-purpose one.
-This document gives its tokens and grammar, its values, how pipelines
-carry values and bytes, variables, control flow, functions and modules,
-errors and exit statuses, how a command is found and run from `/store`,
-the authority the shell grants a command, interactive behaviour, what a
-session recording holds, how settings are reached, and the built-ins of
-the first version.
+nvo is the language of nova-os's shell: typed at the console first, kept
+in script files second. It is a shell language, not a general-purpose
+one; its command is `nvo`, and its script files end in `.nvo` ([The
+name](#the-name)). This document gives its tokens and grammar, its
+values, how pipelines carry values and bytes, variables, control flow,
+functions and modules, errors and exit statuses, how a command is found
+and run from `/store`, the authority the shell grants a command,
+interactive behaviour, what a session recording holds, how settings are
+reached, and the built-ins of the first version.
 
 The shell is an ordinary process. It holds the handles its session gives
 it ([objects.md O6](objects.md#o6-no-ambient-authority)); it is a client
@@ -20,9 +20,8 @@ handle or a message (principle 8). Principle 7 names only the recipe's
 part; [Changes elsewhere](#changes-elsewhere) adds the user's.
 
 Each item gives the design, why, what it costs, and the main alternative
-not taken. Every item is **Proposed**; [Open decisions for
-Devon](#open-decisions-for-devon) lists the choices that need a ruling
-before implementation.
+not taken. Items the owner has ruled on are marked **Decided**; every
+other item is **Proposed**.
 
 Sources are pinned under [Shell design
 references](README.md#shell-design-references) and cited by these names:
@@ -43,6 +42,7 @@ references](README.md#shell-design-references) and cited by these names:
 | Nix | The Nix 2.35.4 Reference Manual, by command |
 | Decimal | Mike Cowlishaw, General Decimal Arithmetic Specification, version 1.70, by section and page |
 | CBOR | Concise Binary Object Representation, RFC 8949, by section |
+| Clear | The pages that give `clear`, `cls` and Ctrl+L in other shells: ncurses's clear(1), Nushell's `clear`, PowerShell's `Clear-Host` and PSReadLine, cmd.exe's `cls`, the Bash and zsh manuals' line editors, and reedline's key bindings |
 
 ## At a glance
 
@@ -89,6 +89,34 @@ through as an error; `setting` is the same call the Settings window
 makes; `with` runs a block with programs from a recipe, and `run` a
 program from the store, without installing either; `grants` shows,
 without running anything, every handle the command would receive.
+
+## The name
+
+**Decided** (by the owner): the language is nvo, its command is `nvo`,
+and a script file's extension is `.nvo`.
+
+- **Why:** one short name for the language and its command, as rc and
+  fish each name a language and its command alike. Homebrew, PyPI and
+  nixpkgs have no package named `nvo`, npm holds only an unpublished
+  record of one, and GitHub's Linguist lists no language for `.nvo`
+  ([References](#references)). Trademark registers were not searched.
+- **Cost:** a name that says nothing of what it names to someone who
+  has not met it.
+- **Not taken:** "NovaScript", taken twice in the same field: the npm
+  package `novascript` describes itself as "an English-like programming
+  language built on TypeScript" (version 3.0.1, changed 2026-03-18), and
+  in Numerus "All running Numerus simulations are expressed in a
+  language called NovaScript", "an extension of" JavaScript. `nsh` for
+  the command, which other shells hold: Homebrew core's `nsh` formula is
+  "Fish-like, POSIX-compatible shell" (nuta/nsh), which nixpkgs also
+  packages, and Apache NuttX's shell is the NuttShell (NSH). `.nsh` for
+  the extension, which belongs to NSIS ("Header files have the .nsh
+  extension"), as Linguist maps it, and to the UEFI Shell, whose EDK II
+  source sets `mScriptExtension` to `L".NSH"`. `nv`, which packages
+  install as a command: npm's `nv` ("Front-end development environment")
+  installs `bin/nv`, and PyPI's `nv` is "A utility for managing multiple
+  configurations & environments". Each costs a name a user may already
+  have on a machine, meaning something else.
 
 ## L1. Source and tokens
 
@@ -564,12 +592,14 @@ of a decimal fraction such as 1.1" (CBOR 3.4.4).
 - **Not taken:** fish's universal variables, "shared between all the
   user's fish sessions on the computer" (fish, The fish language,
   "Universal Variables"); persistent state belongs in settings
-  ([L24](#l24-settings)), where the graphical interface sees it too.
-  POSIX's single global namespace of string variables (POSIX 2.5).
+  ([L24](#l24-settings-and-service-commands)), where the graphical
+  interface sees it too. POSIX's single global namespace of string
+  variables (POSIX 2.5).
 
 ## L7. Pipelines
 
-**Proposed.**
+**Decided** (by the owner): the value encoding, rule 9. **Proposed:** the
+rest.
 
 1. **A stream is a sequence of values.** Built-ins and functions write
    values. An external program that speaks bytes contributes one `bytes`
@@ -635,9 +665,11 @@ of a decimal fraction such as 1.1" (CBOR 3.4.4).
    3.1, major types 2 and 3); `path`, `size`, `duration`, `time`, `error`
    and records take nova-os tags. A record is a tagged array of keys and
    values, since the deterministic encoding sorts a map's keys (CBOR
-   4.2.1) and a record's order is its own. The stream's framing in
-   channel messages of up to 65,536 bytes is the value protocol's to
-   specify ([Changes elsewhere](#changes-elsewhere)).
+   4.2.1) and a record's order is its own. A program that speaks only
+   text exchanges JSON with `to json` and `from json`
+   ([L25](#l25-built-ins)). The stream's framing in channel messages of
+   up to 65,536 bytes is the value protocol's to specify
+   ([Changes elsewhere](#changes-elsewhere)).
 
 - **Why:** records and tables make a pipeline's data addressable by
   name, which PowerShell built its pipeline on ("Instead of processing
@@ -648,6 +680,8 @@ of a decimal fraction such as 1.1" (CBOR 3.4.4).
   objects exist only inside the shell. Values here cross process
   boundaries in one exterior encoding, so a program in any language can
   read and write them, while built-ins pass them without encoding.
+  CBOR keeps integers, decimals, text and bytes apart and exact, and the
+  core deterministic encoding (CBOR 4.2.1) gives a value one encoding.
   Conversions are explicit because automatic ones depend on data:
   Nushell renders a table with box-drawing characters before it reaches
   an external program, so the line `grep` selected reached `ls` with the
@@ -669,8 +703,7 @@ of a decimal fraction such as 1.1" (CBOR 3.4.4).
   programs in one runtime can join. Oils's text data languages as the
   wire format, "JSON-based data languages on the wire" (Chu 2023). Their
   cost is printing and parsing every number and escaping every byte
-  string, where CBOR keeps types and bytes as they are
-  ([Open decisions](#open-decisions-for-devon)). Elvish's two outputs
+  string, where CBOR keeps types and bytes as they are. Elvish's two outputs
   per command, a byte part and a value part (Elvish, Unique semantics,
   "Passing Data Structures Through the Pipeline"); a byte output here is
   one value in the one stream.
@@ -962,7 +995,8 @@ signature.
 
 ## L14. Running from the store
 
-**Proposed.**
+**Decided** (by the owner): rule 3, that a program file outside `/store`
+is refused in the first version. **Proposed:** the rest.
 
 1. **By store path.** `run /store/<hash>-hello-2.12.1/bin/hello
    <arguments>` runs that program without installing it. The shell names
@@ -986,8 +1020,7 @@ signature.
    ends in the script extension as a script, from anywhere, since the
    program that runs it is the shell from its own store path
    ([L19](#l19-scripts)); any other file must be in `/store`. A program
-   file outside `/store` is not run in the first version
-   ([Open decisions](#open-decisions-for-devon)).
+   file outside `/store` is refused in the first version with `launch`.
 
 - **Why:** Nix's commands do the same on Unix: `nix run` "builds and
   runs installable", running `<out>/bin/<name>` of a derivation (Nix,
@@ -999,12 +1032,19 @@ signature.
   its closure and its derivation's declarations
   ([L20](#l20-the-recipe-and-the-command-line)), so running one is safe
   without installing it. A recipe that pins its inputs gives the same
-  environment on every machine (DESIGN.md, principle 1).
+  environment on every machine (DESIGN.md, principle 1). A file built by
+  hand has no derivation, so principle 7 gives it no declared authority;
+  the question returns when nova-os builds itself and an edit, compile
+  and run loop needs it (DESIGN.md, Stages, 5).
 - **Cost:** a program built by hand runs only after a build puts it in
   the store; a recipe's evaluation and build can take long before the
   block starts.
 - **Not taken:** installing before running, as most package managers
-  require. Its cost is a profile changed to try a program once.
+  require. Its cost is a profile changed to try a program once. Running
+  a file outside `/store` with its arguments and streams alone, no
+  closure and no declarations. Its cost is a program that cannot load
+  what it was built against, and a way to run code no derivation
+  describes.
 
 ## L15. Grants from arguments
 
@@ -1079,7 +1119,10 @@ settings and no network reach it unless one of these names them.
 
 ## L16. Designation
 
-**Proposed.** Every path value carries a bound: the subtree within
+**Decided** (by the owner): the bound of `into path` is `$cwd` when
+`--within` is not given. **Proposed:** the rest.
+
+Every path value carries a bound: the subtree within
 which the shell will grant it. Granting a path outside its bound raises
 `access-denied`, naming where the path came from.
 
@@ -1110,13 +1153,19 @@ names `/users/bob/notes`, outside `~`, and is refused.
   text names a `--within`; a grant refused for its bound needs the path
   written out or granted again. `~/$name` lets the data choose anything
   under `~`, because that is what was written.
+- **Why `$cwd` for `into path`:** it covers converting names read from a
+  file in the directory being worked in, and fails clearly outside it.
 - **Not taken:** any path value grants. Its cost is a pipeline such as
   `^find-big ./src | each { ^upload $in }` handing `upload` whatever
-  `find-big` names, `~/.ssh` included.
+  `find-big` names, `~/.ssh` included. `--within` required on every
+  `into path`; its cost is a flag written out for the common case of
+  names in the directory being worked in.
 
 ## L17. Rights
 
-**Proposed.**
+**Decided** (by the owner): rule 2, that a signature's `path(write)`
+grants write where the user names the path, and that highlighting shows
+the write before Enter. **Proposed:** the rest.
 
 | Written | A file gets | A directory gets |
 |---|---|---|
@@ -1150,16 +1199,24 @@ names `/users/bob/notes`, outside `~`, and is refused.
   process being run, but the filename is not included in the argument
   list" (Plash, The Plash shell). Here `=>` binds one word, so no
   bracketing is needed to limit it, and `grant` takes the place of `+`.
+  A signature's `path(write)` grants write because naming a destination
+  to `cp` is the user's designation, highlighting shows the write before
+  Enter, and a signature lives in the derivation, where an audit reads
+  it.
 - **Cost:** a program with no signature that writes files needs `=>`
   written; a program that writes through a temporary name and renames it
-  over the target needs its directory granted write
-  ([Open decisions](#open-decisions-for-devon) asks whether a signature
-  may grant write at all).
+  over the target needs its directory granted write; a wrong signature
+  grants write where its program should only read, which only its
+  highlighting shows.
 - **Not taken:** Plash's `=>`, which applies to every argument after it
   and is scoped with `{ }` (Plash, The Plash shell); here `{ }` is a
   block. Plash's `!!`, which runs a command "in the conventional way,
   without running the process with a virtualised filesystem" (Plash,
   The Plash shell); here no command runs with the user's whole view.
+  Every write marked with `=>` on the command line, signatures or not.
+  Its cost is `=>` written for every program whose signature already
+  says it writes there, and a `cp` that reads its destination when it is
+  forgotten.
 
 ## L18. Asking for more: the powerbox
 
@@ -1213,9 +1270,8 @@ names `/users/bob/notes`, outside `~`, and is refused.
 
 ## L19. Scripts
 
-**Proposed.** A script is a nova-script file run as a program; `main`
-gives its parameters. Examples use `.nvo`, the extension an open
-decision recommends.
+**Proposed.** A script is a `.nvo` file run as a program; `main` gives
+its parameters.
 
 ```
 # Back up a directory under a dated name.
@@ -1244,11 +1300,12 @@ def main(src: path, dest: path(write)) {
 3. `needs` is a record whose keys are `read` and `write`, each a list
    of paths, and `services` and `devices`, each a list of names; the
    wall clock is the service `date` reads, so a script that runs `date`
-   needs it, and `settings` is the service [L24](#l24-settings) reads.
-   At the prompt the shell shows them and asks once for each script's
-   contents, keyed by the file's SHA-256, so an edited script asks again;
-   elsewhere an unapproved `needs` fails the launch
-   ([Open decisions](#open-decisions-for-devon)).
+   needs it, and `settings` is the service
+   [L24](#l24-settings-and-service-commands) reads. At the prompt the
+   shell shows them and asks once per SHA-256 of the file, so an edited
+   script asks again, and keeps the answer as a setting; elsewhere an
+   unapproved `needs` fails the launch
+   ([L20](#l20-the-recipe-and-the-command-line), rule 2).
 4. A script in `/store` takes its `needs` from its derivation
    ([L20](#l20-the-recipe-and-the-command-line)); a `needs` block that
    asks for more than the derivation declares fails the launch.
@@ -1269,8 +1326,9 @@ def main(src: path, dest: path(write)) {
 
 ## L20. The recipe and the command line
 
-**Proposed.** What an external program holds when it starts is the
-union of:
+**Decided** (by the owner): consent, rule 2. **Proposed:** the rest.
+
+What an external program holds when it starts is the union of:
 
 | Part | From |
 |---|---|
@@ -1293,7 +1351,16 @@ union of:
    The launcher reads them, since the deriver is outside the shell's
    closure. A path with no deriver, such as a source, has none and gets
    only its closure, its arguments and its streams.
-2. `grants { command }` shows every row above for each program the
+2. **Consent.** Installing a program into a profile, the user's or the
+   system's ([storage.md F13](storage.md#f13-profiles-system-and-garbage-collection)),
+   is consent to what its derivation declares. A program run from a
+   store path that is in no profile asks once per SHA-256 of its
+   derivation, and a script once per SHA-256 of its file
+   ([L19](#l19-scripts)): the shell shows what it declares, and keeps the
+   answer as a setting, so the same derivation or file is not asked
+   about again. Outside an interactive session a declaration without
+   consent fails the launch with `launch`.
+3. `grants { command }` shows every row above for each program the
    command would start whose arguments are known without running
    anything; it runs no capture, and shows an argument that depends on
    one, and a program a condition chooses, as unknown.
@@ -1310,15 +1377,27 @@ union of:
   declarations; an endowment declared wrongly fails the launch until
   the recipe is fixed; a program that declares its working directory
   gets whichever directory the user stands in, so `cd` is a designation
-  too.
+  too. Consent is a prompt the first time each program from outside a
+  profile or each script runs, and a setting kept per answer; a program
+  installed is given its whole declaration without a prompt.
+- **Why consent where the user acts:** installing is the act of
+  choosing a program, so it is asked nothing more; a program tried once
+  without installing, or a script someone else may have written, is
+  shown before it gets what it declares, and a change to either, which
+  changes its SHA-256, is shown again.
 - **Not taken:** Plash's default endowment, read-only access to "/bin,
   /lib, /usr and /etc" for every program, because "Unix does not have
   this information" (Plash, The Plash shell). nova-os has it in every
-  recipe.
+  recipe. Granting what is declared without asking, as principle 7 reads
+  on its own; its cost is a script from anywhere given its `needs` the
+  first time it runs. Asking at every run; its cost is a prompt users
+  learn to accept unread.
 
 ## L21. Interactive behaviour
 
-**Proposed.** The console edits the line where it draws it
+**Decided** (by the owner): Ctrl+L, rule 10. **Proposed:** the rest.
+
+The console edits the line where it draws it
 ([console.md C4](console.md#c4-sessions)); the shell assists through the
 console protocol:
 
@@ -1332,7 +1411,7 @@ console protocol:
 2. **Styles are roles,** not colours: command, built-in, keyword,
    string, number, variable, read grant, write grant, flag, comment,
    error, suggestion. The console's theme, a setting
-   ([L24](#l24-settings)), gives them colours.
+   ([L24](#l24-settings-and-service-commands)), gives them colours.
 3. **Grants are shown before Enter.** Each path argument is styled by
    the right it will grant, a write as a write, and one a link redirects
    shows its target; a program whose recipe declares its working
@@ -1350,6 +1429,8 @@ console protocol:
    pipeline's processes and raises `interrupted`.
 9. **Rendering:** tables in columns to the panel's width, sizes in IEC
    units, times in UTC until a time zone is a setting.
+10. **Ctrl+L** clears the panel, as `clear` does ([L25](#l25-built-ins)),
+    and draws the line being edited again at its top.
 
 - **Why:** fish's interactive defaults, on by default and not
   configurable: autosuggestions "based on command history, completions,
@@ -1363,9 +1444,9 @@ console protocol:
   evil"). Showing grants before Enter makes the authority a command gets
   visible at the moment the user decides.
 - **Cost:** a round trip to the shell for every edit; the console
-  protocol grows assisted reads, style spans and an interrupt key
-  ([Changes elsewhere](#changes-elsewhere)); until the console draws
-  UTF-8, names outside ASCII show as `?` (console.md C4).
+  protocol grows assisted reads, style spans, an interrupt key and a
+  clear operation ([Changes elsewhere](#changes-elsewhere)); until the
+  console draws UTF-8, names outside ASCII show as `?` (console.md C4).
 - **Not taken:** the shell editing the line itself in a raw key mode,
   which the console's design turns down: "editing that each client does
   itself in a raw mode" (console.md C4).
@@ -1427,11 +1508,17 @@ console protocol:
   time it is read. Its cost is a full replay to answer a question about
   one command.
 
-## L24. Settings
+## L24. Settings and service commands
 
-**Proposed.** Settings are served by a settings service whose keys each
-have a name (`desktop.background`), a schema (type, allowed values,
-default, description) and a value. The Settings window and the shell
+**Decided** (by the owner): every service describes its interface once,
+in one interface description language, and a generator makes from that
+description the service's C protocol header, its nvo commands, its
+Settings forms and its documentation. New services start on it, and
+existing protocols move over to it one by one. **Proposed:** the rest.
+
+Settings are served by a settings service whose keys each have a name
+(`desktop.background`), a schema (type, allowed values, default,
+description) and a value. The Settings window and the shell
 are two clients of the same protocol, and neither has a path the other
 lacks (DESIGN.md, principle 3).
 
@@ -1450,21 +1537,53 @@ setting watch desktop.background        # one record per change, until interrupt
    settings for the whole system need the handle an administrator holds.
    A script asks for them in `needs` as the service `settings`
    ([L19](#l19-scripts)).
-4. Actions that are not settings, such as switching the system's
-   generation or creating a user, are commands of the programs that
-   speak those services' protocols ([Open decisions](#open-decisions-for-devon)).
+4. **One description per service.** Each service describes its
+   interface once, in the interface description language
+   ([Changes elsewhere](#changes-elsewhere)): its requests and replies,
+   its settings with their schemas, and what each is for. From that one
+   text the generator makes the service's C protocol header, the nvo
+   commands that speak its protocol, the Settings window's form for each
+   of its settings, and its documentation.
+5. **A service's settings** are keys of the settings service whose
+   schemas come from the service's description; the service reads them
+   there. The network service's log is one
+   ([network.md N12](network.md#n12-grants)).
+6. **A service's actions** that are not settings, such as switching the
+   system's generation or creating a user, are its generated nvo
+   commands, with signatures as [L9](#l9-functions-and-signatures)
+   gives, so they are checked, completed and described as any command
+   is. How the shell finds them and reaches the service through a handle
+   the session holds is the interface description language's
+   specification to give.
+7. A new service is described this way from its start. An existing
+   protocol keeps its hand-written header until it moves over.
 
 - **Why:** one protocol behind both interfaces is principle 3's
   guarantee, and typed keys with descriptions make settings
-  discoverable from the shell.
-- **Cost:** every setting the interface shows needs a schema in the
-  service.
+  discoverable from the shell. One description per service makes the
+  guarantee mechanical: the header a service is built against, the
+  command a user types, the form the Settings window draws and the
+  documentation a reader reads come from the same text, so none of them
+  can hold a request, a setting or a field the others lack.
+- **Cost:** every setting the interface shows needs a schema; a
+  description language and a generator to specify, build from the seed
+  and keep; a protocol in two forms, hand-written and described, until
+  each moves over.
 - **Not taken:** configuration files that the shell edits as text while
   the interface keeps its own store. Its cost is two sources of truth.
+  A program of commands for each service, written by hand beside its
+  protocol, with a generic bridge once two services' interfaces showed
+  what it must describe. Its cost is each service's commands, forms and
+  documentation kept in step with its protocol by hand, each a place to
+  drift, and a bridge fitted afterwards to protocols not described for
+  it.
 
 ## L25. Built-ins
 
-**Proposed.** A command is built in only if it changes the shell's own
+**Decided** (by the owner): `clear`, which clears the console's panel.
+**Proposed:** the rest.
+
+A command is built in only if it changes the shell's own
 state (S), transforms values in a pipeline, where an external process
 would only add a round trip (V), mediates authority, launching or the
 console (A), or bridges files and values so that a pipeline can begin or
@@ -1475,6 +1594,7 @@ programs in `/store`, confined like any other.
 |---|---|---|
 | `cd` | Sets `$cwd` | S |
 | `exit` | Ends the script or the shell with a code | S |
+| `clear` | Clears the console's panel, as Ctrl+L does ([L21](#l21-interactive-behaviour)) | A |
 | `history` | The history as a table | S |
 | `help` | A command's signature and description | A |
 | `which` | Where a name resolves | A |
@@ -1514,11 +1634,20 @@ programs in `/store`, confined like any other.
   format and one way of being called. A program such as `date`, which
   reads the wall clock, stays a program, so only what is given the clock
   reads it.
+- **Why `clear` and Ctrl+L:** they are what users of other shells
+  already type. `clear` is ncurses's command to "clear the terminal
+  screen", Nushell's built-in, and on Windows an alias of PowerShell's
+  `Clear-Host`; Ctrl+L clears the screen in the line editors of Bash and
+  zsh, of Nushell (reedline) and of PowerShell (PSReadLine), and in fish
+  (Clear; fish, Interactive use).
 - **Cost:** file management needs its programs in the profile from the
   first boot; the set will grow, and each addition is a decision.
 - **Not taken:** Nushell's hundreds of built-in commands. Their cost is
   a shell that is also the largest program on the system, with its
-  authority.
+  authority. `cls`, the DOS spelling, which cmd.exe keeps ("Clears the
+  Command Prompt window") and PowerShell aliases; and `clr`, which none
+  of the sources above uses. Each is a name to learn for an act users
+  already know by another.
 
 ## Prior art
 
@@ -1582,9 +1711,10 @@ What this design needs outside this document:
   writes with style spans by role, and a style that only the shell's own
   session may use, for its prompts; an interrupt key reported to the
   session; UTF-8 text; a session the shell can give a program that
-  declares the console; and, while the shell shows a powerbox prompt,
-  the keyboard given to the shell's read first and the prompt drawn over
-  every other session.
+  declares the console; while the shell shows a powerbox prompt, the
+  keyboard given to the shell's read first and the prompt drawn over
+  every other session; and a clear operation, which `clear` and Ctrl+L
+  use ([L21](#l21-interactive-behaviour), [L25](#l25-built-ins)).
 - **replay.md:** annotations a recorded process adds to its recording,
   which replay skips ([L23](#l23-replay)).
 - **nova-nix:** derivation attributes for a program's declared grants,
@@ -1592,77 +1722,13 @@ What this design needs outside this document:
   stream kinds and exit statuses.
 - **New specifications:** the value protocol, the CBOR tags and framing
   of [L7](#l7-pipelines); the settings service and its schemas
-  ([L24](#l24-settings)); the powerbox protocol
-  ([L18](#l18-asking-for-more-the-powerbox)).
-
-## Open decisions for Devon
-
-1. **The language's name.** "NovaScript" is taken twice in the same
-   field: the npm package `novascript` describes itself as "an
-   English-like programming language built on TypeScript" (version
-   3.0.1, changed 2026-03-18), and in Numerus "All running Numerus
-   simulations are expressed in a language called NovaScript", "an
-   extension of" JavaScript. **Recommendation:** name the language
-   after its command, `nvo` (below), as rc and fish each name a language
-   and its command alike.
-2. **The interactive command's name.** `nsh` is taken by shells: Homebrew
-   core's `nsh` formula is "Fish-like, POSIX-compatible shell"
-   (nuta/nsh), nixpkgs packages it as `nsh`, and Apache NuttX's shell
-   is the NuttShell (NSH); `.nsh` is also the UEFI Shell's script
-   extension, in the EDK II source nova-os's boot specifications pin
-   (item 3). `nv` is taken by
-   packages that install it as a command: npm's `nv` ("Front-end
-   development environment") installs `bin/nv`, and PyPI's `nv` is "A
-   utility for managing multiple configurations & environments".
-   **Recommendation:** `nvo`. Homebrew, PyPI and nixpkgs have no package
-   of that name, and npm holds only an unpublished record. Trademark
-   registers were not searched.
-3. **The script file extension.** `.nsh` belongs to NSIS ("Header files
-   have the .nsh extension"), which GitHub's Linguist maps it to, and to
-   the UEFI Shell, whose EDK II source sets `mScriptExtension` to
-   `L".NSH"`. **Recommendation:** `.nvo`, matching the command; Linguist
-   lists no language for it.
-4. **The value encoding** ([L7](#l7-pipelines), rule 9). CBOR keeps
-   integers, decimals, text and bytes apart and exact; Oils's J8 text
-   keeps values readable on the wire at the cost of printing and parsing
-   them. **Recommendation:** CBOR with the core deterministic encoding,
-   with `to json` and `from json` for programs that speak only text.
-5. **Consent to declared authority.** A program's recipe and a script's
-   `needs` can name services and directories beyond its arguments.
-   Options: grant what is declared without asking, as principle 7 reads
-   on its own; ask once per digest; ask at every run.
-   **Recommendation:** installing into a profile is consent for that
-   program; a program run from a store path that is not in a profile, and
-   a script, ask once per SHA-256 of the derivation or the file, and the
-   answer is kept as a setting.
-6. **Programs outside `/store`** ([L14](#l14-running-from-the-store)).
-   A file built by hand has no derivation, so principle 7 gives it no
-   declared authority. Options: refuse it; or run it with its arguments
-   and streams alone, no closure and no declarations.
-   **Recommendation:** refuse it in the first version, and decide again
-   when nova-os builds itself (DESIGN.md, Stages, 5) and an
-   edit-compile-run loop needs it.
-7. **Write grants from signatures** ([L17](#l17-rights), rule 2).
-   Options: a signature's `path(write)` grants write where the user
-   names the path; or every write needs `=>` on the command line.
-   **Recommendation:** honour the signature, since naming a destination
-   to `cp` is the user's designation, and highlighting shows the write
-   before Enter; a signature lives in the derivation, where an audit
-   reads it.
-8. **The bound of `into path`** ([L16](#l16-designation)). Options:
-   `$cwd` when `--within` is not given; or `--within` always required.
-   **Recommendation:** `$cwd`, which covers converting names read from a
-   file in the directory being worked in, and fails clearly outside it.
-9. **Service actions as commands** ([L24](#l24-settings), rule 4).
-   Options: each service ships a program of commands for its protocol;
-   or services publish machine-readable interfaces that the shell turns
-   into commands, as settings schemas are. **Recommendation:**
-   programs per service in the first version, and the generic bridge
-   once two services' interfaces show what it must describe.
+  ([L24](#l24-settings-and-service-commands)); the interface description
+  language and its generator ([L24](#l24-settings-and-service-commands));
+  the powerbox protocol ([L18](#l18-asking-for-more-the-powerbox)).
 
 ## References
 
-The registry and documentation pages behind the naming decisions, read
+The registry and documentation pages behind [The name](#the-name), read
 on November 7, 2026, which show no fixed versions:
 [npm `novascript`][npm-novascript], [Numerus: NovaScript
 Introduction][numerus], [Homebrew `nsh`][brew-nsh], [nixpkgs

@@ -22,7 +22,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [store-image.md](store-image.md) | The store image the first milestone boots from: its header, registrations, nodes, blobs and their hash trees |
 | [pool-format.md](pool-format.md) | A data disk's pool: its partition, superblock rings, block pointers, node table and directories, and its commit |
 | [accounts.md](accounts.md) | Users' accounts and records, password hashing, login, the session a login opens, the shell and the first boot |
-| [shell.md](shell.md) | nova-script, the shell's language: its grammar, values, pipelines and errors, how a command is found and run from `/store`, the handles the shell grants a command, interactive behaviour, replay and settings |
+| [shell.md](shell.md) | nvo, the shell's language: its grammar, values, pipelines and errors, how a command is found and run from `/store`, the handles the shell grants a command, interactive behaviour, replay and settings |
 | [display.md](display.md) | Who holds the display from boot to the desktop, the compositor, windows and their buffers, composition, the pointer, routing input, the secure attention key, capture, the trusted interface, replay, the GPU path and the build plan |
 | [ui.md](ui.md) | The toolkit: the rasterizer's outlines, the font and its format, text layout, the interface as data and its renderer, widgets, layout, themes, accessibility, the HUD and the first programs |
 | [network.md](network.md) | The virtio network driver and its frame protocol, the network service's TCP/IP stack and the resolver, grants and sockets as channels, replay, the threat model and limits, and the order of work with its CI checks |
@@ -1000,6 +1000,23 @@ December 2020 (IETF) ("CBOR").
 - Access: free.
 - sha256: `f1164a5b31a39350ad46abe29b83575eb933ca6c45366989c118b6b1058a214a`
 
+**Clearing the screen** ("Clear"): the pages that give `clear`, `cls`
+and Ctrl+L in other shells, with the version or date each shows.
+
+| Page | Version or date | sha256 |
+|---|---|---|
+| [clear(1)][ncurses-clear], ncurses | 6.6, 2025-04-05 | `8b7cf93b98e16c8939eca8f73529b7e37a5d8f11ed2ba2ddd55cfa829d724877` |
+| [clear][nu-clear], Nushell | none shown | `c22ab158fa8b5524c1fd47fbc9dc03fa9ef9ce073860695ffbf032be657b6db3` |
+| [Clear-Host][ps-clear-host] (Microsoft Learn) | 2025-04-29, its `ms.date` | `9c54ba1752fb60892d2fa4106118e408a87cb6003b2a18f57e9b9b12284eae07` |
+| [about_PSReadLine_Functions][ps-psreadline] (Microsoft Learn) | Updated 2026-01-18 | `8fc19e6993cb2e39a4f3e09c91b09a324c82ba49444cc1fc0836b480813a73f3` |
+| [cls][ms-cls] (Microsoft Learn) | Updated 2023-02-03 | `d90bfefb2339462ef5dcb008ffa0d3e8ecb89afddcf8041b9b9377fa4f592dc1` |
+| [Commands For Moving][bash-moving], Bash Reference Manual | Bash 5.3, 18 May 2025 | `3a2d2c0aa2fad6dadced1f7085ec85e8ae00fad963696afa3384c67e9f0d2fec` |
+| [Zsh Line Editor][zsh-zle], zsh manual | zsh 5.9.2 | `63211d3d709360f661014e70598718687efac0420f72cacf98fcbc7677510bf1` |
+| [`src/edit_mode/keybindings.rs`][reedline-keys], reedline | Tag `v0.52.1`, commit `b72fd34f54abb15ff50886604a82c22f95642a78` | `a2b613280057fe0512ab3c9b142079f8fb09ed2651ec46841e352d8983c109d8` |
+
+- Access: free web pages; reedline is open source, under the MIT
+  licence, and shell.md cites one line of it and copies none.
+
 - Used by, for every entry in this section: [shell.md](shell.md).
 
 [ps-1]: https://learn.microsoft.com/en-us/powershell/scripting/lang-spec/chapter-01
@@ -1025,6 +1042,14 @@ December 2020 (IETF) ("CBOR").
 [nix-run]: https://nix.dev/manual/nix/2.35/command-ref/new-cli/nix3-run.html
 [nix-env-shell]: https://nix.dev/manual/nix/2.35/command-ref/new-cli/nix3-env-shell.html
 [nix-shell]: https://nix.dev/manual/nix/2.35/command-ref/nix-shell.html
+[ncurses-clear]: https://invisible-island.net/ncurses/man/clear.1.html
+[nu-clear]: https://www.nushell.sh/commands/docs/clear.html
+[ps-clear-host]: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/clear-host
+[ps-psreadline]: https://learn.microsoft.com/en-us/powershell/module/psreadline/about/about_psreadline_functions
+[ms-cls]: https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cls
+[bash-moving]: https://www.gnu.org/software/bash/manual/html_node/Commands-For-Moving.html
+[zsh-zle]: https://zsh.sourceforge.io/Doc/Release/Zsh-Line-Editor.html
+[reedline-keys]: https://github.com/nushell/reedline/blob/b72fd34f54abb15ff50886604a82c22f95642a78/src/edit_mode/keybindings.rs
 
 ## Display and interface design references
 
