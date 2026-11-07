@@ -293,16 +293,19 @@ static void say_grant(const FUNCTION *found,
 }
 
 /* Start the driver from file in job and wait for it to end. Returns its
-   exit code, or 0 if it did not start. */
+   exit code, or 0 if it did not start or init did not see it end; *ended
+   is 0 in the last case alone, when the driver may still run. */
 static UINT32 run_in_job(const PLATFORM *platform, UINT32 job,
                          const BOOT_FILE_VIEW *file, const FUNCTION *found,
-                         PCI_DEVICE_BOOTSTRAP *device, UINT32 initiator)
+                         PCI_DEVICE_BOOTSTRAP *device, UINT32 initiator,
+                         int *ended)
 {
     HANDLE_TRANSFER handles[PCI_HANDLES_MAX];
     PROGRAM program;
     UINT32 mine, theirs, count, observed, state, exit_code;
     UINT32 status = loader_load(job, file, &program);
 
+    *ended = 1;
     if (status != OK) {
         say("nova-init: cannot load the driver, status ");
         say_number(status);
@@ -334,10 +337,19 @@ static UINT32 run_in_job(const PLATFORM *platform, UINT32 job,
         return 0;
     }
     say_grant(found, device);
-    object_wait_one(program.process, PROCESS_TERMINATED, DEADLINE_INFINITE,
-                    &observed);
-    process_info(program.process, &state, &exit_code);
+    status = object_wait_one(program.process, PROCESS_TERMINATED,
+                             DEADLINE_INFINITE, &observed);
+    if (status == OK)
+        status = process_info(program.process, &state, &exit_code);
     handle_close(program.process);
+    if (status != OK || state != PROCESS_STATE_TERMINATED) {
+        say("nova-init: the virtio block driver's end was not seen, "
+            "status ");
+        say_number(status);
+        say("\r\n");
+        *ended = 0;
+        return 0;
+    }
     say("nova-init: virtio block driver ended, exit code ");
     say_number(exit_code);
     say("\r\n");
@@ -346,21 +358,23 @@ static UINT32 run_in_job(const PLATFORM *platform, UINT32 job,
 
 /* Run the driver in a job of its own, a child of the root job that
    grants it driver_limits, as I10 has a supervisor do. Returns its exit
-   code, or 0 if it did not start. */
+   code and sets *ended as run_in_job does. */
 static UINT32 run_driver(const PLATFORM *platform, const BOOT_FILE_VIEW *file,
                          const FUNCTION *found, PCI_DEVICE_BOOTSTRAP *device,
-                         UINT32 initiator)
+                         UINT32 initiator, int *ended)
 {
     UINT32 job, exit_code;
     UINT32 status = job_create(platform->job, &driver_limits, &job);
 
+    *ended = 1;
     if (status != OK) {
         say("nova-init: cannot create the driver's job, status ");
         say_number(status);
         say("\r\n");
         return 0;
     }
-    exit_code = run_in_job(platform, job, file, found, device, initiator);
+    exit_code =
+        run_in_job(platform, job, file, found, device, initiator, ended);
     handle_close(job);
     return exit_code;
 }
@@ -393,12 +407,13 @@ static volatile UINT8 *map_common(const PLATFORM *platform,
     return mapped ? mapped + (offset - first) : 0;
 }
 
-/* Stop the function once its driver has ended (ipc.md I10): clear Bus
-   Master Enable, so it starts no more DMA, with Memory Space Enable set
-   so its registers answer; reset the device by writing 0 to its
-   device_status, after which it neither notifies nor touches its queues
-   (VIRTIO 1.4 4.1.4.3, 2.4.1), so none of the pages they named is in
-   use any more (3.3.1); and then release what the initiator holds in
+/* Stop the function once its driver's process has terminated, so that
+   nothing of the driver can turn bus mastering on again (ipc.md I10):
+   clear Bus Master Enable, so it starts no more DMA, with Memory Space
+   Enable set so its registers answer; reset the device by writing 0 to
+   its device_status, after which it neither notifies nor touches its
+   queues (VIRTIO 1.4 4.1.4.3, 2.4.1), so none of the pages they named is
+   in use any more (3.3.1); and then release what the initiator holds in
    quarantine (ipc.md I8). Returns 1 if the function was stopped and the
    quarantine released; 0 if not, and the quarantine then stays. */
 static int stop_function(const PLATFORM *platform, FUNCTION *found,
@@ -443,6 +458,7 @@ int platform_run(const PLATFORM *platform)
     PCI_DEVICE_BOOTSTRAP device;
     FUNCTION found;
     UINT32 initiator, exit_code = 0, start;
+    int ended;
 
     scan(platform, &found);
     if (!found.config) {
@@ -465,8 +481,9 @@ int platform_run(const PLATFORM *platform)
     for (start = 0; start < DRIVER_STARTS; start++) {
         if (start)
             say("nova-init: restarting the virtio block driver\r\n");
-        exit_code = run_driver(platform, file, &found, &device, initiator);
-        if (!stop_function(platform, &found, &device, initiator) ||
+        exit_code =
+            run_driver(platform, file, &found, &device, initiator, &ended);
+        if (!ended || !stop_function(platform, &found, &device, initiator) ||
             exit_code == VIRTIO_BLK_EXIT_DONE)
             break;
     }
