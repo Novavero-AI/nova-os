@@ -138,9 +138,10 @@ jobs:
   # Skylake-Client is an Intel model that needs page-table isolation, and
   # max offers every feature TCG has. The KVM boot runs on the runner's
   # own processor. Every boot attaches a writable copy of data.img as the
-  # data disk, as README.md's Run command does; the two bad-GPT boots
-  # change a byte of its GPT, a CRC's or the entry array's, and check
-  # that the file system service refuses the disk.
+  # data disk, as README.md's Run command does; the four bad-GPT boots
+  # change its GPT, a CRC's byte, the entry array's, the pool's entry
+  # moved below the usable LBAs or a second entry over it, and check that
+  # the file system service refuses the disk.
   boot:
     name: ${{ matrix.name }}
     needs: reproduce
@@ -185,6 +186,18 @@ jobs:
             disk: disk.img
             accel: tcg
             corrupt: entries
+            minutes: 15
+          - name: Boot (bad GPT extent)
+            mode: system
+            disk: disk.img
+            accel: tcg
+            corrupt: extent
+            minutes: 15
+          - name: Boot (bad GPT overlap)
+            mode: system
+            disk: disk.img
+            accel: tcg
+            corrupt: overlap
             minutes: 15
           - name: Chain
             mode: chain

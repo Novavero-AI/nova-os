@@ -140,6 +140,8 @@ _Static_assert(NODES_MAX < NO_SLOT, "no slot is a node's");
 #define GPT_HEADER_CRC 16
 #define GPT_HEADER_CRC_SIZE 4
 #define GPT_MY_LBA 24
+#define GPT_FIRST_USABLE 40
+#define GPT_LAST_USABLE 48
 #define GPT_HEADER_MIN 92
 #define GPT_ENTRIES_CRC 88
 #define GPT_ENTRIES_LBA 72
@@ -1458,16 +1460,35 @@ static int gpt_header_valid(const UINT8 *header)
     return crc == pool_get32(header + GPT_HEADER_CRC);
 }
 
+/* Whether the type GUID at entry is all zero: an unused entry (UEFI
+   2.11 5.3.3). */
+static int gpt_entry_unused(const UINT8 *entry)
+{
+    UINT32 i;
+
+    for (i = 0; i < POOL_GUID_SIZE; i++)
+        if (entry[i])
+            return 0;
+    return 1;
+}
+
+/* The used entries' extents, read in one pass with the array's CRC. */
+static UINT64 used_first[GPT_ENTRIES_MAX], used_last[GPT_ENTRIES_MAX];
+
 /* The pool partition, by its type GUID in the disk's primary GPT, whose
-   header and entry array must pass their CRCs; a disk whose table fails
-   one is refused. The backup table at the disk's end, which UEFI 2.11
-   5.3.2 has software read when the primary fails, is not read. */
+   header and entry array must pass their CRCs, and which must lie within
+   the header's usable LBAs and overlap no other used entry (UEFI 2.11
+   5.3.1); a disk that fails any of these is refused, so the pool's
+   rings never overwrite the table or another partition. The backup
+   table at the disk's end, which 5.3.2 has software read when the
+   primary fails, is not read. */
 static UINT32 find_partition(UINT64 capacity)
 {
     static const UINT8 type[POOL_GUID_SIZE] = POOL_PARTITION_TYPE;
     const UINT8 *entry;
-    UINT64 entries, first = 0, last = 0;
+    UINT64 entries, first_usable, last_usable, first = 0, last = 0;
     UINT32 count, size, per_sector, expected, crc = 0, i, j, status;
+    UINT32 used = 0, pool = 0;
     int found = 0;
 
     status = block_call(BLOCK_READ, GPT_HEADER_LBA, POOL_SECTOR_SIZE,
@@ -1482,10 +1503,13 @@ static UINT32 find_partition(UINT64 capacity)
     count = pool_get32(page(IO_PAGE) + GPT_ENTRY_COUNT);
     size = pool_get32(page(IO_PAGE) + GPT_ENTRY_SIZE);
     expected = pool_get32(page(IO_PAGE) + GPT_ENTRIES_CRC);
+    first_usable = pool_get64(page(IO_PAGE) + GPT_FIRST_USABLE);
+    last_usable = pool_get64(page(IO_PAGE) + GPT_LAST_USABLE);
     if (size < GPT_ENTRY_MIN || size > POOL_SECTOR_SIZE ||
         POOL_SECTOR_SIZE % size || count > GPT_ENTRIES_MAX ||
         entries >= capacity ||
-        (UINT64)count * size / POOL_SECTOR_SIZE > capacity - entries)
+        ((UINT64)count * size + POOL_SECTOR_SIZE - 1) / POOL_SECTOR_SIZE >
+            capacity - entries)
         return ERR_NOT_SUPPORTED;
     per_sector = POOL_SECTOR_SIZE / size;
     for (i = 0; i < count; i++) {
@@ -1497,13 +1521,19 @@ static UINT32 find_partition(UINT64 capacity)
         }
         entry = page(IO_PAGE) + i % per_sector * size;
         crc = pool_crc32(crc, entry, size);
+        if (gpt_entry_unused(entry))
+            continue;
+        used_first[used] = pool_get64(entry + GPT_ENTRY_FIRST);
+        used_last[used] = pool_get64(entry + GPT_ENTRY_LAST);
         for (j = 0; j < POOL_GUID_SIZE && entry[j] == type[j]; j++)
             ;
         if (j == POOL_GUID_SIZE && !found) {
             found = 1;
-            first = pool_get64(entry + GPT_ENTRY_FIRST);
-            last = pool_get64(entry + GPT_ENTRY_LAST);
+            pool = used;
+            first = used_first[used];
+            last = used_last[used];
         }
+        used++;
     }
     if (crc != expected) {
         say("nova-fs: the disk's GPT entry array fails its check\r\n");
@@ -1511,8 +1541,15 @@ static UINT32 find_partition(UINT64 capacity)
     }
     if (!found)
         return ERR_NOT_FOUND;
-    if (first > last || last >= capacity)
+    for (i = 0; i < used; i++)
+        if (i != pool && used_first[i] <= last && first <= used_last[i])
+            break;
+    if (first < first_usable || first > last || last > last_usable ||
+        last_usable >= capacity || i < used) {
+        say("nova-fs: the disk's pool entry lies outside the usable LBAs or "
+            "overlaps another\r\n");
         return ERR_DATA_INTEGRITY;
+    }
     pool_first_lba = first;
     pool_blocks = (last - first + 1) / POOL_SECTORS_PER_BLOCK;
     pool_middle = pool_blocks / 2;
@@ -1886,7 +1923,8 @@ static UINT32 rename_path(const CHANNEL *c, const IO_REQUEST *request,
     if (!from_length || !to_length || !path_valid(from, from_length) ||
         !path_valid(to, to_length) || inside(from, from_length, to, to_length))
         return ERR_INVALID_ARGS;
-    if (from_length == to_length && compare(from, from_length, to, to_length) == 0)
+    if (from_length == to_length &&
+        compare(from, from_length, to, to_length) == 0)
         return resolve(c->slot, from, from_length, &slot, &kind);
     status = rename_check(c, request, from, from_length, to, to_length, &slot,
                           &kind, &replaced);

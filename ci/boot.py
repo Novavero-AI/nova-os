@@ -22,10 +22,12 @@ bootstrap chain's steps, each pinned link and init's checks passing.
 Each --expect TEXT adds a line the boot must report. With a data disk,
 the boot must also report the file system service opening its pool,
 /data and /users published, and the data disk's check passing. With
---corrupt-gpt, a byte of each of the copy's two GPT headers' CRCs, or
-of each of its two entry arrays, is changed first, and the boot must
-report the service refusing the disk and /data and /users not
-published.
+--corrupt-gpt, the copy's two GPT tables are changed first: header or
+entries change a byte of each header's CRC or of each entry array;
+extent moves the pool's entry to start at LBA 0, below the first usable
+LBA; overlap adds a second entry over the pool's blocks; the last two
+with every CRC made to match. The boot must then report the service
+refusing the disk and /data and /users not published.
 
 The check fails at once on a line from nova-os that reports a failure,
 a halt, a fault or a supervised process restarted or given up, or if
@@ -44,6 +46,7 @@ import sys
 import tempfile
 import threading
 import time
+import zlib
 
 # README.md's Run command, with the display off, the serial port on
 # standard output and a QMP socket for the keys. -no-reboot makes a reset
@@ -93,22 +96,37 @@ DATA_LINES = [
     "nova-fstest: checks passed",
 ]
 
-# What --corrupt-gpt changes in the data disk (UEFI 2.11 5.3.2, 5.3.3): a
-# byte of each GPT header's HeaderCRC32, or a byte of the first entry's
-# PartitionName in each entry array, in the primary table at LBA 1 and
-# the backup it names. Each leaves every check but a CRC's passing, so
-# only the CRC can refuse the disk. Both tables are changed because
-# firmware restores a primary table that fails from a backup that
-# passes, as 5.3.2 asks and EDK2 does on a writable disk.
+# What --corrupt-gpt changes in the data disk (UEFI 2.11 5.3), in the
+# primary table at LBA 1 and the backup it names: a byte of each
+# header's HeaderCRC32, or of the first entry's PartitionName in each
+# entry array, which only a CRC check refuses; or, with each array's
+# CRC and each header's made to match, the first entry, the pool's as
+# mkdata writes it, moved to start at LBA 0, or a second entry, a Linux
+# filesystem's, over the same blocks, which only the checks of 5.3.1
+# refuse. Both tables are changed because firmware restores a primary
+# table that fails from a backup that passes, as 5.3.2 asks and EDK2
+# does on a writable disk.
 SECTOR = 512
 PRIMARY_LBA = 1
+HEADER_SIZE = 12
+HEADER_CRC = 16
 ALTERNATE_LBA = 32
 ENTRIES_LBA = 72
-HEADER_CRC = 16
+ENTRY_COUNT = 80
+ENTRY_SIZE = 84
+ENTRIES_CRC = 88
+ENTRY_UNIQUE = 16
+ENTRY_FIRST = 32
 ENTRY_NAME = 56
+GUID_SIZE = 16
+LINUX_FILESYSTEM = bytes.fromhex("af3dc60f838472478e793d69d8477de4")
+EXTENT_REFUSED = ("nova-fs: the disk's pool entry lies outside the usable "
+                  "LBAs or overlaps another")
 GPT_REFUSED = {
     "header": "nova-fs: the disk's GPT header fails its check",
     "entries": "nova-fs: the disk's GPT entry array fails its check",
+    "extent": EXTENT_REFUSED,
+    "overlap": EXTENT_REFUSED,
 }
 DATA_REFUSED = "nova-init: /data and /users are not published"
 
@@ -231,6 +249,16 @@ def read_u64(disk, offset):
     return int.from_bytes(disk.read(8), "little")
 
 
+def read_u32(disk, offset):
+    disk.seek(offset)
+    return int.from_bytes(disk.read(4), "little")
+
+
+def write_u32(disk, offset, value):
+    disk.seek(offset)
+    disk.write(value.to_bytes(4, "little"))
+
+
 def flip(disk, offset):
     disk.seek(offset)
     byte = disk.read(1)[0]
@@ -238,15 +266,49 @@ def flip(disk, offset):
     disk.write(bytes([byte ^ 0xff]))
 
 
+def move_to_zero(array, size):
+    array[ENTRY_FIRST:ENTRY_FIRST + 8] = bytes(8)
+
+
+def add_overlap(array, size):
+    second = bytearray(array[:size])
+    second[:GUID_SIZE] = LINUX_FILESYSTEM
+    second[ENTRY_UNIQUE] ^= 0xff
+    array[size:2 * size] = second
+
+
+def rewrite_entries(disk, header, change):
+    """Change the entry array the header at LBA header names, and make
+    the array's CRC and the header's match."""
+    base = header * SECTOR
+    entries = read_u64(disk, base + ENTRIES_LBA) * SECTOR
+    size = read_u32(disk, base + ENTRY_SIZE)
+    length = read_u32(disk, base + ENTRY_COUNT) * size
+    disk.seek(entries)
+    array = bytearray(disk.read(length))
+    change(array, size)
+    disk.seek(entries)
+    disk.write(array)
+    write_u32(disk, base + ENTRIES_CRC, zlib.crc32(array))
+    header_size = read_u32(disk, base + HEADER_SIZE)
+    disk.seek(base)
+    fields = bytearray(disk.read(header_size))
+    fields[HEADER_CRC:HEADER_CRC + 4] = bytes(4)
+    write_u32(disk, base + HEADER_CRC, zlib.crc32(fields))
+
+
 def corrupt_gpt(disk, what):
-    """Change a byte of both GPT headers' CRCs, or of both entry arrays."""
+    """Change both GPT tables as --corrupt-gpt what asks."""
     backup = read_u64(disk, PRIMARY_LBA * SECTOR + ALTERNATE_LBA)
     for header in (PRIMARY_LBA, backup):
         if what == "header":
             flip(disk, header * SECTOR + HEADER_CRC)
-        else:
+        elif what == "entries":
             entries = read_u64(disk, header * SECTOR + ENTRIES_LBA)
             flip(disk, entries * SECTOR + ENTRY_NAME)
+        else:
+            rewrite_entries(disk, header,
+                            move_to_zero if what == "extent" else add_overlap)
 
 
 def data_disk(args, scratch):
