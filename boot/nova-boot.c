@@ -1,5 +1,6 @@
 /* nova-boot: the UEFI loader. It draws the boot screen, loads the kernel
-   from \nova\kernel.exe on the volume it was booted from, builds the
+   from \nova\kernel.exe on the volume it was booted from and reads the
+   first process's image from \nova\init.exe beside it, builds the
    kernel's page tables, measures the timestamp counter against Stall,
    asks the firmware's random number generators for seeds, takes the
    final memory map, exits boot services, loads the kernel's
@@ -30,6 +31,7 @@ static EFI_GUID simple_file_system_guid = {
     {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
 
 static CHAR16 kernel_path[] = L"\\nova\\kernel.exe";
+static CHAR16 init_path[] = L"\\nova\\init.exe";
 
 #define CALIBRATION_MICROSECONDS 50000
 
@@ -332,12 +334,14 @@ static EFI_STATUS read_file(EFI_BOOT_SERVICES *boot, EFI_FILE_PROTOCOL *file,
     return EFI_SUCCESS;
 }
 
-static EFI_STATUS read_kernel(EFI_HANDLE image, EFI_BOOT_SERVICES *boot,
-                              UINT8 **data, UINTN *size)
+/* Read the file at path on nova-boot's own volume into pool memory of
+   type EfiLoaderData. */
+static EFI_STATUS read_boot_file(EFI_HANDLE image, EFI_BOOT_SERVICES *boot,
+                                 CHAR16 *path, UINT8 **data, UINTN *size)
 {
     EFI_LOADED_IMAGE_PROTOCOL *loaded;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *volume;
-    EFI_FILE_PROTOCOL *root, *kernel;
+    EFI_FILE_PROTOCOL *root, *file;
     EFI_STATUS status;
 
     status = boot->HandleProtocol(image, &loaded_image_guid,
@@ -351,10 +355,10 @@ static EFI_STATUS read_kernel(EFI_HANDLE image, EFI_BOOT_SERVICES *boot,
     status = volume->OpenVolume(volume, &root);
     if (status != EFI_SUCCESS)
         return status;
-    status = root->Open(root, &kernel, kernel_path, EFI_FILE_MODE_READ, 0);
+    status = root->Open(root, &file, path, EFI_FILE_MODE_READ, 0);
     if (status == EFI_SUCCESS) {
-        status = read_file(boot, kernel, data, size);
-        kernel->Close(kernel);
+        status = read_file(boot, file, data, size);
+        file->Close(file);
     }
     root->Close(root);
     return status;
@@ -909,8 +913,8 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *mode;
     KERNEL_IMAGE kernel;
     ADDRESS_SPACE space;
-    UINT8 *file;
-    UINTN file_size;
+    UINT8 *file, *init;
+    UINTN file_size, init_size;
     UINT64 t0;
     EFI_STATUS status;
 
@@ -933,15 +937,26 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     gfx_boot_screen(&boot_info.screen, &boot_info.spinner);
     gfx_spinner_step(&boot_info.screen, &boot_info.spinner);
 
-    status = read_kernel(ImageHandle, boot, &file, &file_size);
+    status = read_boot_file(ImageHandle, boot, kernel_path, &file,
+                            &file_size);
     if (status != EFI_SUCCESS)
         return status;
     status = place_kernel(boot, file, file_size, &kernel);
     boot->FreePool(file);
     if (status != EFI_SUCCESS)
         return status;
+    /* The kernel loads the first process's image itself; nova-boot hands
+       it over as read, in memory the kernel keeps. */
+    status = read_boot_file(ImageHandle, boot, init_path, &init, &init_size);
+    if (status != EFI_SUCCESS) {
+        boot->FreePages(kernel.base, kernel.pages);
+        return status;
+    }
+    boot_info.init_image = direct_map((UINT64)init);
+    boot_info.init_image_size = init_size;
     status = build_address_space(boot, &kernel, gop->Mode, &space);
     if (status != EFI_SUCCESS) {
+        boot->FreePool(init);
         boot->FreePages(kernel.base, kernel.pages);
         return status;
     }
@@ -955,6 +970,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     status = exit_boot_services(ImageHandle, boot);
     if (status != EFI_SUCCESS) {
         free_address_space(boot, &space);
+        boot->FreePool(init);
         boot->FreePages(kernel.base, kernel.pages);
         return status;
     }

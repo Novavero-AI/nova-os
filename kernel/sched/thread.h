@@ -1,6 +1,8 @@
-/* Kernel threads and the scheduler: preemptive round robin on one
-   processor, driven by the Local APIC timer, with an idle thread that
-   halts when nothing is ready. */
+/* Threads and the scheduler: preemptive round robin on one processor,
+   driven by the Local APIC timer, with an idle thread that halts when
+   nothing is ready. A kernel thread runs kernel code only; a user thread
+   belongs to a process and runs its code in user mode, entering the
+   kernel on its own kernel stack. */
 
 #ifndef NOVA_THREAD_H
 #define NOVA_THREAD_H
@@ -34,6 +36,7 @@ typedef enum {
 } THREAD_STATE;
 
 typedef struct THREAD THREAD;
+struct PROCESS;
 
 struct THREAD {
     ARCH_CONTEXT context;
@@ -47,6 +50,7 @@ struct THREAD {
     void *argument;
     UINT64 switches; /* times the scheduler has switched to it */
     WAITABLE waitable;
+    struct PROCESS *process; /* a user thread's process; 0 for a kernel thread */
 };
 
 /* Make thread a new thread that will run entry(argument) and then exit,
@@ -57,12 +61,27 @@ struct THREAD {
    to the thread until the waiter runs. Returns OK or ERR_NO_MEMORY. */
 STATUS thread_create(THREAD *thread, THREAD_ENTRY entry, void *argument);
 
+/* Make thread a new user thread of process, which will enter user mode at
+   entry with RSP stack and arguments argument1 and argument2
+   (arch_context_init_user), on the page tables at address_space, with its
+   vector state in fpu. It gets a kernel stack as thread_create's threads
+   do. The process owns the THREAD and the fpu area; process_thread_reaped
+   is called once the thread has exited and its stack is free. Returns OK
+   or ERR_NO_MEMORY. */
+STATUS thread_create_user(THREAD *thread, struct PROCESS *process,
+                          UINT64 address_space, UINT8 *fpu, UINT64 entry,
+                          UINT64 stack, UINT64 argument1, UINT64 argument2);
+
 /* Make a new thread ready to run. Returns OK, or ERR_BAD_STATE if it has
    been started before. */
 STATUS thread_start(THREAD *thread);
 
 /* End the running thread. Does not return. */
-void thread_exit(void);
+_Noreturn void thread_exit(void);
+
+/* Called on a new user thread's first switch, before it enters user mode,
+   as thread_run is for a kernel thread (switch.S). */
+void thread_user_first_run(void);
 
 THREAD *thread_current(void);
 

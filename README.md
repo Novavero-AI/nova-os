@@ -6,9 +6,11 @@ a small kernel core, written in C and built entirely from source down to a
 seed and compared.
 
 It boots in a UEFI virtual machine. nova-boot, the loader, draws the boot
-screen, loads the kernel from `\nova\kernel.exe`, exits the firmware's boot
-services and jumps to the kernel, which reports itself on the first serial
-port and, once started, fades the boot screen into the desktop background.
+screen, loads the kernel from `\nova\kernel.exe` and reads the first
+process from `\nova\init.exe`, exits the firmware's boot services and
+jumps to the kernel, which runs the first process in user mode, reports
+itself and the process's exit code on the first serial port and, once
+started, fades the boot screen into the desktop background.
 [DESIGN.md](DESIGN.md) holds the principles, the decisions made so far and
 the stages; [design/backgrounds](design/backgrounds/README.md) holds the
 background's prototypes and the check that `gfx/limb.c` draws Limb's
@@ -16,7 +18,7 @@ pixels.
 
 ## Build
 
-Both images are compiled by TinyCC at commit
+The three images are compiled by TinyCC at commit
 cb41cbfe717e4c00d7bb70035cda5ee5f0ff9341, built as a cross compiler that
 writes x86-64 PE. The archive's sha256 is
 `7381f944aa9255cd560e8192c5b0241246d2c83eea54b8eb317102992fe1e2bb`.
@@ -39,45 +41,57 @@ cc -o x86_64-win32-tcc -I cfg -I tinycc-$rev \
   kernel/x86_64/idt.c kernel/x86_64/apic.c kernel/x86_64/paging.c \
   kernel/x86_64/serial.c kernel/x86_64/clock.c kernel/x86_64/context.c \
   kernel/x86_64/entry.S kernel/x86_64/switch.S kernel/x86_64/entropy.c \
+  kernel/x86_64/fpu.c kernel/x86_64/user.c kernel/x86_64/syscall.S \
   kernel/mm/page.c kernel/mm/page_test.c kernel/sched/thread.c \
   kernel/sched/wait.c kernel/sched/sched_test.c kernel/random/chacha20.c \
   kernel/random/sha256.c kernel/random/generator.c kernel/random/random.c \
-  kernel/random/random_test.c gfx/gfx.c gfx/limb.c gfx/background.c
+  kernel/random/random_test.c kernel/object/object.c \
+  kernel/object/channel.c kernel/object/resource.c \
+  kernel/object/process.c kernel/object/image.c \
+  kernel/object/first_process.c kernel/syscall/syscall.c gfx/gfx.c \
+  gfx/limb.c gfx/background.c
+./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
+  -I include -I native -Wl,-subsystem=native -Wl,-e=init_main \
+  -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
+  -o init.exe init/init.c native/native.S
 ```
 
 `-shared` makes TinyCC write base relocations, which the firmware needs to
 load nova-boot, and nova-boot to load the kernel, at addresses of their
-choosing; TinyCC writes them only for a DLL-style image. For the native
-subsystem TinyCC aligns sections to 32 bytes but still writes the
-4096 and 512 byte alignments into the header, so the kernel's link sets
-those alignments (in hexadecimal) to make its layout match. Each build
-gives the same bytes:
+choosing; TinyCC writes them only for a DLL-style image. `init.exe` is
+linked without it: the kernel places the first process at the image's
+own base address. For the native subsystem TinyCC aligns sections to 32
+bytes but still writes the 4096 and 512 byte alignments into the header,
+so the kernel's and `init.exe`'s links set those alignments (in
+hexadecimal) to make their layout match. Each build gives the same
+bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `BOOTX64.EFI` | 25,088 | `72062013e5dbb01ffd255e7a1befe0c60fdd7d21d36f6787751471966dbe8ce1` |
-| `kernel.exe` | 59,904 | `7a704c1bedd768cfc1ea9ca3e8e22c3cded218fba85adabb8be416db8f6de631` |
+| `BOOTX64.EFI` | 25,088 | `a3f46044322f1017ea1b71dfbb7a4910f895331f37a83d2bee5839fb755080ee` |
+| `kernel.exe` | 83,968 | `b4a45ab61b12ce11ae0697e3c8fae09425eaf572fa5848a733dc588fd926de83` |
+| `init.exe` | 4,608 | `5af62c7059f652d3dfffad8c0d5d777b2c1a6f4019ec60c40a6bf4cf221f41d7` |
 
 ## Disk image
 
 `tools/mkimage.c` writes the boot disk twice: `disk.img`, a raw 64 MiB
 disk, and `disk.vhdx`, the same disk in a fixed VHDX file, the format a
 Hyper-V Generation 2 virtual machine boots. The disk has a GPT with one EFI
-System Partition, formatted FAT32, holding `\EFI\BOOT\BOOTX64.EFI` and
-`\NOVA\KERNEL.EXE`. The tool is C99 with only the standard library, so the
+System Partition, formatted FAT32, holding `\EFI\BOOT\BOOTX64.EFI`,
+`\NOVA\KERNEL.EXE` and `\NOVA\INIT.EXE`. The tool is C99 with only the standard library, so the
 host compiler or TinyCC builds it.
 
 ```sh
 cc -o mkimage tools/mkimage.c
-./mkimage disk.img disk.vhdx BOOTX64.EFI kernel.exe
+./mkimage disk.img disk.vhdx BOOTX64.EFI kernel.exe init.exe
 ```
 
 From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `8f69cbe89796944abcf9501af8b56767c58dfb05145813b6c45e3f91ed0ea582` |
-| `disk.vhdx` | 71,303,168 | `397ee459847f0b57c0485d5fb5e3aba68a5db304c382a290060dd462ad59f076` |
+| `disk.img` | 67,108,864 | `99f3157583c6bc9dd598db9deb17aacefa19d7c3b560f531b5f88d953466509e` |
+| `disk.vhdx` | 71,303,168 | `2811850577944f5d2fa61bccf0fe201459207368fa3529c47550755717027184` |
 
 To boot either file in QEMU, replace the `fat:esp` drive in the command
 below with `-drive if=virtio,format=raw,file=disk.img` or
@@ -92,7 +106,7 @@ on a Mac with Homebrew):
 ```sh
 fw=$(brew --prefix)/share/qemu
 mkdir -p esp/EFI/BOOT esp/nova
-cp BOOTX64.EFI esp/EFI/BOOT/ && cp kernel.exe esp/nova/
+cp BOOTX64.EFI esp/EFI/BOOT/ && cp kernel.exe init.exe esp/nova/
 cp $fw/edk2-i386-vars.fd vars.fd && chmod u+w vars.fd
 qemu-system-x86_64 -machine q35 -m 256M \
   -drive if=pflash,format=raw,readonly=on,file=$fw/edk2-x86_64-code.fd \

@@ -28,6 +28,12 @@ UINT64 page_alloc_run(UINT64 pages);
    told from an allocated one, so freeing one is not caught. */
 int page_free(UINT64 address);
 
+/* A free page, now allocated and zeroed, at its direct-map address, or 0
+   if none is free: the memory of a kernel object. page_free_mapped frees
+   it. */
+VOID *page_alloc_mapped(void);
+void page_free_mapped(VOID *page);
+
 UINT64 page_free_count(void);
 
 /* Pages of the memory types the OS owns as general memory, whether free

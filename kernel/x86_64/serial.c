@@ -7,13 +7,25 @@
 #define LINE_STATUS 5
 #define TRANSMIT_EMPTY 0x20
 
+static void put(UINT8 byte)
+{
+    while (!(inb(COM1 + LINE_STATUS) & TRANSMIT_EMPTY))
+        ;
+    outb(COM1, byte);
+}
+
 void serial_write(const char *s)
 {
-    for (; *s; s++) {
-        while (!(inb(COM1 + LINE_STATUS) & TRANSMIT_EMPTY))
-            ;
-        outb(COM1, (UINT8)*s);
-    }
+    for (; *s; s++)
+        put((UINT8)*s);
+}
+
+void serial_write_bytes(const UINT8 *bytes, UINT64 count)
+{
+    UINT64 i;
+
+    for (i = 0; i < count; i++)
+        put(bytes[i]);
 }
 
 void serial_number(UINT64 n)

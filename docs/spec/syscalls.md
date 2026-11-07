@@ -380,7 +380,7 @@ result registers are 0 except where its description says otherwise
 | 5 | `ERR_WRONG_TYPE` | The handle names an object of another type |
 | 6 | `ERR_ACCESS_DENIED` | The handle lacks a right the call needs, or the rights asked for are not a subset of the handle's |
 | 7 | `ERR_NO_MEMORY` | Kernel memory or the job's quota is exhausted |
-| 8 | `ERR_OUT_OF_RANGE` | A count past a fixed limit (`CHANNEL_MAX_BYTES`, `CHANNEL_MAX_HANDLES`, `WAIT_MANY_MAX`), or an offset past an object's size or a resource's range |
+| 8 | `ERR_OUT_OF_RANGE` | A count past a fixed limit (`CHANNEL_MAX_BYTES`, `CHANNEL_MAX_HANDLES`, `WAIT_MANY_MAX`, `DEBUG_WRITE_MAX_BYTES`), or an offset past an object's size or a resource's range |
 | 9 | `ERR_SHOULD_WAIT` | The operation would block: a queue is empty or full |
 | 10 | `ERR_TIMED_OUT` | The deadline passed |
 | 11 | `ERR_CANCELED` | A handle being waited on was closed, or a request was cancelled |
@@ -463,6 +463,7 @@ column marks an array the kernel fills in user memory.
 | 41 | `debug_write` | resource, bytes, byte count | | `USE` on the debug-log resource | The kernel's serial console |
 | 42 | `random_read` | bytes, byte count | | | The kernel's own generator, which it needs before any server runs; results are recorded for replay ([replay.md](replay.md)), as with Zircon's `zx_cprng_draw` ([cprng_draw][zx-cprng]) |
 | 43 | `task_exception_channel` | process or job | handle | `TERMINATE` | Faults are raised by the processor and reach the kernel first ([objects.md O10](objects.md#o10-object-lifetime)) |
+| 44 | `thread_set_tls_base` | base | | | Without `WRFSBASE`, a 64-bit segment base is loaded with `WRMSR`, at CPL 0 only (S10) |
 
 A new thread, from `process_start` or `thread_start`, begins at `entry`
 with RCX and RDX holding its two arguments, every other general-purpose
@@ -482,7 +483,7 @@ function must not return.
 - **Why this set:** each call passes objects.md O1's test, shown in the
   last column; a call is added only when a first-stage component needs it
   and no user-mode server can provide it.
-- **Cost:** 43 calls to implement and test before the first user-mode
+- **Cost:** 44 calls to implement and test before the first user-mode
   driver runs.
 - **Not taken:** seL4's form, a handful of system calls with every object
   operation sent as a message to the object's capability (seL4 2.2). Its
@@ -511,6 +512,42 @@ detects them, and the vendor guidance it follows.
   on every entry on AMD processors affected by branch type confusion or
   speculative return stack overflow ([speculation.md M9](speculation.md#m9-branch-type-confusion),
   [M10](speculation.md#m10-speculative-return-stack-overflow)).
+
+## S10. Thread-local storage
+
+**Decided.**
+
+A user thread's thread-local storage base is its FS base. A thread
+starts with base 0 and sets its own with `thread_set_tls_base(base)`
+(S8); `base` must be 0 or an address in [`USER_BASE`, `USER_TOP`), or the
+call fails with `ERR_INVALID_ARGS`. The kernel never reads memory at the
+base. The base is part of the thread's user state, like its vector
+registers (S4): the kernel saves `IA32_FS_BASE` (C000_0100h, APM 4.5.3)
+when it switches away from the thread and loads it when it switches
+back, so the thread keeps whatever base it last had, however it was set.
+CR4.FSGSBASE (bit 16) stays clear, so `RDFSBASE`, `WRFSBASE`, `RDGSBASE`
+and `WRGSBASE` are not enabled (SDM 2.5); loading a non-null selector
+into FS still sets the base, from the descriptor's 32-bit base (SDM
+3.4.4), which is 0 in every descriptor user code may load.
+
+- **Why a call:** `WRFSBASE` needs a processor that reports it and the
+  kernel's CR4.FSGSBASE (SDM 2.5). QEMU's default processor model
+  reports no FSGSBASE (CPUID.07H.00H:EBX is 0 there), so a call is needed
+  on such a processor in any case, and one mechanism serves every x86-64
+  processor. A thread sets its base once, when its runtime sets up its
+  thread-local storage.
+- **Why FS:** the kernel uses GS for its per-CPU block (S3) and never
+  FS, so the user's base never passes through `IA32_KERNEL_GS_BASE`, and
+  `SWAPGS` keeps one job.
+- **Cost:** a system call per change of base, where `WRFSBASE` is one
+  instruction; and on each switch between user threads, a read and a
+  write of `IA32_FS_BASE`. TinyCC at the pinned commit does not implement
+  `_Thread_local` (`tccgen.c`), so the native layer, not the compiler,
+  reaches the base.
+- **Not taken:** CR4.FSGSBASE set where the processor reports it, with
+  the call kept for processors that do not. Its cost is two mechanisms,
+  and user code able to set GS's base as well, which the kernel would
+  then also save and restore on every switch.
 
 ## References
 

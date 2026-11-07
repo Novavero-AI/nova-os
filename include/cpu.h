@@ -154,7 +154,7 @@ static inline void wait_for_interrupt(void)
 }
 
 /* Stop for good. An NMI still wakes HLT, hence the loop. */
-static inline void halt_forever(void)
+static inline _Noreturn void halt_forever(void)
 {
     disable_interrupts();
     for (;;)

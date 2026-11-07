@@ -7,6 +7,9 @@
 
 void serial_write(const char *s);
 
+/* count bytes, as they are. */
+void serial_write_bytes(const UINT8 *bytes, UINT64 count);
+
 /* n in decimal. */
 void serial_number(UINT64 n);
 

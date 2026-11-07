@@ -8,9 +8,10 @@
 /* The rate of the timer interrupt. */
 #define TIMER_HZ 1000
 
-/* Install the kernel's own descriptor tables and exception handlers, then
-   take over nova-boot's page tables and remove their lower-half mapping.
-   Returns with interrupts disabled. */
+/* Install the kernel's own descriptor tables and exception handlers, take
+   over nova-boot's page tables and remove their lower-half mapping, and
+   set the processor up for user mode and the system-call entry. Returns
+   with interrupts disabled. */
 void arch_init(void);
 
 /* Take the interrupt controllers over from the firmware and start the

@@ -16,6 +16,7 @@ void arch_init(void)
        anything depends on it. */
     breakpoint();
     paging_init();
+    user_mode_init();
 }
 
 void arch_start_timer(UINT64 tsc_per_ms)

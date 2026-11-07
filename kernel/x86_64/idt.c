@@ -1,6 +1,7 @@
 /* The kernel's interrupt descriptor table and the C side of interrupt
    entry. Gates lead to the stubs in entry.S, which save the interrupted
-   state and call interrupt_dispatch. */
+   state and call interrupt_dispatch, or exception_halt for the three
+   events that have stacks of their own. */
 
 #include "x86_64.h"
 #include "cpu.h"
@@ -23,7 +24,9 @@ typedef struct {
 _Static_assert(sizeof(IDT_GATE) == 16, "an IDT gate is 16 bytes");
 
 /* Present, DPL 0, type 1110b: a 64-bit interrupt gate (SDM Vol. 3A
-   Table 3-2), which clears IF on entry (SDM Vol. 3A 7.12.1.3). */
+   Table 3-2), which clears IF on entry (SDM Vol. 3A 7.12.1.3). With DPL
+   0, user code cannot raise any vector with INT n, INT3 or INTO: the
+   processor raises #GP instead (SDM Vol. 3A 7.12.1.2). */
 #define GATE_PRESENT 0x80
 #define GATE_INTERRUPT 0x0e
 
@@ -32,8 +35,9 @@ _Static_assert(sizeof(IDT_GATE) == 16, "an IDT gate is 16 bytes");
    naming the vector (SDM Vol. 2A, INT n, IA-32e mode; Vol. 3A 7.13). */
 static IDT_GATE idt[VECTOR_COUNT];
 
-/* ist 0 keeps the interrupted stack; 1 to 7 switch to that IST slot's
-   stack (SDM Vol. 3A 7.14.5). */
+/* ist 0 keeps the interrupted stack, or takes RSP0 from the TSS on a
+   change to CPL 0; 1 to 7 switch to that IST slot's stack (SDM Vol. 3A
+   7.14.4, 7.14.5). */
 static void set_gate(UINT32 vector, UINT64 handler, UINT8 ist)
 {
     IDT_GATE *gate = &idt[vector];
@@ -53,20 +57,16 @@ void idt_load(void)
 
     for (vector = 0; vector < EXCEPTION_COUNT; vector++)
         set_gate(vector, exception_stubs[vector], 0);
+    set_gate(NMI_VECTOR, exception_stubs[NMI_VECTOR], NMI_IST);
     set_gate(DOUBLE_FAULT_VECTOR, exception_stubs[DOUBLE_FAULT_VECTOR],
              DOUBLE_FAULT_IST);
-    set_gate(PAGE_FAULT_VECTOR, exception_stubs[PAGE_FAULT_VECTOR],
-             PAGE_FAULT_IST);
+    set_gate(MACHINE_CHECK_VECTOR, exception_stubs[MACHINE_CHECK_VECTOR],
+             MACHINE_CHECK_IST);
     set_gate(TIMER_VECTOR, (UINT64)timer_stub, 0);
     set_gate(SPURIOUS_VECTOR, (UINT64)spurious_stub, 0);
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (UINT64)idt;
     __asm__ volatile("lidt %0" : : "m"(idtr) : "memory");
-}
-
-static int has_error_code(UINT64 vector)
-{
-    return vector < EXCEPTION_COUNT && (ERROR_CODE_VECTORS >> vector & 1);
 }
 
 static void log_breakpoint(const INTERRUPT_FRAME *frame)
@@ -76,8 +76,12 @@ static void log_breakpoint(const INTERRUPT_FRAME *frame)
     serial_write("\r\n");
 }
 
-/* The kernel has no recovery from an exception yet: report it and stop. */
-static void exception_halt(const INTERRUPT_FRAME *frame)
+/* The kernel has no recovery from an exception of its own: report it and
+   stop. A stack overflow faults on the stack's guard page, and the page
+   fault cannot be delivered on the exhausted stack, so it ends here as a
+   double fault (SDM Vol. 3A 7.15, Interrupt 8), with the guard's address
+   in CR2. */
+_Noreturn void exception_halt(const INTERRUPT_FRAME *frame)
 {
     serial_write("nova: exception ");
     serial_number(frame->vector);
@@ -87,7 +91,8 @@ static void exception_halt(const INTERRUPT_FRAME *frame)
         serial_write(", error code ");
         serial_hex(frame->error_code);
     }
-    if (frame->vector == PAGE_FAULT_VECTOR) {
+    if (frame->vector == PAGE_FAULT_VECTOR ||
+        frame->vector == DOUBLE_FAULT_VECTOR) {
         serial_write(", cr2 ");
         serial_hex(read_cr2());
     }
@@ -97,11 +102,27 @@ static void exception_halt(const INTERRUPT_FRAME *frame)
     halt_forever();
 }
 
-void interrupt_dispatch(const INTERRUPT_FRAME *frame)
+/* A page fault in the kernel is a bug, unless it is user_copy's access
+   to user memory, which then fails instead (docs/spec/syscalls.md S6). */
+static void kernel_page_fault(INTERRUPT_FRAME *frame)
 {
+    UINT64 fixup = user_copy_fixup(frame->rip, read_cr2());
+
+    if (!fixup)
+        exception_halt(frame);
+    frame->rip = fixup;
+}
+
+void interrupt_dispatch(INTERRUPT_FRAME *frame)
+{
+    if (frame->vector < EXCEPTION_COUNT && (frame->cs & SELECTOR_RPL_MASK))
+        user_exception(frame);
     switch (frame->vector) {
     case BREAKPOINT_VECTOR:
         log_breakpoint(frame);
+        break;
+    case PAGE_FAULT_VECTOR:
+        kernel_page_fault(frame);
         break;
     case TIMER_VECTOR:
         apic_timer_interrupt();

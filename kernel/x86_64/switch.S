@@ -1,44 +1,39 @@
-/* arch_switch(from, to), with from in RCX and to in RDX (Microsoft x64
-   convention). The processor's task switch does not exist in 64-bit mode,
-   so threads are switched in software (SDM Vol. 3A 10.7).
+/* switch_stacks(from, to), with from in RCX and to in RDX (Microsoft x64
+   convention): the part of arch_switch (context.c) that moves from one
+   kernel stack to another. The processor's task switch does not exist in
+   64-bit mode, so threads are switched in software (SDM Vol. 3A 10.7).
 
-   A kernel thread is switched as a call: the registers the convention has
-   a callee preserve, RBX, RBP, RDI, RSI and R12 to R15 ("Caller/callee
+   A thread is switched as a call: the registers the convention has a
+   callee preserve, RBX, RBP, RDI, RSI and R12 to R15 ("Caller/callee
    saved registers"), go on the outgoing thread's stack and RSP into from;
    then the incoming thread's RSP comes from to, its registers come off
-   its stack, and RET continues it after its own call to arch_switch, or
-   in the start function arch_context_init gave a new thread. The other
-   general registers are volatile across any call, so no caller expects
-   them kept. RFLAGS is not kept either: every switch is made with
-   interrupts disabled and DF clear, and each thread sets IF again itself
-   as it leaves the code that switched: by IRETQ from the timer interrupt,
-   restore_interrupts after a wait, the STI of wait_for_interrupt in the
-   idle loop, or, for a new thread, thread_run.
+   its stack, and RET continues it after its own call to switch_stacks,
+   or where arch_context_init or arch_context_init_user started a new
+   thread. The other general registers are volatile across any call, so
+   no caller expects them kept. RFLAGS is not kept either: every switch is
+   made with interrupts disabled and DF clear, and each thread sets IF
+   again itself as it leaves the code that switched: by IRETQ from the
+   timer interrupt or into user mode, restore_interrupts after a wait,
+   the STI of wait_for_interrupt in the idle loop, or, for a new kernel
+   thread, thread_run.
 
    The convention also makes XMM6 to XMM15, the x87 control word and
    MXCSR's control bits nonvolatile (same page, "FPCSR", "MXCSR"). Kernel
    code executes no x87, SSE or AVX instruction
    (docs/spec/boot-protocol.md, Flags and floating point; syscalls.md S4),
-   so those registers hold the same values in every kernel thread and the
-   switch keeps them by leaving them alone.
-
-   A user thread will add two things here. First, its x87, SSE and AVX
-   state, which S4 has the kernel preserve: XSAVE of the outgoing thread's
-   state into an area its ARCH_CONTEXT points to and XRSTOR of the
-   incoming thread's, the save and restore on every switch that SDM Vol.
-   3A 16.4 describes for preemptive systems. Second, the incoming thread's
-   kernel stack top in the TSS's RSP0, which the processor loads when an
-   interrupt arrives from user mode (SDM Vol. 3A 7.14.4, 10.7). Its
-   general registers need no room here: its entry pushes them on its
-   kernel stack (S3), where they stay while it is switched out. Neither is
-   needed yet, because no thread runs user code: no thread has vector
-   state of its own, and no interrupt changes privilege level. */
+   so those registers hold the user state of the last user thread that
+   ran, which arch_switch saves and restores around this. A user thread's
+   general registers need no room here: its entry to the kernel pushed
+   them on its kernel stack (entry.S, syscall.S), where they stay while
+   it is switched out. */
 
 #include "context.h"
 
+#define SHADOW_SPACE 32
+
     .text
-    .globl arch_switch
-arch_switch:
+    .globl switch_stacks
+switch_stacks:
     pushq %rbx
     pushq %rbp
     pushq %rdi
@@ -58,3 +53,13 @@ arch_switch:
     popq %rbp
     popq %rbx
     ret
+
+/* Where a new user thread's first switch returns, with RSP at the
+   INTERRUPT_FRAME arch_context_init_user placed at the top of its kernel
+   stack, 16-byte aligned, and interrupts disabled. */
+    .globl user_first_switch
+user_first_switch:
+    subq $SHADOW_SPACE, %rsp
+    call thread_user_first_run
+    addq $SHADOW_SPACE, %rsp
+    jmp return_to_user

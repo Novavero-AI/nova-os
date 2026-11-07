@@ -9,14 +9,15 @@
    allocator, checks it and reports on the first serial port; starts its
    clock, the scheduler and the timer; seeds the random number
    generator; starts a thread that keeps the boot screen's spinner
-   turning and a startup thread that tests the threads, then stops the
-   spinner and fades the boot screen into the desktop background; and
-   becomes the idle thread. */
+   turning and a startup thread that runs the first user process, tests
+   the threads, then stops the spinner and fades the boot screen into the
+   desktop background; and becomes the idle thread. */
 
 #include "background.h"
 #include "boot_info.h"
 #include "cpu.h"
 #include "mm/page.h"
+#include "object/process.h"
 #include "random/random.h"
 #include "sched/thread.h"
 #include "sched/wait.h"
@@ -94,13 +95,18 @@ static void spin(void *argument)
     }
 }
 
-/* Test the threads, then stop the spinner and, once its thread has ended
-   so that nothing else draws, fade into the desktop background. */
+/* Run the first process to its end and test the threads, then stop the
+   spinner and, once its thread has ended so that nothing else draws,
+   fade into the desktop background. The thread self-test counts free
+   pages, so no other thread may allocate or free any while it runs; it
+   starts once the first process has ended, and so also shows the
+   scheduler intact after whatever that process did. */
 static void startup(void *argument)
 {
     BOOT_INFO *info = argument;
     UINT32 observed;
 
+    first_process_run(info);
     sched_self_test(&spinner_thread);
     event_signal(&startup_done, 0, STARTUP_DONE);
     wait_one(&spinner_thread.waitable, THREAD_TERMINATED, DEADLINE_INFINITE,

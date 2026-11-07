@@ -1,7 +1,8 @@
 # Disk layout
 
 The boot disk nova-os's image tool writes: what the firmware needs to find
-and start nova-boot, and what nova-boot needs to find the kernel.
+and start nova-boot, and what nova-boot needs to find the kernel and the
+first process.
 Specifications are cited by the versions in [README.md](README.md):
 "UEFI 5.3.2" is section 5.3.2 of UEFI 2.11, "FAT" the FAT32 File System
 Specification 1.03.
@@ -77,6 +78,7 @@ The partition holds a FAT32 file system (UEFI 13.3; FAT):
 ```
 \EFI\BOOT\BOOTX64.EFI    nova-boot
 \NOVA\KERNEL.EXE         the kernel
+\NOVA\INIT.EXE           the first user process
 ```
 
 `\EFI\BOOT\BOOTX64.EFI` is the file the firmware starts when a boot option
@@ -86,8 +88,9 @@ the x64 name as `BOOTx64.EFI` with `Machine` 0x8664. An EFI System
 Partition on a hard disk has the directory `\EFI` in its root, and `BOOT`
 under it holds the images used to recover booting (UEFI 13.3.1.3).
 
-`\NOVA\KERNEL.EXE` is the file nova-boot opens as `\nova\kernel.exe`
-([boot-protocol.md](boot-protocol.md)). It is not a UEFI image, and UEFI
+`\NOVA\KERNEL.EXE` and `\NOVA\INIT.EXE` are the files nova-boot opens
+as `\nova\kernel.exe` and `\nova\init.exe`
+([boot-protocol.md](boot-protocol.md)). Neither is a UEFI image, and UEFI
 sets no location for files an application reads (UEFI 13.3.1.3).
 
 Every name fits 8.3 and is stored as a short directory entry only, in
@@ -100,9 +103,11 @@ uppercase (UEFI 13.3.1.2), with no long-name entries:
 | `\EFI\BOOT\BOOTX64.EFI` | `BOOTX64 EFI` |
 | `\NOVA` | `NOVA` followed by 7 spaces |
 | `\NOVA\KERNEL.EXE` | `KERNEL  EXE` |
+| `\NOVA\INIT.EXE` | `INIT    EXE` |
 
 FAT matches names without regard to case ("Name Matching In Short & Long
-Names"), so `\nova\kernel.exe` and `BOOTx64.EFI` find these entries.
+Names"), so `\nova\kernel.exe`, `\nova\init.exe` and `BOOTx64.EFI`
+find these entries.
 `DIR_NTRes` is 0. Each directory other than the root starts with its dot
 and dotdot entries; the root has neither (FAT, "FAT Directory Structure").
 

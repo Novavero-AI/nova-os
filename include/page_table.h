@@ -24,6 +24,9 @@
 
 #define PTE_PRESENT (1ULL << 0)
 #define PTE_WRITABLE (1ULL << 1)
+/* U/S: user-mode accesses are allowed only through a translation whose
+   entries at every level set it (SDM Vol. 3A 5.6.1). */
+#define PTE_USER (1ULL << 2)
 #define PTE_WRITE_THROUGH (1ULL << 3) /* PWT */
 #define PTE_CACHE_DISABLE (1ULL << 4) /* PCD */
 /* PS: a level 2 or 3 entry with it set maps a 2 MiB or 1 GiB page. A

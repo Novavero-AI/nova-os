@@ -1,12 +1,12 @@
 /* mkimage: writes nova-os's boot disk twice, as a raw disk image and as a
    VHDX file. The disk carries a protective MBR and a GPT with one EFI
    System Partition, formatted FAT32, which holds \EFI\BOOT\BOOTX64.EFI
-   (the file firmware boots when no boot option names one) and
-   \NOVA\KERNEL.EXE. Every GUID, serial number, timestamp and sequence
+   (the file firmware boots when no boot option names one),
+   \NOVA\KERNEL.EXE and \NOVA\INIT.EXE. Every GUID, serial number, timestamp and sequence
    number is a constant, and the disk is assembled in a zeroed buffer in a
    fixed order, so the same inputs give the same bytes.
 
-   usage: mkimage DISK.IMG DISK.VHDX BOOTX64.EFI KERNEL.EXE
+   usage: mkimage DISK.IMG DISK.VHDX BOOTX64.EFI KERNEL.EXE INIT.EXE
 
    Formats: UEFI 2.10 chapter 5 (MBR and GPT), section 13.3 (the EFI
    System Partition's file system) and appendix A (GUIDs); Microsoft's
@@ -31,8 +31,8 @@
 #define DISK_SECTORS (DISK_SIZE / SECTOR_SIZE)
 #define SECTORS(n) ((size_t)(n) * SECTOR_SIZE)
 
-/* The two files on the disk, in the order of the command line. */
-enum { INPUT_LOADER, INPUT_KERNEL, INPUT_COUNT };
+/* The files on the disk, in the order of the command line. */
+enum { INPUT_LOADER, INPUT_KERNEL, INPUT_INIT, INPUT_COUNT };
 
 struct input {
     const char *path;
@@ -295,6 +295,7 @@ enum {
     NODE_LOADER,
     NODE_NOVA,
     NODE_KERNEL,
+    NODE_INIT,
     NODE_COUNT
 };
 
@@ -312,6 +313,7 @@ static const struct node {
     [NODE_LOADER] = {"BOOTX64 EFI", NODE_BOOT, INPUT_LOADER},
     [NODE_NOVA] = {"NOVA       ", NODE_ROOT, DIRECTORY},
     [NODE_KERNEL] = {"KERNEL  EXE", NODE_NOVA, INPUT_KERNEL},
+    [NODE_INIT] = {"INIT    EXE", NODE_NOVA, INPUT_INIT},
 };
 
 struct fat_layout {
@@ -749,17 +751,19 @@ static int write_output(const char *path, const uint8_t *data, size_t size)
 
 int main(int argc, char **argv)
 {
-    struct input inputs[INPUT_COUNT] = {{NULL, NULL, 0}, {NULL, NULL, 0}};
+    struct input inputs[INPUT_COUNT] = {
+        {NULL, NULL, 0}, {NULL, NULL, 0}, {NULL, NULL, 0}};
     uint8_t *file = NULL, *disk;
     int status = EXIT_FAILURE, i;
 
-    if (argc != 5) {
-        fprintf(stderr,
-                "usage: mkimage DISK.IMG DISK.VHDX BOOTX64.EFI KERNEL.EXE\n");
+    if (argc != 6) {
+        fprintf(stderr, "usage: mkimage DISK.IMG DISK.VHDX BOOTX64.EFI "
+                        "KERNEL.EXE INIT.EXE\n");
         return EXIT_FAILURE;
     }
     inputs[INPUT_LOADER].path = argv[3];
     inputs[INPUT_KERNEL].path = argv[4];
+    inputs[INPUT_INIT].path = argv[5];
     for (i = 0; i < INPUT_COUNT; i++)
         if (read_input(&inputs[i]) != 0)
             goto done;

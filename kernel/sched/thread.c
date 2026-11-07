@@ -1,4 +1,4 @@
-/* Kernel threads and the scheduler.
+/* Threads and the scheduler.
 
    One processor for now. Its scheduling state is a CPU record that
    cpu_self finds, and every change to that record, or to the scheduling
@@ -16,19 +16,21 @@
    arrive late or are missed. With nothing ready the boot thread runs,
    halting until an interrupt; it never blocks and never queues.
 
-   A thread's stack is a run of pages from the page allocator used through
-   the direct map, whose lowest page is a guard: its direct-map
+   A thread's kernel stack is a run of pages from the page allocator used
+   through the direct map, whose lowest page is a guard: its direct-map
    translation is removed, so running off the stack faults there, and the
-   page-fault handler, on a stack of its own, reports it (gdt.c). A thread
-   cannot free the stack it runs on, so an exiting thread leaves itself in
-   its CPU's record and the thread that runs next frees the stack right
-   after the switch, before anything else runs, then asserts
-   THREAD_TERMINATED. */
+   double-fault handler, on a stack of its own, reports it (idt.c). A
+   thread cannot free the stack it runs on, so an exiting thread leaves
+   itself in its CPU's record and the thread that runs next frees the
+   stack right after the switch, before anything else runs, then asserts
+   THREAD_TERMINATED and, for a user thread, hands the THREAD back to its
+   process. */
 
 #include "thread.h"
 #include "cpu.h"
 #include "memory_layout.h"
 #include "../mm/page.h"
+#include "../object/process.h"
 #include "../x86_64/clock.h"
 #include "../x86_64/paging.h"
 
@@ -149,6 +151,8 @@ static void finish_switch(CPU *cpu)
     cpu->exited = 0;
     free_stack(exited->stack);
     waitable_update(&exited->waitable, 0, THREAD_TERMINATED);
+    if (exited->process)
+        process_thread_reaped(exited);
 }
 
 /* Give the processor to the next ready thread, or to the boot thread if
@@ -190,15 +194,23 @@ static void thread_run(void)
     thread_exit();
 }
 
+void thread_user_first_run(void)
+{
+    finish_switch(cpu_self());
+}
+
 /* ------------------------------------------------------------------------
    Threads. */
 
-STATUS thread_create(THREAD *thread, THREAD_ENTRY entry, void *argument)
+/* The fields every new thread starts with; returns its stack's top, or 0
+   if no stack is free. */
+static UINT64 init_thread(THREAD *thread, THREAD_ENTRY entry, void *argument,
+                          struct PROCESS *process)
 {
     UINT64 run = alloc_stack();
 
     if (!run)
-        return ERR_NO_MEMORY;
+        return 0;
     thread->state = THREAD_NEW;
     thread->next_ready = 0;
     thread->next_timeout = 0;
@@ -209,9 +221,30 @@ STATUS thread_create(THREAD *thread, THREAD_ENTRY entry, void *argument)
     thread->argument = argument;
     thread->switches = 0;
     waitable_init(&thread->waitable);
-    arch_context_init(&thread->context,
-                      (UINT64)direct_map(run + THREAD_STACK_RUN * PAGE_SIZE),
-                      thread_run);
+    thread->process = process;
+    return (UINT64)direct_map(run + THREAD_STACK_RUN * PAGE_SIZE);
+}
+
+STATUS thread_create(THREAD *thread, THREAD_ENTRY entry, void *argument)
+{
+    UINT64 top = init_thread(thread, entry, argument, 0);
+
+    if (!top)
+        return ERR_NO_MEMORY;
+    arch_context_init(&thread->context, top, thread_run);
+    return OK;
+}
+
+STATUS thread_create_user(THREAD *thread, struct PROCESS *process,
+                          UINT64 address_space, UINT8 *fpu, UINT64 entry,
+                          UINT64 stack, UINT64 argument1, UINT64 argument2)
+{
+    UINT64 top = init_thread(thread, 0, 0, process);
+
+    if (!top)
+        return ERR_NO_MEMORY;
+    arch_context_init_user(&thread->context, top, address_space, fpu, entry,
+                           stack, argument1, argument2);
     return OK;
 }
 
@@ -228,8 +261,9 @@ STATUS thread_start(THREAD *thread)
     return status;
 }
 
-/* A dead thread is never queued, so the switch never returns here. */
-void thread_exit(void)
+/* A dead thread is never queued, so the switch never returns here and
+   the halt after it is never reached. */
+_Noreturn void thread_exit(void)
 {
     CPU *cpu;
 
@@ -238,6 +272,7 @@ void thread_exit(void)
     cpu->current->state = THREAD_DEAD;
     cpu->exited = cpu->current;
     reschedule(cpu);
+    halt_forever();
 }
 
 /* ------------------------------------------------------------------------
@@ -247,6 +282,7 @@ void sched_init(void)
 {
     CPU *cpu = cpu_self();
 
+    arch_context_init_boot(&boot_thread.context);
     boot_thread.state = THREAD_RUNNING;
     cpu->current = &boot_thread;
     cpu->idle = &boot_thread;

@@ -285,6 +285,24 @@ int page_free(UINT64 address)
     return freed;
 }
 
+VOID *page_alloc_mapped(void)
+{
+    UINT64 address = page_alloc();
+    UINT64 *page, i;
+
+    if (!address)
+        return 0;
+    page = direct_map(address);
+    for (i = 0; i < PAGE_SIZE / sizeof(UINT64); i++)
+        page[i] = 0;
+    return page;
+}
+
+void page_free_mapped(VOID *page)
+{
+    page_free((UINT64)page - DIRECT_MAP_BASE);
+}
+
 UINT64 page_free_count(void) { return free_pages; }
 
 UINT64 page_total_count(void) { return total_pages; }
