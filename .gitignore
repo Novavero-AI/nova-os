@@ -14,5 +14,8 @@ mkdata
 data.img
 data-run.img
 
+# What doxygen writes from the Doxyfile.
+/reference/
+
 # What Python writes when the background prototypes run.
 __pycache__/
