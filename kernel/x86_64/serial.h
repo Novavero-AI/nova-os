@@ -26,6 +26,10 @@ void serial_write_bytes(const UINT8 *bytes, UINT64 count);
 /* n in decimal. */
 void serial_number(UINT64 n);
 
+/* ns nanoseconds in milliseconds to the tenth, rounded down, and the
+   unit: "12.3 ms". */
+void serial_ms(UINT64 ns);
+
 /* n in hexadecimal, with a 0x prefix. */
 void serial_hex(UINT64 n);
 

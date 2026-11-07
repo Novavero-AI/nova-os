@@ -45,7 +45,10 @@ specimen.img must report init's checks passing, the display sent to
 the type specimen from /store and the specimen drawn; then QMP's
 screendump, kept at SCREEN.ppm if given, must equal pixel for pixel
 the screen design/text/specimen.py draws at its size with the nova-os
-fonts in FONTS.
+fonts in FONTS. In every mode but chain, the kernel must also report
+the frames the boot screen's spinner started while it prepared the
+background: at least one, unless the preparation ended within the
+longest a turning spinner goes between frames.
 Each --expect TEXT adds a line the boot must report. With a data disk,
 the boot must also report the file system service opening its pool,
 /data and /users published, and the data disk's check passing. With
@@ -111,6 +114,34 @@ INPUT_LINES = [
     % (TABLET_MAX, TABLET_MAX),
 ]
 
+# The kernel draws the background offscreen while the boot screen's
+# spinner turns, and logs the frames the spinner started meanwhile and
+# how long the preparation took, in tenths of a millisecond rounded
+# down. A turning spinner starts a frame at least every SPINNER_GAP_MS,
+# the sum of its parts below; another thread ready meanwhile delays the
+# spinner by a slice and the drawing as long. The bound takes the ticks
+# to come on time, which under TCG they need not, but there the
+# preparation takes over ten times as long. A preparation that may have
+# lasted longer than the bound must show MIN_SPINNER_FRAMES; one that
+# ended within it may show none.
+SPINNER_STARTED = "nova: the spinner started "
+SPINNER_FRAMES = re.compile(re.escape(SPINNER_STARTED)
+                            + r"(\d+) frames? while the background was "
+                            r"prepared, in (\d+)\.(\d) ms")
+MIN_SPINNER_FRAMES = 1
+TENTHS_PER_MS = 10
+# The bound's parts, each the kernel's: the spinner's next frame falls
+# due within FRAME_MS (kernel/main.c); its wait ends at the first timer
+# tick at or after that, and a tick comes every TICK_MS, at TIMER_HZ
+# (kernel/x86_64/arch.h); it then waits behind the drawing, which keeps
+# the processor for its TIME_SLICE_MS (kernel/sched/thread.h) and on to
+# the first tick after the slice ends. sched_timer_interrupt
+# (kernel/sched/thread.c) ends the wait and the slice at those ticks.
+FRAME_MS = 33
+TICK_MS = 1
+TIME_SLICE_MS = 10
+SPINNER_GAP_MS = FRAME_MS + TICK_MS + TIME_SLICE_MS + TICK_MS
+
 SYSTEM_LINES = SELF_TESTS + [
     "nova-store: serving ",
     "nova-hello: checks passed",
@@ -118,6 +149,7 @@ SYSTEM_LINES = SELF_TESTS + [
     'nova-virtio-blk: lba 1: GPT header, signature "EFI PART"',
     INIT_PASSED,
     STARTUP_DONE,
+    SPINNER_STARTED,
     "nova: background drawn in ",
     "nova-console: drawing on the ",
 ] + INPUT_LINES
@@ -144,6 +176,7 @@ SPECIMEN_LINES = SELF_TESTS + [
     "nova-hello: checks passed",
     INIT_PASSED,
     STARTUP_DONE,
+    SPINNER_STARTED,
     "nova: background drawn in ",
     "nova-init: the display sent to /store/",
     "nova-specimen: drawn on the ",
@@ -408,6 +441,23 @@ class BootFailed(Exception):
     pass
 
 
+def check_spinner(report):
+    """Fail if report, the kernel's line on the spinner's frames, shows
+    fewer than MIN_SPINNER_FRAMES over a preparation that may have lasted
+    longer than SPINNER_GAP_MS; say so if it shows fewer over one that
+    ended within it. The logged time is rounded down, so the preparation
+    ended within the bound only if a tenth of a millisecond more does."""
+    frames, whole, tenth = (int(group) for group in report.groups())
+    if frames >= MIN_SPINNER_FRAMES:
+        return
+    if (whole * TENTHS_PER_MS + tenth + 1
+            > SPINNER_GAP_MS * TENTHS_PER_MS):
+        raise BootFailed("the spinner stood still: " + report.group(0))
+    print("          the background was prepared within the %d ms a "
+          "turning spinner can go between frames" % SPINNER_GAP_MS,
+          flush=True)
+
+
 class Serial:
     """The guest's serial lines, read from QEMU's standard output. What
     a line holds of UNLOGGED is noted in leaked."""
@@ -449,6 +499,9 @@ class Serial:
             at = line.find(NOVA)
             if at >= 0 and any(word in line[at:] for word in FAILURES):
                 raise BootFailed("reported a failure: " + line[at:])
+            report = SPINNER_FRAMES.search(line)
+            if report:
+                check_spinner(report)
             missing = [text for text in missing if text not in line]
 
 

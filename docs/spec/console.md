@@ -53,7 +53,7 @@ panel, so nothing of the compositor's last frame stays.
   kernel and the first process and nothing else, and its close is a
   signal the first process can wait for, so the release needs no new
   message or object. The report and the release are two events because
-  the fade starts at the report and ends some time later.
+  the kernel draws the background and fades it in between them.
 - **Why a narrowed resource:** a section holds at most
   `SECTION_MAX_SIZE` (2 MiB) and a 2560 x 1600 framebuffer is 16 MiB,
   so the console makes several; a resource covering the framebuffer is

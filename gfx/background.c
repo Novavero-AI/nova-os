@@ -1,6 +1,9 @@
 /* The desktop background's arrival. Limb is drawn once into memory from
-   the page allocator and the part of the screen the boot screen drew on
-   is saved; then each frame mixes the two images in linear light, as the
+   the page allocator while the boot screen's spinner still turns, since
+   the drawing takes seconds under emulation on a large screen and a
+   spinner standing still for that long looks like a hang. Once the
+   spinner has stopped, the part of the screen the boot screen drew on is
+   saved; then each frame mixes the two images in linear light, as the
    boot screen's anti-aliasing mixes ink with black, by a step of the
    fade's schedule (fade.h). A frame shows the step due when it will be
    done, judged by the longest frame so far: where a frame and a timer
@@ -31,8 +34,6 @@
    Offscreen images. The page allocator hands out one page at a time, not
    necessarily next to the one before, so an image is a chain of pages,
    filled and read in order, row after row. */
-
-typedef struct PIXEL_PAGE PIXEL_PAGE;
 
 #define PAGE_PIXELS \
     ((INT64)((PAGE_SIZE - sizeof(PIXEL_PAGE *)) / sizeof(UINT32)))
@@ -275,22 +276,10 @@ static void fade_frame(const SCREEN *screen, const RECT *box,
    QEMU's TCG while the processor is busy, and a schedule counted in them
    would fall behind with them. */
 
-#define TENTHS_PER_MS 10
-
 /* How long each part took, in nanoseconds, and the frames drawn. */
 typedef struct {
     UINT64 drawn, faded, busy, busiest, frames;
 } TIMES;
-
-static void serial_ms(UINT64 ns)
-{
-    UINT64 tenths = ns * TENTHS_PER_MS / NS_PER_MS;
-
-    serial_number(tenths / TENTHS_PER_MS);
-    serial_write(".");
-    serial_number(tenths % TENTHS_PER_MS);
-    serial_write(" ms");
-}
 
 static void report(const TIMES *times)
 {
@@ -339,42 +328,76 @@ static void fade(const SCREEN *screen, const RECT *box, PIXEL_PAGE *image,
     times->faded = clock_monotonic() - began;
 }
 
-void background_fade_in(const BOOT_INFO *info)
+/* ------------------------------------------------------------------------
+   Preparing and showing. */
+
+void background_prepare(const BOOT_INFO *info, BACKGROUND *background)
 {
     const SCREEN *screen = &info->screen;
-    LIMB limb;
-    RECT box;
-    PIXEL_PAGE *image, *saved;
-    TIMES times;
-    UINT64 start, flags;
+    const RECT *box = &background->box;
+    UINT64 start;
 
-    if (!limb_init(&limb, screen->width, screen->height)) {
-        flags = serial_lock();
-        serial_write("nova: no background for a screen this size\r\n");
-        serial_unlock(flags);
+    if (!limb_init(&background->limb, screen->width, screen->height)) {
+        background->state = BACKGROUND_NO_SIZE;
         return;
     }
-    gfx_boot_bounds(screen, &info->spinner, &box);
-    if (!chain_alloc(screen->width * screen->height, &image) ||
-        !chain_alloc((box.right - box.left) * (box.bottom - box.top),
-                     &saved)) {
-        chain_free(image);
-        start = clock_monotonic();
-        draw_onscreen(screen, &limb);
-        gfx_flush();
-        flags = serial_lock();
-        serial_write("nova: background drawn in ");
-        serial_ms(clock_monotonic() - start);
-        serial_write(", with no memory to fade it in\r\n");
-        serial_unlock(flags);
+    /* The spinner's thread changes only its head, which the bounds do not
+       depend on. */
+    gfx_boot_bounds(screen, &info->spinner, &background->box);
+    if (!chain_alloc(screen->width * screen->height, &background->image) ||
+        !chain_alloc((box->right - box->left) * (box->bottom - box->top),
+                     &background->saved)) {
+        chain_free(background->image);
+        background->state = BACKGROUND_NO_MEMORY;
         return;
     }
     start = clock_monotonic();
-    draw_offscreen(screen, &limb, image);
-    times.drawn = clock_monotonic() - start;
-    save(screen, &box, saved);
-    fade(screen, &box, image, saved, &times);
-    chain_free(image);
-    chain_free(saved);
+    draw_offscreen(screen, &background->limb, background->image);
+    background->drawn = clock_monotonic() - start;
+    background->state = BACKGROUND_READY;
+}
+
+static void fade_in(const SCREEN *screen, BACKGROUND *background)
+{
+    TIMES times;
+
+    times.drawn = background->drawn;
+    save(screen, &background->box, background->saved);
+    fade(screen, &background->box, background->image, background->saved,
+         &times);
+    chain_free(background->image);
+    chain_free(background->saved);
     report(&times);
+}
+
+static void draw_unfaded(const SCREEN *screen, const LIMB *limb)
+{
+    UINT64 start = clock_monotonic(), flags;
+
+    draw_onscreen(screen, limb);
+    gfx_flush();
+    flags = serial_lock();
+    serial_write("nova: background drawn in ");
+    serial_ms(clock_monotonic() - start);
+    serial_write(", with no memory to fade it in\r\n");
+    serial_unlock(flags);
+}
+
+void background_show(const BOOT_INFO *info, BACKGROUND *background)
+{
+    UINT64 flags;
+
+    switch (background->state) {
+    case BACKGROUND_READY:
+        fade_in(&info->screen, background);
+        break;
+    case BACKGROUND_NO_MEMORY:
+        draw_unfaded(&info->screen, &background->limb);
+        break;
+    case BACKGROUND_NO_SIZE:
+        flags = serial_lock();
+        serial_write("nova: no background for a screen this size\r\n");
+        serial_unlock(flags);
+        break;
+    }
 }
