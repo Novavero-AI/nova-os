@@ -1,0 +1,60 @@
+# The API reference of nova-os's public headers: the native layer's calls
+# (native/native.h), the numbers, records and protocols in include/, and
+# the client library's headers in lib/. Run doxygen at the repository's
+# root; it writes reference/html/index.html. Any warning fails the run,
+# so every public declaration needs a comment Doxygen reads. Options not
+# set here keep Doxygen's defaults.
+
+PROJECT_NAME           = nova-os
+PROJECT_BRIEF          = "API reference"
+OUTPUT_DIRECTORY       = reference
+
+INPUT                  = docs/reference/mainpage.md include lib native
+FILE_PATTERNS          = *.h
+RECURSIVE              = YES
+USE_MDFILE_AS_MAINPAGE = docs/reference/mainpage.md
+
+# The headers name each struct by its typedef and document a static
+# inline function as any other.
+OPTIMIZE_OUTPUT_FOR_C  = YES
+TYPEDEF_HIDES_STRUCT   = YES
+EXTRACT_STATIC         = YES
+JAVADOC_AUTOBRIEF      = YES
+SORT_MEMBER_DOCS       = NO
+
+# A _Static_assert checks a layout; it declares nothing, and Doxygen would
+# read it as a function.
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             = "_Static_assert(condition,message)="
+
+# Names are relative to the root, where doxygen runs, pages carry no date,
+# and page file names are in lowercase whatever the host's file system, so
+# the same tree gives the same pages on every host, and they unpack whole
+# on a file system that ignores case.
+FULL_PATH_NAMES        = YES
+STRIP_FROM_PATH        = .
+STRIP_FROM_INC_PATH    = include lib native
+TIMESTAMP              = NO
+CASE_SENSE_NAMES       = NO
+
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_UNDOC_ENUM_VAL = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_IF_INCOMPLETE_DOC = YES
+WARN_NO_PARAMDOC       = NO
+WARN_AS_ERROR          = FAIL_ON_WARNINGS
+
+# Debian's Doxygen, and so Ubuntu's, turns dot graphs on by default; the
+# reference draws none, so it needs no Graphviz.
+HAVE_DOT               = NO
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_TREEVIEW      = YES
+HTML_COLORSTYLE        = DARK
+# The hue of the stylesheet's accent, #7ea8f8, so Doxygen's own icons
+# match it.
+HTML_COLORSTYLE_HUE    = 219
+HTML_EXTRA_STYLESHEET  = docs/reference/novavero.css

@@ -1,0 +1,346 @@
+/* The API reference's look, after novavero.ai's docs: Inter, and the
+   site's palette (https://novavero.ai/palette.css), GitHub Primer's dark
+   neutrals with one blue accent, under the palette's own names. With
+   HTML_COLORSTYLE = DARK, Doxygen writes its colours into its own
+   stylesheets as values rather than custom properties, so the rules
+   below override them part by part. Doxygen's icons, the images and
+   shapes it draws, keep the Doxyfile's hue, which is the accent's. */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  color-scheme: dark;
+  --canvas: #0d1117;
+  --surface: #151b23;
+  --inset: #010409;
+  --neutral-muted: #656c7633;
+  --line: #3d444d;
+  --line-muted: #3d444db3;
+  --line-emphasis: #656c76;
+  --fg-default: #f0f6fc;
+  --fg-body: #d1d7e0;
+  --fg-muted: #9198a1;
+  --fg-on-emphasis: #ffffff;
+  --accent: #7ea8f8;
+  --accent-emphasis: #3d66d2;
+  --accent-muted: #7ea8f81a;
+  --sans: 'Inter', system-ui, sans-serif;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+}
+
+body, table, div, p, dl {
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+body {
+  background: var(--canvas);
+  color: var(--fg-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a, a:visited, a.el, a.code, .contents a:visited { color: var(--accent); font-weight: inherit; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+::selection { background: var(--accent-emphasis); color: var(--fg-on-emphasis); }
+
+code, pre, tt, .memname, .memItemLeft, .memItemRight,
+.fieldname, .paramname, div.fragment, div.line {
+  font-family: var(--mono);
+}
+
+/* The title bar and the menu under it */
+
+#titlearea {
+  background: var(--canvas);
+  border-bottom: 1px solid var(--line-muted);
+  padding: 6px 8px;
+}
+#projectname { color: var(--fg-default); font: 600 1.25rem var(--sans); letter-spacing: -0.02em; }
+#projectbrief { color: var(--fg-muted); font: 400 0.875rem var(--sans); }
+
+#main-nav, .sm-dox, .tabs {
+  background: var(--canvas);
+  background-image: none;
+}
+/* Doxygen also gives class sm-dox to the wrapper of the narrow-screen
+   menu toggle above the menu, so the menu's edge goes on its container. */
+#main-nav { border-bottom: 1px solid var(--line-muted); }
+.sm-dox a, .sm-dox a:focus, .sm-dox a:active, .sm-dox a.highlighted,
+.sm-dox a:visited {
+  background-image: none;
+  color: var(--fg-muted);
+  font-family: var(--sans);
+  text-shadow: none;
+}
+.sm-dox a:hover { color: var(--fg-default); text-decoration: none; }
+.sm-dox ul {
+  background: var(--inset);
+  background-image: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.sm-dox ul a, .sm-dox ul a:hover { background: transparent; color: var(--fg-body); }
+.sm-dox ul a:hover { color: var(--fg-default); }
+/* The caret over a submenu, its edge and its fill */
+.sm-dox > li > ul:before { border-bottom-color: var(--line); }
+.sm-dox > li > ul:after { border-bottom-color: var(--inset); }
+
+/* The sidebar's tree and its splitter */
+
+#side-nav, #nav-tree {
+  background: var(--canvas);
+  background-image: none;
+}
+#nav-tree .label { font-family: var(--sans); font-size: 0.875rem; }
+#nav-tree .label a { color: var(--fg-muted); }
+#nav-tree .selected {
+  background: var(--accent-muted);
+  background-image: none;
+  border-radius: 6px;
+  text-shadow: none;
+}
+#nav-tree .selected a { color: var(--accent); }
+#nav-tree a:hover { color: var(--fg-default); text-decoration: none; }
+#nav-tree { border-right-color: var(--line-muted); }
+/* The splitter keeps Doxygen's width to drag by and draws its line at its
+   right edge. */
+.ui-resizable-e, #nav-tree-contents { background-image: none; }
+.ui-resizable-e { background: transparent; box-shadow: inset -1px 0 var(--line-muted); }
+
+/* The arrows that open a tree's levels, in the sidebar and in the lists:
+   a character in Doxygen 1.9.8, two sides of a bordered box in 1.18 */
+
+.arrow { color: var(--fg-muted); }
+span.arrowhead { border-color: var(--fg-muted); }
+#nav-tree .selected .arrow { color: var(--accent); }
+.selected span.arrowhead { border-color: var(--accent); }
+
+/* The outline of the page, which Doxygen's releases after 1.9.8 draw at
+   the right */
+
+#page-nav { background: var(--canvas); border-left: 1px solid var(--line-muted); }
+#page-nav-resize-handle { background-color: var(--line-muted); }
+ul.page-outline li.vis { background-color: var(--accent-muted); }
+
+/* The breadcrumb bar, which also carries the footer */
+
+.navpath ul, #nav-path ul {
+  background: var(--canvas);
+  background-image: none;
+  border: 0;
+  border-top: 1px solid var(--line-muted);
+  color: var(--fg-muted);
+}
+.navpath li, .navpath li.navelem b { color: var(--fg-muted); }
+.navpath li.navelem { background-image: none; }
+.navpath li.navelem a { color: var(--fg-muted); font-family: var(--sans); text-shadow: none; }
+#nav-path li.navelem:after { background: var(--canvas); box-shadow: 2px -2px 0 2px var(--line); }
+#nav-path li.navelem:hover, #nav-path li.navelem:hover:after { background-color: var(--neutral-muted); }
+.navpath li.footer, address.footer, hr.footer + address { color: var(--fg-muted); }
+
+/* A page's heading and body */
+
+div.header {
+  background: var(--canvas);
+  background-image: none;
+  border-bottom: 1px solid var(--line-muted);
+}
+div.headertitle { padding: 24px 32px 12px; }
+.title {
+  color: var(--fg-default);
+  font: 600 2rem/1.2 var(--sans);
+  letter-spacing: -0.02em;
+}
+div.summary a { color: var(--fg-muted); }
+div.contents { margin: 0; padding: 8px 32px 64px; max-width: 980px; }
+div.textblock p, div.memdoc p { margin: 0 0 0.75rem; }
+hr, hr.footer {
+  height: 0;
+  border: 0;
+  border-top: 1px solid var(--line-muted);
+  box-shadow: none;
+}
+
+h1, h2, h3, h4 { color: var(--fg-default); font-family: var(--sans); }
+h2.groupheader, td h2.groupheader {
+  background: transparent;
+  color: var(--fg-default);
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 2.5rem 0 0.75rem;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line-muted);
+  box-shadow: none;
+}
+
+/* The tables that summarise a file's macros, types and functions */
+
+table.memberdecls { width: 100%; border-spacing: 0; }
+.memItemLeft, .memItemRight, .mdescLeft, .mdescRight {
+  background: transparent;
+  border: 0;
+  color: var(--fg-body);
+  font-size: 0.85rem;
+}
+.memItemRight a.el, .memItemLeft a.el { font-weight: 500; }
+.mdescRight { color: var(--fg-muted); font-family: var(--sans); font-size: 0.875rem; }
+.memSeparator { border-bottom: 1px solid var(--line-muted); line-height: 1px; }
+tr[class^='memdesc'] { box-shadow: none; }
+tr.heading + tr[class^='memitem'] td.memItemLeft,
+tr.heading + tr[class^='memitem'] td.memItemRight,
+tr.groupHeader + tr[class^='memitem'] td.memItemLeft,
+tr.groupHeader + tr[class^='memitem'] td.memItemRight {
+  border-top-color: var(--line-muted);
+}
+tr.heading + tr td.ititle, tr.groupHeader + tr td.ititle, td.ititle {
+  border: 0;
+  padding: 0 0 8px;
+}
+.memberdecls td.glow, .fieldtable tr.glow, .memitem.glow {
+  background-color: var(--accent-muted);
+  box-shadow: none;
+}
+.memberdecls .groupheader { font-size: 1rem; color: var(--fg-default); }
+div.groupHeader {
+  color: var(--fg-default);
+  font-family: var(--sans);
+  font-weight: 600;
+  margin-top: 2rem;
+  border-bottom: 1px solid var(--line-muted);
+  box-shadow: none;
+}
+div.groupText {
+  margin-left: 0;
+  color: var(--fg-muted);
+  font-family: var(--sans);
+  font-style: normal;
+}
+
+/* A declaration's detailed entry */
+
+.memitem { margin-bottom: 1.25rem; box-shadow: none; }
+.memtitle {
+  background: var(--surface);
+  background-image: none;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  box-shadow: none;
+  color: var(--fg-default);
+  font-family: var(--mono);
+}
+/* The block Doxygen 1.18 draws under the title to join it to the prototype */
+.memtitle:after { background: var(--surface); }
+.memproto {
+  background: var(--surface);
+  background-image: none;
+  border: 1px solid var(--line);
+  color: var(--fg-default);
+  text-shadow: none;
+  box-shadow: none;
+}
+.memdoc {
+  background: var(--canvas);
+  background-image: none;
+  border: 1px solid var(--line);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  box-shadow: none;
+  color: var(--fg-body);
+}
+.memname { color: var(--fg-default); font-weight: 500; }
+.paramname, .paramname em { color: var(--accent); font-style: normal; }
+.permalink a { color: var(--fg-muted); }
+
+/* Code */
+
+div.fragment, pre.fragment {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: var(--fg-body);
+}
+div.line { font-size: 0.82rem; line-height: 1.6; color: var(--fg-body); }
+span.lineno { background: transparent; border-right: 1px solid var(--line); color: var(--fg-muted); }
+span.lineno a { background: transparent; color: var(--fg-muted); }
+span.lineno a:hover { background: var(--neutral-muted); color: var(--fg-default); }
+span.keyword, span.keywordtype, span.keywordflow, span.preprocessor { color: var(--accent); }
+span.comment { color: var(--fg-muted); }
+span.stringliteral { color: var(--fg-body); }
+.contents code, span.tt {
+  background: var(--neutral-muted);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  color: var(--fg-default);
+  font-size: 0.85em;
+}
+
+/* The lists of files and data structures */
+
+div.directory { border-color: var(--line-muted); }
+.directory table { border-collapse: collapse; }
+.directory tr.odd { background: var(--surface); }
+.directory tr.even { background: var(--canvas); }
+.directory td { border: 0; padding: 6px 10px; }
+.directory td.desc { border-left: 0; color: var(--fg-muted); }
+.directory .levels span { color: var(--fg-muted); }
+
+table.fieldtable {
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: none;
+}
+.fieldtable th {
+  background: var(--surface);
+  background-image: none;
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-default);
+}
+.fieldtable td { border-bottom: 1px solid var(--line-muted); border-right: 0; }
+
+/* Tags: a member's static or inline, and the letter that marks an
+   entry's kind in a list */
+
+span.mlabel, .icon {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--fg-muted);
+}
+
+/* The search box; its edge keeps 3:1 against the canvas, as the site's
+   search field's does, and turns the accent while it has the focus */
+
+#MSearchBox {
+  background: var(--surface);
+  border: 1px solid var(--line-emphasis);
+  border-radius: 8px;
+  box-shadow: none;
+}
+#MSearchBox.MSearchBoxActive { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+#MSearchField, .MSearchBoxActive #MSearchField {
+  background: transparent;
+  color: var(--fg-default);
+  font-family: var(--sans);
+}
+#MSearchField::placeholder { color: var(--fg-muted); }
+
+/* The menu of what to search and the results, panels like the site's
+   search results */
+
+#MSearchSelectWindow, #MSearchResultsWindow {
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: none;
+}
+div.SRPage { background: transparent; }
+a.SelectItem, a.SelectItem:focus, a.SelectItem:active { color: var(--fg-body); }
+a.SelectItem:hover { background: var(--accent-muted); color: var(--fg-default); }
+a.SRSymbol, a.SRSymbol:visited { color: var(--fg-default); }
+.SRScope, a.SRScope, a.SRScope:visited { color: var(--fg-muted); }
