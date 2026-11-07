@@ -132,11 +132,12 @@ I9:
 
 | Request | Effect | Right |
 |---|---|---|
-| `open(path, rights, flags, endpoint)` | Connects `endpoint` to the node at `path` (O8, rule 1). The first message on `endpoint` is the result: a status and the node's attributes ([F2](#f2-attributes)), so the opener learns in one round trip what it opened and which protocol to speak on it. With the create flag, a missing file or directory is created | `READ` to read what is opened, `WRITE` to write or create, `EXECUTE` to map it executable; what is opened gets at most the directory's rights |
+| `open(path, rights, flags, endpoint)` | Connects `endpoint` to the node at `path` (O8, rule 1). The first message on `endpoint` is the result: a status and the node's attributes ([F2](#f2-attributes)), so the opener learns in one round trip what it opened and which protocol to speak on it. With the create flag, a missing file, or with the directory flag a directory, is created in a directory that exists; with the exclusive flag too, a node already there fails the open, as does one of the other kind | `READ` to read what is opened, `WRITE` to write or create, `EXECUTE` to map it executable; what is opened gets at most the directory's rights |
 | `read_dir(cookie, count)` | Up to `count` entries, each a name and a kind, after `cookie`, in bytewise order of their names, and the cookie to continue from | `LIST` |
 | `get_attributes()` | The directory's own attributes | none |
 | `remove(path)` | Removes a file, a link or an empty directory | `WRITE` |
-| `rename(from, to)` | Moves a node; both paths are resolved against this directory, so a holder moves only within what it holds | `WRITE` |
+| `rename(from, to)` | Moves a node; both paths are resolved against this directory, so a holder moves only within what it holds. With the replace flag it replaces, in the same step, a file or an empty directory already at `to` with one of the same kind | `WRITE` |
+| `flush()` | Answers once every change to the volume is durable ([F6](#f6-pools-volumes-and-the-commit)) | `WRITE` |
 | `publish(name, directory)`, `replace(name, directory)`, `unpublish(name)` | Only on the namespace server's own directories ([F4](#f4-publishing-file-systems)) | `PUBLISH` |
 
 The client library takes at most `LIST_ENTRIES_MAX` (65,536) entries
@@ -146,10 +147,19 @@ server whose listing never ends cannot hold its client, as
 ([F3](#f3-symbolic-links)).
 
 A file is a channel that speaks I9's requests (read, write, control,
-flush, cancel) and two more: `get_attributes`, and `get_section`, which
-returns a section holding the file's contents where the server offers one
-([F9](#f9-reading-and-verifying-the-store)). A node has one name: there
-are no hard links.
+flush, cancel) and three more: `get_attributes`; `truncate(size)`, which
+sets its length, dropping bytes past it or extending it with zeros; and
+`get_section`, which returns a section holding the file's contents where
+the server offers one ([F9](#f9-reading-and-verifying-the-store)). A
+write past the end extends the file, and the bytes it skips read as
+zero. A file's `flush` is the directory's: it commits the whole volume,
+since a commit is one transaction group
+([F6](#f6-pools-volumes-and-the-commit)). Every change is seen at once
+by every channel of the volume, and a crash keeps each commit whole or
+none of it. A node has one name: there are no hard links; a channel
+open on a node keeps reaching it when it is renamed, and answers
+`ERR_NOT_FOUND` once it is removed. `include/directory_protocol.h` gives
+every request's layout.
 
 - **Why:** these are the requests a shell, a compiler and a launcher
   need: reach a node, list a directory, learn what a node is, change a
