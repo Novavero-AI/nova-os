@@ -43,7 +43,7 @@ UINT8 *map_into_init_at(UINT32 section, UINT64 address, UINT64 size,
 /* Run stage0-pe32's chain from its hex0 seed to M1, each step as a
    32-bit process created in job, and check each link it builds against
    nova-nix's (chain.c). Returns 1 if every link matched or the boot
-   volume lacks the seed, 0 if not. */
+   volume holds none of the chain's inputs, 0 if not. */
 int chain_run(UINT32 job);
 
 #endif

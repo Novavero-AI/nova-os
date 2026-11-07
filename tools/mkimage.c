@@ -1,4 +1,4 @@
-/* mkimage: writes nova-os's boot disk twice, as a raw disk image and as a
+/* mkimage: writes a nova-os boot disk twice, as a raw disk image and as a
    VHDX file. The disk carries a protective MBR and a GPT with one EFI
    System Partition, formatted FAT32, which holds \EFI\BOOT\BOOTX64.EFI
    (the file firmware boots when no boot option names one), and in

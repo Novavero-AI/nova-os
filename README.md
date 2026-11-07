@@ -11,9 +11,10 @@ files in `\nova\`, the first process's `init.exe` among them, exits the
 firmware's boot services and jumps to the kernel, which runs the first
 process in user mode, reports itself and the process's exit code on the
 first serial port and, once started, fades the boot screen into the
-desktop background. The first process runs stage0-pe32's chain, from its
-hex0 seed to M1, as 32-bit Windows programs and checks each link against
-the one nova-nix builds on Windows
+desktop background. From the test disk, which holds the inputs of
+stage0-pe32's chain, the first process runs the bootstrap check: the
+chain, from its hex0 seed to M1, as 32-bit Windows programs, with each
+link checked against the one nova-nix builds on Windows
 ([docs/spec/compat.md](docs/spec/compat.md)). It then enumerates PCI and
 starts the virtio block driver, `virtblk.exe`, as a user-mode process of
 its own, which reads the boot disk's partition table and the EFI System
@@ -100,23 +101,27 @@ same bytes:
 |---|---|---|
 | `BOOTX64.EFI` | 28,160 | `04b0989e077d4ca8838dac1b3007b744025370165c1846903b010f4c3853ba44` |
 | `kernel.exe` | 130,048 | `fe76f143bb150b19ee9553940df5bfccd8c80c38efef9d5a24c9041c993a4461` |
-| `init.exe` | 43,008 | `ca67278eab1262a26874a7b89faaa93e66efad7df752cff2c7184d5c77aa1408` |
+| `init.exe` | 43,520 | `8d2ebdda1d7eb6d5fdce8d4d27c5039f96a3c34ca94aced4641815642f2696ce` |
 | `virtblk.exe` | 14,848 | `c1bce54d00c905a867e88ed7a9cfaaf860264be5ddac929609d96a704df124dd` |
 | `ntdll.dll` | 10,240 | `9a43b4e3b773c1b5a3b6eb541fd0de9c3f3675d2867d1193b707118648853d10` |
 
 ## Disk image
 
-`tools/mkimage.c` writes the boot disk twice: `disk.img`, a raw 64 MiB
-disk, and `disk.vhdx`, the same disk in a fixed VHDX file, the format a
-Hyper-V Generation 2 virtual machine boots. The disk has a GPT with one EFI
-System Partition, formatted FAT32, holding `\EFI\BOOT\BOOTX64.EFI` and in
-`\NOVA\` the kernel, `INIT.EXE`, `NTDLL.DLL`, `VIRTBLK.EXE`, and the
-inputs of stage0-pe32's chain up to M1 under 8.3 names
-([docs/spec/disk-layout.md](docs/spec/disk-layout.md)): its seed and the
-files of stage0-pe32 and of the M2libc, M2-Planet and mescc-tools trees
-it builds from, at the commits nova-nix's stage0-pe32 package pins. The
-tool is C99 with only the standard library, so the host compiler or
-TinyCC builds it.
+`tools/mkimage.c` writes a boot disk as two files: a raw 64 MiB disk
+image, and the same disk in a fixed VHDX file, the format a Hyper-V
+Generation 2 virtual machine boots. The disk has a GPT with one EFI System
+Partition, formatted FAT32, holding `\EFI\BOOT\BOOTX64.EFI` and in
+`\NOVA\` the other files given, under 8.3 names
+([docs/spec/disk-layout.md](docs/spec/disk-layout.md)). The tool is C99
+with only the standard library, so the host compiler or TinyCC builds it.
+
+The block below writes two disks. The system's, `disk.img` and
+`disk.vhdx`, holds in `\NOVA\` the kernel, `INIT.EXE`, `NTDLL.DLL` and
+`VIRTBLK.EXE`. The test disk, `chain.img` and `chain.vhdx`, holds the
+same files and the inputs of stage0-pe32's chain up to M1, which the
+bootstrap check reads: its seed and the files of stage0-pe32 and of the
+M2libc, M2-Planet and mescc-tools trees it builds from, at the commits
+nova-nix's stage0-pe32 package pins.
 
 ```sh
 raw=https://raw.githubusercontent.com/Novavero-AI
@@ -155,6 +160,8 @@ m1-macro.c $mescc/M1-macro.c
 EOF
 cc -o mkimage tools/mkimage.c
 ./mkimage disk.img disk.vhdx BOOTX64.EFI kernel.exe init.exe ntdll.dll \
+  virtblk.exe
+./mkimage chain.img chain.vhdx BOOTX64.EFI kernel.exe init.exe ntdll.dll \
   virtblk.exe chain/*
 ```
 
@@ -193,43 +200,48 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `627901806820f996991d9be8c3ae98156c8e3e5d9d0359687f6f8a8e0b2474a7` |
-| `disk.vhdx` | 71,303,168 | `d24f18e53eb0475720a4cb134d60a63675c7f9736b71bbc1948fa4baf110d009` |
-
-To boot either file in QEMU, replace the `fat:esp` drive in the command
-below with `-drive if=virtio,format=raw,file=disk.img` or
-`-drive if=virtio,format=vhdx,file=disk.vhdx`; the `esp` folder is then not
-needed.
+| `disk.img` | 67,108,864 | `98617cc1e946127038c1458b4b8f33bb65d8490c4aa5794a83228da19bb5c518` |
+| `disk.vhdx` | 71,303,168 | `b522c5bf1cefb1b26aca5ed431a659c1deb481032b9dd94390bcdf9499ec4ec1` |
+| `chain.img` | 67,108,864 | `216543198de6e87542d1c488aa33ee1f708ba44205a950edd84ea7c64f04e687` |
+| `chain.vhdx` | 71,303,168 | `2eb78902b62e9b541c53158b406239ee69dc35961c518dbb20215f2e557f5180` |
 
 ## Run
 
 With QEMU and the EDK2 firmware it bundles (under `$(brew --prefix)/share/qemu`
-on a Mac with Homebrew):
+on a Mac with Homebrew), the system boots from `disk.img`:
 
 ```sh
 fw=$(brew --prefix)/share/qemu
-mkdir -p esp/EFI/BOOT esp/nova
-cp BOOTX64.EFI esp/EFI/BOOT/
-cp kernel.exe init.exe ntdll.dll virtblk.exe chain/* esp/nova/
 cp $fw/edk2-i386-vars.fd vars.fd && chmod u+w vars.fd
 qemu-system-x86_64 -machine q35 -m 256M \
   -drive if=pflash,format=raw,readonly=on,file=$fw/edk2-x86_64-code.fd \
   -drive if=pflash,format=raw,file=vars.fd \
-  -drive if=virtio,format=raw,file=fat:esp,readonly=on \
+  -drive if=virtio,format=raw,readonly=on,file=disk.img \
   -net none -device virtio-rng-pci -device qemu-xhci -device usb-tablet \
   -serial stdio
 ```
 
 The kernel prints its lines to the terminal through the serial port,
-among them the first process's, which give the size and sha256 of what
-each step of the chain wrote, each link's the one nova-nix pins, and end
-with `nova-init: checks passed`. The
-firmware's variable store needs a writable copy, and the folder is attached
-as a read-only virtio disk, since QEMU's default IDE disk cannot be
-read-only. The virtio-rng device gives the firmware a random number
-generator, which nova-boot asks for the seed of the kernel's generator:
-QEMU's default processor has neither RDRAND nor RDSEED, so without the
-device the kernel's generator has no seed and says so. The USB tablet
+among them the first process's, which say
+`nova-init: the bootstrap check is not on this disk` and end with
+`nova-init: checks passed`.
+
+For the bootstrap check, boot `chain.img` in place of `disk.img`. The
+first process then gives the size and sha256 of what each of the
+chain's 20 steps wrote, each link's the one nova-nix pins, and says
+`nova-init: the chain built nova-nix's hex0, hex1, hex2, catm, M0,
+cc_x86, M2 and M1` before it ends with `nova-init: checks passed`.
+Under QEMU's emulation, without hardware acceleration, the chain takes
+about 11 minutes on an Apple M2. With `format=vhdx`, the same drive
+boots `disk.vhdx` or `chain.vhdx`.
+
+The firmware's variable store needs a writable copy. The disk is attached
+through virtio, so that the virtio block driver has the boot disk to
+read, and read-only, so that a boot leaves the image as built. The
+virtio-rng device gives the firmware a random number generator, which
+nova-boot asks for the seed of the kernel's generator: QEMU's default
+processor has neither RDRAND nor RDSEED, so without the device the
+kernel's generator has no seed and says so. The USB tablet
 gives the window an absolute pointer, so QEMU does not capture the
 mouse; on a Mac, `-display cocoa,zoom-to-fit=on -full-screen` gives it a
 full-screen Space.

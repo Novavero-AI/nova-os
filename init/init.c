@@ -3,10 +3,10 @@
    message, writes to the kernel's debug log with the root system
    resource the message carries, checks the answers of the calls it has
    to the cases their contracts name, runs stage0-pe32's chain from its
-   seed as 32-bit processes when the boot volume holds it (chain.c),
-   starts the virtio block driver as the platform driver (platform.c),
-   and exits with EXIT_CHECKS_PASSED, which the kernel reads with
-   process_info and logs.
+   seed as 32-bit processes when the boot volume holds the chain's
+   inputs (chain.c), starts the virtio block driver as the platform
+   driver (platform.c), and exits with EXIT_CHECKS_PASSED, which the
+   kernel reads with process_info and logs.
    A failed check is logged, if the log is reachable, and ends the
    process with EXIT_CHECK_FAILED. */
 

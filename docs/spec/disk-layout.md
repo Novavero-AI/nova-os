@@ -1,8 +1,9 @@
 # Disk layout
 
-The boot disk nova-os's image tool writes: what the firmware needs to find
-and start nova-boot, and what nova-boot needs to find the kernel and the
-first process.
+The boot disks nova-os's image tool writes, the system's and the test
+disk: what the firmware needs to find and start nova-boot, and what
+nova-boot needs to find the kernel and the first process. The two differ
+only in the files of `\NOVA\`.
 Specifications are cited by the versions in [README.md](README.md):
 "UEFI 5.3.2" is section 5.3.2 of UEFI 2.11, "FAT" the FAT32 File System
 Specification 1.03.
@@ -75,12 +76,20 @@ The partition holds a FAT32 file system (UEFI 13.3; FAT):
 
 ## Files
 
+Both disks hold:
+
 ```
 \EFI\BOOT\BOOTX64.EFI    nova-boot
 \NOVA\KERNEL.EXE         the kernel
 \NOVA\INIT.EXE           the first user process
 \NOVA\NTDLL.DLL          ntdll for 32-bit processes
 \NOVA\VIRTBLK.EXE        the virtio block driver
+```
+
+The test disk adds the inputs of the bootstrap check, the chain the first
+process runs from the seed:
+
+```
 \NOVA\HEX0SEED.EXE       stage0-pe32's seed, hex0-seed.exe
 \NOVA\...                the other inputs of the seed's chain
 ```
@@ -100,7 +109,9 @@ and UEFI sets no location for files an application reads (UEFI
 stage0-pe32 and of the trees it builds from, unmodified, under 8.3 names
 the README's disk-image block gives them; the first process gives them
 to the chain's programs under their own names
-([compat.md](compat.md#c4-files)).
+([compat.md](compat.md#c4-files)). The first process runs the chain
+when `\NOVA\` holds all of them, and refuses a disk that holds some
+but not all.
 
 Every name fits 8.3 and is stored as a short directory entry only, in
 uppercase (UEFI 13.3.1.2), with no long-name entries. `\NOVA\`'s entries

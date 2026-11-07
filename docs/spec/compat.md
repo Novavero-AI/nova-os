@@ -4,8 +4,8 @@ How nova-os runs a 32-bit Windows program: the process a launcher builds
 for it, the ntdll it calls, how its DOS paths reach its view of storage,
 and the stand-in file protocol behind them. The programs are
 stage0-pe32's seed, `hex0-seed.exe`, and the links of its chain up to
-M1, which the first process runs at boot (`init/chain.c`). The kernel's
-side, the 32-bit lane, is
+M1, which the first process runs when it boots from the test disk
+(`init/chain.c`). The kernel's side, the 32-bit lane, is
 [syscalls.md S11](syscalls.md#s11-the-32-bit-lane).
 
 Microsoft Learn pages are cited by title and pinned in
@@ -178,6 +178,13 @@ against the sha256 nova-nix's Stage0 (Windows) CI job pins for it;
 hex0's is the seed's own, since `hex0_x86.hex0` assembles into the
 seed.
 
+The chain, the bootstrap check, runs when the boot volume holds all 26
+of its inputs, as the test disk does
+([disk-layout.md](disk-layout.md#files)). On a volume that holds none,
+the system's disk, the first process logs that the check is not on this
+disk and goes on to its other checks. A volume that holds some but not
+all fails the check, with the inputs it lacks named.
+
 The outputs lie one after another in a region of the first process's
 memory, which grows by sections as the step writing the last output
 writes. A step writes only its own output, so the one growing is always
@@ -190,6 +197,11 @@ largest, `M2-0-0.M1`, is 1.7 MB.
   and M1 is pinned, so M2's own run is checked too.
 - **Why:** the boot volume is the one storage nova-os reads today, and
   the outputs need nowhere to persist for the checks.
+- **Why only from the test disk:** the chain takes minutes under QEMU's
+  emulation, and a boot of the system does not wait for it.
+- **Why some of the inputs fail:** such a volume is a test disk with
+  inputs missing, and passing it would report the checks passed with the
+  chain unrun.
 - **Cost:** the views are fixed in the first process, and the outputs
   stay in its memory until it ends, since `process_map` has no inverse
   yet.

@@ -367,7 +367,7 @@ the commits it records for them: **M2libc**
 `ee0bf91eb02390c2d40bd85379113e524f0c752b` and **mescc-tools**
 `578ac99623d291e2b9eacf03cacc390cfe512661` (all GPL-3.0). The seed,
 `bootstrap-seeds/PE32/i386/hex0-seed.exe`, and the files its chain reads
-up to M1 are test inputs, fetched by hash
+up to M1 are test inputs, fetched by hash for the test disk
 ([README](../../README.md#disk-image)); the sources were read only to
 learn which routines, fields and values the chain's programs use, and
 nothing of them is copied ([compat.md](compat.md)).

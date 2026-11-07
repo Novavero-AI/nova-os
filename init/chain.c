@@ -15,7 +15,14 @@
    (.github/workflows/ci.yml), so the chain on nova-os is held to the
    chain on Windows byte for byte. M2 is the first link built on the C
    library of libc-core.M1, and nothing pins the file it writes, so the
-   chain runs on to M1, whose link is pinned. */
+   chain runs on to M1, whose link is pinned.
+
+   The chain, the bootstrap check, runs when the boot volume holds all
+   of its inputs, as the test disk does. A volume that holds none, the
+   system's disk, has no check to run, and init says so and goes on. A
+   volume that holds some but not all is refused: it is a test disk with
+   inputs missing, and passing it would report the checks passed with
+   the chain unrun. */
 
 #include "init.h"
 #include "compat.h"
@@ -64,7 +71,6 @@ static const SOURCE sources[] = {
 };
 
 #define SOURCE_COUNT (sizeof sources / sizeof sources[0])
-#define SEED_SOURCE 0
 
 /* A step: the image it runs, a source or an earlier step's output; its
    command line after the program's name, whose words are separated by
@@ -348,26 +354,53 @@ static int run_step(UINT32 job, UINT32 number, const BOOT_FILE_VIEW *ntdll)
     return 1;
 }
 
+static UINT32 sources_present(void)
+{
+    UINT32 count = 0, i;
+
+    for (i = 0; i < SOURCE_COUNT; i++)
+        if (boot_file(sources[i].boot))
+            count++;
+    return count;
+}
+
+/* Refuse a boot volume that holds present of the chain's inputs but not
+   all, naming those it lacks. */
+static int incomplete(UINT32 present)
+{
+    const char *separator = " ";
+    UINT32 i;
+
+    say("nova-init: the chain failed: the boot volume holds ");
+    say_number(present);
+    say(" of its ");
+    say_number(SOURCE_COUNT);
+    say(" inputs and lacks");
+    for (i = 0; i < SOURCE_COUNT; i++)
+        if (!boot_file(sources[i].boot)) {
+            say(separator);
+            say(sources[i].boot);
+            separator = ", ";
+        }
+    say("\r\n");
+    return 0;
+}
+
 int chain_run(UINT32 job)
 {
     const BOOT_FILE_VIEW *ntdll = boot_file(NTDLL_FILE);
-    UINT32 i;
+    UINT32 present = sources_present(), i;
 
-    if (!boot_file(sources[SEED_SOURCE].boot)) {
-        say("nova-init: no seed on the boot volume, the chain skipped\r\n");
+    if (!present) {
+        say("nova-init: the bootstrap check is not on this disk\r\n");
         return 1;
     }
+    if (present != SOURCE_COUNT)
+        return incomplete(present);
     if (!ntdll) {
         say("nova-init: the chain failed: no ntdll.dll on the boot volume\r\n");
         return 0;
     }
-    for (i = 0; i < SOURCE_COUNT; i++)
-        if (!boot_file(sources[i].boot)) {
-            say("nova-init: the chain failed: no ");
-            say(sources[i].boot);
-            say(" on the boot volume\r\n");
-            return 0;
-        }
     for (i = 0; i < STEP_COUNT; i++)
         if (!run_step(job, i, ntdll))
             return 0;
