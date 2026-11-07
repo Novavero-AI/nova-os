@@ -30,8 +30,8 @@ static CHAR16 kernel_path[] = L"\\nova\\kernel.exe";
 
 /* ExitBootServices calls. A refusal means the map changed after it was
    taken. UEFI lets the first call shut boot services down in part
-   (7.4.6), and EDK II stops its timer before it checks the key, so a map
-   retaken after a refusal stays current. */
+   (7.4.6); EDK II stops its timer before it checks the key, so timer
+   events no longer change the map between attempts. */
 #define EXIT_ATTEMPTS 3
 
 /* Room for this many more descriptors in the map buffer, since allocating
@@ -62,14 +62,24 @@ _Noreturn static void halt(void)
         __asm__ volatile("cli\n\thlt");
 }
 
-/* Switch to the largest mode within MAX_WIDTH x MAX_HEIGHT that has a
-   linear 32-bit framebuffer, if it is larger than the current one. */
+/* Whether a mode has a linear framebuffer of 32-bit pixels that
+   gfx/gfx.c can draw to. */
+static int drawable(const EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info)
+{
+    return info->PixelFormat == PIXEL_RGB || info->PixelFormat == PIXEL_BGR;
+}
+
+/* Switch to the largest drawable mode within MAX_WIDTH x MAX_HEIGHT, if
+   it is larger than the current mode or the current mode is not
+   drawable. */
 static void largest_mode(EFI_BOOT_SERVICES *boot,
                          EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
 {
     UINT32 mode, best = gop->Mode->Mode;
-    INT64 best_area = (INT64)gop->Mode->Info->HorizontalResolution *
-                      gop->Mode->Info->VerticalResolution;
+    INT64 best_area = drawable(gop->Mode->Info)
+                          ? (INT64)gop->Mode->Info->HorizontalResolution *
+                                gop->Mode->Info->VerticalResolution
+                          : 0;
 
     for (mode = 0; mode < gop->Mode->MaxMode; mode++) {
         EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
@@ -81,8 +91,7 @@ static void largest_mode(EFI_BOOT_SERVICES *boot,
         area = (INT64)info->HorizontalResolution * info->VerticalResolution;
         if (info->HorizontalResolution <= MAX_WIDTH &&
             info->VerticalResolution <= MAX_HEIGHT && area > best_area &&
-            (info->PixelFormat == PIXEL_RGB ||
-             info->PixelFormat == PIXEL_BGR)) {
+            drawable(info)) {
             best = mode;
             best_area = area;
         }
@@ -230,7 +239,7 @@ static EFI_STATUS relocate(UINT8 *image, UINT32 image_size, UINT32 rva,
         block_size = read32(block + 4);
         if (block_size < RELOC_BLOCK_HEADER || block_size > size - offset)
             return EFI_LOAD_ERROR;
-        for (e = RELOC_BLOCK_HEADER; e + RELOC_ENTRY_SIZE <= block_size;
+        for (e = RELOC_BLOCK_HEADER; block_size - e >= RELOC_ENTRY_SIZE;
              e += RELOC_ENTRY_SIZE) {
             UINT32 entry = read16(block + e);
             UINT32 type = entry >> RELOC_TYPE_SHIFT;
@@ -307,7 +316,7 @@ static EFI_STATUS place_kernel(EFI_BOOT_SERVICES *boot, const UINT8 *file,
             return EFI_LOAD_ERROR;
     }
 
-    kernel->pages = (image_size + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE;
+    kernel->pages = ((UINT64)image_size + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE;
     status = boot->AllocatePages(ALLOCATE_ANY_PAGES, EFI_LOADER_CODE,
                                  kernel->pages, &kernel->base);
     if (status != EFI_SUCCESS)
@@ -326,7 +335,7 @@ static EFI_STATUS place_kernel(EFI_BOOT_SERVICES *boot, const UINT8 *file,
         UINT32 n = raw_size < virtual_size ? raw_size : virtual_size;
 
         for (offset = 0; offset < n; offset++)
-            image[address + offset] = file[raw_offset + offset];
+            image[address + offset] = file[(UINT64)raw_offset + offset];
     }
 
     status = relocate(image, image_size, reloc_rva, reloc_size,
@@ -436,7 +445,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
         return status;
     largest_mode(boot, gop);
     mode = gop->Mode->Info;
-    if (mode->PixelFormat != PIXEL_RGB && mode->PixelFormat != PIXEL_BGR)
+    if (!drawable(mode))
         return EFI_LOAD_ERROR;
     boot_info.screen.pixels = (UINT32 *)gop->Mode->FrameBufferBase;
     boot_info.screen.width = mode->HorizontalResolution;

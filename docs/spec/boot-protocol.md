@@ -19,8 +19,8 @@ nova-boot, in order:
    `PixelRedGreenBlueReserved8BitPerColor` (0) or
    `PixelBlueGreenRedReserved8BitPerColor` (1) (UEFI 12.9.2), it switches
    to the one with the most pixels if that is more than the current mode
-   has, then draws the boot screen. It fails if the mode in use has
-   another format.
+   has or the current mode has another format, then draws the boot
+   screen. It fails if no mode it can draw to is in use.
 3. Reads and places the kernel image ([Kernel image](#kernel-image)).
 4. Measures the timestamp counter against `Stall(50000)`.
 5. Takes the memory map into a buffer it allocates with room for four
@@ -69,8 +69,10 @@ A PE32+ image (PE Format):
 
 nova-boot rejects an image whose headers, section table, sections,
 relocation blocks or relocated locations reach outside the file or
-`SizeOfImage`. It reads a data directory only when `NumberOfRvaAndSizes`
-and `SizeOfOptionalHeader` both cover it (PE Format, Optional Header).
+`SizeOfImage`. An image whose `NumberOfRvaAndSizes` gives no slot for the
+base relocation directory has no relocations; one whose
+`SizeOfOptionalHeader` does not cover a slot `NumberOfRvaAndSizes` claims
+is rejected (PE Format, Optional Header).
 
 The README's build links the kernel with `-subsystem=native`
 (`IMAGE_SUBSYSTEM_NATIVE`, 1), `-e=kernel_main`, and section and file
