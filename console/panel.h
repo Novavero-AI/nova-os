@@ -1,12 +1,16 @@
 /* What the console draws (docs/spec/console.md C5): one dark
    translucent panel with rounded corners over the desktop background,
    and in it a grid of cells, each a glyph of the console font and, where
-   the caret stands, the caret. */
+   the caret stands, the caret, which show the lines of the text view.h
+   places in view. It writes the screen's pixels and nothing else, so
+   that ci/screens.c draws the same panel on the host; the console makes
+   the stores visible once its frame is drawn (gfx_flush). */
 
 #ifndef NOVA_PANEL_H
 #define NOVA_PANEL_H
 
 #include "gfx.h"
+#include "view.h"
 
 /* The lines the panel shows. */
 #define PANEL_ROWS 30
@@ -36,6 +40,24 @@ typedef struct {
     UINT8 mix[PANEL_INKS][PANEL_CHANNELS][COVERAGE_MAX + 1][PANEL_CODES];
 } INKS;
 
+/* What drawing the panel's cells needs: the screen, the panel's layout
+   on it, its backdrop, the console font's masks at the layout's cell
+   width, and the inks. */
+typedef struct {
+    const SCREEN *screen;
+    const LAYOUT *layout;
+    const UINT32 *backdrop;
+    const UINT8 *masks;
+    const INKS *inks;
+} PANEL;
+
+/* What the screen shows in the panel's cells: each one's character, and
+   the caret. */
+typedef struct {
+    UINT8 cells[PANEL_ROWS][TEXT_COLUMNS_MAX];
+    VIEW_CARET caret;
+} PANEL_SHOWN;
+
 /* Lay the panel out on a width x height screen. Returns 0 if not one
    cell fits. */
 int panel_layout(LAYOUT *layout, INT64 width, INT64 height);
@@ -52,16 +74,16 @@ int panel_backdrop(const LAYOUT *layout, INT64 width, INT64 height,
 
 void panel_inks(INKS *inks);
 
-/* Draw the backdrop on screen. */
+/* Draw the backdrop on screen, and note in shown what that leaves in
+   the cells: every one blank, and no caret. */
 void panel_show(const SCREEN *screen, const LAYOUT *layout,
-                const UINT32 *backdrop);
+                const UINT32 *backdrop, PANEL_SHOWN *shown);
 
-/* Draw the cell at row and column, column up to layout->columns, where
-   the cell lies in the panel's padding, with glyph, a mask of the
-   console font, and caret's mask over it unless caret is 0. */
-void panel_cell(const SCREEN *screen, const LAYOUT *layout,
-                const UINT32 *backdrop, const INKS *inks,
-                const UINT8 *glyph, const UINT8 *caret, UINT32 row,
-                UINT32 column);
+/* Draw text's view from line top, with caret, in the cells where shown
+   says the screen differs: each cell whose character changed, and the
+   cells the caret leaves and enters. Then shown says what the screen
+   shows. */
+void panel_text(const PANEL *panel, PANEL_SHOWN *shown, const TEXT *text,
+                UINT64 top, const VIEW_CARET *caret);
 
 #endif

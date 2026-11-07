@@ -529,6 +529,7 @@ upstream release of the QEMU that CI installs from Ubuntu 24.04
 | [`hw/input/virtio-input.c`][qemu-virtio-input-8] | `v8.2.2` | `ccb9cb16a9e180a9edede42b534dca80131dcdea317cb04d9db6e555ee4355d4` |
 | [`ui/input.c`][qemu-input-c-8] | `v8.2.2` | `e67241a5d54df6b19397f31172b0143ea0d5590676c6d6bd5e11e458f7d5e1f4` |
 | [`include/ui/input.h`][qemu-input-8] | `v8.2.2` | `69efe9f954bf6937994eead227ce21b9ead6dd90b0ea610eace70849e8b3c4f4` |
+| [`ui/input-legacy.c`][qemu-input-legacy-8] | `v8.2.2` | `9b1e7e74ffe473d07d25079edcf9668c7c85e61f34b853d4a06fdd307171fd56` |
 
 [qemu-hid]: https://gitlab.com/qemu-project/qemu/-/raw/v11.1.3/hw/input/virtio-input-hid.c
 [qemu-input]: https://gitlab.com/qemu-project/qemu/-/raw/v11.1.3/include/ui/input.h
@@ -539,6 +540,7 @@ upstream release of the QEMU that CI installs from Ubuntu 24.04
 [qemu-virtio-input-8]: https://gitlab.com/qemu-project/qemu/-/raw/v8.2.2/hw/input/virtio-input.c
 [qemu-input-c-8]: https://gitlab.com/qemu-project/qemu/-/raw/v8.2.2/ui/input.c
 [qemu-input-8]: https://gitlab.com/qemu-project/qemu/-/raw/v8.2.2/include/ui/input.h
+[qemu-input-legacy-8]: https://gitlab.com/qemu-project/qemu/-/raw/v8.2.2/ui/input-legacy.c
 
 - Access: free. `virtio-input-hid.c` is under the GPL, version 2 or
   later; [display.md](display.md), [console.md](console.md) and
@@ -552,8 +554,11 @@ upstream release of the QEMU that CI installs from Ubuntu 24.04
   turned up sent as `REL_WHEEL` 1 (`virtio-input-hid.c`). `ci/boot.py`:
   the tablet's range (`input.h`), the one `SYN_REPORT` that ends each
   `input-send-event` and the device a button is sent to (`input.c`),
-  the one whose driver set `DRIVER_OK` last (`virtio-input.c`), each
-  the same in 8.2.2.
+  the one whose driver set `DRIVER_OK` last (`virtio-input.c`), the
+  wheel's turn sent as `REL_WHEEL` 1 or -1 (`virtio-input-hid.c`), and
+  the 1,024 key events, syncs and delays `send-key` queues, past which
+  it drops a key (`input.c`), each the same in 8.2.2, whose `send-key`
+  is in `input-legacy.c`.
 
 **eXtensible Host Controller Interface for Universal Serial Bus (xHCI)
 Requirements Specification**, revision 2.0, October 2025, document

@@ -65,8 +65,9 @@ and on Windows with a TinyCC built from stage0-pe32's seed.
   a copy-on-write pool with a SHA-256 checksum on every block
   ([pool-format.md](docs/spec/pool-format.md)).
 - The console draws a panel over the background in its own font, edits
-  the line a program reads from the keyboard, and logs what each pointer
-  report does ([console.md](docs/spec/console.md)).
+  the line a program reads from the keyboard, scrolls back through what
+  it has shown with Page Up, Page Down and the pointer's wheel, and logs
+  what each pointer report does ([console.md](docs/spec/console.md)).
 
 **Accounts and the shell**
 

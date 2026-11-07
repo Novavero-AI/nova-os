@@ -84,6 +84,13 @@ jobs:
             drivers/pointer.c
           "$RUNNER_TEMP/check-pointer"
 
+      - name: The console's text, keys and view behave as console.md C3 to C5 give
+        run: |
+          cc -std=c11 -Wall -Wextra -pedantic -Werror -I include -I console \
+            -o "$RUNNER_TEMP/check-text" tools/check-text.c console/text.c \
+            console/keys.c console/view.c
+          "$RUNNER_TEMP/check-text"
+
       - name: gfx/limb.c draws Limb as its prototype does
         run: design/backgrounds/check-limb.sh
 
@@ -209,11 +216,15 @@ jobs:
   # types the first account's creation, runs whoami and the file
   # commands in its shell, and reads the data disk on the runner after
   # each; the persistence boot then boots the same copy again, logs in
-  # with that account and shows the file the first boot wrote. The five
-  # bad-GPT boots change its GPT, a CRC's byte, the entry array's, the
-  # pool's entry moved below the usable LBAs, or with them, over the
-  # table, or a second entry over it, and check that the file system
-  # service refuses the disk and that login does not start without it.
+  # with that account and shows the file the first boot wrote. In the
+  # default, Skylake, max and KVM boots the session then writes a file
+  # whose lines fill the console's panel, the wheel turns through QMP,
+  # and each screen checked must equal the one ci/screens.c draws, which
+  # boot.py builds with the runner's compiler. The five bad-GPT boots
+  # change its GPT, a CRC's byte, the entry array's, the pool's entry
+  # moved below the usable LBAs, or with them, over the table, or a
+  # second entry over it, and check that the file system service
+  # refuses the disk and that login does not start without it.
   # The specimen boot takes QMP's screendump once the type specimen has
   # drawn, keeps it as an artifact, and checks it against the specimen's
   # prototype, rendered from the fonts the reproduce job built.

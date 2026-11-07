@@ -157,7 +157,7 @@ program() {
 # nova-boot to load the kernel, at addresses of their choosing.
 tcc x86_64 -shared -I gfx -I boot -Wl,-subsystem=efiapp -Wl,-e=efi_main \
   -o "$out/BOOTX64.EFI" boot/nova-boot.c boot/tables.c boot/switch.S \
-  gfx/gfx.c gfx/raster.c gfx/boot_screen.c
+  gfx/gfx.c gfx/flush.c gfx/raster.c gfx/boot_screen.c
 tcc x86_64 -shared -I gfx -I boot -I kernel -Wl,-subsystem=native \
   -Wl,-e=kernel_main -Wl,-section-alignment=$SECTION_ALIGNMENT \
   -Wl,-file-alignment=$FILE_ALIGNMENT -o "$out/kernel.exe" kernel/main.c \
@@ -176,7 +176,7 @@ tcc x86_64 -shared -I gfx -I boot -I kernel -Wl,-subsystem=native \
   kernel/object/port.c kernel/object/interrupt.c \
   kernel/object/initiator.c kernel/object/first_process.c \
   kernel/object/object_test.c kernel/syscall/syscall.c gfx/gfx.c \
-  gfx/raster.c gfx/boot_screen.c gfx/limb.c gfx/background.c
+  gfx/flush.c gfx/raster.c gfx/boot_screen.c gfx/limb.c gfx/background.c
 
 # ntdll.dll is linked with -shared for its export table, which TinyCC
 # writes only for a DLL, and is placed at its own base address too.
@@ -199,9 +199,9 @@ program virtinp.exe virtio_input_main -I native -I lib -I drivers \
   drivers/virtio_input.c drivers/pointer.c drivers/virtio_driver.c \
   drivers/virtio_pci.c drivers/pci.c lib/log.c native/native.S
 program console.exe console_main -I native -I lib -I gfx -I kernel/random \
-  console/console.c console/text.c console/keys.c console/panel.c \
-  gfx/gfx.c gfx/raster.c gfx/font.c gfx/limb.c lib/mapping.c lib/log.c \
-  native/native.S
+  console/console.c console/text.c console/keys.c console/view.c \
+  console/panel.c gfx/gfx.c gfx/flush.c gfx/raster.c gfx/font.c \
+  gfx/limb.c lib/mapping.c lib/log.c native/native.S
 program store.exe store_main -I native -I lib -I kernel/random \
   store/store.c store/reader.c lib/name.c lib/log.c native/native.S \
   kernel/random/sha256.c
@@ -225,8 +225,8 @@ program hello.exe hello_main -I native -I lib -I test \
 program specimen.exe specimen_main -I native -I lib -I gfx -I test \
   -D "FONTS_PATH=\"/store/$fonts/share/fonts\"" test/specimen.c \
   test/specimen_draw.c lib/outline.c lib/typeface.c lib/typeset.c \
-  lib/mapping.c lib/path.c lib/log.c gfx/gfx.c gfx/raster.c gfx/limb.c \
-  native/native.S
+  lib/mapping.c lib/path.c lib/log.c gfx/gfx.c gfx/flush.c gfx/raster.c \
+  gfx/limb.c native/native.S
 
 # The store image's paths: nova-services, the programs the image's
 # header names for the first process to start; greeting; hello, the
