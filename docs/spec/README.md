@@ -22,6 +22,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [store-image.md](store-image.md) | The store image the first milestone boots from: its header, registrations, nodes, blobs and their hash trees |
 | [pool-format.md](pool-format.md) | A data disk's pool: its partition, superblock rings, block pointers, node table and directories, and its commit |
 | [accounts.md](accounts.md) | Users' accounts and records, password hashing, login, the session a login opens, the shell and the first boot |
+| [shell.md](shell.md) | nova-script, the shell's language: its grammar, values, pipelines and errors, how a command is found and run from `/store`, the handles the shell grants a command, interactive behaviour, replay and settings |
 
 ## Firmware and platform
 
@@ -56,7 +57,9 @@ BSD-2-Clause-Patent).
 - Access: open source.
 - Used by: the boot protocol, for firmware behaviour UEFI leaves to the
   implementation, and the firmware's random number generators. The
-  firmware QEMU bundles is an EDK II build.
+  firmware QEMU bundles is an EDK II build. [shell.md](shell.md), for
+  the UEFI Shell's script extension
+  (`ShellPkg/Application/Shell/Shell.c`).
 
 **Should I create a generation 1 or 2 virtual machine in Hyper-V?**
 (Microsoft Learn), dated June 18, 2025, updated February 16, 2026.
@@ -662,6 +665,167 @@ Network Appliance Technical Report 3002, Rev. C 3/95.
   it by page and copies none of its text.
 - sha256: `74c3db584971aea2b11549ca25799ead824e1bd8994e94cd3f8665ce5aea79cc`
 - Used by: [storage.md](storage.md).
+
+## Shell design references
+
+Specifications, papers and documentation [shell.md](shell.md) cites, by
+the names in its first table. Web pages were fetched on November 7,
+2026; a page that shows no version or date is identified by its sha256
+alone, and a later copy may differ.
+
+**Shell Command Language**, chapter 2 of the Shell and Utilities volume,
+The Open Group Base Specifications Issue 8, IEEE Std 1003.1-2024 ("POSIX").
+
+- Document: <https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html>
+- Access: free web page.
+- sha256: `0889867a53fe12508a71e8739ec23ecdddc95e6f67697c98e26acc8ff0ec1acd`
+
+**Rc - The Plan 9 Shell**, Tom Duff, Bell Laboratories, as distributed
+with Plan 9 ("rc"), and **The Use of Name Spaces in Plan 9**, Rob Pike,
+Dave Presotto, Ken Thompson, Howard Trickey and Phil Winterbottom
+("Plan 9 names").
+
+- Documents: <https://9p.io/sys/doc/rc.html>, <https://9p.io/sys/doc/names.html>
+- Access: free web pages.
+- sha256: `ac8f53a72a03991525c5d7fdc7ceb6b91cf2c0b420b5abc7cd8bd256a2dee779`
+  (rc) and `6894b37413ce7735ae0cdfaa87c24ecfd6cc0490c0bfa864a77cda4c4ba68645`
+  (Plan 9 names)
+
+**Windows PowerShell Language Specification 3.0** (Microsoft Learn),
+published in December 2012 and kept, in its own words, "for historical
+reference"; the Word original is at
+<https://www.microsoft.com/download/details.aspx?id=36389> ("PowerShell").
+
+| Chapter | Updated | sha256 |
+|---|---|---|
+| [1. Introduction][ps-1] | 2025-01-08 | `5256ec44cf1ad0b7a3ff9a34445621ae1dbfddab4e03b6467cd8a16bbc4e62f2` |
+| [8. Statements][ps-8] | 2022-05-16 | `dbf0600401ea1434e564561e43f7c574f354c176c6ae06cd6736dd393d9280fa` |
+| [13. Cmdlets][ps-13] | 2021-05-19 | `26a9bd7bfb8872666081b99349684dd23ecd2a86940b62edbf56e9f3d0ba332d` |
+
+- Access: free web pages.
+
+**The Nushell book** ("Nushell"), which shows no version; Nushell's
+latest release was 0.116.1.
+
+| Page | sha256 |
+|---|---|
+| [Pipelines][nu-pipelines] | `0aaeec50ec5b091b851a3e36fa53c3c79e9b2d5443474d170bd76a62b58abbce` |
+| [Types of Data][nu-types] | `713368745a7e0183f7d7b3e1f0256058cdf7b91f5a35a908b35045f76cec6942` |
+| [Variables][nu-variables] | `5971fa2af5274fb07ab20c86fc5d00128ea8a86d9bef00c4adf9ab07ea19e5ce` |
+| [Creating Your Own Errors][nu-errors] | `3e601dc673c7d667115cee433f74fa2f84e53baf243289306cc27f50737364ae` |
+| [Running System (External) Commands][nu-externals] | `e9969e9141134bc9d24a091f8c478801679331fafb6a9d22d68e1c6ad46d70f0` |
+
+- Access: free web pages.
+
+**fish-shell 4.9.3 documentation** ("fish").
+
+| Page | sha256 |
+|---|---|
+| [Design][fish-design] | `3484e82b05f889a1d8ae0f898222a57815928eadaabe84acf5087c3597452c70` |
+| [The fish language][fish-language] | `1eca2aefd4a2d98daa531fda43732ba9995ecb32421b80adb40272367d0a6cb1` |
+| [Interactive use][fish-interactive] | `45a6250f6f42aba4e4bb93f22cd00949cc9d69e7325c7ca2b57011f180635154` |
+
+- Access: free web pages.
+
+**Oils 0.38.0 documentation** ("Oils"), and **Oils Is Exterior-First
+(Code, Text, and Structured Data)**, Andy Chu, the Oils blog, June 20,
+2023 ("Chu 2023").
+
+| Document | sha256 |
+|---|---|
+| [Simple Word Evaluation in Unix Shell][oils-words] | `a36c86ccdbafc23ece315d408eec4d40025a3ce4a0b11da54004e2ad1155f977` |
+| [YSH Fixes Shell's Error Handling (errexit)][oils-errors] ("Error Handling") | `cd5cb5489d04b9d469f2c0cc22debc0477269f3b06e55efb78bb22b25b172c9f` |
+| [Variable Declaration, Mutation, and Scope][oils-variables] ("Variables") | `538ba7a6c4a924d59d73edb5c356002ad6db133f8b668f2f1eb7e1a245424ba0` |
+| [Oils Is Exterior-First][chu-2023] | `5cc93a54f66a4cd50e03f4e68c6f66ae59b50e9cffce47bf32252ecf76332ea1` |
+
+- Access: free web pages.
+
+**Elvish documentation** ("Elvish"), which shows no version; Elvish's
+latest release was 0.21.0.
+
+| Page | sha256 |
+|---|---|
+| [Language specification][elvish-language] | `d98808eaccb76d51b493f94e6f0c408328169f2fcd3343c92b9acc6c13969f65` |
+| [Unique semantics][elvish-unique] | `9fe443b9bc3fa1af921dba01528218aebe39b69ff644103f391441a28f361fce` |
+
+- Access: free web pages.
+
+**Plash documentation**, Mark Seaborn ("Plash"): the web site's sources
+in the author's repository at commit
+`1d77bb2fec3d9cdeb3547c42682818c447492bf4` (December 30, 2009). The
+site, <http://plash.beasts.org/>, redirects to a page that is not
+found, and the Internet Archive refused requests with HTTP 429, so the
+sources are pinned instead.
+
+| Page | File | sha256 |
+|---|---|---|
+| Introduction | [`plash/web-site/index.xxml`][plash-index] | `97c2f0ea183bc31732aae8cae8731157c0fbf28803879a0c36f78a7026b1e576` |
+| The Plash shell | [`plash/web-site/pola-shell.xxml`][plash-shell] | `beea4e135d6fdbd44f2d14eae03b6e20778c38799fd7a459c85f885d063823b0` |
+| Powerboxes | [`plash/web-site/powerbox.xxml`][plash-powerbox] | `f16190768586fdad4e0f9e9cbc9e567b3690bc79ab9287eec70c787a714f3721` |
+
+- Access: open source; its `COPYRIGHT` file gives the GNU Lesser General
+  Public License, version 2.1 or later. shell.md quotes the pages and
+  copies no code.
+
+**Capsicum: practical capabilities for UNIX**, Robert N. M. Watson,
+Jonathan Anderson, Ben Laurie and Kris Kennaway, USENIX Security 2010
+("Capsicum").
+
+- Document: <https://www.usenix.org/legacy/event/sec10/tech/full_papers/Watson.pdf>,
+  USENIX's copy, 17 pages without printed page numbers, cited by section
+  and PDF page.
+- Access: free download.
+- sha256: `7ff6a2cf650b15ad852594578847b14f6ecdf08cdedabdb1a03566a4eab4c2ab`
+
+**Nix 2.35.4 Reference Manual** ("Nix").
+
+| Page | sha256 |
+|---|---|
+| [`nix run`][nix-run] | `e2673ce35cdbfb53c3395c46a0443e5a0851ce9f9f19e0e501d6a92ca74cb6c2` |
+| [`nix env shell`][nix-env-shell] | `5a11ba24651b02c3688720a8ed1a6344de474e0dcf91f31766fbea34723052e0` |
+| [`nix-shell`][nix-shell] | `edc3e3f7e78eb251c3fac088603ed1557c38d9ed0333b473a58c2f23d23154c2` |
+
+- Access: free web pages.
+
+**General Decimal Arithmetic Specification**, version 1.70, April 7,
+2009, Mike Cowlishaw, IBM ("Decimal").
+
+- Document: <https://speleotrove.com/decimal/decarith.pdf>
+- Access: free download, "Reproduced with permission from IBM".
+- sha256: `d279ab7ce8b3533188e81eb7db560df1b28c3de623170d8533b9d370ca4d76f0`
+
+**Concise Binary Object Representation (CBOR)**, RFC 8949, STD 94,
+December 2020 (IETF) ("CBOR").
+
+- Document: <https://www.rfc-editor.org/rfc/rfc8949.txt>
+- Access: free.
+- sha256: `f1164a5b31a39350ad46abe29b83575eb933ca6c45366989c118b6b1058a214a`
+
+- Used by, for every entry in this section: [shell.md](shell.md).
+
+[ps-1]: https://learn.microsoft.com/en-us/powershell/scripting/lang-spec/chapter-01
+[ps-8]: https://learn.microsoft.com/en-us/powershell/scripting/lang-spec/chapter-08
+[ps-13]: https://learn.microsoft.com/en-us/powershell/scripting/lang-spec/chapter-13
+[nu-pipelines]: https://www.nushell.sh/book/pipelines.html
+[nu-types]: https://www.nushell.sh/book/types_of_data.html
+[nu-variables]: https://www.nushell.sh/book/variables.html
+[nu-errors]: https://www.nushell.sh/book/creating_errors.html
+[nu-externals]: https://www.nushell.sh/book/running_externals.html
+[fish-design]: https://fishshell.com/docs/current/design.html
+[fish-language]: https://fishshell.com/docs/current/language.html
+[fish-interactive]: https://fishshell.com/docs/current/interactive.html
+[oils-words]: https://oils.pub/release/latest/doc/simple-word-eval.html
+[oils-errors]: https://oils.pub/release/latest/doc/error-handling.html
+[oils-variables]: https://oils.pub/release/latest/doc/variables.html
+[chu-2023]: https://www.oilshell.org/blog/2023/06/ysh-design.html
+[elvish-language]: https://elv.sh/ref/language.html
+[elvish-unique]: https://elv.sh/learn/unique-semantics.html
+[plash-index]: https://github.com/mseaborn/plash/blob/1d77bb2fec3d9cdeb3547c42682818c447492bf4/plash/web-site/index.xxml
+[plash-shell]: https://github.com/mseaborn/plash/blob/1d77bb2fec3d9cdeb3547c42682818c447492bf4/plash/web-site/pola-shell.xxml
+[plash-powerbox]: https://github.com/mseaborn/plash/blob/1d77bb2fec3d9cdeb3547c42682818c447492bf4/plash/web-site/powerbox.xxml
+[nix-run]: https://nix.dev/manual/nix/2.35/command-ref/new-cli/nix3-run.html
+[nix-env-shell]: https://nix.dev/manual/nix/2.35/command-ref/new-cli/nix3-env-shell.html
+[nix-shell]: https://nix.dev/manual/nix/2.35/command-ref/nix-shell.html
 
 ## Not pinned
 
