@@ -1,0 +1,9 @@
+# What the README's build and run commands create.
+tinycc.tar.gz
+tinycc-*/
+cfg/
+x86_64-win32-tcc
+*.EFI
+*.exe
+esp/
+vars.fd
