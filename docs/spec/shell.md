@@ -491,7 +491,7 @@ of a decimal fraction such as 1.1" (CBOR 3.4.4).
 - **Why:** these rules remove two hazards: a name with a space split
   into two arguments, and globbing surprises. In POSIX, the
   results of unquoted expansions are split at every byte of `IFS`, by
-  default "<space>, <tab>, and <newline>" (POSIX 2.6.5), and then
+  default `<space>`, `<tab>` and `<newline>` (POSIX 2.6.5), and then
   matched against file names (POSIX 2.6.6), so correctness depends on
   quoting every expansion. Here correctness needs no quoting at all.
 - **Cost:** a list that should become many arguments needs `...`;
