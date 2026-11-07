@@ -277,9 +277,12 @@ when it switches to that process. IOPL stays 0, so user code reaches only
 allowed ports (SDM 2.3, IOPL): when CPL is greater than IOPL, the
 processor checks one bit per port and raises #GP if the bit of any port
 an access covers is set. Ports past the bitmap's end count as set, and the
-bitmap is followed by a byte with every bit set (SDM Vol. 1 20.5.2). Like
-a mapping, an allowance outlasts the resource handle it was made with: it
-ends when the process denies it or exits.
+bitmap is followed by a byte with every bit set (SDM Vol. 1 20.5.2). A
+process with no allowed ports runs with the TSS's I/O map base at or past
+the TSS limit, so there is no I/O permission map and every port access at
+CPL 3 raises #GP (the same section). Like a mapping, an allowance outlasts
+the resource handle it was made with: it ends when the process denies it
+or exits.
 
 - **Why:** the authority to touch a device is then a handle like any
   other, delegated down a chain the platform driver controls. Zircon hands
@@ -351,6 +354,14 @@ still best kept in the kernel" (2016, 3.3).
 The first set delivers message-signalled interrupts (MSI and MSI-X), which
 virtio's PCI devices use (VIRTIO 1.4, PCI transport); a level-triggered
 line shared by several devices is left out until a device needs one.
+
+A message-signalled interrupt is a memory write to an architectural
+address range, so without interrupt remapping any device that can do DMA
+can raise any interrupt with any attributes (VT-d 2.5.2.1). Where the
+IOMMU remaps interrupts (VT-d chapter 5; AMD IOMMU 2.2.5), the kernel
+enables it and gives each device only the entries `interrupt_create` set
+up for it. Without remapping, the kernel reports the device's interrupts
+as unconfined, as it reports unconfined DMA ([I8](#i8-dma)).
 
 ## I8. DMA
 
