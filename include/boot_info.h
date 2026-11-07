@@ -8,7 +8,7 @@
 #define NOVA_BOOT_INFO_H
 
 #include "types.h"
-#include "gfx.h"
+#include "boot_screen.h"
 #include "native_abi.h"
 
 /* "NOVABOOT" in memory order: the record is nova-boot's. */

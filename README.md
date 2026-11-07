@@ -54,7 +54,8 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   -D 'TCC_VERSION="0.9.28"' tinycc-$rev/tcc.c
 ./x86_64-win32-tcc -shared -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I gfx -I boot -Wl,-subsystem=efiapp -Wl,-e=efi_main \
-  -o BOOTX64.EFI boot/nova-boot.c boot/tables.c boot/switch.S gfx/gfx.c
+  -o BOOTX64.EFI boot/nova-boot.c boot/tables.c boot/switch.S gfx/gfx.c \
+  gfx/raster.c gfx/boot_screen.c
 ./x86_64-win32-tcc -shared -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I gfx -I boot -I kernel -Wl,-subsystem=native \
   -Wl,-e=kernel_main -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
@@ -74,7 +75,7 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   kernel/object/port.c kernel/object/interrupt.c \
   kernel/object/initiator.c kernel/object/first_process.c \
   kernel/object/object_test.c kernel/syscall/syscall.c gfx/gfx.c \
-  gfx/limb.c gfx/background.c
+  gfx/raster.c gfx/boot_screen.c gfx/limb.c gfx/background.c
 ./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I native -I lib -I drivers -I kernel/random -I store \
   -I test -Wl,-subsystem=native -Wl,-e=init_main \
@@ -151,8 +152,8 @@ build gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `BOOTX64.EFI` | 29,184 | `4a30a01cfd4237a0de0be3d693e5231fcdfc4ff050e65ca81bd262b89eed8228` |
-| `kernel.exe` | 203,264 | `7f0a6fc89c836835fcb7ed4433723e3b1ccbc3f50cf4aedff4b1bcf33ce88fdd` |
+| `BOOTX64.EFI` | 29,184 | `5255e8a076b179293d155659e0f7ee1e525f58970875f4c9c44c3904327c490a` |
+| `kernel.exe` | 203,264 | `82d53992a3f7644d756270e1e8ebdc35ec4f14f81b1b81f3b9fceb434e3ed68d` |
 | `init.exe` | 75,776 | `227f7d7266c92c0edf86ef700c001b046bfb01b3d35d31e69366f5999911cacc` |
 | `virtblk.exe` | 15,872 | `a8eeec9d33961612a7b6a8dd5def8b9f5484ed438b07dad934c34727868cd7d0` |
 | `virtinp.exe` | 15,872 | `6eeae2fd7f9aa438f70d64b15875303de4c8a742a833d0a0da8dfd2af6258993` |
@@ -278,10 +279,10 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `e7951141cb1e413499cf9f05095cd7c4b8116c5cbb09fbd1018885dd48265690` |
-| `disk.vhdx` | 71,303,168 | `52a705d4175fc8655460cda0342ef84b35d9aea7821b9ebaaffa83fe7d728dbc` |
-| `chain.img` | 67,108,864 | `fb6602c72ea289b7a177fc3e81505e082c639fb354e4e5477e7e76de3850a49f` |
-| `chain.vhdx` | 71,303,168 | `dc60cc50933cc8fad2385131756b7bdb07fa7d956a53ead67f0e9e9f74f27f03` |
+| `disk.img` | 67,108,864 | `ffb69c5af5eeaa839e15605de413e1c8cfbc3defb679ceb1ecdc35a030e77c45` |
+| `disk.vhdx` | 71,303,168 | `486b39ed981a34057070d2841fcff6f6bb01744ab90d424fde685374fb9f08b6` |
+| `chain.img` | 67,108,864 | `d1bb039793ad14f0f89c8e28c2144316d062fb98d66ba12a07c9dbe65dc578e4` |
+| `chain.vhdx` | 71,303,168 | `912e04323f5688338b059e6e83fe405218cb2486362acb0416a60690363be64c` |
 
 ## Run
 

@@ -92,7 +92,7 @@ _Noreturn static void halt(void)
 }
 
 /* Whether a mode has a linear framebuffer of 32-bit pixels that
-   gfx/gfx.c can draw to. */
+   the boot screen can draw to. */
 static int drawable(const EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info)
 {
     return info->PixelFormat == PIXEL_RGB || info->PixelFormat == PIXEL_BGR;

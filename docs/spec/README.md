@@ -480,7 +480,7 @@ ICC profiles** (International Color Consortium), April 2015.
   listed at <https://registry.color.org/rgb-registry/srgb>
 - Access: free download.
 - sha256: `ceed855c29808217a472954abb04cdc60a5bd3200387a93f5c5ffcef8ddf9f1f`
-- Used by: `gfx/gfx.c`, for sRGB's transfer function: the encoding in
+- Used by: `gfx/raster.c`, for sRGB's transfer function: the encoding in
   A.8 and the decoding in B.1, whose red line is the decoding; its green
   and blue lines repeat the red channel's variable, and its linear blue
   line misprints 12.92 as 12.02.
