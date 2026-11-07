@@ -33,7 +33,9 @@ cc -o x86_64-win32-tcc -I cfg -I tinycc-$rev \
 ./x86_64-win32-tcc -shared -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I gfx -I boot -Wl,-subsystem=native -Wl,-e=kernel_main \
   -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
-  -o kernel.exe kernel/main.c gfx/gfx.c
+  -o kernel.exe kernel/main.c kernel/x86_64/arch.c kernel/x86_64/gdt.c \
+  kernel/x86_64/idt.c kernel/x86_64/apic.c kernel/x86_64/serial.c \
+  kernel/x86_64/entry.S gfx/gfx.c
 ```
 
 `-shared` makes TinyCC write base relocations, which the firmware needs to
@@ -47,7 +49,7 @@ gives the same bytes:
 | Image | Size | sha256 |
 |---|---|---|
 | `BOOTX64.EFI` | 13,824 | `ca1e6d23da16987618f74974839962dbbbc1b38cb0607fd77bb5cd54ff8e25a6` |
-| `kernel.exe` | 8,192 | `eeaa8868d60bf460c67381ae09359833b021000056b5368ca52b48bcc224b68a` |
+| `kernel.exe` | 12,800 | `5fdc6b7aebeb98c2fb7c039382f2008deb76ecf2fe5da8e6e0393253ff536924` |
 
 ## Run
 
