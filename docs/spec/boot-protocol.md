@@ -234,11 +234,13 @@ which UEFI types `EfiLoaderCode` for code and `EfiLoaderData` for data
 
 The firmware's stack, page tables and IDT live in memory UEFI does not
 name; on EDK II they are `EfiBootServicesData`, and its page-table pools
-too (`DxeIpl` and `UefiCpuPkg/CpuDxe/CpuPageTable.c`). The kernel switches
-to its own stack, GDT, IDT and page tables before it allocates from
-`EfiBootServicesCode` or `EfiBootServicesData`, and copies what it needs
-from `BOOT_INFO` and the map before it reuses `EfiLoaderCode` or
-`EfiLoaderData`.
+too (`DxeIpl` and `UefiCpuPkg/CpuDxe/CpuPageTable.c`). EDK II maps its
+whole page-table pool read-only and sets CR0.WP. So before the kernel
+allocates from `EfiBootServicesCode` or `EfiBootServicesData` it moves to
+its own stack, GDT and IDT, and until it loads page tables of its own it
+holds back every page the firmware's tables occupy or do not let it
+write. It copies what it needs from `BOOT_INFO` and the map before it
+reuses `EfiLoaderCode` or `EfiLoaderData`.
 
 ## Undecided
 

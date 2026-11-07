@@ -35,7 +35,8 @@ cc -o x86_64-win32-tcc -I cfg -I tinycc-$rev \
   -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
   -o kernel.exe kernel/main.c kernel/x86_64/arch.c kernel/x86_64/gdt.c \
   kernel/x86_64/idt.c kernel/x86_64/apic.c kernel/x86_64/serial.c \
-  kernel/x86_64/entry.S gfx/gfx.c
+  kernel/x86_64/entry.S kernel/mm/page.c kernel/mm/page_test.c \
+  kernel/mm/boot_tables.c gfx/gfx.c
 ```
 
 `-shared` makes TinyCC write base relocations, which the firmware needs to
@@ -49,7 +50,7 @@ gives the same bytes:
 | Image | Size | sha256 |
 |---|---|---|
 | `BOOTX64.EFI` | 13,824 | `ca1e6d23da16987618f74974839962dbbbc1b38cb0607fd77bb5cd54ff8e25a6` |
-| `kernel.exe` | 12,800 | `5fdc6b7aebeb98c2fb7c039382f2008deb76ecf2fe5da8e6e0393253ff536924` |
+| `kernel.exe` | 20,480 | `48180bf81a346a7b0fa7601d1db1aa0c98f33e69b3c0c362cfb1bd1066ce618a` |
 
 ## Run
 
