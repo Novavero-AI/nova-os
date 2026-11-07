@@ -1,39 +1,96 @@
 # nova-os
 
-nova-os is an operating system in early development: NT's object model on
-a small kernel core, written in C and built entirely from source down to a
-1,623-byte seed, so that every byte of a release can be rebuilt from that
-seed and compared.
+[![CI](https://github.com/Novavero-AI/nova-os/actions/workflows/ci.yml/badge.svg)](https://github.com/Novavero-AI/nova-os/actions/workflows/ci.yml)
+[![Seed](https://github.com/Novavero-AI/nova-os/actions/workflows/seed.yml/badge.svg)](https://github.com/Novavero-AI/nova-os/actions/workflows/seed.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-It boots in a UEFI virtual machine. nova-boot, the loader, draws the boot
-screen and starts the kernel, which runs the first process in user mode.
-The first process starts the rest as user-mode processes: the store
-service and the namespace server, from the store image, through which it
-publishes the store as `/store`
-([docs/spec/storage.md](docs/spec/storage.md), F16); the virtio
-block and input drivers ([docs/spec/input.md](docs/spec/input.md)); the
-console, which takes the display once the boot screen fades and serves
-programs text output and lines typed at the keyboard
-([docs/spec/console.md](docs/spec/console.md)); with a data disk, the
-file system service, which serves `/data` and `/users` from it
-([docs/spec/storage.md](docs/spec/storage.md), F18); and the accounts
-service and login, which start each user's shell
-([docs/spec/accounts.md](docs/spec/accounts.md)). It restarts a driver
-or the console if one ends ([docs/spec/ipc.md](docs/spec/ipc.md), I10).
-From a test disk it also runs stage0-pe32's bootstrap chain, from its
-hex0 seed to M1, as 32-bit Windows programs, and checks each link against
-the one nova-nix builds on Windows
-([docs/spec/compat.md](docs/spec/compat.md)).
-[docs/spec](docs/spec/README.md) lists the specifications, and
-[DESIGN.md](DESIGN.md) holds the principles, the decisions made so far and
-the stages; [design/backgrounds](design/backgrounds/README.md) holds the
-background's prototypes and the check that `gfx/limb.c` draws Limb's
-pixels, [design/font](design/font/README.md) the console font's
-prototype and the check that `gfx/font.c` draws its glyphs, and
-[design/text](design/text/README.md) the prototypes of the filled
-outlines and text programs draw with, `lib/outline.c`,
-`lib/typeface.c` and `lib/typeset.c`, and the check that the library
-draws the prototypes' pixels.
+An operating system with NT's object model on a small kernel core,
+drivers in user mode, and disk images that rebuild byte for byte from a
+1,623-byte seed.
+
+![nova-os in QEMU on its first boot. Over the desktop background, a dark planet with a lit horizon, the console's panel shows login creating the administrator's account, ada, then the shell running whoami and help, which lists the shell's commands.](docs/images/first-boot.webp)
+
+## What it is
+
+nova-os is an operating system in early development. It boots through
+UEFI on x86-64, in a virtual machine for now, and its programming model
+is NT's: kernel objects in one namespace, handles with access rights
+and a native system-call API, on a small kernel, with drivers, file
+systems and services as user-mode processes. It is written in C and
+built by TinyCC, and the build gives the same bytes on Linux, on macOS,
+and on Windows with a TinyCC built from stage0-pe32's seed.
+[DESIGN.md](DESIGN.md) holds its principles, decisions and stages.
+
+## What runs today
+
+**Boot**
+
+- nova-boot, a UEFI application, draws the boot screen, loads the kernel
+  and the files beside it from the EFI System Partition, and asks the
+  firmware for random seeds
+  ([boot-protocol.md](docs/spec/boot-protocol.md)).
+- The boot screen fades into Limb, the desktop background, once the
+  first process reports that its startup is done.
+
+**Kernel**
+
+- Paging, interrupts, a timer, the ACPI tables, physical memory, and
+  threads with a scheduler, on one processor.
+- Kernel objects with handles and access rights: processes, jobs,
+  sections, channels, ports, interrupts, and the device resources and
+  DMA initiators a driver holds ([objects.md](docs/spec/objects.md),
+  [ipc.md](docs/spec/ipc.md)).
+- The native system-call API, with a lane for 32-bit processes
+  ([syscalls.md](docs/spec/syscalls.md)).
+- Speculative-execution mitigations chosen for the processor it runs on
+  ([speculation.md](docs/spec/speculation.md)).
+- A random number generator seeded from the firmware, RDSEED or RDRAND,
+  and the timer.
+- Self-tests of the page allocator, the random number generator, objects
+  and threads on every boot.
+
+**Services and drivers, each a user-mode process**
+
+- The first process starts the rest, and restarts the input driver, the
+  console, the accounts service or login when one ends, as its restart
+  policy allows ([ipc.md](docs/spec/ipc.md)).
+- virtio block and input drivers, for disks and for keyboards, tablets
+  and mice, each given its own device's resources and nothing else.
+- The store service serves `/store` read-only from the store image,
+  checking every block against its hash; store paths are named as Nix
+  names them ([storage.md](docs/spec/storage.md)).
+- The namespace server holds the one namespace, where `/store`, `/data`
+  and `/users` are published.
+- The file system service serves `/data` and `/users` from a data disk:
+  a copy-on-write pool with a SHA-256 checksum on every block
+  ([pool-format.md](docs/spec/pool-format.md)).
+- The console draws a panel over the background in its own font, edits
+  the line a program reads from the keyboard, and logs what each pointer
+  report does ([console.md](docs/spec/console.md)).
+
+**Accounts and the shell**
+
+- On the first boot, login creates the administrator's account; later
+  boots log in with a name and a password, which the accounts service
+  hashes with Argon2id ([accounts.md](docs/spec/accounts.md)).
+- The shell works in the user's home: it lists, shows, writes, moves and
+  removes files, runs programs from `/store`, and lets an administrator
+  create accounts. `help` lists its commands.
+
+**Text**
+
+- A library that fills outlines and sets lines of text in Inter, from
+  nova-os fonts the build converts from Inter's release and keeps in
+  `/store` ([font-format.md](docs/spec/font-format.md)).
+- The type specimen, a program from `/store`, draws with it in the
+  console's place when booted from the specimen's disk.
+
+**Windows programs**
+
+- nova-os's ntdll gives 32-bit Windows programs the routines
+  stage0-pe32's bootstrap chain calls. From the test disk the chain runs
+  from its hex0 seed to M1, and each link must match the one nova-nix
+  builds on Windows ([compat.md](docs/spec/compat.md)).
 
 ## Build
 
@@ -116,5 +173,19 @@ once its driver runs, keeps QEMU from capturing the mouse.
   `-vga none -device VGA,edid=on,xres=2560,yres=1600` sets to
   2560 x 1600. For 3840 x 2160, add `refresh_rate=50000,vgamem_mb=32`
   to the device.
+
+## Documentation
+
+- [docs/spec](docs/spec/README.md) holds nova-os's specifications and
+  pins the external specifications they cite.
+- [DESIGN.md](DESIGN.md) holds the principles, the decisions made so
+  far, the stages and what CI tests.
+- The API reference documents the public headers. Doxygen generates it:
+  `doxygen` at the repository's root writes it to
+  `reference/html/index.html`.
+- The specifications and the design are also published at
+  [novavero.ai/docs/nova-os](https://novavero.ai/docs/nova-os/).
+
+## License
 
 nova-os is licensed under the Apache License 2.0; see [LICENSE](LICENSE).
