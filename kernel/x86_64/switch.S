@@ -25,9 +25,12 @@
    ran, which arch_switch saves and restores around this. A user thread's
    general registers need no room here: its entry to the kernel pushed
    them on its kernel stack (entry.S, syscall.S), where they stay while
-   it is switched out. */
+   it is switched out.
+
+   RET and JMP are followed by INT3 (docs/spec/speculation.md M17). */
 
 #include "context.h"
+#include "x86_64.h"
 
 #define SHADOW_SPACE 32
 
@@ -53,6 +56,7 @@ switch_stacks:
     popq %rbp
     popq %rbx
     ret
+    int3
 
 /* Where a new user thread's first switch returns, with RSP at the
    INTERRUPT_FRAME arch_context_init_user placed at the top of its kernel
@@ -63,3 +67,15 @@ user_first_switch:
     call thread_user_first_run
     addq $SHADOW_SPACE, %rsp
     jmp return_to_user
+    int3
+
+/* void rsb_overwrite(void): the 32-CALL overwrite that a process switch
+   on some AMD processors makes after its IBPB (M7, rule 3), so that no
+   return address the last process left predicts a later RET. Its own
+   RET is predicted to one of the overwrite's INT3s, where that
+   misprediction ends, and returns to the caller. */
+    .globl rsb_overwrite
+rsb_overwrite:
+    RSB_OVERWRITE
+    ret
+    int3

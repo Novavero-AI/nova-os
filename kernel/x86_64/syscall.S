@@ -9,7 +9,12 @@
    interrupt from user mode leaves, then enables interrupts and calls
    syscall_dispatch, which puts the status and results into the frame.
    The exit disables interrupts, checks the return address, restores the
-   registers S4 preserves and leaves by SYSRETQ. */
+   registers S4 preserves and leaves by SYSRETQ.
+
+   Both carry the speculative-execution measures of
+   docs/spec/speculation.md M3 in the order M3 gives, each a measure site
+   (x86_64.h, MEASURE) skipped where the processor does not need it. RET
+   and JMP are followed by INT3 (M17). */
 
 #include "x86_64.h"
 #include "native_abi.h"
@@ -35,11 +40,14 @@
 
 /* Steps 2 and 3 of S3's entry, which run at CPL 0 on the user's stack
    with the user's GS base until the SWAPGS, and with interrupts disabled
-   throughout, as IA32_FMASK leaves them. */
+   throughout, as IA32_FMASK leaves them. The SWAPGS is unconditional, so
+   no fence follows it (M5). */
 #define SWITCH_TO_KERNEL_STACK                               \
     SWAPGS;                                                  \
     movq %rsp, %gs:PER_CPU_USER_RSP;                         \
     movq %gs:PER_CPU_KERNEL_STACK, %rsp
+
+    MEASURE_TABLE(syscall_measures)
 
     .text
     .globl syscall_entry
@@ -67,6 +75,7 @@ syscall_entry:
     pushq %r13
     pushq %r14
     pushq %r15
+    USER_ENTRY_MEASURES
     sti
     movq %rsp, %rcx
     subq $SHADOW_SPACE, %rsp
@@ -79,6 +88,9 @@ syscall_entry:
     movq FRAME_RIP(%rsp), %rcx
     cmpq user_top(%rip), %rcx
     ja 1f
+    MEASURE(MEASURE_IBRS)
+    WRITE_SPEC_CTRL(spec_ctrl_user)
+    MEASURE_END
     popq %r15
     popq %r14
     popq %r13
@@ -101,22 +113,34 @@ syscall_entry:
     orq $USER_FLAGS_SET, %r11
     movq POPPED_RSP(%rsp), %rsp
     SWAPGS
+    /* M13: VERW last, once every general register holds the user's value
+       or zero. SYSRETQ loads RFLAGS from R11, so the ZF VERW writes never
+       reaches user mode. */
+    MEASURE(MEASURE_VERW)
+    verw verw_selector(%rip)
+    MEASURE_END
     sysretq
 1:
     movq %rsp, %rcx
     subq $SHADOW_SPACE, %rsp
     call user_bad_return
+    int3
 
 /* SYSCALL from compatibility mode enters here (IA32_CSTAR) on AMD
    processors. A 32-bit thread enters by its own gate (S11), so this
-   entry ends the calling process (S2). The kernel stack's top is 16-byte
-   aligned, so RSP is aligned at the call. */
+   entry ends the calling process (S2), after the entry's measures, since
+   it runs kernel code entered from user mode. The kernel stack's top is
+   16-byte aligned, so RSP is aligned at the call. */
     .globl syscall_compat_entry
 syscall_compat_entry:
     SWITCH_TO_KERNEL_STACK
+    USER_ENTRY_MEASURES
     sti
     subq $SHADOW_SPACE, %rsp
     call syscall_compat
+    int3
+
+    MEASURE_TABLE_END(syscall_measures_end)
 
 /* STATUS user_copy(void *to, const void *from, UINT64 size), arguments
    in RCX, RDX and R8: copy size bytes, one of the two ranges in user
@@ -149,7 +173,9 @@ user_copy_access:
     popq %rdi
     popfq
     ret
+    int3
     .globl user_copy_fault
 user_copy_fault:
     movl $ERR_BAD_ADDRESS, %eax
     jmp 3b
+    int3

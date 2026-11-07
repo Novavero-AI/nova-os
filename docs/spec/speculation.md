@@ -186,6 +186,14 @@ NMI, double fault and machine check can arrive at CPL 3 or inside S3's
 windows (S3), so with either set of page tables loaded and either IBRS
 value. Where M11 or M6's rule 4 applies they save CR3 and
 IA32_SPEC_CTRL, load the kernel's values, and restore both on return.
+Each stops the kernel today, so none returns and none restores.
+
+On the entry and the exit, a measure only some processors need is
+assembled in place behind an unconditional jump over it, which the kernel
+replaces with a NOP at boot where the measure applies, before any entry
+from user mode. A branch on
+a flag would decide the same, but it can be mispredicted past the
+measure, as the conditional `SWAPGS` of M5 is.
 
 A process switch, when a CPU changes to a thread of a different process
 from the last user thread it ran, adds before loading the new process's
@@ -767,8 +775,10 @@ So:
    registers at the system-call boundary (S4).
 
 The masks, `CMOV` selects, fences, MSR writes, VERW, the 32-CALL overwrite
-and the BHB-clearing sequence are written in `kernel/x86_64/entry.S` or in
-GCC-style inline assembly, which TinyCC accepts (`include/cpu.h`).
+and the BHB-clearing sequence are written in the kernel's assembly
+(`kernel/x86_64/entry.S`, `syscall.S`, `switch.S`, sharing the macros of
+`x86_64.h`) or in GCC-style inline assembly, which TinyCC accepts
+(`include/cpu.h`).
 
 - **Not taken:** changing TinyCC's code generator to call a register
   thunk for indirect calls and to end functions with a jump to a return

@@ -61,6 +61,21 @@ static inline void cpuid(UINT32 leaf, UINT32 *a, UINT32 *b, UINT32 *c,
     *d = edx;
 }
 
+/* The same for a subleaf other than 0. */
+static inline void cpuid_subleaf(UINT32 leaf, UINT32 subleaf, UINT32 *a,
+                                 UINT32 *b, UINT32 *c, UINT32 *d)
+{
+    UINT32 eax, ebx, ecx, edx;
+
+    __asm__ volatile("cpuid"
+                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                     : "a"(leaf), "c"(subleaf));
+    *a = eax;
+    *b = ebx;
+    *c = ecx;
+    *d = edx;
+}
+
 /* Bounds-check bypass (docs/spec/speculation.md M4): a branch that checks
    a caller's value can be mispredicted, and the loads after it run with
    the value it refused (Intel HFB 3.2.1). After the check these compute

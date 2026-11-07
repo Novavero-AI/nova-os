@@ -16,6 +16,15 @@ void paging_init(void);
    run on. */
 UINT64 paging_kernel_space(void);
 
+/* Write count bytes at linear, in the kernel image's text, which its own
+   mapping keeps read-only, through the direct map. */
+void paging_write_text(UINT64 linear, const UINT8 *bytes, UINT64 count);
+
+/* Record that the processor is switching to a user thread on space, with
+   interrupts disabled. Returns 1 if the last user thread it ran was on
+   another space, and so of another process. */
+int paging_enter_user_space(UINT64 space);
+
 /* Map the 4 KiB page at physical, at its direct-map address, with the
    strong uncacheable memory type, which memory-mapped registers such as
    the Local APIC's need. Returns that address, or 0 if no PAT entry holds

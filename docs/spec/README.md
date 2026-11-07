@@ -465,7 +465,11 @@ memory-mapped configuration space (ECAM):
   Revision C1**, publication 57238, revision 0.49, March 6, 2026.
   `MmioCfgBaseAddr` (MSRC001_0058) gives the base and bus range;
   `CPUID_Fn00000001_ECX` and `CPUID_Fn00000007_EBX_x00` give AMD's
-  RDRAND and RDSEED bits, which `kernel/x86_64/entropy.c` reads.
+  RDRAND and RDSEED bits, which `kernel/x86_64/entropy.c` reads;
+  `DE_CFG` (MSRC001_1029), which makes LFENCE dispatch serializing, and
+  `PATCH_LEVEL` (MSR0000_008B), the loaded microcode's revision, which
+  `kernel/x86_64/speculation.c` sets and reads
+  ([speculation.md](speculation.md) M4, M13).
   <https://docs.amd.com/api/khub/documents/X_EXZ3uavMHFQe8qvjfHcw/content>,
   a zip archive, sha256
   `e91d9fe3ae32df3d6c88012cdac261440cc06e089a0d83d191247a06c8c91e99`.

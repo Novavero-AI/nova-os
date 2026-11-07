@@ -9,9 +9,10 @@
 #define TIMER_HZ 1000
 
 /* Install the kernel's own descriptor tables and exception handlers, take
-   over nova-boot's page tables and remove their lower-half mapping, and
-   set the processor up for user mode and the system-call entry. Returns
-   with interrupts disabled. */
+   over nova-boot's page tables and remove their lower-half mapping, put
+   the speculative-execution measures in place, and set the processor up
+   for user mode and the system-call entry. Returns with interrupts
+   disabled. */
 void arch_init(void);
 
 /* Take the interrupt controllers over from the firmware and start the

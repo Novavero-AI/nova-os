@@ -82,7 +82,104 @@
 #define PER_CPU_KERNEL_STACK 0
 #define PER_CPU_USER_RSP 8
 
-#ifndef __ASSEMBLER__
+/* IA32_SPEC_CTRL and IA32_PRED_CMD (Intel CPUID, "IA32_SPEC_CTRL MSR" and
+   "IA32_PRED_CMD MSR"; APM 3.2.9): SPEC_CTRL's IBRS bit restricts
+   indirect branch prediction (docs/spec/speculation.md M6), and writing
+   PRED_CMD_IBPB to PRED_CMD is the indirect branch prediction barrier.
+   No integer suffix: the assembly uses them too. */
+#define IA32_SPEC_CTRL 0x48
+#define IA32_PRED_CMD 0x49
+#define PRED_CMD_IBPB 1
+
+/* The measures of docs/spec/speculation.md M3 that the entry and exit
+   carry where the processor needs them, one bit each. speculation.c
+   decides which apply. */
+#define MEASURE_IBRS 0x01      /* M6 rule 4: IBRS written on entry and exit */
+#define MEASURE_IBPB 0x02      /* M9, M10: IBPB on entry */
+#define MEASURE_RSB 0x04       /* M7: the 32-CALL overwrite on entry */
+#define MEASURE_BHB 0x08       /* M8: the BHB-clearing sequence on entry */
+#define MEASURE_VERW 0x10      /* M13: VERW before the return to user mode */
+
+/* The 32-CALL overwrite's CALLs: the size of the return stack buffer,
+   or return address predictor, that the vendors give (Intel HFB
+   3.1.2.2.2, footnote 5; AMD STMS V2-3). */
+#define RSB_ENTRIES 32
+#define RETURN_ADDRESS_SIZE 8
+
+#ifdef __ASSEMBLER__
+
+/* A measure site: the code from MEASURE(m) to MEASURE_END runs only where
+   measure m is in force. A branch on a flag set at boot would decide that
+   too, but a branch can be mispredicted past the measure it guards, as
+   the conditional SWAPGS shows (Intel SWAPGS); so each site is assembled
+   behind an unconditional JMP over it, and speculation_init replaces the
+   JMP with a NOP of the same length where m applies, before any entry
+   from user mode. For a label not yet defined TinyCC encodes JMP as E9
+   and a 32-bit displacement, five bytes (i386-asm.c, asm_opcode), which
+   speculation_init checks before it writes. The site's address and m go
+   to .rdata, between the file's MEASURE_TABLE and MEASURE_TABLE_END.
+   Every site uses the labels 661 and 662, so sites do not nest. */
+#define MEASURE(m)                                                     \
+    661: jmp 662f;                                                     \
+    .pushsection .rdata; .quad 661b, m; .popsection
+#define MEASURE_END 662:
+
+#define MEASURE_TABLE(name)                                            \
+    .pushsection .rdata; .balign 8; .globl name; name:; .popsection
+#define MEASURE_TABLE_END(name)                                        \
+    .pushsection .rdata; .globl name; name:; .popsection
+
+/* The 32-CALL overwrite (M7): RSB_ENTRIES near CALLs, each with a
+   non-zero displacement, and no RET (Intel HFB 3.1.2.2.2, footnote 5;
+   AMD STMS V2-3). Each pass makes two CALLs and drops the two return
+   addresses they pushed, so the stack is as it was. INT3 after each CALL
+   ends sequential speculation past it, and the LFENCE a mispredicted exit
+   from the loop (AMD STMS G-5). Clobbers RAX and the flags. */
+#define RSB_OVERWRITE                                                  \
+    movl $(RSB_ENTRIES / 2), %eax;                                     \
+    671: call 672f;                                                    \
+    int3;                                                              \
+    672: call 673f;                                                    \
+    int3;                                                              \
+    673: addq $(2 * RETURN_ADDRESS_SIZE), %rsp;                        \
+    decl %eax;                                                         \
+    jnz 671b;                                                          \
+    lfence
+
+/* IA32_SPEC_CTRL written with value, a variable of speculation.c: the
+   IBRS writes of M6, rule 4, on entry and exit. Clobbers RAX, RCX and
+   RDX. */
+#define WRITE_SPEC_CTRL(value)                               \
+    movl $IA32_SPEC_CTRL, %ecx;                              \
+    movl value(%rip), %eax;                                  \
+    xorl %edx, %edx;                                         \
+    wrmsr
+
+/* Steps 3 to 6 of M3's entry from user mode, once the frame is on the
+   thread's kernel stack, and before any RET or indirect branch but the
+   balanced CALLs and RETs of the last two: IBRS (M6), IBPB (M9, M10),
+   the 32-CALL overwrite (M7) and the BHB-clearing sequence (M8). Each
+   write to IA32_SPEC_CTRL or IA32_PRED_CMD waits for every older
+   instruction and holds every younger one (Intel CPUID, "IA32_SPEC_CTRL
+   MSR"). Clobbers RAX, RCX, RDX and the flags, which the frame holds. */
+#define USER_ENTRY_MEASURES                                  \
+    MEASURE(MEASURE_IBRS);                                   \
+    WRITE_SPEC_CTRL(spec_ctrl_kernel);                       \
+    MEASURE_END;                                             \
+    MEASURE(MEASURE_IBPB);                                   \
+    movl $IA32_PRED_CMD, %ecx;                               \
+    movl $PRED_CMD_IBPB, %eax;                               \
+    xorl %edx, %edx;                                         \
+    wrmsr;                                                   \
+    MEASURE_END;                                             \
+    MEASURE(MEASURE_RSB);                                    \
+    RSB_OVERWRITE;                                           \
+    MEASURE_END;                                             \
+    MEASURE(MEASURE_BHB);                                    \
+    call bhb_clear;                                          \
+    MEASURE_END
+
+#else
 
 #include "types.h"
 
@@ -144,6 +241,34 @@ extern const UINT8 msi_stubs[];
    enters the kernel. */
 void syscall_entry(void);
 void syscall_compat_entry(void);
+
+/* VERW's memory operand, the kernel's data selector (entry.S). */
+extern const UINT16 verw_selector;
+
+/* A measure site of entry.S or syscall.S (MEASURE): the address of the
+   JMP that skips it, and the MEASURE_ bit under which it runs. */
+typedef struct {
+    UINT64 site;
+    UINT64 measure;
+} MEASURE_SITE;
+
+extern const MEASURE_SITE entry_measures[], entry_measures_end[];
+extern const MEASURE_SITE syscall_measures[], syscall_measures_end[];
+
+/* switch.S: the 32-CALL overwrite of a process switch (M7), then a RET,
+   which the overwritten return stack mispredicts into a trap. */
+void rsb_overwrite(void);
+
+/* msr.S: RDMSR and WRMSR for an MSR that may not exist, or may refuse
+   the value: each returns 1 if the instruction completed and 0 if it
+   raised #GP, which idt.c resumes at msr_access_failed when the faulting
+   instruction is msr_read_access's or msr_write_access's. Under a
+   hypervisor an MSR the enumeration promises can still be missing. */
+int msr_read_checked(UINT32 msr, UINT64 *value);
+int msr_write_checked(UINT32 msr, UINT64 value);
+void msr_read_access(void);
+void msr_write_access(void);
+void msr_access_failed(void);
 
 void gdt_load(void);
 void idt_load(void);

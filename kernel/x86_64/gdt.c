@@ -108,10 +108,11 @@ static UINT8 double_fault_stack[FAULT_STACK_SIZE];
 static UINT8 machine_check_stack[FAULT_STACK_SIZE];
 
 /* 64-bit mode loads CS only through a far transfer. This one is a far
-   return to the next instruction; its REX.W form pops an eight-byte RIP
+   return to the label after it, past the INT3 that follows every RET
+   (docs/spec/speculation.md M17); its REX.W form pops an eight-byte RIP
    and CS, where the plain form pops four bytes of each (SDM Vol. 2B, RET),
    and TinyCC's assembler has no mnemonic for it. */
-#define FAR_RETURN_64 ".byte 0x48, 0xcb\n"
+#define FAR_RETURN_64 ".byte 0x48, 0xcb\n\tint3\n"
 
 /* DS, ES, FS and GS start with the user data selector, which a new user
    thread starts with too; from then on each user thread keeps its own

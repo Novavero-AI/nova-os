@@ -40,6 +40,11 @@ static UINT64 *top_table;
 static int levels;
 static UINT64 no_execute; /* PTE_NO_EXECUTE while IA32_EFER.NXE is set */
 
+/* The space of the last user thread this processor ran, or 0 if none or
+   if that space was destroyed, so that a new space at the same address is
+   another process's. */
+static UINT64 last_user_space;
+
 static UINT64 *table_at(UINT64 entry)
 {
     return direct_map(entry & PTE_ADDRESS);
@@ -81,6 +86,57 @@ void paging_init(void)
 UINT64 paging_kernel_space(void)
 {
     return kernel_space;
+}
+
+/* The entry of the kernel's tables that maps kernel address linear, at
+   the level it is found, which is where the walk ends: a page or a large
+   page, or 0 where nothing is mapped. */
+static UINT64 kernel_leaf(UINT64 linear, int *level)
+{
+    UINT64 *table = top_table;
+    UINT64 entry = 0;
+
+    for (*level = levels; *level >= PAGE_TABLE_LEVEL; (*level)--) {
+        entry = table[table_index(linear, *level)];
+        if (!(entry & PTE_PRESENT) || *level == PAGE_TABLE_LEVEL ||
+            (entry & PTE_LARGE))
+            break;
+        table = table_at(entry);
+    }
+    return entry & PTE_PRESENT ? entry : 0;
+}
+
+/* The physical address of kernel address linear, which the kernel's
+   tables map. */
+static UINT64 kernel_physical(UINT64 linear)
+{
+    int level;
+    UINT64 entry = kernel_leaf(linear, &level);
+    UINT64 span = level_span(level);
+
+    return (entry & PTE_ADDRESS & ~(span - 1)) + linear % span;
+}
+
+static void stop(const char *what, UINT64 address)
+{
+    serial_write("nova: paging: ");
+    serial_write(what);
+    serial_write(" at ");
+    serial_hex(address);
+    serial_write(", halted\r\n");
+    halt_forever();
+}
+
+void paging_write_text(UINT64 linear, const UINT8 *bytes, UINT64 count)
+{
+    UINT64 i;
+    int level;
+
+    for (i = 0; i < count; i++) {
+        if (!kernel_leaf(linear + i, &level))
+            stop("text to write is not mapped", linear + i);
+        *(UINT8 *)direct_map(kernel_physical(linear + i)) = bytes[i];
+    }
 }
 
 /* The PWT, PCD and PAT bits of a PTE that select a PAT entry holding UC,
@@ -273,6 +329,14 @@ int paging_unmap_direct_range(UINT64 physical, UINT64 size)
     write_back_and_invalidate_caches();
     restore_interrupts(flags);
     return complete;
+}
+
+int paging_enter_user_space(UINT64 space)
+{
+    if (space == last_user_space)
+        return 0;
+    last_user_space = space;
+    return 1;
 }
 
 /* ------------------------------------------------------------------------
@@ -487,6 +551,12 @@ void paging_space_clear(UINT64 space)
 
 void paging_space_destroy(UINT64 space)
 {
+    UINT64 flags;
+
     paging_space_clear(space);
+    flags = save_and_disable_interrupts();
+    if (space == last_user_space)
+        last_user_space = 0;
+    restore_interrupts(flags);
     page_free(space);
 }

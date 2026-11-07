@@ -129,6 +129,16 @@ static void kernel_page_fault(INTERRUPT_FRAME *frame)
     frame->rip = fixup;
 }
 
+/* A #GP in the kernel is a bug, unless it is a checked MSR access to an
+   MSR the processor lacks, which then fails instead (msr.S). */
+static void kernel_general_protection(INTERRUPT_FRAME *frame)
+{
+    if (frame->rip != (UINT64)msr_read_access &&
+        frame->rip != (UINT64)msr_write_access)
+        exception_halt(frame);
+    frame->rip = (UINT64)msr_access_failed;
+}
+
 /* An interrupt from user mode returns there from here with interrupts
    disabled until IRETQ, so a thread whose process is terminating, stopped
    while it ran or while the scheduler had switched away from it here,
@@ -140,6 +150,9 @@ void interrupt_dispatch(INTERRUPT_FRAME *frame)
     switch (frame->vector) {
     case BREAKPOINT_VECTOR:
         log_breakpoint(frame);
+        break;
+    case GENERAL_PROTECTION_VECTOR:
+        kernel_general_protection(frame);
         break;
     case PAGE_FAULT_VECTOR:
         kernel_page_fault(frame);

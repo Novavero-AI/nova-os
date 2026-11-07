@@ -6,7 +6,15 @@
    Microsoft x64 convention keeps no data below RSP; from user mode the
    processor has switched to the thread's kernel stack from the TSS's
    RSP0 first (SDM Vol. 3A 7.14.4). NMI, double fault and machine check
-   switch to stacks of their own (gdt.c) and join ist_common instead.
+   switch to
+   stacks of their own (gdt.c) and join ist_common instead.
+
+   An entry from user mode carries the speculative-execution measures of
+   docs/spec/speculation.md M3 in the order M3 gives, and the return to
+   user mode those of its exit. Each is a measure site (x86_64.h,
+   MEASURE), skipped where the processor does not need it. RET and JMP
+   are followed by INT3 (M17).
+
    TinyCC runs the C preprocessor over this file and assembles it as AT&T
    syntax, where ';' separates statements; that lets one macro write a
    whole stub. */
@@ -49,7 +57,8 @@
     pushq $0;                                                \
     .endr;                                                   \
     pushq $(vector);                                         \
-    jmp common
+    jmp common;                                              \
+    int3
 
 #define EXCEPTION(vector) EXCEPTION_TO(vector, interrupt_common)
 #define EXCEPTION_IST(vector) EXCEPTION_TO(vector, ist_common)
@@ -60,9 +69,19 @@
     name:                                                    \
     pushq $0;                                                \
     pushq $(vector);                                         \
-    jmp interrupt_common
+    jmp interrupt_common;                                    \
+    int3
+
+    MEASURE_TABLE(entry_measures)
 
     .text
+
+/* VERW's memory operand: the kernel's data selector, a writable data
+   segment, as M13 decides. */
+    .globl verw_selector
+verw_selector:
+    .word KERNEL_DATA_SELECTOR
+
 EXCEPTION(0)
 EXCEPTION(1)
 EXCEPTION_IST(2)
@@ -102,17 +121,19 @@ INTERRUPT(spurious_stub, SPURIOUS_VECTOR)
 INTERRUPT(compat_gate_stub, COMPAT_GATE_VECTOR)
 
 /* One stub per message-signalled vector, each MSI_STUB_SIZE bytes from
-   the last: two pushes and a jump take at most 12 bytes (a PUSH of an
-   immediate above 0x7f needs 5), and .balign pads the rest. */
+   the last: two pushes, a jump and an INT3 take at most 13 bytes (a PUSH
+   of an immediate above 0x7f needs 5, the jump 5), and .balign pads the
+   rest. */
     .balign MSI_STUB_SIZE
     .globl msi_stubs
 msi_stubs:
     .set msi_vector, MSI_VECTOR_FIRST
     .rept MSI_VECTOR_COUNT
-    .balign MSI_STUB_SIZE
+    .balign MSI_STUB_SIZE, 0xcc
     pushq $0
     pushq $msi_vector
     jmp interrupt_common
+    int3
     .set msi_vector, msi_vector + 1
     .endr
 
@@ -125,7 +146,11 @@ msi_stubs:
    exchanges them, and the return to user mode exchanges them back
    (docs/spec/syscalls.md S3). From kernel mode GS is already the
    kernel's: the only kernel code that runs with the user's GS base is
-   the system-call entry and exit, with interrupts disabled.
+   the system-call entry and exit, with interrupts disabled. The test
+   that decides can be mispredicted either way, so each path fences
+   before it can reach a GS-relative load (M5; Intel SWAPGS,
+   "Mitigation"): the kernel path at once, the user path after the
+   SWAPGS.
 
    Delivery clears TF, NT, RF and IF but not AC (SDM Vol. 3A 7.12.1.3),
    which user code sets with POPF and user_copy sets on purpose. With
@@ -135,10 +160,17 @@ msi_stubs:
    processor has no SMAP, and AC then has no effect at CPL 0. */
 interrupt_common:
     testb $SELECTOR_RPL_MASK, ENTRY_CS(%rsp)
-    jz 1f
-    SWAPGS
-1:
+    jnz interrupt_from_user
+    lfence
     PUSH_REGISTERS
+    jmp interrupt_dispatch_common
+    int3
+interrupt_from_user:
+    SWAPGS
+    lfence
+    PUSH_REGISTERS
+    USER_ENTRY_MEASURES
+interrupt_dispatch_common:
     cmpb $0, smap_enabled(%rip)
     je 2f
     CLAC
@@ -161,30 +193,84 @@ interrupt_common:
    first switch (switch.S). IRETQ faults on a non-canonical RIP at CPL 0
    with the user's GS base already swapped in (docs/spec/syscalls.md S5),
    so a return address above USER_TOP, which only a kernel bug can
-   produce, ends the thread's process instead (user_bad_return). */
+   produce, ends the thread's process instead (user_bad_return). Then
+   come M3's exit measures: IBRS cleared (M6) and VERW (M13), the last
+   instruction before IRETQ. */
     .globl return_to_user
 return_to_user:
     movq FRAME_RIP(%rsp), %rax
     cmpq user_top(%rip), %rax
     ja 3f
+    MEASURE(MEASURE_IBRS)
+    WRITE_SPEC_CTRL(spec_ctrl_user)
+    MEASURE_END
     POP_REGISTERS
     addq $VECTOR_AND_ERROR_CODE, %rsp
     SWAPGS
+    MEASURE(MEASURE_VERW)
+    verw verw_selector(%rip)
+    MEASURE_END
     iretq
 3:
     movq %rsp, %rcx
     subq $SHADOW_SPACE, %rsp
     call user_bad_return
+    int3
 
 /* NMI, double fault and machine check: each can arrive inside the
    system-call entry or exit, at CPL 0 with the user's GS base, so these
-   never execute SWAPGS and never use GS (S3). Each stops the kernel. */
+   never execute SWAPGS and never use GS (S3). Each can arrive with
+   either IBRS value, so where M6's rule 4 applies the handler writes the
+   kernel's IA32_SPEC_CTRL (M3). Each stops the kernel, so it is not
+   restored. */
 ist_common:
     PUSH_REGISTERS
     cld
+    MEASURE(MEASURE_IBRS)
+    WRITE_SPEC_CTRL(spec_ctrl_kernel)
+    MEASURE_END
     movq %rsp, %rcx
     subq $SHADOW_SPACE, %rsp
     call exception_halt
+    int3
+
+/* The BHB-clearing sequence of M8: Intel's short sequence (Intel BHI,
+   "Software BHB-clearing Sequence", Listing 1), which suffices on every
+   processor before Alder Lake, as a routine the entries call. Its CALLs
+   and RETs balance. INT3 follows each RET and JMP as M17 asks, where the
+   listing has nothing, and in place of the NOP the listing puts after
+   the JMP at 803, a byte that is never executed either way. Clobbers
+   RAX, RCX and the flags. */
+    .globl bhb_clear
+bhb_clear:
+    movl $5, %ecx
+    call 801f
+    jmp 805f
+    int3
+    .balign 64, 0xcc
+801:
+    call 802f
+    ret
+    int3
+    .balign 64, 0xcc
+802:
+    movl $5, %eax
+803:
+    jmp 804f
+    int3
+804:
+    subl $1, %eax
+    jnz 803b
+    subl $1, %ecx
+    jnz 801b
+    ret
+    int3
+805:
+    lfence
+    ret
+    int3
+
+    MEASURE_TABLE_END(entry_measures_end)
 
     .data
     .balign 8

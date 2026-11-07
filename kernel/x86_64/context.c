@@ -15,6 +15,7 @@
 #include "memory_layout.h"
 #include "page_table.h"
 #include "paging.h"
+#include "speculation.h"
 #include "x86_64.h"
 
 _Static_assert(offsetof(ARCH_CONTEXT, rsp) == CONTEXT_RSP,
@@ -32,7 +33,6 @@ typedef struct {
    16-byte aligned before the call pushed the return address (x64 calling
    convention; x64 stack usage). */
 #define SHADOW_SPACE 32
-#define RETURN_ADDRESS_SIZE 8
 
 /* The RFLAGS a user thread starts with: IF and the always-set bit 1
    (docs/spec/syscalls.md S8; SDM Vol. 3A 2.3). */
@@ -165,9 +165,14 @@ static void load_data_segments(const UINT16 *selectors)
    loaded after FS's selector, which would replace it. Kernel code
    executes no x87, SSE or AVX instruction (docs/spec/boot-protocol.md,
    Flags and floating point) and its 64-bit code reads no selector, so a
-   kernel thread leaves them all as it found them. Loading CR3 invalidates the lower half's translations
-   (SDM Vol. 3A 5.10.4.1); no kernel entry is global, so the upper half's
-   go too, and are refilled from the same tables. */
+   kernel thread leaves them all as it found them.
+
+   A switch to a user thread of another process than the last user
+   thread this processor ran takes the speculation barrier before the new
+   CR3 (docs/spec/speculation.md M3). Loading CR3 invalidates
+   the lower half's translations (SDM Vol. 3A 5.10.4.1); no kernel entry
+   is global, so the upper half's go too, and are refilled from the same
+   tables. */
 void arch_switch(ARCH_CONTEXT *from, ARCH_CONTEXT *to)
 {
     if (from->fpu) {
@@ -177,6 +182,8 @@ void arch_switch(ARCH_CONTEXT *from, ARCH_CONTEXT *to)
     }
     tss_set_kernel_stack(to->kernel_stack_top);
     per_cpu_set_kernel_stack(to->kernel_stack_top);
+    if (to->fpu && paging_enter_user_space(to->address_space))
+        speculation_process_switch();
     if ((read_cr3() & PTE_ADDRESS) != to->address_space)
         write_cr3(to->address_space);
     if (to->fpu) {

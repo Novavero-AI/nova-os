@@ -33,6 +33,7 @@
 #include "../object/process.h"
 #include "../x86_64/clock.h"
 #include "../x86_64/paging.h"
+#include "../x86_64/speculation.h"
 
 #define TIME_SLICE_NS (TIME_SLICE_MS * NS_PER_MS)
 
@@ -301,7 +302,8 @@ void sched_init(void)
 
 /* An interrupt that makes a thread ready while this thread halts switches
    to it before returning here; one that arrives between the check and
-   the halt wakes the halt, as wait_for_interrupt describes. */
+   the halt wakes the halt, as wait_for_interrupt describes. Where
+   docs/spec/speculation.md M13 applies, VERW comes before the halt. */
 void sched_idle(void)
 {
     CPU *cpu = cpu_self();
@@ -311,7 +313,7 @@ void sched_idle(void)
         if (cpu->ready_head)
             reschedule(cpu);
         else
-            wait_for_interrupt();
+            speculation_wait_for_interrupt();
     }
 }
 

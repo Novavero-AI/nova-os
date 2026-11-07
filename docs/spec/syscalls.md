@@ -686,14 +686,12 @@ reaches the `SYSCALL` entry like any 64-bit thread.
 
 The gate enters through the same path as every interrupt from user mode
 (S9), with the same measures: RFLAGS.AC cleared, `SWAPGS` decided by the
-saved CS, and the return address checked against `USER_TOP` (S5). None
-of the per-entry and per-exit measures of
-[speculation.md M3](speculation.md#m3-the-measures-by-path) is in the
-kernel yet on any path, the `SYSCALL` entry included: the LFENCE after
-the conditional `SWAPGS` (M5), IBRS writes (M6), IBPB (M9, M10), the
-32-CALL overwrite (M7), the BHB-clearing sequence (M8), page-table
-isolation (M11), VERW (M13) and the masked call number (M4). The lane
-takes each when the interrupt entry does.
+saved CS, the return address checked against `USER_TOP` (S5), and the
+per-entry and per-exit measures of
+[speculation.md M3](speculation.md#m3-the-measures-by-path) that the
+processor needs, but page-table isolation (M11), which the kernel does
+not have yet on any path; the call number is masked as a 64-bit
+caller's is (M4).
 
 ## References
 

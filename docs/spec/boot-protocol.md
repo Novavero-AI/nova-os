@@ -515,6 +515,13 @@ SEV-ES they run it on a page table of its own, also in
 (`X64/MpFuncs.nasm`) loads into CR3, so they translate through none of
 the firmware's boot-services tables.
 
+The kernel starts none of them. Whatever starts them starts at most one
+logical processor per core
+([speculation.md M16](speculation.md#m16-sibling-threads)), and gives
+each, before it runs user code, its own entry area (GDT, TSS, per-CPU
+block and stacks), the MSR settings `speculation_init` makes on the
+bootstrap processor, and its own record of the last process it ran.
+
 ### Firmware services
 
 Boot services are gone. Of the system table only `Hdr`, `FirmwareVendor`,

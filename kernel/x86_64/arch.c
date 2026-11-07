@@ -5,6 +5,7 @@
 #include "cpu.h"
 #include "paging.h"
 #include "serial.h"
+#include "speculation.h"
 
 void arch_init(void)
 {
@@ -16,6 +17,7 @@ void arch_init(void)
        anything depends on it. */
     breakpoint();
     paging_init();
+    speculation_init();
     user_mode_init();
 }
 
