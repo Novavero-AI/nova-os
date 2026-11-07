@@ -2,9 +2,10 @@
    before the first process, so that every object it makes is gone
    before any process could see it. It checks that interrupt vectors are
    charged to a job's quota (docs/spec/objects.md O6), that closing a
-   handle ends the waits made through it (O9), and that a device page
-   takes one memory type (docs/spec/ipc.md I6); it logs each result to
-   the serial port and halts with the reason at the first failure. */
+   handle ends the waits made through it (O9), that a device page takes
+   one memory type (docs/spec/ipc.md I6), and that process_unmap removes
+   whole mappings only (docs/spec/syscalls.md S8); it logs each result
+   to the serial port and halts with the reason at the first failure. */
 
 #include "boot_info.h"
 #include "channel.h"
@@ -12,6 +13,7 @@
 #include "process.h"
 #include "cpu.h"
 #include "../acpi/acpi.h"
+#include "../mm/page.h"
 #include "../x86_64/clock.h"
 #include "../x86_64/serial.h"
 #include "../x86_64/user.h"
@@ -31,6 +33,19 @@
 #define TEST_PACKET USER_BASE
 #define JOIN_LIMIT_NS (5 * NS_PER_SECOND)
 #define POLL_MS 1
+
+/* The unmap test maps a section of TEST_PAGES pages into a process of its
+   own, which never runs: its first TEST_FIRST_PAGES at TEST_ADDRESS and
+   the rest just above them, two mappings side by side, in a range no
+   other mapping's tables reach. */
+#define TEST_ADDRESS 0x40000000ULL
+#define TEST_PAGES 3
+#define TEST_FIRST_PAGES 2
+
+/* A section's references in the unmap test: its creator's handle, and
+   one for each mapping. */
+#define TEST_UNMAPPED_REFERENCES 1
+#define TEST_MAPPED_REFERENCES (TEST_UNMAPPED_REFERENCES + 2)
 
 /* A thread waiting through a handle in the cancel test's table, and how
    its wait ended. */
@@ -255,10 +270,91 @@ static void test_memory_types(const BOOT_INFO *info)
                  "only its live section's type\r\n");
 }
 
+static int test_pages_mapped(const PROCESS *process, UINT32 pages)
+{
+    UINT32 i;
+
+    for (i = 0; i < pages; i++)
+        if (!paging_user_mapped(process->space, TEST_ADDRESS + i * PAGE_SIZE))
+            return 0;
+    return 1;
+}
+
+static int test_pages_unmapped(const PROCESS *process, UINT32 pages)
+{
+    UINT32 i;
+
+    for (i = 0; i < pages; i++)
+        if (paging_user_mapped(process->space, TEST_ADDRESS + i * PAGE_SIZE))
+            return 0;
+    return 1;
+}
+
+/* Part of a mapping, a range reaching past one and a range with a page
+   no mapping holds are each refused, removing nothing; then one call
+   removes both mappings, each releases its section, every page the
+   tables of the range took is free again, and under isolation the user
+   table no longer names them. Nothing else allocates pages while the
+   test runs, before the first process. */
+static void test_unmap(void)
+{
+    JOB *job = job_create_root();
+    PROCESS *process = 0;
+    SECTION *section = 0;
+    UINT64 free_before;
+
+    check(job && process_create(job, 0, &process) == OK &&
+              section_create(TEST_PAGES * PAGE_SIZE, &section) == OK,
+          "no memory for the unmap test");
+    free_before = page_free_count();
+    check(process_map(process, section, 0, TEST_ADDRESS,
+                      TEST_FIRST_PAGES * PAGE_SIZE, MAP_READ) == OK &&
+              process_map(process, section, TEST_FIRST_PAGES * PAGE_SIZE,
+                          TEST_ADDRESS + TEST_FIRST_PAGES * PAGE_SIZE,
+                          (TEST_PAGES - TEST_FIRST_PAGES) * PAGE_SIZE,
+                          MAP_READ | MAP_WRITE) == OK &&
+              paging_tables_agree(process->space),
+          "the unmap test's mappings were refused");
+    check(process_unmap(process, TEST_ADDRESS, PAGE_SIZE) == ERR_BAD_STATE,
+          "process_unmap of part of a mapping was not refused");
+    check(process_unmap(process, TEST_ADDRESS + PAGE_SIZE,
+                        TEST_FIRST_PAGES * PAGE_SIZE) == ERR_BAD_STATE,
+          "process_unmap of a range reaching past a mapping was not "
+          "refused");
+    check(process_unmap(process, TEST_ADDRESS,
+                        (TEST_PAGES + 1) * PAGE_SIZE) == ERR_BAD_STATE,
+          "process_unmap of a range with an unmapped page was not refused");
+    check(process_unmap(process, TEST_ADDRESS + 1, PAGE_SIZE) ==
+              ERR_INVALID_ARGS,
+          "process_unmap of an unaligned range was not refused");
+    check(test_pages_mapped(process, TEST_PAGES) &&
+              section->object.references == TEST_MAPPED_REFERENCES,
+          "a refused process_unmap removed a page");
+    check(process_unmap(process, TEST_ADDRESS, TEST_PAGES * PAGE_SIZE) == OK,
+          "process_unmap of two whole mappings was refused");
+    check(test_pages_unmapped(process, TEST_PAGES) &&
+              process->mapping_count == 0,
+          "process_unmap left a page mapped");
+    check(section->object.references == TEST_UNMAPPED_REFERENCES,
+          "an unmapped mapping kept its section");
+    check(page_free_count() == free_before,
+          "process_unmap left a table of the range allocated");
+    check(paging_tables_agree(process->space),
+          "process_unmap left the user table naming a freed table");
+    object_close(&section->object);
+    object_close(&process->object);
+    object_close(&job->object);
+    serial_write("nova: objects: process_unmap refused part of a mapping, "
+                 "a range past one and a range with a hole, then removed "
+                 "two whole mappings, released their section and freed "
+                 "their tables\r\n");
+}
+
 void object_self_test(void *boot_info)
 {
     test_vector_quota();
     test_canceled_waits();
     test_memory_types(boot_info);
+    test_unmap();
     serial_write("nova: object self-test passed\r\n");
 }

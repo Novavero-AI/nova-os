@@ -35,6 +35,11 @@ const BOOT_FILE_VIEW *boot_file(const char *name);
    the call fails. */
 UINT8 *map_into_init(UINT32 section, UINT64 size, UINT32 protection);
 
+/* Remove the mapping map_into_init made at address for size bytes,
+   which it rounds up to whole pages as map_into_init does. Returns the
+   call's status. */
+UINT32 unmap_from_init(const UINT8 *address, UINT64 size);
+
 /* Map size bytes of section, from its start, at address in init's own
    space with MAP_ protection, and return the address; 0 if the call
    fails. */

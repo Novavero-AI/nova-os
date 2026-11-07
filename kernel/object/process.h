@@ -10,8 +10,8 @@
 #include "section.h"
 #include "../sched/thread.h"
 
-/* The most process_map calls one process takes; each holds its section
-   until the process terminates. */
+/* The most mappings one process holds at once; each holds its section
+   until it is unmapped or the process terminates. */
 #define PROCESS_MAX_MAPPINGS 128
 
 /* The rights a new process's handle carries (O5, rule 1). */
@@ -28,6 +28,14 @@
 typedef struct PROCESS PROCESS;
 typedef struct USER_THREAD USER_THREAD;
 
+/* What one process_map call mapped: size bytes at address, pages of
+   section, which the mapping holds. */
+typedef struct {
+    SECTION *section;
+    UINT64 address;
+    UINT64 size;
+} MAPPING;
+
 struct PROCESS {
     OBJECT object;
     WAITABLE waitable;
@@ -41,7 +49,7 @@ struct PROCESS {
     UINT32 threads; /* started and not yet exited, on the list below */
     USER_THREAD *running;
     UINT32 mapping_count;
-    SECTION *mappings[PROCESS_MAX_MAPPINGS];
+    MAPPING mappings[PROCESS_MAX_MAPPINGS]; /* in no order */
 };
 
 /* A user thread as an object: created for a process by thread_create
@@ -105,6 +113,18 @@ UINT32 process_map_rights(UINT32 protection);
    ERR_NO_MEMORY. A call that fails maps nothing. */
 STATUS process_map(PROCESS *process, SECTION *section, UINT64 offset,
                    UINT64 address, UINT64 size, UINT32 protection);
+
+/* Remove the mappings that make up the size bytes at address in
+   process: every page of the range lies in a mapping, and every
+   mapping that reaches the range lies wholly within it (S8). Their
+   translations are made unusable (paging_unmap_user_borrowed) before
+   they release their sections. Returns
+   OK; ERR_INVALID_ARGS for an address or size that is not a whole
+   number of pages, a size of 0, or a range that leaves user memory; or
+   ERR_BAD_STATE if the process is terminating, a page of the range lies
+   in no mapping, or a mapping reaches past the range. A call that fails
+   unmaps nothing. */
+STATUS process_unmap(PROCESS *process, UINT64 address, UINT64 size);
 
 /* End process with exit_code (O10). Its threads stop first: each
    blocked one's wait ends with ERR_CANCELED, none blocks again, and each

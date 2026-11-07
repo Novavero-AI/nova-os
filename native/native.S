@@ -214,6 +214,14 @@ process_map:
     syscall
     ret
 
+/* UINT32 process_unmap(UINT32 process, UINT64 address, UINT64 size) */
+    .globl process_unmap
+process_unmap:
+    movq %rcx, %r10
+    movl $CALL_PROCESS_UNMAP, %eax
+    syscall
+    ret
+
 /* UINT32 handle_duplicate(UINT32 handle, UINT32 rights, UINT32 *duplicate) */
     .globl handle_duplicate
 handle_duplicate:

@@ -6,8 +6,8 @@
    The output region holds the seed chain's outputs one after another
    from OUTPUT_BASE. Each is written only by the process that creates
    it, and only while it is the last in the region, so it grows in place
-   as sections are mapped at the region's end. process_map has no
-   inverse yet, so the region only grows. */
+   as sections are mapped at the region's end. init unmaps none of it,
+   so the region only grows. */
 
 #include "view.h"
 #include "file_protocol.h"

@@ -212,5 +212,4 @@ largest, `M2-0-0.M1`, is 1.7 MB.
   inputs missing, and passing it would report the checks passed with the
   chain unrun.
 - **Cost:** the views are fixed in the first process, and the outputs
-  stay in its memory until it ends, since `process_map` has no inverse
-  yet.
+  stay in its memory until it ends.

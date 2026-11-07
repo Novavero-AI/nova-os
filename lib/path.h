@@ -16,6 +16,12 @@
 /* The most links one open follows, Linux's MAXSYMLINKS. */
 #define SYMLINK_MAX_HOPS 40
 
+/* The most entries one listing takes from its server, so that a server
+   whose listing never ends fails the call instead of holding it
+   (storage.md F1): 65,536, 1,024 full replies, sixteen times the most
+   paths the store service lists at its root (STORE_PATHS_MAX, store.c). */
+#define LIST_ENTRIES_MAX 65536
+
 typedef struct {
     UINT32 directory;
     UINT32 length;
@@ -48,7 +54,9 @@ UINT32 view_open(const VIEW *view, const char *path, UINT32 rights,
    directory at path, in bytewise order of name: the server's entries,
    with the next component of any view prefix nested below path (F5,
    rule 4). name lasts only for the call, and each calls no path
-   function. Returns OK or a status as view_open's. */
+   function. Returns OK or a status as view_open's; ERR_OUT_OF_RANGE
+   once the server has given LIST_ENTRIES_MAX entries and the listing
+   has not ended, having called each for those. */
 UINT32 view_list(const VIEW *view, const char *path,
                  void (*each)(void *context, const UINT8 *name,
                               UINT32 length, UINT32 kind),

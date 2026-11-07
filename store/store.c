@@ -11,6 +11,16 @@
    section, which holds every path (F16). It never follows a symbolic
    link: an open that reaches one stops there (F3).
 
+   Each channel belongs to a client (F17): the control channel and the
+   root directory each start one, as does each closure directory, and
+   every other channel belongs to the client of the channel it was opened
+   through. A client holds at most SERVICE_CLIENT_CHANNELS channels and
+   the service keeps at most CLIENT_SECTIONS sections for it, so no
+   client takes what another holds; the clients are the control channel,
+   the root and up to six programs' closure directories. The root is
+   one client, which every process that opens /store through the
+   namespace server shares.
+
    One thread waits on every channel it serves and serves each message
    in turn; it ends once no channel is left. */
 
@@ -24,12 +34,17 @@
 /* Every channel served is waited on in one call. */
 #define CHANNELS_MAX WAIT_MANY_MAX
 
-/* The blob sections the service fills, which it keeps for its life:
-   process_map has no inverse yet, so each stays mapped in the service,
-   writable as it was mapped to be filled; the handle the service keeps
-   carries neither WRITE nor PIN. A blob that fails its check keeps its
-   slot, and is refused at once when asked for again. */
-#define SECTIONS_MAX 16
+/* The sections the service keeps for a client: the CLIENT_SECTIONS it
+   filled for the client most recently used, so that it keeps at most
+   SERVICE_CLIENTS * CLIENT_SECTIONS sections, 32 MiB at
+   SECTION_MAX_SIZE, and one client's fills never push out another's
+   (F17). A section one client keeps serves every client that asks for
+   its blob. The service maps a section writable only while it fills
+   it, and the handle it keeps carries neither WRITE nor PIN, so once
+   the section is handed out nothing can write it (F9, F15). A blob that
+   fails its check keeps an entry with no section, which refuses it at
+   once while the entry lasts. */
+#define CLIENT_SECTIONS 2
 #define KEPT_SECTION_RIGHTS                                               \
     (SECTION_RIGHT_READ | SECTION_RIGHT_EXECUTE | RIGHT_DUPLICATE |       \
      RIGHT_TRANSFER)
@@ -39,9 +54,10 @@
 #define STORE_PATHS_MAX 4096
 #define BITS_PER_BYTE 8
 
-/* Where the image and the blob sections are mapped in the service. */
+/* Where the image is mapped in the service, and where a blob's section
+   is mapped while the service fills it, one at a time. */
 #define IMAGE_BASE 0x0000000100000000ULL
-#define SECTIONS_BASE 0x0000000200000000ULL
+#define FILL_BASE 0x0000000200000000ULL
 
 /* The rights each kind of directory may carry: the store is read only,
    and only the namespace server's directories publish. */
@@ -57,6 +73,7 @@ typedef enum {
 
 typedef struct {
     UINT32 handle;
+    UINT32 client;
     CHANNEL_KIND kind;
     UINT32 rights;
     UINT32 path; /* a closure's path's registration */
@@ -65,14 +82,19 @@ typedef struct {
 
 typedef struct {
     UINT8 blob[STORE_DIGEST_SIZE];
-    UINT32 section; /* HANDLE_INVALID once its blob failed its check */
+    UINT32 section; /* HANDLE_INVALID for a blob that failed its check */
 } SECTION_SLOT;
+
+typedef struct {
+    UINT32 channels; /* open; 0 for a free client */
+    UINT32 section_count;
+    SECTION_SLOT sections[CLIENT_SECTIONS]; /* the most recently used first */
+} CLIENT;
 
 static STORE_IMAGE image;
 static CHANNEL channels[CHANNELS_MAX];
 static UINT32 channel_count;
-static SECTION_SLOT sections[SECTIONS_MAX];
-static UINT32 section_count;
+static CLIENT clients[SERVICE_CLIENTS];
 static UINT32 self = HANDLE_INVALID;
 
 static UINT8 message[CHANNEL_MAX_BYTES];
@@ -119,21 +141,55 @@ static void close_received(UINT32 keep)
     received_count = 0;
 }
 
-static UINT32 add_channel(UINT32 handle, CHANNEL_KIND kind, UINT32 rights,
-                          UINT32 path, const UINT8 *node)
+/* Serve handle as a channel of client. The channels open are the sum of
+   the clients', so they never pass CHANNELS_MAX. */
+static UINT32 add_channel(UINT32 handle, UINT32 client, CHANNEL_KIND kind,
+                          UINT32 rights, UINT32 path, const UINT8 *node)
 {
     CHANNEL *c;
 
-    if (channel_count == CHANNELS_MAX)
+    if (clients[client].channels == SERVICE_CLIENT_CHANNELS)
         return ERR_NO_RESOURCES;
+    clients[client].channels++;
     c = &channels[channel_count++];
     c->handle = handle;
+    c->client = client;
     c->kind = kind;
     c->rights = rights;
     c->path = path;
     if (node)
         copy(c->node, node, STORE_DIGEST_SIZE);
     return OK;
+}
+
+/* Serve handle as the first channel of a new client, in a client that
+   has none open. */
+static UINT32 add_client(UINT32 handle, CHANNEL_KIND kind, UINT32 rights,
+                         UINT32 path)
+{
+    UINT32 i;
+
+    for (i = 0; i < SERVICE_CLIENTS; i++)
+        if (clients[i].channels == 0)
+            return add_channel(handle, i, kind, rights, path, 0);
+    return ERR_NO_RESOURCES;
+}
+
+/* Close the channel at index, whose place the last channel takes. A
+   client left with no channel ends, closing the sections kept for it. */
+static void remove_channel(UINT32 index)
+{
+    CLIENT *client = &clients[channels[index].client];
+    UINT32 i;
+
+    handle_close(channels[index].handle);
+    channels[index] = channels[--channel_count];
+    if (--client->channels)
+        return;
+    for (i = 0; i < client->section_count; i++)
+        if (client->sections[i].section != HANDLE_INVALID)
+            handle_close(client->sections[i].section);
+    client->section_count = 0;
 }
 
 /* Write a reply of the header and data bytes from reply, with handles. A
@@ -295,7 +351,8 @@ static void open_path(const CHANNEL *c, const UINT8 *path, UINT32 length,
     if (status == OK && c->kind == CHANNEL_NODE)
         status = store_node_get(&image, c->node, &node);
     if (status == OK && length == 0) {
-        status = add_channel(endpoint, c->kind, rights, c->path, c->node);
+        status = add_channel(endpoint, c->client, c->kind, rights, c->path,
+                             c->node);
         if (status == OK) {
             data = c->kind == CHANNEL_NODE ? node_attributes(&node, rights)
                                            : listing_attributes(rights);
@@ -338,8 +395,8 @@ static void open_path(const CHANNEL *c, const UINT8 *path, UINT32 length,
         return;
     }
     if (status == OK)
-        status = add_channel(endpoint, CHANNEL_NODE, rights, c->path,
-                             node.digest);
+        status = add_channel(endpoint, c->client, CHANNEL_NODE, rights,
+                             c->path, node.digest);
     if (status != OK) {
         if (status == ERR_DATA_INTEGRITY) {
             say("nova-store: integrity error opening ");
@@ -353,6 +410,8 @@ static void open_path(const CHANNEL *c, const UINT8 *path, UINT32 length,
     send(endpoint, transaction, OK, 0, node_attributes(&node, rights), 0, 0);
 }
 
+/* Answer an open of the closure directory of the path whose base name
+   is the length bytes at name, on endpoint, which starts a client. */
 static void open_closure(const UINT8 *name, UINT32 length, UINT32 rights,
                          UINT32 transaction, UINT32 endpoint)
 {
@@ -364,7 +423,7 @@ static void open_closure(const UINT8 *name, UINT32 length, UINT32 rights,
              !store_registration_find(&image, name, length, &index))
         status = ERR_NOT_FOUND;
     if (status == OK)
-        status = add_channel(endpoint, CHANNEL_CLOSURE, rights, index, 0);
+        status = add_client(endpoint, CHANNEL_CLOSURE, rights, index);
     if (status != OK) {
         send(endpoint, transaction, status, 0, 0, 0, 0);
         handle_close(endpoint);
@@ -491,52 +550,92 @@ static UINT32 read_file(const CHANNEL *c, UINT64 offset, UINT32 length,
     return store_blob_read(&blob, offset, reply + sizeof(IO_REPLY), *count);
 }
 
-/* The section of blob's slot, filled from the image the first time it is
-   asked for through a mapping made with the section's first handle,
-   which then closes, leaving the service its KEPT_SECTION_RIGHTS. */
-static UINT32 blob_section(const STORE_BLOB *blob, UINT32 *section)
+/* A new section holding blob's bytes, and the service's handle to it,
+   with KEPT_SECTION_RIGHTS. The section is filled through a mapping
+   made with its first handle, which closes before the fill, and the
+   mapping is removed before the section is kept, so that the service
+   gives up its own write access (F9); a fill whose mapping is not
+   removed keeps nothing. Returns ERR_DATA_INTEGRITY if a block fails
+   its check. */
+static UINT32 fill(const STORE_BLOB *blob, UINT32 *section)
 {
-    SECTION_SLOT *slot;
-    UINT64 size, i;
-    UINT32 full, status;
+    UINT64 size = blob->length ? (blob->length + PAGE_SIZE - 1) / PAGE_SIZE *
+                                     PAGE_SIZE
+                               : PAGE_SIZE;
+    UINT32 full, status, unmapped;
 
-    for (i = 0; i < section_count; i++)
-        if (same(blob->digest, sections[i].blob, STORE_DIGEST_SIZE)) {
-            *section = sections[i].section;
-            return *section == HANDLE_INVALID ? ERR_DATA_INTEGRITY : OK;
-        }
-    if (blob->length > SECTION_MAX_SIZE)
-        return ERR_OUT_OF_RANGE;
-    if (section_count == SECTIONS_MAX)
-        return ERR_NO_RESOURCES;
-    size = blob->length ? (blob->length + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE
-                        : PAGE_SIZE;
+    *section = HANDLE_INVALID;
     status = section_create(size, 0, &full);
     if (status != OK)
         return status;
-    slot = &sections[section_count];
     status = handle_duplicate(full, KEPT_SECTION_RIGHTS, section);
     if (status == OK)
-        status = process_map(self, full, 0,
-                             SECTIONS_BASE + section_count * SECTION_MAX_SIZE,
-                             size, MAP_READ | MAP_WRITE);
+        status =
+            process_map(self, full, 0, FILL_BASE, size, MAP_READ | MAP_WRITE);
     handle_close(full);
-    if (status != OK) {
-        if (*section != HANDLE_INVALID)
-            handle_close(*section);
-        return status;
+    if (status == OK) {
+        status = store_blob_read(blob, 0, (UINT8 *)FILL_BASE, blob->length);
+        unmapped = process_unmap(self, FILL_BASE, size);
+        if (status == OK)
+            status = unmapped;
     }
-    copy(slot->blob, blob->digest, STORE_DIGEST_SIZE);
-    slot->section = *section;
-    section_count++;
-    status = store_blob_read(
-        blob, 0, (UINT8 *)(SECTIONS_BASE + (section_count - 1) *
-                                               SECTION_MAX_SIZE),
-        blob->length);
-    if (status != OK) {
+    if (status != OK && *section != HANDLE_INVALID) {
         handle_close(*section);
-        slot->section = HANDLE_INVALID;
+        *section = HANDLE_INVALID;
     }
+    return status;
+}
+
+/* Make the section at index of client's the most recently used, first,
+   and return it. */
+static const SECTION_SLOT *touch(CLIENT *client, UINT32 index)
+{
+    SECTION_SLOT slot = client->sections[index];
+
+    for (; index > 0; index--)
+        client->sections[index] = client->sections[index - 1];
+    client->sections[0] = slot;
+    return &client->sections[0];
+}
+
+/* Keep section, which holds blob or is HANDLE_INVALID for a blob that
+   failed its check, as client's most recently used; its least recently
+   used falls out past CLIENT_SECTIONS, its handle closed. */
+static void keep_section(CLIENT *client, const UINT8 *blob, UINT32 section)
+{
+    SECTION_SLOT *last;
+
+    if (client->section_count == CLIENT_SECTIONS) {
+        last = &client->sections[CLIENT_SECTIONS - 1];
+        if (last->section != HANDLE_INVALID)
+            handle_close(last->section);
+    } else {
+        last = &client->sections[client->section_count++];
+    }
+    copy(last->blob, blob, STORE_DIGEST_SIZE);
+    last->section = section;
+    touch(client, client->section_count - 1);
+}
+
+/* The section of blob for client: one any client keeps, or one filled
+   now and kept for client. */
+static UINT32 blob_section(UINT32 client, const STORE_BLOB *blob,
+                           UINT32 *section)
+{
+    UINT32 k, i, status;
+
+    for (k = 0; k < SERVICE_CLIENTS; k++)
+        for (i = 0; i < clients[k].section_count; i++)
+            if (same(blob->digest, clients[k].sections[i].blob,
+                     STORE_DIGEST_SIZE)) {
+                *section = touch(&clients[k], i)->section;
+                return *section == HANDLE_INVALID ? ERR_DATA_INTEGRITY : OK;
+            }
+    if (blob->length > SECTION_MAX_SIZE)
+        return ERR_OUT_OF_RANGE;
+    status = fill(blob, section);
+    if (status == OK || status == ERR_DATA_INTEGRITY)
+        keep_section(&clients[client], blob->digest, *section);
     return status;
 }
 
@@ -555,7 +654,7 @@ static UINT32 get_section(const CHANNEL *c, UINT32 rights, UINT64 *size,
         return ERR_ACCESS_DENIED;
     status = file_of(c, &node, &blob);
     if (status == OK)
-        status = blob_section(&blob, &section);
+        status = blob_section(c->client, &blob, &section);
     if (status == OK)
         status = handle_duplicate(
             section,
@@ -735,10 +834,10 @@ static void read_bootstrap(UINT32 bootstrap)
         process_exit(SERVICE_EXIT_FAILED);
     }
     handle_close(handles[STORE_BOOTSTRAP_IMAGE].handle);
-    add_channel(handles[STORE_BOOTSTRAP_CONTROL].handle, CHANNEL_CONTROL,
-                CONTROL_RIGHTS, 0, 0);
-    add_channel(handles[STORE_BOOTSTRAP_ROOT].handle, CHANNEL_ROOT,
-                STORE_RIGHTS, 0, 0);
+    add_client(handles[STORE_BOOTSTRAP_CONTROL].handle, CHANNEL_CONTROL,
+               CONTROL_RIGHTS, 0);
+    add_client(handles[STORE_BOOTSTRAP_ROOT].handle, CHANNEL_ROOT,
+               STORE_RIGHTS, 0);
     say("nova-store: serving ");
     say_number(image.registration_count);
     say(" paths, ");
@@ -774,10 +873,8 @@ _Noreturn void store_main(UINT32 bootstrap, UINT64 argument)
                 keep = serve(i);
             else
                 keep = !(observed & CHANNEL_PEER_CLOSED);
-            if (!keep) {
-                handle_close(channels[i].handle);
-                channels[i] = channels[--channel_count];
-            }
+            if (!keep)
+                remove_channel(i);
         }
     }
     say("nova-store: no channel left open, ending\r\n");

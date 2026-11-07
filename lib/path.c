@@ -529,6 +529,7 @@ UINT32 view_list(const VIEW *view, const char *path,
     IO_REQUEST request;
     const IO_DIRECTORY_ENTRY *entry;
     UINT32 length, count, next = 0, channel, status, reply_length, at;
+    UINT32 taken = 0;
     UINT64 cookie = 0;
 
     if (!normalize((const UINT8 *)path, text_length(path), current, &length))
@@ -569,6 +570,10 @@ UINT32 view_list(const VIEW *view, const char *path,
             if (reply_length - at < sizeof *entry ||
                 reply_length - at - sizeof *entry < entry->length) {
                 status = ERR_BAD_STATE;
+                break;
+            }
+            if (taken++ == LIST_ENTRIES_MAX) {
+                status = ERR_OUT_OF_RANGE;
                 break;
             }
             name = reply_bytes + at + sizeof *entry;

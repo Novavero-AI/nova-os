@@ -9,6 +9,14 @@
    step; unpublishing removes it (F4). The server holds no per-process
    state: a process's view names the directories it reaches (F5).
 
+   Each root channel belongs to a client (F17). The root channel of the
+   bootstrap message, its starter's, starts one, and so does each open
+   of the root through it, which is how the starter hands the root to
+   another process; an open of the root through any other channel
+   belongs to that channel's client. A client holds at most
+   SERVICE_CLIENT_CHANNELS root channels, so none takes what another
+   holds.
+
    One thread waits on every root channel it serves; it ends once none
    is left open, and its publications close with it. */
 
@@ -27,9 +35,17 @@
 #define ROOT_RIGHTS                                                       \
     (IO_RIGHT_READ | IO_RIGHT_EXECUTE | IO_RIGHT_LIST | IO_RIGHT_PUBLISH)
 
+/* Whether opening the root through a channel starts a client. */
+typedef enum {
+    OPENS_JOIN = 1,
+    OPENS_START_CLIENTS
+} OPENS;
+
 typedef struct {
     UINT32 handle;
+    UINT32 client;
     UINT32 rights;
+    OPENS opens;
 } CHANNEL;
 
 /* A name and the directory published under it, kept in bytewise order
@@ -42,6 +58,7 @@ typedef struct {
 
 static CHANNEL channels[CHANNELS_MAX];
 static UINT32 channel_count;
+static UINT32 client_channels[SERVICE_CLIENTS]; /* 0 for a free client */
 static PUBLICATION publications[PUBLICATIONS_MAX];
 static UINT32 publication_count;
 
@@ -97,6 +114,44 @@ static UINT32 take_channel(UINT32 rights)
     handle = received[0].handle;
     received_count = 0;
     return handle;
+}
+
+/* Serve handle as a root channel of client. The channels open are the
+   sum of the clients', so they never pass CHANNELS_MAX. */
+static UINT32 add_channel(UINT32 handle, UINT32 client, UINT32 rights,
+                          OPENS opens)
+{
+    CHANNEL *c;
+
+    if (client_channels[client] == SERVICE_CLIENT_CHANNELS)
+        return ERR_NO_RESOURCES;
+    client_channels[client]++;
+    c = &channels[channel_count++];
+    c->handle = handle;
+    c->client = client;
+    c->rights = rights;
+    c->opens = opens;
+    return OK;
+}
+
+/* Serve handle as the first channel of a new client, in a client that
+   has none open. */
+static UINT32 add_client(UINT32 handle, UINT32 rights, OPENS opens)
+{
+    UINT32 i;
+
+    for (i = 0; i < SERVICE_CLIENTS; i++)
+        if (client_channels[i] == 0)
+            return add_channel(handle, i, rights, opens);
+    return ERR_NO_RESOURCES;
+}
+
+/* Close the channel at index, whose place the last channel takes. */
+static void remove_channel(UINT32 index)
+{
+    handle_close(channels[index].handle);
+    client_channels[channels[index].client]--;
+    channels[index] = channels[--channel_count];
 }
 
 static void send(UINT32 channel, UINT32 transaction, UINT32 status,
@@ -174,10 +229,11 @@ static void open_path(const CHANNEL *c, const IO_REQUEST *request,
              (rest == request->length && rest > n))
         status = ERR_INVALID_ARGS;
     else if (request->length == 0) {
-        status = channel_count < CHANNELS_MAX ? OK : ERR_NO_RESOURCES;
+        status = c->opens == OPENS_START_CLIENTS
+                     ? add_client(endpoint, request->rights, OPENS_JOIN)
+                     : add_channel(endpoint, c->client, request->rights,
+                                   OPENS_JOIN);
         if (status == OK) {
-            channels[channel_count].handle = endpoint;
-            channels[channel_count++].rights = request->rights;
             send(endpoint, request->transaction, OK, 0,
                  root_attributes(request->rights));
             return;
@@ -361,9 +417,8 @@ static void read_bootstrap(UINT32 bootstrap)
         process_exit(SERVICE_EXIT_FAILED);
     handle_close(bootstrap);
     say_open(handles[NAMESPACE_BOOTSTRAP_DEBUG_LOG].handle);
-    channels[0].handle = handles[NAMESPACE_BOOTSTRAP_ROOT].handle;
-    channels[0].rights = ROOT_RIGHTS;
-    channel_count = 1;
+    add_client(handles[NAMESPACE_BOOTSTRAP_ROOT].handle, ROOT_RIGHTS,
+               OPENS_START_CLIENTS);
     say("nova-namespace: serving the root directory\r\n");
 }
 
@@ -392,10 +447,8 @@ _Noreturn void namespace_main(UINT32 bootstrap, UINT64 argument)
                 keep = serve(i);
             else
                 keep = !(observed & CHANNEL_PEER_CLOSED);
-            if (!keep) {
-                handle_close(channels[i].handle);
-                channels[i] = channels[--channel_count];
-            }
+            if (!keep)
+                remove_channel(i);
         }
     }
     for (i = 0; i < publication_count; i++)

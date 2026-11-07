@@ -296,13 +296,13 @@ static UINT32 start_store(UINT32 job, UINT32 debug_log,
    Programs from /store, through the directory protocol. */
 
 /* Load the program at path in view: its file's section, which init maps
-   to read, laid out in a new process. */
+   to read until it is laid out in a new process. */
 static UINT32 load_from_store(UINT32 job, const VIEW *view, const char *path,
                               PROGRAM *program)
 {
     IO_ATTRIBUTES attributes;
     RECEIVED_HANDLE section;
-    UINT32 channel, status;
+    UINT32 channel, status, unmapped;
     UINT64 size = 0;
     const UINT8 *mapped = 0;
 
@@ -318,7 +318,14 @@ static UINT32 load_from_store(UINT32 job, const VIEW *view, const char *path,
     handle_close(section.handle);
     if (!mapped)
         return ERR_NO_MEMORY;
-    return loader_load_image(job, mapped, size, program);
+    status = loader_load_image(job, mapped, size, program);
+    unmapped = unmap_from_init(mapped, size);
+    if (status == OK && unmapped != OK) {
+        handle_close(program->thread);
+        handle_close(program->process);
+        status = unmapped;
+    }
+    return status;
 }
 
 static UINT32 start_namespace(UINT32 job, UINT32 debug_log, UINT32 store_root,

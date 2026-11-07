@@ -3,8 +3,8 @@
    a malformed file fails the load instead of faulting init. The image is
    laid out in one section through a view of it in init, and that
    section is mapped into the process at the image's base, each run of
-   pages with one protection as one mapping. The view stays mapped:
-   process_map has no inverse yet. */
+   pages with one protection as one mapping; then the view is unmapped,
+   so init keeps no mapping of a program it loads. */
 
 #include "loader.h"
 
@@ -173,7 +173,7 @@ static void copy(UINT8 *to, const UINT8 *from, UINT64 count)
 static UINT32 map_image(const PE *pe, UINT32 process)
 {
     UINT64 start, run;
-    UINT32 section, protection, i;
+    UINT32 section, protection, i, unmapped;
     UINT32 status = section_create(pe->image_size, 0, &section);
     UINT8 *view;
 
@@ -204,6 +204,11 @@ static UINT32 map_image(const PE *pe, UINT32 process)
             ;
         status = process_map(process, section, start, pe->base + start, run,
                              protection);
+    }
+    if (view) {
+        unmapped = unmap_from_init(view, pe->image_size);
+        if (status == OK)
+            status = unmapped;
     }
     handle_close(section);
     return status;

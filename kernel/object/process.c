@@ -5,7 +5,8 @@
    adds a page for its USER_THREAD and one for its vector state (fpu.h),
    besides its kernel stack. Its address space owns the pages the kernel
    maps for it, its first image and stack, and borrows the pages of the
-   sections process_map maps, which the PROCESS holds until it ends. */
+   sections process_map maps, which the PROCESS holds until each mapping
+   is unmapped or the process ends. */
 
 #include <stddef.h>
 
@@ -25,6 +26,8 @@
 #define STACK_START_OFFSET 8
 #define COMPAT_ADDRESS_LIMIT 0x100000000ULL
 #define COMPAT_STACK_ALIGNMENT 4
+
+_Static_assert(sizeof(PROCESS) <= PAGE_SIZE, "a process fits its page");
 
 /* A process never started is destroyed with its last handle; a started
    one runs on until it exits or is killed (O10). */
@@ -303,12 +306,66 @@ STATUS process_map(PROCESS *process, SECTION *section, UINT64 offset,
                 section_page(section, offset / PAGE_SIZE + i),
                 user_protection, section->memory_type))
             status = ERR_NO_MEMORY;
-    if (status == ERR_NO_MEMORY)
-        while (i-- > 0)
-            paging_unmap_user_borrowed(process->space, address + i * PAGE_SIZE);
+    /* A page that did not map leaves those before it, and the tables
+       added on the way, to remove; nothing else in the range is mapped. */
+    if (status == ERR_NO_MEMORY && i > 0)
+        paging_unmap_user_borrowed(process->space, address, size);
     if (status == OK) {
+        MAPPING *mapping = &process->mappings[process->mapping_count++];
+
         object_retain(&section->object);
-        process->mappings[process->mapping_count++] = section;
+        mapping->section = section;
+        mapping->address = address;
+        mapping->size = size;
+    }
+    restore_interrupts(flags);
+    return status;
+}
+
+static int inside(const MAPPING *mapping, UINT64 address, UINT64 end)
+{
+    return address <= mapping->address &&
+           mapping->address + mapping->size <= end;
+}
+
+/* Mappings never overlap, since process_map refuses a mapped page, so
+   the range is whole mappings exactly when no mapping that reaches it
+   reaches past it and those within it hold all its pages. With
+   interrupts disabled from the checks to the last release, no other
+   thread changes the mappings meanwhile; the translations go before the
+   sections, as in finish. Removing a mapping moves the last into its
+   place, which the loop, from the last down, has passed already. */
+STATUS process_unmap(PROCESS *process, UINT64 address, UINT64 size)
+{
+    UINT64 end = address + size, held = 0, flags;
+    STATUS status = OK;
+    UINT32 i;
+
+    if (!page_aligned(address) || !page_aligned(size) || size == 0 ||
+        !user_range_valid(address, size))
+        return ERR_INVALID_ARGS;
+    flags = save_and_disable_interrupts();
+    if (process->terminating)
+        status = ERR_BAD_STATE;
+    for (i = 0; status == OK && i < process->mapping_count; i++) {
+        const MAPPING *mapping = &process->mappings[i];
+
+        if (inside(mapping, address, end))
+            held += mapping->size;
+        else if (mapping->address < end &&
+                 address < mapping->address + mapping->size)
+            status = ERR_BAD_STATE;
+    }
+    if (status == OK && held != size)
+        status = ERR_BAD_STATE;
+    if (status == OK) {
+        paging_unmap_user_borrowed(process->space, address, size);
+        for (i = process->mapping_count; i-- > 0;)
+            if (inside(&process->mappings[i], address, end)) {
+                object_release(&process->mappings[i].section->object);
+                process->mappings[i] =
+                    process->mappings[--process->mapping_count];
+            }
     }
     restore_interrupts(flags);
     return status;
@@ -330,7 +387,7 @@ static void finish(PROCESS *process)
     handle_table_close_all(process->handles);
     paging_space_clear(process->space);
     for (i = 0; i < count; i++)
-        object_release(&process->mappings[i]->object);
+        object_release(&process->mappings[i].section->object);
     flags = save_and_disable_interrupts();
     process->state = PROCESS_STATE_TERMINATED;
     restore_interrupts(flags);

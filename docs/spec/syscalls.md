@@ -497,7 +497,17 @@ option is defined yet. `process_map` takes a fixed address, page-aligned
 like `offset` and `size`, and a protection of `MAP_READ` (1) with
 `MAP_WRITE` (2), `MAP_EXECUTE` (4), both or neither; a range that is
 partly mapped already fails with `ERR_BAD_STATE`, and its result is the
-address. A mapping holds its section until the process terminates.
+address. A mapping holds its section until it is unmapped or the
+process terminates. `process_unmap` removes whole mappings: its range
+must be exactly the pages of one or more mappings, each lying wholly
+within it, or the call fails with `ERR_BAD_STATE` and removes nothing,
+as it does once the process has begun terminating; a range that is not
+page-aligned, is empty or leaves user memory fails with
+`ERR_INVALID_ARGS`. Before it returns, the range's cached translations
+are dropped, those of a page-table isolation user table's PCID by the
+next return to user mode, before any can be used
+([speculation.md M11](speculation.md#m11-rogue-data-cache-load-and-page-table-isolation)),
+and each mapping's hold on its section ends with it.
 
 `section_create_physical`'s cache policy is `CACHE_UNCACHED` (0) or
 `CACHE_WRITE_COMBINING` (1), and its limit is `SECTION_MAX_SIZE` too, so

@@ -427,6 +427,21 @@ static STATUS process_map_call(const UINT64 *arguments, UINT64 *results)
     return status;
 }
 
+/* process_unmap(process, address, size). */
+static STATUS process_unmap_call(const UINT64 *arguments, UINT64 *results)
+{
+    OBJECT *process;
+    STATUS status = handle_get(caller_handles(), (UINT32)arguments[0],
+                               TYPE_PROCESS, PROCESS_RIGHT_MAP, &process);
+
+    (void)results;
+    if (status != OK)
+        return status;
+    status = process_unmap((PROCESS *)process, arguments[1], arguments[2]);
+    object_release(process);
+    return status;
+}
+
 /* ------------------------------------------------------------------------
    Device access (docs/spec/ipc.md I6 to I8). Each call that creates an
    object takes a resource or initiator handle first, then reserves the
@@ -733,6 +748,7 @@ static const CALL_ENTRY calls[CALL_COUNT] = {
     [CALL_THREAD_EXIT] = {thread_exit_call, 0, 1},
     [CALL_SECTION_CREATE] = {section_create_call, 2, 0},
     [CALL_PROCESS_MAP] = {process_map_call, 6, 0},
+    [CALL_PROCESS_UNMAP] = {process_unmap_call, 3, 0},
     [CALL_RESOURCE_CREATE] = {resource_create_call, 3, 0},
     [CALL_SECTION_CREATE_PHYSICAL] = {section_create_physical_call, 4, 0},
     [CALL_INTERRUPT_CREATE] = {interrupt_create_call, 3, 0},

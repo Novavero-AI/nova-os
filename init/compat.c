@@ -11,9 +11,9 @@
    and the stack come from fresh sections only the process maps, so they
    are freed when it ends. A seed chain program's image declares up to
    128 MiB of such memory and a 64 MiB stack (observed in the chain),
-   which init could not map into itself step after step: process_map has
-   no inverse yet. The kernel maps no page on demand, so all of it is
-   memory from the start. */
+   which init never maps into itself: a fresh section is zeros already.
+   The kernel maps no page on demand, so all of it is memory from the
+   start. */
 
 #include <stddef.h>
 

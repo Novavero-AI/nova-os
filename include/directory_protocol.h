@@ -16,7 +16,10 @@
    reaches a symbolic link, the server stops there (F3): the attributes
    are the link's, its target and then the part of the path after it
    follow them, and the server closes the endpoint, as it does after a
-   failure. Otherwise it serves the endpoint as what it opened.
+   failure. Otherwise it serves the endpoint as what it opened. An open
+   that would take its client past the channels a server allows it, or
+   start a client the server has no room for, fails with
+   ERR_NO_RESOURCES (storage.md F17).
 
    Read a directory: IO_READ_DIR with offset the cookie, 0 to start, and
    length the entries wanted. The reply's information is the cookie to

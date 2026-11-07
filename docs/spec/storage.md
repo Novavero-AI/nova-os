@@ -4,7 +4,7 @@ How nova-os names and keeps files: the namespace server's directory
 protocol and the per-process views built on it, the native file system,
 the content-addressed store at `/store`, how builds write into the store
 and how it is collected, which disk holds what, how storage meets record
-and replay, and the first milestone.
+and replay, and the first milestone and its servers' limits on clients.
 [objects.md O8](objects.md#o8-the-namespace) decides the namespace's
 shape, [ipc.md I9](ipc.md#i9-asynchronous-io-requests) the I/O request
 and [replay.md](replay.md) what a recording captures; this document
@@ -138,6 +138,12 @@ I9:
 | `remove(path)` | Removes a file, a link or an empty directory | `WRITE` |
 | `rename(from, to)` | Moves a node; both paths are resolved against this directory, so a holder moves only within what it holds | `WRITE` |
 | `publish(name, directory)`, `replace(name, directory)`, `unpublish(name)` | Only on the namespace server's own directories ([F4](#f4-publishing-file-systems)) | `PUBLISH` |
+
+The client library takes at most `LIST_ENTRIES_MAX` (65,536) entries
+from one listing and fails it with `ERR_OUT_OF_RANGE` past them, so a
+server whose listing never ends cannot hold its client, as
+`SYMLINK_MAX_HOPS` bounds the links an open follows
+([F3](#f3-symbolic-links)).
 
 A file is a channel that speaks I9's requests (read, write, control,
 flush, cancel) and two more: `get_attributes`, and `get_section`, which
@@ -586,7 +592,8 @@ never with `WRITE`. The store service fills a blob's section by copying
 from its own I/O buffers, never by a device writing into it, checks the
 copy against the blob's digest, and then gives up its own write access
 ([F15](#f15-store-reads-and-replay)). It keeps a bounded cache of such
-sections and gives every process a narrowed handle to one, so processes
+sections ([F17](#f17-limits-on-clients)) and gives every process a
+narrowed handle to one, so processes
 that map the same file share its pages, as composefs's "data files are
 shared in the page cache" ([composefs README][composefs]). A PE image
 whose file alignment is smaller than its section alignment, as the
@@ -1057,6 +1064,69 @@ snapshots, a storage driver and the Windows layer.
   nova-boot for something the firmware's FAT driver already reads; the
   second needs a storage driver, PCI and DMA working before anything runs
   from `/store`.
+
+### F17. Limits on clients
+
+**Decided.** The store service and the namespace server each divide
+the channels they serve, and the store service the sections it keeps,
+among their clients, so that no client can take what another holds.
+
+1. **A client** is a channel that starts one, with every channel opened
+   through it or through a channel opened from it. Each channel of a
+   service's bootstrap message starts a client; so does each closure
+   directory the store service's control channel opens, one per program
+   launched ([F5](#f5-per-process-views)), and each open of the root
+   through the namespace server's own root channel, its starter's, which
+   is how the starter hands the root to another process. An open
+   through any other channel belongs to that channel's client, so a
+   process that opens its directory again to pass it on shares its own
+   limits with the receiver.
+2. **Channels.** A service serves at most 8 clients at once
+   (`SERVICE_CLIENTS`), each with at most 8 channels open
+   (`SERVICE_CLIENT_CHANNELS`): together the 64 channels one
+   `object_wait_many` watches ([objects.md O9](objects.md#o9-waiting)),
+   which is how a service waits on all of them. Eight channels hold a
+   program's closure directory, a directory it lists and the files it
+   keeps open, with room to spare. An open that would start a ninth
+   client, or take a client past eight channels, fails with
+   `ERR_NO_RESOURCES`; a client's places free as its channels close,
+   and a client with none left is free for another.
+3. **Sections.** For each client the store service keeps the 2 sections
+   it filled for that client most recently used (`CLIENT_SECTIONS`); a
+   fill past them closes the client's least recently used. A section
+   one client keeps serves every client that asks for its blob. The
+   service keeps at most 16 sections, 32 MiB at `SECTION_MAX_SIZE`.
+
+- **Why:** a limit all clients share lets one client that holds its
+  channels open, or asks for the sections of many files, refuse every
+  other, and a table of sections kept for the service's life refuses
+  every program once it fills. A fixed share per client is how
+  [objects.md O6](objects.md#o6-no-ambient-authority) reserves a job's
+  quota: what one client holds is never another's to take. A client is
+  defined by where its channels come from because a server sees
+  channels, not the processes or jobs that hold them; the starter, which
+  decides what each program reaches (F5), decides where clients start.
+- **Cost:** while a service waits with one `object_wait_many`, it serves
+  64 channels: the store service serves its control channel, its root
+  and the closure directories of at most six programs at once, and a
+  seventh launch fails, and a program that keeps more than seven files
+  open through its closure directory is refused the eighth. Every
+  client of the namespace server that reaches `/store` through it shares
+  one store client, the root the namespace server holds, so one of them
+  that keeps eight files open there refuses the others' opens of
+  `/store`; programs reach the store through closure directories, and
+  the namespace server's clients are its starter and those it hands the
+  root to. The namespace server's publications are shared too, by every
+  client holding `PUBLISH`. A section the
+  service has closed lives on while a process holds or maps it
+  ([F9](#f9-reading-and-verifying-the-store)), so a client that keeps
+  the sections of many files makes the service fill as many; these
+  limits bound the sections the service keeps, not those it fills.
+- **Not taken:** charging each client's channels and sections to its
+  job, as O6 charges kernel memory to the job that allocates it. No call
+  tells a server the job of the process at a channel's other end, and
+  the service's own job pays for the sections it fills whichever client
+  asks.
 
 ## Changes elsewhere
 

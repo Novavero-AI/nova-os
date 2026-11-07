@@ -105,9 +105,19 @@ int paging_map_user_borrowed(UINT64 space, UINT64 linear, UINT64 physical,
 /* Whether anything is mapped at the user page linear in space. */
 int paging_user_mapped(UINT64 space, UINT64 linear);
 
-/* Remove the borrowed page paging_map_user_borrowed mapped at linear in
-   space, leaving the page to its owner. */
-void paging_unmap_user_borrowed(UINT64 space, UINT64 linear);
+/* Whether space's user table, under isolation, repeats the lower half of
+   its kernel table, as every change to a top-level entry keeps it; 1
+   without isolation, where there is no user table. */
+int paging_tables_agree(UINT64 space);
+
+/* Remove what is mapped in the size bytes at linear, page aligned, in
+   space, where every page mapped is a borrowed page
+   paging_map_user_borrowed mapped, leaving each to its owner; free the
+   tables the range leaves empty; and make the space's cached
+   translations of them unusable: dropped before returning, or, for the
+   user table's under PCIDs, by the next exit's CR3 load, before which
+   nothing uses them. */
+void paging_unmap_user_borrowed(UINT64 space, UINT64 linear, UINT64 size);
 
 /* The physical-address width, MAXPHYADDR (SDM Vol. 3A 5.1.4): entries
    map only addresses below 2 to its power. */

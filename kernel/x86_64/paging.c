@@ -647,16 +647,80 @@ int paging_user_mapped(UINT64 space, UINT64 linear)
     return mapped;
 }
 
+int paging_tables_agree(UINT64 space)
+{
+    const UINT64 *top = direct_map(space);
+    UINT64 flags, i;
+    int agree = 1;
+
+    if (!isolation)
+        return 1;
+    flags = save_and_disable_interrupts();
+    for (i = 0; i < LOWER_HALF_ENTRIES; i++)
+        if (user_table(space)[i] != top[i])
+            agree = 0;
+    restore_interrupts(flags);
+    return agree;
+}
+
+static int table_empty(const UINT64 *table)
+{
+    UINT64 i;
+
+    for (i = 0; i < PAGE_TABLE_ENTRIES; i++)
+        if (table[i] & PTE_PRESENT)
+            return 0;
+    return 1;
+}
+
+/* Clear the entries of table, at level, that map [linear, end), and free
+   each table below it that is left with no entry present, so that no
+   table outlives the mappings it held. mirror is the space's user table
+   when table is its top table under isolation, whose lower half repeats
+   the kernel table's entries, else 0. The pages mapped are borrowed, so
+   none is freed. The depth is the paging depth, at most five. */
+static void clear_user_range(UINT64 *table, UINT64 *mirror, int level,
+                             UINT64 linear, UINT64 end)
+{
+    UINT64 span = level_span(level), next, index, physical;
+
+    for (; linear < end; linear = next) {
+        next = linear - linear % span + span;
+        index = table_index(linear, level);
+        if (!(table[index] & PTE_PRESENT))
+            continue;
+        if (level == PAGE_TABLE_LEVEL) {
+            table[index] = 0;
+            continue;
+        }
+        physical = table[index] & PTE_ADDRESS;
+        clear_user_range(direct_map(physical), 0, level - 1, linear,
+                         next < end ? next : end);
+        if (table_empty(direct_map(physical))) {
+            table[index] = 0;
+            if (mirror)
+                mirror[index] = 0;
+            page_free(physical);
+        }
+    }
+}
+
 /* The processor may cache a translation for a speculative access the
-   code never makes (SDM Vol. 3A 5.10.2.2), so the space's cached
-   translations are dropped (space_changed). */
-void paging_unmap_user_borrowed(UINT64 space, UINT64 linear)
+   code never makes (SDM Vol. 3A 5.10.2.2), and paging-structure entries
+   for the tables freed here (5.10.3), so the space's cached
+   translations are dropped (space_changed): the kernel PCID's here, and
+   with PCIDs the user PCID's at the next exit's CR3 load. Until then the
+   processor uses none of them, since it uses only the current PCID's
+   entries (5.10.1) and the kernel's PCID is current, so a freed table
+   or page may be handed out again before that load. A freed table is
+   all not-present entries, and the allocator never writes a freed
+   page. */
+void paging_unmap_user_borrowed(UINT64 space, UINT64 linear, UINT64 size)
 {
     UINT64 flags = save_and_disable_interrupts();
-    UINT64 *entry = user_entry(space, linear, 0);
 
-    if (entry)
-        *entry = 0;
+    clear_user_range(direct_map(space), isolation ? user_table(space) : 0,
+                     levels, linear, linear + size);
     space_changed(space);
     restore_interrupts(flags);
 }

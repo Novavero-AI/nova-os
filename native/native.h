@@ -103,6 +103,12 @@ UINT32 section_create(UINT64 size, UINT32 options, UINT32 *section);
 UINT32 process_map(UINT32 process, UINT32 section, UINT64 offset,
                    UINT64 address, UINT64 size, UINT32 protection);
 
+/* Remove the mappings that make up the size bytes at address in
+   process, which needs PROCESS_RIGHT_MAP: each a whole mapping
+   process_map made, with no page of the range left out (ERR_BAD_STATE
+   otherwise, removing nothing). */
+UINT32 process_unmap(UINT32 process, UINT64 address, UINT64 size);
+
 /* A second handle to handle's object, with rights, RIGHTS_SAME or a
    subset of handle's rights. Needs RIGHT_DUPLICATE. */
 UINT32 handle_duplicate(UINT32 handle, UINT32 rights, UINT32 *duplicate);

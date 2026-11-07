@@ -98,6 +98,12 @@ UINT8 *map_into_init(UINT32 section, UINT64 size, UINT32 protection)
     return address;
 }
 
+UINT32 unmap_from_init(const UINT8 *address, UINT64 size)
+{
+    return process_unmap(self, (UINT64)address,
+                         (size + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE);
+}
+
 static void check(int passed, const char *what)
 {
     if (passed)

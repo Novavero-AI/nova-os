@@ -1,11 +1,23 @@
 /* The store service and the namespace server, which the first process
    starts (docs/spec/storage.md F16): their bootstrap messages, the store
-   service's own request, and their exit codes. */
+   service's own request, their limits on clients, and their exit codes. */
 
 #ifndef NOVA_SERVICES_H
 #define NOVA_SERVICES_H
 
 #include "native_abi.h"
+
+/* A service serves at most SERVICE_CLIENTS clients at once, each with at
+   most SERVICE_CLIENT_CHANNELS channels open (storage.md F17): together
+   the WAIT_MANY_MAX channels one object_wait_many watches, which is how
+   a service waits for all of them. Eight channels hold a program's
+   closure directory, a directory it lists and the files it keeps open,
+   with room to spare. */
+#define SERVICE_CLIENTS 8
+#define SERVICE_CLIENT_CHANNELS (WAIT_MANY_MAX / SERVICE_CLIENTS)
+
+_Static_assert(SERVICE_CLIENTS * SERVICE_CLIENT_CHANNELS == WAIT_MANY_MAX,
+               "the clients' channels are every channel one wait watches");
 
 /* The store service's bootstrap message: these handles in this order,
    and a STORE_BOOTSTRAP. The image is a section it may only read; its
