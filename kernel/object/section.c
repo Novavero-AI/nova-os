@@ -180,11 +180,14 @@ STATUS section_create_device(const RESOURCE *resource, UINT64 base,
     return OK;
 }
 
+/* index comes from a caller's offset, which process_map and
+   initiator_pin have checked against the section's size, so it is
+   masked before it selects an entry (docs/spec/speculation.md M4). */
 UINT64 section_page(const SECTION *section, UINT64 index)
 {
     if (section->kind == SECTION_DEVICE)
         return section->base + index * PAGE_SIZE;
-    return section->physical[index];
+    return section->physical[index_masked(index, section->pages)];
 }
 
 void section_fill(SECTION *section, const UINT8 *data, UINT64 size)

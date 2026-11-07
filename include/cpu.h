@@ -61,6 +61,59 @@ static inline void cpuid(UINT32 leaf, UINT32 *a, UINT32 *b, UINT32 *c,
     *d = edx;
 }
 
+/* Bounds-check bypass (docs/spec/speculation.md M4): a branch that checks
+   a caller's value can be mispredicted, and the loads after it run with
+   the value it refused (Intel HFB 3.2.1). After the check these compute
+   its outcome again as data, with no branch to mispredict, so a load
+   that uses their result stays in bounds. Each is one asm statement:
+   TinyCC emits it as written, and its operands are the volatile
+   registers RAX, RCX and RDX and the scratch R8 and R9, which a callee
+   need not preserve. */
+
+/* index if it is below size, otherwise 0. CMP sets CF exactly when index
+   is below size, SBB of a register from itself turns CF into all ones or
+   zero, and AND applies that mask: bounds clipping, for which Intel lists
+   SBB (Intel HFB 3.2.4.1). */
+static inline UINT64 index_masked(UINT64 index, UINT64 size)
+{
+    UINT64 masked;
+
+    __asm__ volatile("cmpq %2, %1\n\t"
+                     "sbbq %0, %0\n\t"
+                     "andq %1, %0"
+                     : "=&a"(masked)
+                     : "c"(index), "d"(size)
+                     : "cc");
+    return masked;
+}
+
+/* address if the size bytes from it lie in [base, top], ending at top at
+   the latest, otherwise 0: each of the three conditions clears the result
+   with a CMOV, "sufficient to mitigate bounds check bypass
+   vulnerabilities even in cases where bounds clipping is not applicable"
+   (Intel HFB 3.2.4.2; AMD STMS V1-2). When address is above top, top -
+   address wraps, but the second CMOV has cleared the result already. */
+static inline UINT64 range_selected(UINT64 address, UINT64 size, UINT64 base,
+                                    UINT64 top)
+{
+    UINT64 selected;
+
+    __asm__ volatile("xorl %%r8d, %%r8d\n\t"
+                     "movq %1, %0\n\t"
+                     "cmpq %3, %1\n\t"
+                     "cmovbq %%r8, %0\n\t"
+                     "cmpq %4, %1\n\t"
+                     "cmovaq %%r8, %0\n\t"
+                     "movq %4, %%r9\n\t"
+                     "subq %1, %%r9\n\t"
+                     "cmpq %%r9, %2\n\t"
+                     "cmovaq %%r8, %0"
+                     : "=&a"(selected)
+                     : "c"(address), "d"(size), "m"(base), "m"(top)
+                     : "r8", "r9", "cc");
+    return selected;
+}
+
 static inline UINT64 read_cr0(void)
 {
     UINT64 value;

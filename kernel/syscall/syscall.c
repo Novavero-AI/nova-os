@@ -747,14 +747,20 @@ static const CALL_ENTRY calls[CALL_COUNT] = {
     [CALL_THREAD_SET_TLS_BASE] = {thread_set_tls_base_call, 1, 1},
 };
 
+/* The call number is a caller's index into calls, so each read of the
+   table masks it after the range check (docs/spec/speculation.md M4). */
 UINT32 syscall_argument_count(UINT64 number)
 {
-    return number < CALL_COUNT ? calls[number].arguments : 0;
+    if (number >= CALL_COUNT)
+        return 0;
+    return calls[index_masked(number, CALL_COUNT)].arguments;
 }
 
 int syscall_served_32_bit(UINT64 number)
 {
-    return number < CALL_COUNT && calls[number].lane_32_bit;
+    if (number >= CALL_COUNT)
+        return 0;
+    return calls[index_masked(number, CALL_COUNT)].lane_32_bit != 0;
 }
 
 int syscall_reports_results(UINT64 number, STATUS status)
@@ -763,10 +769,17 @@ int syscall_reports_results(UINT64 number, STATUS status)
            (number == CALL_OBJECT_WAIT_ONE && status == ERR_CANCELED);
 }
 
+/* A mispredicted range check reads entry 0, whose call is 0, and a call
+   through it would fetch from address 0, which no table maps (S6). */
 STATUS syscall_invoke(UINT64 number, const UINT64 *arguments,
                       UINT64 *results)
 {
-    if (number >= CALL_COUNT || !calls[number].call)
+    CALL call;
+
+    if (number >= CALL_COUNT)
         return ERR_NOT_SUPPORTED;
-    return calls[number].call(arguments, results);
+    call = calls[index_masked(number, CALL_COUNT)].call;
+    if (!call)
+        return ERR_NOT_SUPPORTED;
+    return call(arguments, results);
 }

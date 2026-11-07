@@ -212,8 +212,9 @@ variant 1).
    zero otherwise, computed with `CMP` and `SBB` and applied with `AND`,
    so a mispredicted check reads entry 0, inside the array, never memory
    beyond it. For a handle the mask applies to the index field
-   ([objects.md O3](objects.md#o3-handles)). Intel lists `SBB` among the
-   instructions for bounds clipping (Intel HFB 3.2.4.1).
+   ([objects.md O3](objects.md#o3-handles)), and for a section the page
+   index an offset gives. Intel lists `SBB` among the instructions for
+   bounds clipping (Intel HFB 3.2.4.1).
 2. **User pointers are selected.** The copy routines of S6, after
    checking that a range lies in [`USER_BASE`, `USER_TOP`), select the
    pointer with `CMOV`, which yields 0 when the check failed, so a
@@ -225,6 +226,9 @@ variant 1).
    (M5). On AMD processors that do not enumerate LfenceAlwaysSerializing,
    the kernel sets MSR C001_1029[1] at boot so that LFENCE is dispatch
    serializing (AMD STMS G-2; APM Vol. 3 E.4.19).
+
+`tools/check-masks.c` checks the mask and the select against the
+comparisons they stand in for.
 
 - **Why:** masking and `CMOV` cost an instruction or two and do not stall
   the pipeline; Intel recommends them first and LFENCE "as a last

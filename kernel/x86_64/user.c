@@ -333,10 +333,15 @@ UINT64 user_copy_fixup(UINT64 rip, UINT64 address)
                : 0;
 }
 
+/* After the check, the user pointer is selected again by CMOV, which
+   gives 0 for a range the check refused, so a mispredicted check copies
+   from or to address 0, which is never mapped (S6), and never reaches
+   kernel memory (docs/spec/speculation.md M4). */
 STATUS copy_from_user(void *to, UINT64 from, UINT64 size)
 {
     if (!user_range_valid(from, size))
         return ERR_BAD_ADDRESS;
+    from = range_selected(from, size, USER_BASE, user_top);
     return size ? user_copy(to, (const void *)from, size) : OK;
 }
 
@@ -344,5 +349,6 @@ STATUS copy_to_user(UINT64 to, const void *from, UINT64 size)
 {
     if (!user_range_valid(to, size))
         return ERR_BAD_ADDRESS;
+    to = range_selected(to, size, USER_BASE, user_top);
     return size ? user_copy((void *)to, from, size) : OK;
 }

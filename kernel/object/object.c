@@ -132,7 +132,8 @@ HANDLE_TABLE *handle_table_create(void)
 }
 
 /* The entry value names, or 0. A value of generation 0, HANDLE_INVALID
-   among them, never matches. */
+   among them, never matches. The index field is a caller's index into the
+   table, masked after its range check (docs/spec/speculation.md M4). */
 static HANDLE_ENTRY *entry_of(HANDLE_TABLE *table, UINT32 value)
 {
     UINT32 index = value >> HANDLE_GENERATION_BITS;
@@ -140,7 +141,7 @@ static HANDLE_ENTRY *entry_of(HANDLE_TABLE *table, UINT32 value)
 
     if (index >= HANDLE_TABLE_CAPACITY)
         return 0;
-    entry = &table->entries[index];
+    entry = &table->entries[index_masked(index, HANDLE_TABLE_CAPACITY)];
     if (entry->state != HANDLE_IN_USE ||
         entry->generation != (value & HANDLE_GENERATION_MASK))
         return 0;
