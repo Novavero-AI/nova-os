@@ -157,7 +157,9 @@ top of its IST stack (S2), and leaves GS as it found it.
 - **Why:** the windows are as short as the instructions allow, and the
   only events that can arrive in them have stacks of their own and a way
   to find per-CPU data without GS.
-- **Cost:** each call pays two `SWAPGS` and a stack switch in software.
+- **Cost:** each call pays two `SWAPGS` and a stack switch in software,
+  and the speculative-execution measures of S9 where the processor needs
+  them.
 - **Not taken:** deciding in the NMI and machine-check handlers whether to
   execute `SWAPGS` from the saved CS, as the other handlers do. Inside the
   windows that rule swaps the wrong way; reading the current GS base
@@ -492,6 +494,23 @@ the numbers and the register convention are private to it. Zircon goes
 further and makes its vDSO "the only means to enter the kernel for system
 calls", enforcing that every entry comes from the vDSO's code
 ([vDSO][zx-vdso]); nova-os does not enforce it (**Decided**).
+
+## S9. Speculative execution
+
+**Decided.** The entry and exit of S3, the interrupt and exception entries
+from user mode, and the switch from one process to another carry the
+speculative-execution mitigations of [speculation.md](speculation.md). Its
+M3 lists them by path and in their order among S3's steps; its later
+sections give, for each, the processors it applies to, how the kernel
+detects them, and the vendor guidance it follows.
+
+- **Why:** the same measures apply to every entry from user mode, not only
+  to `SYSCALL`, and to the process switch, so they are specified once,
+  apart from this path.
+- **Cost:** on some processors they dominate the cost of a call: an IBPB
+  on every entry on AMD processors affected by branch type confusion or
+  speculative return stack overflow ([speculation.md M9](speculation.md#m9-branch-type-confusion),
+  [M10](speculation.md#m10-speculative-return-stack-overflow)).
 
 ## References
 

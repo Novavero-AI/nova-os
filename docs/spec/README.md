@@ -13,6 +13,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [objects.md](objects.md) | The kernel's object types, handles and access rights, the namespace, waiting and object lifetime |
 | [ipc.md](ipc.md) | Channels and ports, how user-mode drivers reach interrupts, device memory and DMA, and asynchronous I/O requests |
 | [syscalls.md](syscalls.md) | The x86-64 system-call entry, its register convention, error codes and the first calls |
+| [speculation.md](speculation.md) | The speculative-execution mitigations on entry from and exit to user mode and at a process switch, and how the kernel detects which apply |
 | [replay.md](replay.md) | Every nondeterministic input a process can receive, and how a recording captures or excludes it |
 
 ## Firmware and platform
@@ -68,7 +69,9 @@ BSD-2-Clause-Patent).
 - sha256: `77919be320f35da2782771ef2cb65a868cf68e62c8f8279f2ca61199cb70d1f8`
 - Used by: nova-boot (paging) and the kernel (paging, GDT, TSS, IDT,
   Local APIC, TSC, the interrupt flag); the system-call entry
-  ([syscalls.md](syscalls.md)).
+  ([syscalls.md](syscalls.md)); page-table isolation
+  ([speculation.md](speculation.md): SMEP and PCID enumeration, 5.1.4;
+  PCIDs, 5.10.1 and 5.10.4.1).
 
 **Intel 64 and IA-32 Architectures Software Developer's Manual, Volume 1:
 Basic Architecture**, order number 253665-093US, September 2026, the same
@@ -100,7 +103,104 @@ publication 24593, revision 3.46, October 2026.
 - sha256: `e4130d5aa26227b6a116d75af9e0f6e5adb4c034ff0d49a3c0fe73c3f49794cf`
 - Used by: nova-boot and the kernel on AMD processors, for the same areas
   as the Intel manual; IA32_EFER's address (3.1.7), which the Intel
-  volume pinned here does not give; memory encryption (7.10).
+  volume pinned here does not give; memory encryption (7.10); the
+  speculation controls ([speculation.md](speculation.md): Automatic IBRS,
+  3.1.7; SPEC_CTRL, PRED_CMD and the return address predictor, 3.2.9).
+
+**AMD64 Architecture Programmer's Manual, Volume 3: General-Purpose and
+System Instructions**, publication 24594, revision 3.39, October 2026.
+
+- Document: <https://docs.amd.com/api/khub/documents/BqEoC2FadIAgbrUdEzDJIg/content>
+- Access: free download. It states that it grants no licence to AMD's
+  intellectual property and prohibits unauthorized copying or
+  distribution; the specifications cite it and copy none of its text.
+- sha256: `b598514b19f204d973040d9867a7ffc48c949009a8b3dc86b20c9188e721ee45`
+- Used by: [speculation.md](speculation.md), for the CPUID bits that
+  enumerate AMD's speculation controls and susceptibilities (E.3.2,
+  E.4.7, E.4.19).
+
+## Speculative execution
+
+Vendor guidance on speculative-execution attacks.
+[speculation.md](speculation.md) cites each document by the name in its
+first column or heading.
+
+**Hardware Features and Behavior Related to Speculative Execution**
+("Intel HFB"), technical paper, document 758913, revision 2.1, October
+2026 (Intel).
+
+- Document: <https://cdrdv2.intel.com/v1/dl/getContent/758913>, which
+  serves the revision's PDF; Intel publishes it as a web page, ID 823144,
+  at <https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/hardware-behavior-related-to-speculative-execution.html>
+- Access: free download. It grants no licence to Intel's intellectual
+  property, but "the information reported herein is available for use in
+  connection with the mitigation of the security vulnerabilities
+  described". Every page is footed "Intel Confidential", although Intel
+  serves the document publicly and its cover gives the public URL.
+- sha256: `41a35c8591054419eb295e1afe370ede0d1c4d36eb9ea5c154063e969957c823`
+- Used by: [speculation.md](speculation.md).
+
+**Intel software security guidance**, web pages (Intel). Each page gives
+an ID, the date it was last updated and sometimes a version; the
+affected-processors table gives none, and its date is its page
+metadata's last-modified time.
+
+| Name | Page | ID, version, updated | sha256 |
+|---|---|---|---|
+| Intel CPUID | [CPUID Enumeration and Architectural MSRs](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/cpuid-enumeration-and-architectural-msrs.html) | 758381, version 8.0, October 22, 2026 | `a36940e07d7fe03cca1e80eaad1d4e46f8b3913b3f3c5fb60a5e337984c9608e` |
+| Intel retpoline | [Retpoline: A Branch Target Injection Mitigation](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/retpoline-branch-target-injection-mitigation.html) | 758357, version 2.1, August 22, 2022 | `835c5bd131a2da86305f9c91ee4cc2bec2af49a65eec05e902dd2cb00f058481` |
+| Intel BHI | [Branch History Injection and Intra-mode Branch Target Injection](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/branch-history-injection.html), technical documentation | 824191, version 2.6, May 12, 2025 | `5fc47309a092a3d9d4e54aadaa21ba185c9c1632bc31428c8f560985dfa8e1c4` |
+| Intel RSBU | [Return Stack Buffer Underflow](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/advisory-guidance/return-stack-buffer-underflow.html) | 737306, July 12, 2022 | `e2701b33eb2f034eac49f4fc311dac5e86a42a3cd752fa4f947b732cd07aac6e` |
+| Intel PBRSB | [Post-barrier Return Stack Buffer Predictions](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/advisory-guidance/post-barrier-return-stack-buffer-predictions.html) | 739507, August 9, 2022 | `8850920b538dd086f3ef4527550a7a3ddd0453fac55796d5b5f283be6c014402` |
+| Intel RDCL | [Rogue Data Cache Load](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/advisory-guidance/rogue-data-cache-load.html) | 660223, January 3, 2018 | `ff0e336051ab455dc19929414898e9374c12e169cce0906efb1caf52a55c7846` |
+| Intel L1TF | [L1 Terminal Fault](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/intel-analysis-l1-terminal-fault.html), technical documentation | 758376, August 14, 2018 | `2a35669ff18d34277058456d16f088e4b3b861bafb8baced40f9cd02eca90534` |
+| Intel MDS | [Microarchitectural Data Sampling](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/intel-analysis-microarchitectural-data-sampling.html), technical documentation | 758366, version 3.0, March 11, 2021 | `8b7455d51254b7f4af5ab4b04e49cd963fc3922a6d843a98562e3073fb396d98` |
+| Intel TAA | [Intel TSX Asynchronous Abort](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/advisory-guidance/intel-tsx-asynchronous-abort.html) | 660217, November 12, 2019 | `5a69896041f7e73fe1c9f42e8de1af2bf78a8e3b7608bc55ebd43f72383d9b68` |
+| Intel MMIO | [Processor MMIO Stale Data Vulnerabilities](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/processor-mmio-stale-data-vulnerabilities.html), technical documentation | 758360, June 14, 2022 | `0ae873f6b06d994cf83701a826283b30fd95eadc31f78afda45326e22fbc7387` |
+| Intel GDS | [Gather Data Sampling](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/gather-data-sampling.html), technical documentation | 785676, version 1.0, December 5, 2024 | `9a6849881dbe8e69c529b14e716119cc820032c0616b1a65a8bfac44d945286f` |
+| Intel RFDS | [Register File Data Sampling](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/advisory-guidance/register-file-data-sampling.html) | 817587, version 1.0, July 22, 2025 | `f60639698afbc9aa90a6b04e3d45f67a1bfb877122ffefcbae815cad275a7a35` |
+| Intel SWAPGS | [Speculative Behavior of SWAPGS and Segment Registers](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/speculative-behavior-swapgs-and-segment-registers.html), technical documentation | 758371, August 6, 2019 | `bf0e5297926eae5354adf2e1c01f061713a9ce7b3e913d91376a89f99bf1ad90` |
+| Intel ITS | [Indirect Target Selection](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/advisory-guidance/indirect-target-selection.html) | 854667, version 1.0, May 13, 2025 | `94c0c2bc0a39196e79e254476512c4a608e0dcd46f3c09e8b8c4e11b2d445474` |
+| Intel IBPDU | [Indirect Branch Predictor Delayed Updates](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/advisory-guidance/indirect-branch-predictor-delayed-updates.html) | 855452, version 1.0, May 21, 2025 | `4b6bfbe6056f796a7e1d82f5ab1c07b1571d4732f74f8c54f82c55cf7f28391a` |
+| Intel table | [Affected Processors: Guidance for Security Issues on Intel Processors](https://www.intel.com/content/www/us/en/developer/topic-technology/software-security-guidance/processors-affected-consolidated-product-cpu-model.html) | November 2, 2026 | `54abc61a2eca7911263db3d98338f7549b50cba992eb78619b06898ee9a9b949` |
+
+- Access: free web pages.
+- Used by: [speculation.md](speculation.md).
+
+**Software Techniques for Managing Speculation on AMD Processors** ("AMD
+STMS"), white paper, revision 5.09.23, dated May 9, 2023 in its revision
+history (AMD). docs.amd.com lists the same file as documents 70586 and
+70628.
+
+- Document: <https://docs.amd.com/api/khub/documents/vbhMWnxkkda5Mz6LirjB_Q/content>
+- Access: free download.
+- sha256: `d86742c1bf84c7c9a543e014a42152d525bd3cda05eb7f67b453fe5df72036a6`
+- Used by: [speculation.md](speculation.md).
+
+**Speculative Return Stack Overflow Mitigation Options and Considerations
+for Public Cloud Users** ("AMD SRSO cloud"), white paper, first edition,
+April 2024 (AMD), docs.amd.com document 70608.
+
+- Document: <https://docs.amd.com/api/khub/documents/qvUciCbuQfXCBkXbklCwAw/content>
+- Access: free download. It states that it grants no licence to AMD's
+  intellectual property.
+- sha256: `117d0ca1381c4861c7a594b4aecbd0a953ecd2146f69482642bccc1ee006a282`
+- Used by: [speculation.md](speculation.md).
+
+**AMD white papers, from a third-party mirror.** AMD publishes these on
+www.amd.com, which reset or timed out every request made to pin them, and
+docs.amd.com does not carry them. The copies pinned here come from a
+third-party mirror and have not been compared with AMD's.
+
+| Name | Document | Revision, date | sha256 |
+|---|---|---|---|
+| AMD SRSO | [Technical Update Regarding Speculative Return Stack Overflow](https://kib.kiev.ua/x86docs/AMD/Spectre/AMD-SB-7005-r2.0.pdf) | 2.0, February 25, 2024 | `c86e06dd6dc420f48a13ec30f79619101c66dd9ee26511f5887d9b6057bb9ba6` |
+| AMD BTC | [Technical Guidance for Mitigating Branch Type Confusion](https://kib.kiev.ua/x86docs/AMD/Spectre/AMD-SB-1037-r3.0.pdf) | 3.0, November 8, 2022 | `13a4af325a18a94b353a418327ab377cd536cb91ba1de9f2965832885173256c` |
+| AMD TSA | [Technical Guidance for Mitigating Transient Scheduler Attacks](https://kib.kiev.ua/x86docs/AMD/Spectre/technical-guidance-for-mitigating-transient-scheduler-attacks.pdf) | 2.0, July 2025 | `a1360e941db1f2c37fd05113dce8feb7ee6f5a431cf9189302b53ced6640d07b` |
+
+- Access: free download from the mirror. Each states that it grants no
+  licence to AMD's intellectual property.
+- Used by: [speculation.md](speculation.md).
 
 ## IOMMUs
 
@@ -343,3 +443,12 @@ Computer Systems 34(1), April 2016, DOI 10.1145/2893177.
 - **16550 UART.** `kernel/main.c` drives COM1 through the 16550 register
   interface (line status register at offset 5, transmitter-empty bit
   0x20). The register reference, a 16550 datasheet, is not pinned.
+- **AMD-SB-7005**, AMD's "Return Address Predictor Security Bulletin",
+  at <https://www.amd.com/en/resources/product-security/bulletin/amd-sb-7005.html>,
+  the address AMD SRSO gives. AMD SRSO 5 refers to it for the microcode
+  revisions from which "Zen3" and "Zen4" processors clear branch types on
+  IBPB.
+  www.amd.com reset or timed out every request made to pin it, as for the
+  white papers under [Speculative execution](#speculative-execution).
+  Used by: [speculation.md](speculation.md) M10, which logs SRSO as
+  unconfirmed on those processors until the list is pinned.
