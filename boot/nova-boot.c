@@ -802,8 +802,19 @@ static EFI_STATUS map_direct_range(PAGE_TABLES *tables, const RANGE *range,
     return status;
 }
 
-/* Map every range the memory map describes, and the framebuffer, which
-   it need not describe, at DIRECT_MAP_BASE plus its physical address.
+/* Map every range the memory map describes except memory-mapped I/O,
+   and the framebuffer, which it need not describe, at DIRECT_MAP_BASE
+   plus its physical address.
+
+   Memory-mapped I/O is device registers, which the kernel reaches through
+   no direct-map address, and which a driver maps through a device section
+   with the type it chooses, uncached or write-combining. Mapped here too,
+   with the type the MTRRs give it, the page would have two types, and
+   the SDM forbids that: "it is possible to have a single physical page
+   mapped to two or more different linear addresses, each with different
+   memory types. Intel does not support this practice because it may lead
+   to undefined operations that can result in a system failure" (SDM Vol.
+   3A 14.12.4).
 
    The map is taken here, before the final one. UEFI has it describe all
    memory present, however it is used (7.2.3), so the allocations after it
@@ -850,7 +861,9 @@ static EFI_STATUS map_direct(EFI_BOOT_SERVICES *boot, PAGE_TABLES *tables,
         const EFI_MEMORY_DESCRIPTOR *d =
             (const EFI_MEMORY_DESCRIPTOR *)(map.buffer + offset);
 
-        if (d->PhysicalStart % PAGE_SIZE != 0 || d->NumberOfPages == 0)
+        if (d->PhysicalStart % PAGE_SIZE != 0 || d->NumberOfPages == 0 ||
+            d->Type == EFI_MEMORY_MAPPED_IO ||
+            d->Type == EFI_MEMORY_MAPPED_IO_PORT_SPACE)
             continue;
         status = d->NumberOfPages > DIRECT_MAP_SIZE / PAGE_SIZE
                      ? EFI_UNSUPPORTED

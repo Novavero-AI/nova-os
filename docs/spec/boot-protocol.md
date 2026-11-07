@@ -324,7 +324,7 @@ nova-boot builds either. They map, with the constants of
 | Linear addresses | Map | Rights |
 |---|---|---|
 | The lower half | `boot_switch`'s pages, at their physical addresses, and nothing else | Read, execute |
-| `DIRECT_MAP_BASE` (0xFFFF800000000000) + p, for p below 64 TiB | Physical address p, for every range the memory map describes and the framebuffer (`FrameBufferBase` and `FrameBufferSize`, UEFI 12.9.2) | Read, write |
+| `DIRECT_MAP_BASE` (0xFFFF800000000000) + p, for p below 64 TiB | Physical address p, for every range the memory map describes other than memory-mapped I/O, and the framebuffer (`FrameBufferBase` and `FrameBufferSize`, UEFI 12.9.2) | Read, write |
 | `KERNEL_STACK_BASE` to `KERNEL_STACK_TOP` (0xFFFFFFFF7FFEF000 to 0xFFFFFFFF7FFFF000) | The kernel's stack ([Stack](#stack)) | Read, write |
 | `KERNEL_IMAGE_BASE` (0xFFFFFFFF80000000) + RVA, below `SizeOfImage` | The kernel image | A page is executable if a section with `IMAGE_SCN_MEM_EXECUTE` reaches it, writable if one with `IMAGE_SCN_MEM_WRITE` does, and otherwise read-only, as the headers are |
 
@@ -351,6 +351,17 @@ the stack's guard, nor the page at `KERNEL_STACK_TOP`.
 - **Memory types.** The framebuffer's pages are write-combining and
   every other page has the type the MTRRs give it
   ([Memory types](#memory-types)).
+- **Memory-mapped I/O.** Descriptors of `EfiMemoryMappedIO` and
+  `EfiMemoryMappedIOPortSpace` are left out. They are device registers,
+  which the kernel reaches through no direct-map address and a driver
+  maps through a device section with the type it chooses
+  ([ipc.md I6](ipc.md#i6-device-memory-and-io-ports)); mapped here too,
+  with the type the MTRRs give them, their pages would have two types,
+  which the SDM does not allow: "it is possible to have a single physical
+  page mapped to two or more different linear addresses, each with
+  different memory types. Intel does not support this practice because
+  it may lead to undefined operations that can result in a system
+  failure" (SDM 14.12.4).
 - **The direct map's source.** nova-boot takes the memory map it maps
   before the final one. UEFI has the map describe all memory present,
   however it is used (UEFI 7.2.3), so the allocations after it change
@@ -408,7 +419,12 @@ with PCD and PWT alone (SDM 5.9.2).
   (`MdeModulePkg/Core/DxeIplPeim/X64/VirtualMemory.c`) and sets memory
   types through the MTRRs (`UefiCpuPkg/CpuDxe/CpuDxe.c`,
   `CpuSetMemoryAttributes`). The kernel maps the Local APIC's page
-  through a PAT entry that holds UC, entry 3.
+  through a PAT entry that holds UC, entry 3. The one range of device
+  registers the memory map describes as other than memory-mapped I/O,
+  PCI Express configuration space, which firmware reserves, the kernel
+  removes from the direct map once it reads the MCFG
+  ([ipc.md I6](ipc.md#i6-device-memory-and-io-ports)), so every device
+  page but the framebuffer's takes its type from its sections alone.
 - **Large pages.** A large page over memory the MTRRs give several types
   is undefined (SDM 14.11.9), the framebuffer's included, and nova-boot
   does not read the MTRRs to rule it out.

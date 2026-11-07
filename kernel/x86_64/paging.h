@@ -33,6 +33,13 @@ int paging_unmap_direct(UINT64 physical);
    tables that translate it exist by then, so this needs no page. */
 void paging_restore_direct(UINT64 physical);
 
+/* Remove the direct map's translations of the size bytes at physical,
+   page aligned, which the kernel never reaches through it, so that the
+   memory types of other mappings alone decide the pages' type. Returns 0
+   if a large page at the range's edge must be split and no page is free
+   for the table; what was removed by then stays removed. */
+int paging_unmap_direct_range(UINT64 physical, UINT64 size);
+
 /* What a user mapping allows. Only a process whose creator granted it
    may have a mapping both writable and executable (docs/spec/objects.md
    O5); process_map checks that before it asks for one. */
@@ -50,6 +57,11 @@ typedef enum {
     USER_UNCACHED,
     USER_WRITE_COMBINING
 } USER_MEMORY_TYPE;
+
+/* Whether the direct map maps the page at physical with a memory type
+   other than type, through another PAT entry than a user mapping of that
+   type selects. */
+int paging_direct_type_differs(UINT64 physical, USER_MEMORY_TYPE type);
 
 /* A new address space: a top table whose upper half is the kernel's and
    whose lower half maps nothing. Returns its physical address, for CR3,

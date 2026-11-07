@@ -288,6 +288,24 @@ through the page attribute table (SDM 14.12). A device section's handle
 carries `READ` and `WRITE` but never `EXECUTE` or `PIN`, so device memory
 is never executed or used as a DMA buffer.
 
+A physical page has one memory type in every mapping of it, since the
+SDM does not support a page "mapped to two or more different linear
+addresses, each with different memory types", and "a WC page must never
+be aliased to a cacheable page because WC writes may not check the
+processor caches" (SDM 14.12.4). The direct map maps no device memory
+but the framebuffer, write-combining: nova-boot leaves memory-mapped I/O
+out of it ([boot-protocol.md](boot-protocol.md#paging)), and the kernel
+removes each configuration space range it accepts from the MCFG, then
+flushes the caches, which may hold lines read ahead through the old
+mapping if the MTRRs gave it a cacheable type: "changing a cache line's
+memory type from WB to UC to be used for memory-mapped I/O" needs that
+flush (SDM 14.12.4). A device section's `cache` then gives its pages
+their type: `section_create_physical` fails with `ERR_BAD_STATE` over a
+framebuffer page with `UC`, and over a page that a live device section
+covers with the other type, so a page keeps the type of its first
+section until no section over it lives. Mappings hold their section, so
+none outlives the type it was made with.
+
 **I/O ports.** `ioport_set(resource, base, count, allow)` allows or
 denies the calling process `IN` and `OUT` on ports an I/O-port resource
 covers. The I/O permission bitmap lies inside the TSS, at an offset from

@@ -1,14 +1,17 @@
 /* The boot-time self-test of kernel objects, run by the startup thread
    before the first process, so that every object it makes is gone
    before any process could see it. It checks that interrupt vectors are
-   charged to a job's quota (docs/spec/objects.md O6), and that closing a
-   handle ends the waits made through it (O9); it logs each result to the
-   serial port and halts with the reason at the first failure. */
+   charged to a job's quota (docs/spec/objects.md O6), that closing a
+   handle ends the waits made through it (O9), and that a device page
+   takes one memory type (docs/spec/ipc.md I6); it logs each result to
+   the serial port and halts with the reason at the first failure. */
 
+#include "boot_info.h"
 #include "channel.h"
 #include "interrupt.h"
 #include "process.h"
 #include "cpu.h"
+#include "../acpi/acpi.h"
 #include "../x86_64/clock.h"
 #include "../x86_64/serial.h"
 #include "../x86_64/user.h"
@@ -195,9 +198,67 @@ static void test_canceled_waits(void)
                  "when their handles closed\r\n");
 }
 
-void object_self_test(void)
+/* The framebuffer's page, which the direct map maps write-combining for
+   the kernel's drawing, takes only a write-combining section; a page of
+   PCI configuration space, which the direct map leaves out, takes the
+   type of the first section over it and refuses the other while that
+   section lives, and takes either once none does. No section made here
+   is mapped. A framebuffer in memory the map describes, which no section
+   may cover, or a machine without configuration space skips its part. */
+static void test_memory_types(const BOOT_INFO *info)
+{
+    RESOURCE *mmio = resource_create_root(RESOURCE_MMIO, 0,
+                                          1ULL << paging_physical_bits());
+    UINT64 screen = (UINT64)info->screen.pixels - DIRECT_MAP_BASE;
+    SECTION *uncached, *combining;
+    STATUS status;
+
+    check(mmio != 0, "no memory for the memory-type test");
+    screen -= screen % PAGE_SIZE;
+    status = section_create_device(mmio, screen, PAGE_SIZE,
+                                   CACHE_WRITE_COMBINING, &combining);
+    if (status == ERR_ACCESS_DENIED) {
+        serial_write("nova: objects: the framebuffer lies in memory the map "
+                     "describes; its memory-type check is skipped\r\n");
+    } else {
+        check(status == OK,
+              "a write-combining section over the framebuffer was refused");
+        object_close(&combining->object);
+        check(section_create_device(mmio, screen, PAGE_SIZE, CACHE_UNCACHED,
+                                    &uncached) == ERR_BAD_STATE,
+              "an uncached section over the framebuffer, which the kernel "
+              "draws write-combining, was not refused");
+    }
+    if (acpi_ecam_count() == 0) {
+        serial_write("nova: objects: no pci configuration space; its "
+                     "memory-type check is skipped\r\n");
+    } else {
+        UINT64 config = acpi_ecam(0)->base;
+
+        check(section_create_device(mmio, config, PAGE_SIZE, CACHE_UNCACHED,
+                                    &uncached) == OK,
+              "an uncached section over configuration space was refused");
+        check(section_create_device(mmio, config, PAGE_SIZE,
+                                    CACHE_WRITE_COMBINING,
+                                    &combining) == ERR_BAD_STATE,
+              "a write-combining section over a page an uncached section "
+              "covers was not refused");
+        object_close(&uncached->object);
+        check(section_create_device(mmio, config, PAGE_SIZE,
+                                    CACHE_WRITE_COMBINING, &combining) == OK,
+              "a page kept its memory type after its last section went");
+        object_close(&combining->object);
+    }
+    object_close(&mmio->object);
+    serial_write("nova: objects: device pages took one memory type: the "
+                 "framebuffer only write-combining, configuration space "
+                 "only its live section's type\r\n");
+}
+
+void object_self_test(void *boot_info)
 {
     test_vector_quota();
     test_canceled_waits();
+    test_memory_types(boot_info);
     serial_write("nova: object self-test passed\r\n");
 }

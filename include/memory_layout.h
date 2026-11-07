@@ -15,9 +15,10 @@
    UEFI memory map (UEFI 2.11, 7.2.3). */
 
 /* Physical address p is mapped at DIRECT_MAP_BASE + p, for every range
-   the UEFI memory map describes and the framebuffer, read-write and not
-   executable. The window is the lower 64 TiB of 4-level paging's upper
-   half; nova-boot refuses memory above it. */
+   the UEFI memory map describes other than memory-mapped I/O, and the
+   framebuffer, read-write and not executable. The window is the lower 64
+   TiB of 4-level paging's upper half; nova-boot refuses memory above
+   it. */
 #define DIRECT_MAP_BASE 0xFFFF800000000000ULL
 #define DIRECT_MAP_SIZE 0x0000400000000000ULL
 

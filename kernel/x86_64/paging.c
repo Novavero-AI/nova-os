@@ -215,6 +215,60 @@ void paging_restore_direct(UINT64 physical)
     restore_interrupts(flags);
 }
 
+/* A translation through a cacheable type may have read lines ahead,
+   speculatively, which a later uncached mapping of the page must not
+   find: "changing a cache line's memory type from WB to UC to be used
+   for memory-mapped I/O" needs the caches flushed after the TLBs (SDM
+   Vol. 3A 14.12.4), and WBINVD does that for a range of any size. A
+   large page the range covers whole is cleared, one it covers in part
+   split, and the tables on the way stay. Nothing past the direct map's
+   window is mapped there. */
+int paging_unmap_direct_range(UINT64 physical, UINT64 size)
+{
+    UINT64 linear, end, flags;
+    int complete = 1;
+
+    if (physical >= DIRECT_MAP_SIZE)
+        return 1;
+    if (size > DIRECT_MAP_SIZE - physical)
+        size = DIRECT_MAP_SIZE - physical;
+    linear = DIRECT_MAP_BASE + physical;
+    end = linear + size;
+    flags = save_and_disable_interrupts();
+
+    while (complete && linear < end) {
+        UINT64 *table = top_table;
+        int level = levels;
+
+        for (;;) {
+            UINT64 *entry = &table[table_index(linear, level)];
+            UINT64 span = level_span(level);
+
+            if (!(*entry & PTE_PRESENT)) {
+                linear += span - linear % span;
+                break;
+            }
+            if (level == PAGE_TABLE_LEVEL || (*entry & PTE_LARGE)) {
+                if (linear % span == 0 && end - linear >= span) {
+                    *entry = 0;
+                    linear += span;
+                    break;
+                }
+                if (!split(entry, level)) {
+                    complete = 0;
+                    break;
+                }
+            }
+            table = table_at(*entry);
+            level--;
+        }
+    }
+    flush_translations();
+    write_back_and_invalidate_caches();
+    restore_interrupts(flags);
+    return complete;
+}
+
 /* ------------------------------------------------------------------------
    User address spaces. */
 
@@ -250,6 +304,36 @@ static UINT64 memory_type_bits(USER_MEMORY_TYPE type)
         break;
     }
     return 0;
+}
+
+/* A PTE has its PAT bit at 7, an entry that maps a large page at 12
+   (SDM Vol. 3A Tables 5-16, 5-18 and 5-20); the comparison is in a PTE's
+   terms. */
+int paging_direct_type_differs(UINT64 physical, USER_MEMORY_TYPE type)
+{
+    UINT64 linear = DIRECT_MAP_BASE + physical;
+    UINT64 *table = top_table;
+    UINT64 flags, entry, bits;
+    int level, differs = 0;
+
+    if (physical >= DIRECT_MAP_SIZE)
+        return 0;
+    flags = save_and_disable_interrupts();
+    for (level = levels; level >= PAGE_TABLE_LEVEL; level--) {
+        entry = table[table_index(linear, level)];
+        if (!(entry & PTE_PRESENT))
+            break;
+        if (level == PAGE_TABLE_LEVEL || (entry & PTE_LARGE)) {
+            bits = entry & (PTE_WRITE_THROUGH | PTE_CACHE_DISABLE);
+            if (entry & (level == PAGE_TABLE_LEVEL ? PTE_PAT : PTE_LARGE_PAT))
+                bits |= PTE_PAT;
+            differs = bits != memory_type_bits(type);
+            break;
+        }
+        table = table_at(entry);
+    }
+    restore_interrupts(flags);
+    return differs;
 }
 
 _Static_assert(((NOVA_PAT >> (PAT_ENTRY_BITS *

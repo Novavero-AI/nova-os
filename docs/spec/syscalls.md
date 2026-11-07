@@ -391,7 +391,7 @@ cancelled by a closing handle the signals it observed,
 | 11 | `ERR_CANCELED` | A handle being waited on was closed, or a request was cancelled |
 | 12 | `ERR_PEER_CLOSED` | The other end of a channel is closed |
 | 13 | `ERR_BUFFER_TOO_SMALL` | A receive buffer cannot hold the message |
-| 14 | `ERR_BAD_STATE` | The object's state forbids the call: a thread already started, an interrupt already bound, a process already terminated |
+| 14 | `ERR_BAD_STATE` | The object's state forbids the call: a thread already started, an interrupt already bound, a process already terminated, a device page another mapping gives another memory type |
 | 15 | `ERR_NO_RESOURCES` | A resource other than memory is exhausted: the job's quota of interrupt vectors, or the vectors the kernel has for message-signalled interrupts |
 
 The same codes report the outcome of an I/O request in its completion
@@ -496,17 +496,20 @@ address. A mapping holds its section until the process terminates.
 `section_create_physical`'s cache policy is `CACHE_UNCACHED` (0) or
 `CACHE_WRITE_COMBINING` (1), and its limit is `SECTION_MAX_SIZE` too, so
 mapping a device section takes no longer than mapping a memory one; a
-larger range takes several sections. `section_pin`'s options are
-`PIN_DEVICE_READ` (1), `PIN_DEVICE_WRITE` (2) or both, and it writes one
-`UINT64` device address per page. `interrupt_create` takes `options` 0
-for a message-signalled source, numbered as
+larger range takes several sections. A page whose memory type the
+framebuffer's mapping or another live device section fixed already takes
+only that type, and another fails with `ERR_BAD_STATE`
+([ipc.md I6](ipc.md#i6-device-memory-and-io-ports)). `section_pin`'s
+options are `PIN_DEVICE_READ` (1), `PIN_DEVICE_WRITE` (2) or both, and it
+writes one `UINT64` device address per page. `interrupt_create` takes
+`options` 0 for a message-signalled source, numbered as
 [ipc.md I6](ipc.md#i6-device-memory-and-io-ports) gives, and fails with
-`ERR_NOT_SUPPORTED` for a global system interrupt, which this kernel does
-not route yet. The vector it allocates is charged to the calling
+`ERR_NOT_SUPPORTED` for a global system interrupt, which this kernel
+does not route yet. The vector it allocates is charged to the calling
 process's job until the interrupt's last handle closes; past the job's
-quota, or with no vector free, the call fails with `ERR_NO_RESOURCES`. `pin_release` ends the pin and removes its handle
-together, so no other thread of the process can quarantine it between
-the two.
+quota, or with no vector free, the call fails with `ERR_NO_RESOURCES`.
+`pin_release` ends the pin and removes its handle together, so no other
+thread of the process can quarantine it between the two.
 
 `thread_start` starts a further thread of a process `process_start` has
 started; it fails with `ERR_BAD_STATE` if the thread has been started, or

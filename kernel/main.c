@@ -109,7 +109,7 @@ static void startup(void *argument)
     BOOT_INFO *info = argument;
     UINT32 observed;
 
-    object_self_test();
+    object_self_test(info);
     first_process_run(info);
     sched_self_test(&spinner_thread);
     event_signal(&startup_done, 0, STARTUP_DONE);

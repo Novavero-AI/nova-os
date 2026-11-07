@@ -144,10 +144,10 @@ _Noreturn void process_fault(UINT32 vector);
 void process_thread_reaped(THREAD *thread);
 
 /* The boot-time self-test of kernel objects (object_test.c), run before
-   the first process. It logs each result to the serial port, halts with
-   the reason at the first failure, and returns when every check
-   passes. */
-void object_self_test(void);
+   the first process with the BOOT_INFO. It logs each result to the
+   serial port, halts with the reason at the first failure, and returns
+   when every check passes. */
+void object_self_test(void *boot_info);
 
 /* The first process (docs/spec/ipc.md I6), as a kernel thread's entry
    whose argument is the BOOT_INFO: load the image nova-boot read from

@@ -109,6 +109,13 @@ static inline void write_cr4(UINT64 value)
     __asm__ volatile("mov %0, %%cr4" : : "r"(value) : "memory");
 }
 
+/* Write back every modified cache line and invalidate the caches (SDM
+   Vol. 2D, WBINVD). */
+static inline void write_back_and_invalidate_caches(void)
+{
+    __asm__ volatile("wbinvd" : : : "memory");
+}
+
 static inline void breakpoint(void)
 {
     __asm__ volatile("int3");

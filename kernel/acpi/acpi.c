@@ -3,14 +3,16 @@
    memory map gives firmware: EfiACPIReclaimMemory and EfiACPIMemoryNVS,
    where firmware keeps the tables, and EfiReservedMemoryType and
    EfiRuntimeServicesData, which some firmware uses. The direct map maps
-   every range the map describes, and the page allocator hands out none
-   of these (docs/spec/boot-protocol.md, Memory). Every table's checksum
+   every range the map describes but memory-mapped I/O, and the page
+   allocator hands out none of these (docs/spec/boot-protocol.md,
+   Memory). Every table's checksum
    must hold (ACPI 6.6 5.2.6), and every field read lies inside the
    table's checked length. */
 
 #include "acpi.h"
 #include "memory_layout.h"
 #include "../mm/memory_map.h"
+#include "../x86_64/paging.h"
 #include "../x86_64/serial.h"
 
 #define FIRMWARE_TABLE_TYPES                                              \
@@ -199,7 +201,10 @@ static void keep(UINT64 base, UINT64 size)
    The tables. */
 
 /* A range is kept only if it overlaps no memory the map gives RAM or
-   firmware, other than the reservation that firmware makes for it. */
+   firmware, other than the reservation that firmware makes for it, and
+   once the direct map, which covers that reservation with the type the
+   MTRRs give it, no longer maps it: a section over configuration space
+   then gives its pages their one memory type (docs/spec/ipc.md I6). */
 static void read_mcfg(const UINT8 *table, UINT32 length)
 {
     UINT32 at;
@@ -224,6 +229,13 @@ static void read_mcfg(const UINT8 *table, UINT32 length)
         }
         if (ecam_count == BOOTSTRAP_ECAM_RANGES_MAX)
             break;
+        if (!paging_unmap_direct_range(first, size)) {
+            serial_write("nova: acpi: mcfg range at ");
+            serial_hex(first);
+            serial_write(" left out: no memory to unmap it from the direct "
+                         "map\r\n");
+            continue;
+        }
         ecam[ecam_count].base = first;
         ecam[ecam_count].segment = (UINT16)read16(entry + MCFG_SEGMENT);
         ecam[ecam_count].start_bus = (UINT8)start;

@@ -24,14 +24,17 @@
 
 typedef enum { SECTION_MEMORY = 1, SECTION_DEVICE } SECTION_KIND;
 
-typedef struct {
+typedef struct SECTION SECTION;
+
+struct SECTION {
     OBJECT object;
     SECTION_KIND kind;
     USER_MEMORY_TYPE memory_type; /* what its mappings give its pages */
     UINT64 pages;     /* how many */
     UINT64 *physical; /* a memory section's pages, in a page of their own */
     UINT64 base;      /* a device section's first physical address */
-} SECTION;
+    SECTION *next_device; /* on the list of live device sections */
+};
 
 /* A new memory section of size bytes, rounded up to whole pages, every
    byte zero, with its creator's handle. Returns OK; ERR_INVALID_ARGS for
@@ -48,11 +51,16 @@ STATUS section_create(UINT64 size, SECTION **section);
    APIC's page, the MSI range (SDM Vol. 3A 13.11.1) and those acpi.h
    names. A device section holds at most SECTION_MAX_SIZE bytes, as a
    memory section does, so that mapping one is as short as mapping the
-   other; a larger range takes several. Returns OK; ERR_INVALID_ARGS for
-   a size of 0, an unaligned or wrapping range or an unknown cache value;
+   other; a larger range takes several. Each physical page has one memory
+   type in every mapping of it (SDM Vol. 3A 14.12.4), so a page the direct
+   map maps, the framebuffer's, takes only the direct map's type,
+   write-combining, and a page another live device section covers takes
+   only that section's type. Returns OK; ERR_INVALID_ARGS for a size of
+   0, an unaligned or wrapping range or an unknown cache value;
    ERR_OUT_OF_RANGE for a size above SECTION_MAX_SIZE or a range the
    resource does not cover; ERR_ACCESS_DENIED if the range reaches memory
-   or kept registers; or ERR_NO_MEMORY. */
+   or kept registers; ERR_BAD_STATE if a page of it has another memory
+   type already; or ERR_NO_MEMORY. */
 STATUS section_create_device(const RESOURCE *resource, UINT64 base,
                              UINT64 size, UINT32 cache, SECTION **section);
 
