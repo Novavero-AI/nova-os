@@ -161,6 +161,22 @@ current revision of the 1.x line.
   (1.2c)
 - Used by: a USB host-controller driver (QEMU's `qemu-xhci`).
 
+## Graphics
+
+**How to interpret the sRGB color space (specified in IEC 61966-2-1) for
+ICC profiles** (International Color Consortium), April 2015.
+
+- Document: <https://registry.color.org/rgb-registry/files/sRGB.pdf>,
+  listed at <https://registry.color.org/rgb-registry/srgb>
+- Access: free download.
+- sha256: `ceed855c29808217a472954abb04cdc60a5bd3200387a93f5c5ffcef8ddf9f1f`
+- Used by: `gfx/gfx.c`, for sRGB's transfer function: the encoding in
+  A.8 and the decoding in B.1, whose red line is the decoding; its green
+  and blue lines repeat the red channel's variable, and its linear blue
+  line misprints 12.92 as 12.02.
+- IEC 61966-2-1, which defines the transfer function, is sold by the IEC
+  and not pinned.
+
 ## PCI Express configuration space
 
 The PCI Express Base Specification and the PCI Firmware Specification

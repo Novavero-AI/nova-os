@@ -3,7 +3,8 @@
    Geometry is in eighths of a pixel, and a pixel's coverage is how many of
    16 sample points fall inside a stroke; only pixels near a stroke's edge
    are sampled. Inside tests compare squared distances, so no
-   square root is taken. */
+   square root is taken. Coverage mixes the ink with the black in linear
+   light. */
 
 #include "gfx.h"
 
@@ -16,21 +17,137 @@
    each axis, at most 3 from the centre's 4, so 3 * sqrt(2) ~ 4.24 away. */
 #define SAMPLE_REACH 5
 
+/* ------------------------------------------------------------------------
+   sRGB. A pixel's value is an sRGB code, which encodes light by sRGB's
+   transfer function (IEC 61966-2-1, sold by the IEC; the ICC's "How to
+   interpret the sRGB color space (specified in IEC 61966-2-1) for ICC
+   profiles" gives the encoding in A.8 and the decoding in B.1). A pixel a
+   stroke covers in part emits that share of the stroke's light, so
+   coverage scales the light a code decodes to, and the result is encoded
+   back; scaling the code itself would darken every partial pixel. */
+
+#define CODE_MAX 255
+#define HALF_CODES (2 * CODE_MAX)
+#define LIGHT_BITS 30
+#define LIGHT_ONE ((UINT64)1 << LIGHT_BITS)
+
+/* Decoding code C: C / 12.92 for C up to 0.04045, else
+   ((C + 0.055) / 1.055)^2.4, with each constant an exact fraction. */
+#define KNEE_NUM 4045 /* 0.04045 */
+#define KNEE_DEN 100000
+#define SLOPE_NUM 1292 /* 12.92 */
+#define SLOPE_DEN 100
+#define OFFSET_NUM 55  /* 0.055 */
+#define SCALE_NUM 1055 /* 1.055 */
+#define OFFSET_DEN 1000 /* of OFFSET_NUM and SCALE_NUM */
+
+/* light[j] is the light of code j / 2 as a fraction of LIGHT_ONE: the
+   even entries decode the 256 codes, and the odd ones are the midpoints
+   between them, where encoding rounds up. gfx_boot_screen and
+   gfx_spinner_step compute it on first use, in integers, so it follows
+   from the formula above with no generator in the build and no floating
+   point in either image. */
+static UINT32 light[HALF_CODES + 1];
+static int light_ready;
+
+/* a * b for fractions of LIGHT_ONE. */
+static UINT64 times(UINT64 a, UINT64 b)
+{
+    return a * b >> LIGHT_BITS;
+}
+
+/* The fifth root of a fraction of LIGHT_ONE: the largest fraction, set
+   bit by bit, whose fifth power by times does not exceed it. */
+static UINT64 fifth_root(UINT64 a)
+{
+    UINT64 root = 0, bit;
+
+    for (bit = LIGHT_ONE; bit != 0; bit >>= 1) {
+        UINT64 next = root + bit;
+
+        if (next <= LIGHT_ONE &&
+            times(times(times(times(next, next), next), next), next) <= a)
+            root = next;
+    }
+    return root;
+}
+
+/* The light of code j / 2, for C = j / HALF_CODES. Above the knee,
+   t^2.4 = t^2 * (t^2)^(1/5). */
+static UINT64 decode_half(UINT64 j)
+{
+    UINT64 t, t2;
+
+    if (j * KNEE_DEN <= KNEE_NUM * HALF_CODES)
+        return j * SLOPE_DEN * LIGHT_ONE / (HALF_CODES * SLOPE_NUM);
+    t = (j * OFFSET_DEN + OFFSET_NUM * HALF_CODES) * LIGHT_ONE /
+        (SCALE_NUM * HALF_CODES);
+    t2 = times(t, t);
+    return times(t2, fifth_root(t2));
+}
+
+static void fill_light(void)
+{
+    UINT64 j;
+
+    if (light_ready)
+        return;
+    for (j = 0; j <= HALF_CODES; j++)
+        light[j] = (UINT32)decode_half(j);
+    light_ready = 1;
+}
+
+/* The code nearest the encoding of value, a fraction of LIGHT_ONE: the
+   number of midpoints at or below it. */
+static INT64 encode(UINT64 value)
+{
+    INT64 low = 0, high = CODE_MAX;
+
+    while (low < high) {
+        INT64 mid = (low + high + 1) / 2;
+
+        if (light[2 * mid - 1] <= value)
+            low = mid;
+        else
+            high = mid - 1;
+    }
+    return low;
+}
+
+/* The pixel code for colour code over black, covering coverage of its
+   COVERAGE_MAX samples. Most pixels are covered whole or not at all, and
+   those need no search: encode gives back every code from its light, and
+   0 from no light. */
+static INT64 mix(INT64 code, INT64 coverage)
+{
+    if (coverage == COVERAGE_MAX)
+        return code;
+    if (coverage == 0)
+        return 0;
+    return encode(light[2 * code] * (UINT64)coverage / COVERAGE_MAX);
+}
+
+/* ------------------------------------------------------------------------ */
+
 typedef struct {
     INT64 r, g, b;
 } RGB;
 
 static const RGB ink = {242, 242, 246};
 
-/* The ink at a brightness of 0..255 times coverage, over black. */
+/* The ink, its codes scaled by a brightness of 0..255, over black at
+   coverage of COVERAGE_MAX samples. Brightness picks the colour a fully
+   covered pixel shows; coverage mixes that colour's light with black. */
 static void put(const SCREEN *screen, INT64 x, INT64 y, INT64 brightness,
                 INT64 coverage)
 {
-    INT64 a = brightness * coverage / COVERAGE_MAX;
-    INT64 r = ink.r * a / 255, g = ink.g * a / 255, b = ink.b * a / 255;
+    INT64 r, g, b;
 
     if (x < 0 || y < 0 || x >= screen->width || y >= screen->height)
         return;
+    r = mix(ink.r * brightness / 255, coverage);
+    g = mix(ink.g * brightness / 255, coverage);
+    b = mix(ink.b * brightness / 255, coverage);
     screen->pixels[y * screen->stride + x] =
         (UINT32)(screen->format == PIXEL_BGR ? r << 16 | g << 8 | b
                                              : b << 16 | g << 8 | r);
@@ -210,6 +327,7 @@ void gfx_boot_screen(const SCREEN *screen, SPINNER *spinner)
     INT64 h = screen->width * SUBPIXEL / 22;
     INT64 top = screen->height * SUBPIXEL * 44 / 100 - h / 2;
 
+    fill_light();
     draw_wordmark(screen, (screen->width * SUBPIXEL - wordmark_width(h)) / 2,
                   top, h);
     spinner->cx = screen->width / 2;
@@ -257,6 +375,7 @@ void gfx_spinner_step(const SCREEN *screen, SPINNER *sp)
     SHAPE ring;
     INT64 x, y, reach = (sp->radius + sp->width) / SUBPIXEL + 2;
 
+    fill_light();
     ring.kind = RING;
     ring.ax = sp->cx * SUBPIXEL + SUBPIXEL / 2;
     ring.ay = sp->cy * SUBPIXEL + SUBPIXEL / 2;
