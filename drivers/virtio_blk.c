@@ -1,22 +1,39 @@
 /* A user-mode virtio block driver (VIRTIO 1.4 5.2) over the PCI
    transport's modern interface (4.1). It starts as every virtio driver
    here does (virtio_driver.h), with one request virtqueue (2.7) in a
-   pinned page, and reads sectors: the GPT header at LBA 1, the
-   partition entry array it names, and the first sector of the first
-   partition, the EFI System Partition (docs/spec/disk-layout.md). On a
-   disk without a GPT it reads the MBR's first partition instead. It
-   logs what it read, resets the device, releases its pins and exits. */
+   pinned page, and runs in one of two modes (virtio_blk.h).
+
+   Inspecting, it reads sectors: the GPT header at LBA 1, the partition
+   entry array it names, and the first sector of the first partition, the
+   EFI System Partition (docs/spec/disk-layout.md). On a disk without a
+   GPT it reads the MBR's first partition instead. It logs what it read,
+   resets the device, releases its pins and exits.
+
+   Serving, it reports with a client's endpoint and serves the block
+   protocol there (block_protocol.h): it pins the section the client
+   attaches and moves each read and write by DMA between the device and
+   that section, and sends a cache flush for a flush. It has one request
+   on the device at a time and answers each before it reads the next, so
+   a request the client sends after an answer reaches the device after
+   the request answered: a flush sent once the writes before it are
+   answered makes them stable (5.2.6.2), and a write sent once that flush
+   is answered lands after them. */
 
 #include "virtio_blk.h"
+#include "block_protocol.h"
 #include "log.h"
 #include "mmio.h"
 #include "virtio_driver.h"
 
-/* The block device's RO feature bit (5.2.3), which the driver accepts
-   beside the reserved ones (virtio_driver.h); it accepts nothing
-   else. */
+/* The block device's feature bits (5.2.3) the driver accepts beside the
+   reserved ones (virtio_driver.h): RO in both modes, and FLUSH when
+   serving, since it then sends VIRTIO_BLK_T_FLUSH (5.2.5.1). With FLUSH
+   negotiated a write is volatile until a flush completes after it
+   (5.2.6.2). */
 #define FEATURE_RO 5
-#define FEATURES_ACCEPTED (1ULL << FEATURE_RO | VIRTIO_FEATURES_RESERVED)
+#define FEATURE_FLUSH 9
+#define FEATURES_INSPECT (1ULL << FEATURE_RO | VIRTIO_FEATURES_RESERVED)
+#define FEATURES_SERVE (FEATURES_INSPECT | 1ULL << FEATURE_FLUSH)
 
 /* The request queue, 0, at QUEUE_SIZE entries, a power of 2 no larger
    than the device's maximum (4.1.5.1.3). Its three parts share the first
@@ -28,21 +45,41 @@
 #define AVAIL_OFFSET 256
 #define USED_OFFSET 512
 
-/* A read request (5.2.6) in the second DMA page: the device-readable
-   header (type, reserved, sector) at 0, the device-writable data at
-   DATA_OFFSET and the status byte at STATUS_OFFSET, as three chained
-   descriptors, readable before writable (2.7.4.2). */
+/* A request (5.2.6) is a chain of descriptors from 0, readable before
+   writable (2.7.4.2): the device-readable header (type, reserved,
+   sector) at 0 in the second DMA page, the data, and the device-writable
+   status byte at STATUS_OFFSET in that page. Inspecting, the data is one
+   sector at DATA_OFFSET in that page; serving, it lies in the client's
+   section, one descriptor per page it touches. */
 #define REQUEST_TYPE 0
 #define REQUEST_RESERVED 4
 #define REQUEST_SECTOR 8
 #define REQUEST_HEADER_SIZE 16
 #define REQUEST_TYPE_IN 0
+#define REQUEST_TYPE_OUT 1
+#define REQUEST_TYPE_FLUSH 4
 #define DATA_OFFSET 512
 #define STATUS_OFFSET 1024
 #define REQUEST_STATUS_OK 0
+#define REQUEST_STATUS_UNSUPPORTED 2
 #define REQUEST_STATUS_UNSET 0xff
 #define SECTOR_SIZE 512
 #define DMA_PAGES 2
+
+/* The most data descriptors one request takes: a transfer of
+   BLOCK_TRANSFER_MAX bytes that does not start on a page boundary
+   touches one page more than it fills. */
+#define SEGMENTS_MAX (BLOCK_TRANSFER_MAX / PAGE_SIZE + 1)
+#define SECTION_PAGES_MAX (SECTION_MAX_SIZE / PAGE_SIZE)
+
+_Static_assert(SEGMENTS_MAX + 2 <= QUEUE_SIZE,
+               "a request's chain fits the queue");
+_Static_assert(SECTOR_SIZE == BLOCK_SECTOR_SIZE,
+               "the protocol counts the device's sectors");
+
+/* The client's endpoint queues one message each way: the client sends a
+   request once the last is answered. */
+#define CLIENT_CAPACITY 1
 
 /* struct virtio_blk_config: capacity in 512-byte sectors (5.2.4). */
 #define CONFIG_CAPACITY 0
@@ -89,12 +126,33 @@ typedef struct {
     volatile UINT8 *request; /* the second */
     UINT64 request_device;   /* its device address */
     UINT64 capacity;
+    UINT64 features;
     UINT32 pin;
     UINT16 avail_index, used_seen;
     UINT32 reads, interrupts;
+    UINT32 client;          /* serving: the driver's end of the client's */
+    UINT32 section_pin;     /* the attached section's, or HANDLE_INVALID */
+    UINT64 section_size;
+    UINT64 writes, flushes;
 } DEVICE;
 
+/* A run of bytes a descriptor names. */
+typedef struct {
+    UINT64 address;
+    UINT32 length;
+} SEGMENT;
+
 static DEVICE device;
+
+/* The attached section's pages' device addresses. */
+static UINT64 section_pages[SECTION_PAGES_MAX];
+
+/* A message from the client, read whole so that none stays queued. */
+static UINT8 message[CHANNEL_MAX_BYTES];
+static RECEIVED_HANDLE received[CHANNEL_MAX_HANDLES];
+
+/* channel_write needs a valid array even for no handles. */
+static const HANDLE_TRANSFER no_handles[1];
 
 _Noreturn static void fail(const char *what, UINT32 status)
 {
@@ -149,17 +207,19 @@ static UINT64 read_capacity(void)
 
 /* 3.1.1: the reset and bus mastering come with virtio_driver_open; then
    the interrupt, the features, the capacity, two pages of DMA memory,
-   the request queue in the first, and DRIVER_OK. */
-static void start_device(UINT32 bootstrap)
+   the request queue in the first, and DRIVER_OK. The bootstrap channel
+   stays open. */
+static void start_device(UINT32 bootstrap, UINT64 features)
 {
     VIRTIO_DRIVER *virtio = &device.virtio;
     UINT64 accepted, addresses[DMA_PAGES];
 
+    device.section_pin = HANDLE_INVALID;
     virtio_driver_open(virtio, "nova-virtio-blk", VIRTIO_BLK_EXIT_FAILED,
                        bootstrap, CONFIG_SIZE);
-    handle_close(bootstrap);
     virtio_driver_interrupt(virtio, QUEUE_KEY);
-    accepted = virtio_driver_negotiate(virtio, FEATURES_ACCEPTED);
+    accepted = virtio_driver_negotiate(virtio, features);
+    device.features = accepted;
     device.capacity = read_capacity();
     device.queue = virtio_driver_dma(virtio, DMA_PAGES, addresses,
                                      &device.pin);
@@ -224,27 +284,29 @@ static void wait_used(void)
     load_fence();
 }
 
-/* Read one sector, at lba, into the request page's data (5.2.6), as a
-   chain of the three descriptors from 0 that the ring's next entry
-   names. */
-static const volatile UINT8 *read_sector(UINT64 lba)
+/* Put a request of type for sector on the device with its data in the
+   count segments, device-writable for a read, as a chain of descriptors
+   from 0 that the ring's next entry names, and wait until the device has
+   used it. Returns the status byte the device wrote. */
+static UINT8 submit(UINT32 type, UINT64 sector, const SEGMENT *segments,
+                    UINT32 count)
 {
     volatile UINT8 *avail = device.queue + AVAIL_OFFSET;
     volatile UINT8 *used = device.queue + USED_OFFSET;
     volatile UINT8 *element;
-    UINT32 slot = device.avail_index % QUEUE_SIZE;
+    UINT32 slot = device.avail_index % QUEUE_SIZE, i;
+    UINT16 data_flags = type == REQUEST_TYPE_IN ? VIRTQ_DESC_F_WRITE : 0;
 
-    if (lba >= device.capacity)
-        fail("a read past the device's capacity", ERR_OUT_OF_RANGE);
-    *(volatile UINT32 *)(device.request + REQUEST_TYPE) = REQUEST_TYPE_IN;
+    *(volatile UINT32 *)(device.request + REQUEST_TYPE) = type;
     *(volatile UINT32 *)(device.request + REQUEST_RESERVED) = 0;
-    *(volatile UINT64 *)(device.request + REQUEST_SECTOR) = lba;
+    *(volatile UINT64 *)(device.request + REQUEST_SECTOR) = sector;
     device.request[STATUS_OFFSET] = REQUEST_STATUS_UNSET;
     set_descriptor(0, device.request_device, REQUEST_HEADER_SIZE,
                    VIRTQ_DESC_F_NEXT, 1);
-    set_descriptor(1, device.request_device + DATA_OFFSET, SECTOR_SIZE,
-                   VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT, 2);
-    set_descriptor(2, device.request_device + STATUS_OFFSET, 1,
+    for (i = 0; i < count; i++)
+        set_descriptor(1 + i, segments[i].address, segments[i].length,
+                       data_flags | VIRTQ_DESC_F_NEXT, (UINT16)(2 + i));
+    set_descriptor(1 + count, device.request_device + STATUS_OFFSET, 1,
                    VIRTQ_DESC_F_WRITE, 0);
     *(volatile UINT16 *)(avail + VIRTQ_RING_ENTRIES +
                          slot * VIRTQ_AVAIL_ENTRY_SIZE) = 0;
@@ -255,9 +317,25 @@ static const volatile UINT8 *read_sector(UINT64 lba)
     element = used + VIRTQ_RING_ENTRIES +
               device.used_seen % QUEUE_SIZE * VIRTQ_USED_ELEMENT_SIZE;
     device.used_seen++;
-    if (*(volatile UINT32 *)(element + VIRTQ_USED_ID) != 0 ||
-        device.request[STATUS_OFFSET] != REQUEST_STATUS_OK)
-        fail("a read request failed", device.request[STATUS_OFFSET]);
+    if (*(volatile UINT32 *)(element + VIRTQ_USED_ID) != 0)
+        fail("the device used a chain it was not given",
+             *(volatile UINT32 *)(element + VIRTQ_USED_ID));
+    return device.request[STATUS_OFFSET];
+}
+
+/* Read one sector, at lba, into the request page's data. */
+static const volatile UINT8 *read_sector(UINT64 lba)
+{
+    SEGMENT data;
+    UINT8 status;
+
+    if (lba >= device.capacity)
+        fail("a read past the device's capacity", ERR_OUT_OF_RANGE);
+    data.address = device.request_device + DATA_OFFSET;
+    data.length = SECTOR_SIZE;
+    status = submit(REQUEST_TYPE_IN, lba, &data, 1);
+    if (status != REQUEST_STATUS_OK)
+        fail("a read request failed", status);
     device.reads++;
     return device.request + DATA_OFFSET;
 }
@@ -361,12 +439,223 @@ static void say_boot_sector(UINT64 lba)
     say("\r\n");
 }
 
+/* ------------------------------------------------------------------------
+   Serving a client. */
+
+/* The device is reset before the pins are released, so it reads and
+   writes none of their pages any more (3.3.1). */
+_Noreturn static void stop(void)
+{
+    virtio_driver_reset(&device.virtio);
+    check(pin_release(device.pin), "pin_release");
+    if (device.section_pin != HANDLE_INVALID)
+        check(pin_release(device.section_pin), "pin_release");
+    say("nova-virtio-blk: the client closed its end after ");
+    say_number(device.reads);
+    say(" reads, ");
+    say_number(device.writes);
+    say(" writes and ");
+    say_number(device.flushes);
+    say(" flushes; device reset, pins released\r\n");
+    process_exit(VIRTIO_BLK_EXIT_DONE);
+}
+
+/* Give the platform driver the client's endpoint, and close the
+   bootstrap channel. */
+static void report(UINT32 bootstrap, UINT32 client)
+{
+    HANDLE_TRANSFER transfer;
+    UINT32 transaction = 0;
+
+    transfer.handle = client;
+    transfer.rights = BLOCK_CLIENT_RIGHTS;
+    check(channel_write(bootstrap, &transaction, VIRTIO_BLK_REPORT_SIZE,
+                        &transfer, 1),
+          "cannot report to the platform driver");
+    handle_close(bootstrap);
+}
+
+/* Answer the client, waiting while its queue is full. */
+static void answer(UINT32 transaction, UINT32 status, UINT64 information)
+{
+    BLOCK_REPLY reply;
+    UINT32 written, observed;
+
+    reply.transaction = transaction;
+    reply.status = status;
+    reply.information = information;
+    for (;;) {
+        written = channel_write(device.client, &reply, sizeof reply,
+                                no_handles, 0);
+        if (written == OK)
+            return;
+        if (written == ERR_PEER_CLOSED)
+            stop();
+        if (written != ERR_SHOULD_WAIT)
+            fail("cannot answer the client", written);
+        check(object_wait_one(device.client,
+                              CHANNEL_WRITABLE | CHANNEL_PEER_CLOSED,
+                              DEADLINE_INFINITE, &observed),
+              "waiting for the client");
+    }
+}
+
+/* Pin the section the client attaches, whole, for the device. */
+static UINT32 attach(const BLOCK_REQUEST *request, UINT32 handle_count)
+{
+    UINT32 status;
+
+    if (device.section_pin != HANDLE_INVALID)
+        return ERR_BAD_STATE;
+    if (handle_count != 1 || received[0].type != TYPE_SECTION ||
+        (received[0].rights & BLOCK_SECTION_RIGHTS & ~RIGHT_TRANSFER) !=
+            (BLOCK_SECTION_RIGHTS & ~RIGHT_TRANSFER) ||
+        request->length == 0 || request->length % PAGE_SIZE != 0 ||
+        request->length > SECTION_MAX_SIZE || request->sector ||
+        request->buffer)
+        return ERR_INVALID_ARGS;
+    status = section_pin(device.virtio.initiator, received[0].handle, 0,
+                         request->length, PIN_DEVICE_READ | PIN_DEVICE_WRITE,
+                         section_pages, &device.section_pin);
+    if (status != OK) {
+        device.section_pin = HANDLE_INVALID;
+        return status;
+    }
+    device.section_size = request->length;
+    return OK;
+}
+
+/* The pages of the section the bytes from buffer on take, as segments;
+   returns their count. The range lies within the section. */
+static UINT32 segments_of(UINT32 buffer, UINT32 length, SEGMENT *segments)
+{
+    UINT32 count = 0, within, n;
+
+    while (length) {
+        within = buffer % PAGE_SIZE;
+        n = PAGE_SIZE - within < length ? PAGE_SIZE - within : length;
+        segments[count].address = section_pages[buffer / PAGE_SIZE] + within;
+        segments[count].length = n;
+        count++;
+        buffer += n;
+        length -= n;
+    }
+    return count;
+}
+
+/* A read or a write, checked against the device and the section. */
+static UINT32 transfer(const BLOCK_REQUEST *request)
+{
+    SEGMENT segments[SEGMENTS_MAX];
+    UINT32 count, type = request->operation == BLOCK_READ ? REQUEST_TYPE_IN
+                                                           : REQUEST_TYPE_OUT;
+    UINT8 status;
+
+    if (request->length == 0 || request->length % SECTOR_SIZE != 0 ||
+        request->length > BLOCK_TRANSFER_MAX ||
+        request->buffer % SECTOR_SIZE != 0)
+        return ERR_INVALID_ARGS;
+    if (request->buffer > device.section_size ||
+        request->length > device.section_size - request->buffer ||
+        request->sector >= device.capacity ||
+        request->length / SECTOR_SIZE > device.capacity - request->sector)
+        return ERR_OUT_OF_RANGE;
+    if (type == REQUEST_TYPE_OUT && (device.features & 1ULL << FEATURE_RO))
+        return ERR_ACCESS_DENIED;
+    count = segments_of(request->buffer, request->length, segments);
+    status = submit(type, request->sector, segments, count);
+    if (status != REQUEST_STATUS_OK)
+        return status == REQUEST_STATUS_UNSUPPORTED ? ERR_NOT_SUPPORTED
+                                                    : ERR_IO;
+    if (type == REQUEST_TYPE_IN)
+        device.reads++;
+    else
+        device.writes++;
+    return OK;
+}
+
+/* A flush, sector 0 and no data (5.2.6.1). */
+static UINT32 flush(const BLOCK_REQUEST *request)
+{
+    UINT8 status;
+
+    if (request->sector || request->length || request->buffer)
+        return ERR_INVALID_ARGS;
+    if (!(device.features & 1ULL << FEATURE_FLUSH))
+        return ERR_NOT_SUPPORTED;
+    status = submit(REQUEST_TYPE_FLUSH, 0, 0, 0);
+    if (status != REQUEST_STATUS_OK)
+        return status == REQUEST_STATUS_UNSUPPORTED ? ERR_NOT_SUPPORTED
+                                                    : ERR_IO;
+    device.flushes++;
+    return OK;
+}
+
+/* Read the client's next message whole and answer it. */
+static void serve_one(void)
+{
+    const BLOCK_REQUEST *request = (const BLOCK_REQUEST *)message;
+    UINT32 bytes, count, status, i;
+    UINT64 information = 0;
+
+    status = channel_read(device.client, message, sizeof message, received,
+                          CHANNEL_MAX_HANDLES, &bytes, &count);
+    if (status == ERR_PEER_CLOSED)
+        stop();
+    check(status, "reading the client's request");
+    if (bytes != sizeof *request) {
+        for (i = 0; i < count; i++)
+            handle_close(received[i].handle);
+        answer(bytes >= sizeof request->transaction ? request->transaction
+                                                    : 0,
+               ERR_INVALID_ARGS, 0);
+        return;
+    }
+    if (request->operation == BLOCK_ATTACH) {
+        status = attach(request, count);
+        information = status == OK ? device.capacity : 0;
+    } else if (count) {
+        status = ERR_INVALID_ARGS;
+    } else if (device.section_pin == HANDLE_INVALID) {
+        status = ERR_BAD_STATE;
+    } else if (request->operation == BLOCK_READ ||
+               request->operation == BLOCK_WRITE) {
+        status = transfer(request);
+    } else if (request->operation == BLOCK_FLUSH) {
+        status = flush(request);
+    } else {
+        status = ERR_NOT_SUPPORTED;
+    }
+    for (i = 0; i < count; i++)
+        handle_close(received[i].handle);
+    answer(request->transaction, status, information);
+}
+
+_Noreturn static void serve(UINT32 bootstrap)
+{
+    UINT32 theirs, observed;
+
+    start_device(bootstrap, FEATURES_SERVE);
+    check(channel_create(CLIENT_CAPACITY, &device.client, &theirs),
+          "channel_create");
+    report(bootstrap, theirs);
+    for (;;) {
+        check(object_wait_one(device.client,
+                              CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
+                              DEADLINE_INFINITE, &observed),
+              "waiting for the client");
+        serve_one();
+    }
+}
+
 _Noreturn void virtio_blk_main(UINT32 bootstrap, UINT64 argument)
 {
     UINT64 start;
 
-    (void)argument;
-    start_device(bootstrap);
+    if (argument == VIRTIO_BLK_SERVE)
+        serve(bootstrap);
+    start_device(bootstrap, FEATURES_INSPECT);
+    handle_close(bootstrap);
     start = first_partition();
     if (!start)
         fail("the disk names no partition", ERR_NOT_SUPPORTED);

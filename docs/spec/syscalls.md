@@ -398,10 +398,11 @@ cancelled by a closing handle the signals it observed,
 | 16 | `ERR_NOT_FOUND` | A name a directory does not hold ([storage.md F1](storage.md#f1-the-directory-protocol)) |
 | 17 | `ERR_ALREADY_EXISTS` | A name a directory holds already, as a publication's ([storage.md F4](storage.md#f4-publishing-file-systems)) |
 | 18 | `ERR_DATA_INTEGRITY` | Data that fails the check of its digest ([storage.md F9](storage.md#f9-reading-and-verifying-the-store)) |
+| 19 | `ERR_IO` | A request the device failed, as a virtio block device's `VIRTIO_BLK_S_IOERR` status reports one (VIRTIO 1.4 5.2.6) |
 
 The same codes report the outcome of an I/O request in its completion
 message ([ipc.md I9](ipc.md#i9-asynchronous-io-requests)), and codes
-16 to 18 only those: no call of the kernel's returns them. A Win32-style
+16 to 19 only those: no call of the kernel's returns them. A Win32-style
 subsystem translates them to its own codes in user mode.
 
 - **Why:** a caller tests one value against zero. The codes name the
