@@ -170,13 +170,14 @@ contextual alternates or tabular figures.
 and checked by the SHA-256 `SHA256SUMS` gives, as follows.
 
 **Faces.** The six static faces the approved login and desktop designs
-set type in, and no other: Inter Regular, Medium and SemiBold for text
-up to 40 pixels, Inter Display Light, Regular and SemiBold for display
-sizes from 44 (the designs' type scale: field values and body text,
-buttons and the bar, titles and labels; the login's names and titles,
-the account rows, headings). The static faces, not Inter's variable
-font, because a weight between them is never drawn and a variable
-outline needs `gvar`'s deltas resolved at a weight before it is drawn.
+([look.md V5](look.md#v5-type)) set type in, and no other: Inter
+Regular, Medium and SemiBold for text up to 40 pixels, Inter Display
+Light, Regular and SemiBold for display sizes from 44 (the designs'
+type scale: field values and body text, buttons and the bar, titles
+and labels; the login's names and titles, the account rows, headings).
+The static faces, not Inter's variable font, because a weight between
+them is never drawn and a variable outline needs `gvar`'s deltas
+resolved at a weight before it is drawn.
 
 **Characters.** The Unicode blocks [ui.md](ui.md) U3 names, whole:
 Latin, U+0020 to U+007E and U+00A0 to U+024F; Greek and Coptic,

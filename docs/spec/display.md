@@ -14,7 +14,8 @@ Everything here is a protocol or a service every graphical program
 meets, and its mistakes are security holes: a window another program
 can read, a key that reaches the wrong process. Everything in ui.md is
 a library a program may use or leave, its own pixels drawn its own
-way; its mistakes cost looks and speed.
+way; its mistakes cost looks and speed. What the system's own screens
+look like is [look.md](look.md)'s.
 
 It builds on [objects.md](objects.md) (handles, rights, sections),
 [ipc.md](ipc.md) (channels, bulk data in sections, device memory,
@@ -521,8 +522,7 @@ overlay; the compositor draws every window's frame and label.
 
 Translucency is over a static wallpaper, precomputed, and
 there is no full-screen blur, since all drawing is on the CPU, as the
-recommended visual direction, Horizon, has it
-([ui.md U9](ui.md#u9-theming-from-tokens)).
+visual direction, Horizon, has it ([look.md](look.md)).
 
 The compositor composes, bottom to top:
 
@@ -534,7 +534,7 @@ The compositor composes, bottom to top:
 | 4 | `TRUSTED` | The powerbox's dialogs | The powerbox |
 | 5 | `SYSTEM` | Login's screens: the login screen, the secure screen | Login |
 | 6 | Pointer | The pointer's image ([D10](#d10-the-pointer)) | The compositor |
-| 7 | Strip | A band along one edge of the screen, always shown, at least `STRIP_MIN` deep, a screen's height over 100, and as deep as the system's theme makes it: the focused window's label and marks ([D16](#d16-trusted-interface-and-the-powerbox)), and the compositor's notices | The compositor |
+| 7 | Strip | A band along the top of the screen, always shown, at least `STRIP_MIN` deep, a screen's height over 100, and as deep as the system's theme makes it ([look.md V9](look.md#v9-the-bar)): the focused window's label and marks ([D16](#d16-trusted-interface-and-the-powerbox)), and the compositor's notices | The compositor |
 
 No window of any layer covers the strip. A window's frame, its shadow,
 its corners and the mark of its focus are the compositor's, drawn from
@@ -935,7 +935,8 @@ the keyboard.
    the toolkit ([ui.md U12](ui.md#u12-the-first-programs)): the accounts'
    names, the selected one's password field and, while no account
    exists, the first boot's form
-   ([accounts.md A9](accounts.md#a9-the-first-boot)).
+   ([accounts.md A9](accounts.md#a9-the-first-boot)), laid out as
+   [look.md V10](look.md#v10-login) gives.
 2. It lists the names with a new request, `ACCOUNTS_LIST`, on a login
    channel the first process marks as the console's. The service
    answers with every account's name, in bytewise order, and nothing

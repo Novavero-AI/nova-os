@@ -7,7 +7,8 @@ the first programs built on them, the HUD, Files, Settings and the
 terminal. The display's services and protocols, which every graphical
 program meets whether it uses these libraries or not, are
 [display.md](display.md)'s, which also gives the build plan and why the
-two are separate documents.
+two are separate documents. The theme's values and the layout of the
+screens the system draws are [look.md](look.md)'s.
 
 Each item gives the design, why, what it costs, and the main
 alternative not taken. Items the owner has ruled on are marked
@@ -224,7 +225,8 @@ be released under the OFL" (OFL FAQ 1.3).
   needs shaping, or marks that U4 cannot place, and Cyrillic's combining
   marks wait for mark placement too. The four arrows are the ones the
   approved login's and desktop's key hints show. The six faces are the
-  ones the approved login and desktop designs set type in: Inter for
+  ones the approved login and desktop designs
+  ([look.md V5](look.md#v5-type)) set type in: Inter for
   text up to 40 pixels, and Inter Display for the large headings, names
   and titles from 44. Each face is a converted file, and the variable
   font's deltas would be a second outline format in the reader.
@@ -519,10 +521,9 @@ root down.
 ## U9. Theming from tokens
 
 **Decided** (by the owner): login and the desktop share one visual
-language. The recommended direction, Horizon, keeps Limb as a sharp
-wallpaper, marks the focus with a small horizon glow, and has no
-full-screen blur; the visuals are designed apart from this document,
-which depends on none of them. **Decided:** the rest.
+language, Horizon, which keeps Limb as a sharp wallpaper, marks the
+focus with a small horizon glow, and has no full-screen blur;
+[look.md](look.md) gives its tokens' values. **Decided:** the rest.
 
 A theme is a value of tokens, served by the settings service as the keys
 under `theme.` ([shell.md
@@ -535,7 +536,7 @@ compositor's own ([display.md D8](display.md#d8-composition)).
 
 | Tokens | What they give |
 |---|---|
-| Colours, by role | Ink, muted ink, surface, accent, danger, the focus mark, selection |
+| Colours, by role | Inks, surfaces, the accent, danger, the focus marks and selection, in the roles [look.md V3](look.md#v3-colours) gives |
 | Materials | Each translucent surface's tint and amount ([display.md D8](display.md#d8-composition)) |
 | Type | Each style's weight, size and line height |
 | Space | The spacing scale, padding, gaps |
@@ -596,7 +597,8 @@ structured results, one API for the interface and the shell.
 1. **Its place.** `hud.exe` is the session's, started by login with an
    `OVERLAY` connection and its end of a shell's session; the HUD key
    opens and closes it
-   ([display.md D12](display.md#d12-the-secure-attention-key-and-global-keys)).
+   ([display.md D12](display.md#d12-the-secure-attention-key-and-global-keys)),
+   and [look.md V12](look.md#v12-the-hud) gives its layout.
 2. **What it runs.** Everything typed is nvo. Login starts a shell,
    `shell.exe`, for the HUD, with the session's handles
    ([accounts.md A7](accounts.md#a7-the-session)) and a session in

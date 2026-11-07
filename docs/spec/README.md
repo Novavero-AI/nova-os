@@ -25,6 +25,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [shell.md](shell.md) | nvo, the shell's language: its grammar, values, pipelines and errors, how a command is found and run from `/store`, the handles the shell grants a command, interactive behaviour, replay and settings |
 | [display.md](display.md) | Who holds the display from boot to the desktop, the compositor, windows and their buffers, composition, the pointer, routing input, the secure attention key, capture, the trusted interface, replay, the GPU path and the build plan |
 | [ui.md](ui.md) | The toolkit: the rasterizer's outlines, the font and its format, text layout, the interface as data and its renderer, widgets, layout, themes, accessibility, the HUD and the first programs |
+| [look.md](look.md) | The visual design, Horizon: how sizes follow the scale, the theme's colours, surfaces and type, controls, the focus marks and motion, and the layout of the bar, login, windows, the HUD, notifications and the system's requests |
 | [network.md](network.md) | The virtio network driver and its frame protocol, the network service's TCP/IP stack and the resolver, grants and sockets as channels, replay, the threat model and limits, and the order of work with its CI checks |
 | [font-format.md](font-format.md) | The nova-os font: its header, character map, glyphs, outlines and kerning, and its conversion from TrueType |
 
@@ -1108,8 +1109,9 @@ and Ctrl+L in other shells, with the version or date each shows.
 
 ## Display and interface design references
 
-Systems, papers and standards [display.md](display.md) and
-[ui.md](ui.md) compare nova-os with, cited by the name in each heading.
+Systems, papers and standards [display.md](display.md),
+[ui.md](ui.md) and [look.md](look.md) compare nova-os with, cited by
+the name in each heading.
 Web pages were fetched on November 7, 2026; a page with no version is
 identified by its date and sha256, and a later copy may differ.
 
@@ -1253,6 +1255,14 @@ updated December 10, 2025.
 - Document: <https://learn.microsoft.com/en-us/adaptive-cards/>
 - Access: free web page.
 - sha256: `ebd4af5fa95b0332b13f5ba7d6e1889ad08f24dceb90fe037375f6c852ea9c02`
+
+**WCAG**: Web Content Accessibility Guidelines (WCAG) 2.2, W3C
+Recommendation, 12 December 2024.
+
+- Document: <https://www.w3.org/TR/2024/REC-WCAG22-20241212/>
+- Access: free web page; "W3C liability, trademark and document use
+  rules apply".
+- sha256: `6e3c5fe397257cae509a2fb4752b73062cf8cbeb92c2cec618989b17e4cf7057`
 
 ## Network design references
 
