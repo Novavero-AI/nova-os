@@ -5,10 +5,13 @@ with: glyph outlines, advance widths, a character map and pair kerning,
 in fixed records that a program reads in place. `tools/mkfont.c` writes
 it from a TrueType font when the system is built, `lib/typeface.c`
 reads it, and `include/font_format.h` gives its offsets and constants.
+The interface's typeface, Inter, reaches programs this way, from its
+store path under `/store` (README.md's Build section).
 
 Sources are pinned in [README.md](README.md) and cited by these names:
-"OpenType", the OpenType specification 1.9.1, by table or page,
-and "FreeType", FreeType's Glyph Conventions.
+"OpenType", the OpenType specification 1.9.1, by table or page;
+"FreeType", FreeType's Glyph Conventions; "OFL", the SIL Open Font
+License 1.1, by condition.
 
 ## Conventions
 
@@ -161,3 +164,43 @@ ranges given that the font maps, in that order:
 `GSUB` and every `GPOS` feature but `kern` are left out: no ligatures,
 contextual alternates or tabular figures.
 
+## What nova-os ships
+
+README.md's Build section converts Inter 4.1, fetched from its release
+and checked by the SHA-256 the README gives, as follows.
+
+**Faces.** The six static faces the approved login and desktop designs
+set type in, and no other: Inter Regular, Medium and SemiBold for text
+up to 40 pixels, Inter Display Light, Regular and SemiBold for display
+sizes from 44 (the designs' type scale: field values and body text,
+buttons and the bar, titles and labels; the login's names and titles,
+the account rows, headings). The static faces, not Inter's variable
+font, because a weight between them is never drawn and a variable
+outline needs `gvar`'s deltas resolved at a weight before it is drawn.
+
+**Characters.** The Unicode blocks [ui.md](ui.md) U3 names, whole:
+Latin, U+0020 to U+007E and U+00A0 to U+024F; Greek and Coptic,
+U+0370 to U+03FF; Cyrillic, U+0400 to U+04FF, but for its combining
+marks, U+0483 to U+0489, which this format cannot place and the tool
+refuses; General Punctuation and Superscripts and Subscripts, U+2000 to
+U+209F; and Currency Symbols, U+20A0 to U+20CF; with the four arrows
+from U+2190 to U+2193 that the designs' key hints show. Inter maps
+1,022 code points among them; one it does not map, such as U+00AD, the
+soft hyphen, is drawn as glyph 0. Each face keeps 1,023 glyphs, holds
+104,069 to 115,404 nonzero kerning pairs in 149 to 160 classes a side,
+and is 218,790 to 223,690 bytes, against Inter's 408,972 to 419,744
+for every glyph with hinting; the six together are 1,327,296.
+
+**Licence.** Inter is licensed under the OFL. A font converted to
+another format, or with glyphs removed, is a Modified Version: one
+"made by adding to, deleting, or substituting -- in part or in whole
+-- any of the components of the Original Version, by changing formats
+or by porting the Font Software to a new environment" (OFL,
+definitions). A Modified Version may not carry a Reserved Font Name
+without permission (condition 3); Inter's licence names none after its
+copyright statement, so the converted faces keep the name Inter. They
+are redistributed with the copyright notice and the licence, which "can
+be included ... as stand-alone text files" (condition 2), and under the
+OFL alone (condition 5): the fonts' store path holds Inter's
+`LICENSE.txt`, its copyright notice and the OFL's text, in the same
+directory as the faces.

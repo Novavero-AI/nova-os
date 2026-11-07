@@ -112,7 +112,8 @@ CI checks every pull request and every push to main:
   Linux and on macOS (Apple silicon), each host's compiler building
   TinyCC, and checks every size and sha256 the README gives, so both
   hosts must give the README's bytes. It also builds with TinyCC's
-  `-Wall -Werror`.
+  `-Wall -Werror`, runs `design/text/check-text.sh` on the fonts the
+  build converted, and on Linux `design/text/compare-freetype.sh`.
 - **Lint** checks that tracked text is ASCII and that clang's `-Wall
   -Wextra -pedantic -Wshadow` find nothing in any C source, built with
   its `compile_flags.txt`; it runs `tools/check-masks.c`,

@@ -135,10 +135,12 @@ and its checks.
 
 **Decided** (by the owner): Inter, under the OFL 1.1, is the interface's
 typeface, rendered by nova-os from its outlines; it is converted at build
-time into nova-os's font format; the code points converted are Latin,
-Greek and Cyrillic with punctuation and currency, 1,025 of them; and two
-static weights start, settled by the approved mockups. **Proposed:** the
-rest.
+time into nova-os's font format; the code points converted are whole
+Unicode blocks of Latin, Greek and Cyrillic with punctuation,
+superscripts and currency, without Cyrillic's combining marks, and the
+four arrows the approved designs' key hints use, 1,022 of them; and the
+six static faces the approved login and desktop designs use are
+converted.
 
 **The source.** Inter 4.1, the release at tag `v4.1` (commit
 `e3a3d4c57d5ecc01453a575621882a384c1995a3`), fetched by its SHA-256 as
@@ -147,10 +149,17 @@ the test disk's seed files are. Its static TrueType fonts,
 and 2,937 glyphs; the regular weight maps 2,852 code points and is
 411,640 bytes, hinted with ttfautohint (Inter's `Makefile`).
 
-**What is converted.** Latin, Greek and Cyrillic with general
-punctuation and currency, 1,025 code points, the scripts
-[U4](#u4-text-layout) can lay out; and two static weights to start, the
-two the approved mockups settle on.
+**What is converted.** The code points Inter maps in these Unicode
+blocks: Basic Latin's printable characters, U+0020 to U+007E; Latin-1
+Supplement, U+00A0 to U+00FF; Latin Extended-A and -B, U+0100 to
+U+024F; Greek and Coptic, U+0370 to U+03FF; Cyrillic, U+0400 to U+04FF,
+but for its seven combining marks, U+0483 to U+0489; General
+Punctuation, U+2000 to U+206F; Superscripts and Subscripts, U+2070 to
+U+209F; Currency Symbols, U+20A0 to U+20CF; and of Arrows, the four
+from U+2190 to U+2193: 1,022 code points. And
+six static faces: Inter Regular, Medium and SemiBold, and Inter Display
+Light, Regular and SemiBold. [font-format.md](font-format.md) gives each
+face's glyphs, kerning and size.
 
 **The format.** `tools/mkfont.c`, a C tool the chain compiles, as it
 compiles `tools/mkstore.c`, reads the pinned TrueType fonts at build
@@ -210,19 +219,25 @@ be released under the OFL" (OFL FAQ 1.3).
   `GPOS` reader in C to write and keep; Inter's features beyond
   kerning, tabular figures among them, need adding to the converter one
   by one.
-- **Why these characters and weights:** the rest of Inter needs
-  shaping, or marks that U4 cannot place; each weight is a converted
-  file, and the variable font's deltas would be a second outline format
-  in the reader.
-- **Not taken:** a TrueType parser in `lib/font/`. Its cost is the
+- **Why these characters and faces:** they are the scripts
+  [U4](#u4-text-layout) can lay out, in whole blocks; the rest of Inter
+  needs shaping, or marks that U4 cannot place, and Cyrillic's combining
+  marks wait for mark placement too. The four arrows are the ones the
+  approved login's and desktop's key hints show. The six faces are the
+  ones the approved login and desktop designs set type in: Inter for
+  text up to 40 pixels, and Inter Display for the large headings, names
+  and titles from 44. Each face is a converted file, and the variable
+  font's deltas would be a second outline format in the reader.
+- **Not taken:** a TrueType parser in the font library. Its cost is the
   table walk above in every graphical process, and either hinting's
   interpreter or hinting dropped at run time anyway. U+0020 to U+017F
   alone, 317 glyphs; its cost is Greek and Cyrillic drawn as the
   missing glyph. Everything Inter maps, 2,852 code points; its cost is
   glyphs U4 cannot lay out in every font file. Inter's variable font,
   instanced at run time; its cost is a second outline format in the
-  reader. Every weight the mockups use; its cost is a converted file
-  for each.
+  reader. Two static weights to start; its cost is the designs'
+  headings, names, labels and buttons set in faces other than the ones
+  they were designed in.
 
 ## U4. Text layout
 

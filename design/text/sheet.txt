@@ -1,9 +1,9 @@
 # The reference sheet: text in each face and size the approved login
-# and desktop designs use, at their sizes on a 2880 x 1800 screen, and
-# the rounded rectangles and circles they draw, over Limb. sheet.py's
-# header gives the items. check-text.sh draws it with lib/ and with
-# sheet.py and compares the two; compare-freetype.c compares its text
-# with FreeType's.
+# and desktop designs use, at their sizes on a 2880 x 1800 screen, a
+# line of each script converted, and the rounded rectangles and circles
+# the designs draw, over Limb. sheet.py's header gives the items.
+# check-text.sh draws it with lib/ and with sheet.py and compares the
+# two; compare-freetype.c compares its text with FreeType's.
 sheet 1600 1320
 at 48.5 8
 text InterDisplay-Light 128 F2F2F6 devon
@@ -28,6 +28,10 @@ text Inter-Regular 26 E6D5B8 \u00A1\u00A2\u00A3\u00A4\u00A5\u00A6\u00A7\u00A8\u0
 at 1180 680
 text Inter-SemiBold 63.36 F2F2F6 ABDE
 text Inter-SemiBold 42.24 F2F2F6 ABDE
+text Inter-Regular 26 A9B0BE \u0141\u00F3d\u017A, \u0110or\u0111e, \u0150 \u0151, \u0218 \u0219, \u021A \u021B
+text Inter-Regular 26 A9B0BE \u0395\u03BB\u03BB\u03B7\u03BD\u03B9\u03BA\u03AC: \u03B1\u03B2\u03B3 \u03B4\u03AD \u03A9\u03A3
+text Inter-Regular 26 A9B0BE \u041A\u0438\u0440\u0438\u043B\u043B\u0438\u0446\u0430: \u0416\u0429\u042F \u0451\u044A \u0457
+text Inter-Regular 26 A9B0BE x\u00B2 H\u2082O \u20AC \u20BD \u20B4 \u2030 \u2020 \u2026
 # A window's surface, a selected row, the search field, a chip, a
 # primary button and a keycap, then monograms of 144, 96, 44 and 32
 # pixels, whole and at half, and a 1.5 pixel hairline.

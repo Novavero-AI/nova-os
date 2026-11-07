@@ -693,7 +693,9 @@ Authors).
   `Inter-Regular.ttf`, is 411,640 bytes with sha256
   `40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82`;
   their hinting (`Makefile`). Its tables, coverage and kerning were
-  measured with fontTools 4.68.0.
+  measured with fontTools 4.68.0. README.md's Build section fetches the
+  zip, checks its sha256 and converts six of its static fonts
+  ([font-format.md](font-format.md)).
 
 **SIL Open Font License**, version 1.1, February 26, 2007 ("OFL"), and
 **OFL-FAQ**, version 1.1-update7, November 2023 ("OFL FAQ").
@@ -705,8 +707,9 @@ Authors).
   (the licence) and
   `ef6f04f954db9536156a0a1586b975cf3f51964f4dd04f8d9c3f66b6a1089827`
   (the FAQ)
-- Used by: [ui.md](ui.md): a converted font as a Modified Version, the
-  Reserved Font Name, and what must accompany the font.
+- Used by: [ui.md](ui.md) and [font-format.md](font-format.md): a
+  converted font as a Modified Version, the Reserved Font Name, and what
+  must accompany the font.
 
 **On slight hinting, proper text rendering, stem darkening and LCD
 filters**, Nikolaus Waxweiler, November 30, 2015, updated December 8,
