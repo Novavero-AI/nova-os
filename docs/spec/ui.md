@@ -134,20 +134,21 @@ two the approved mockups settle on.
 **The format.** `tools/mkfont.c`, a C tool the chain compiles, as it
 compiles `tools/mkstore.c`, reads the pinned TrueType fonts at build
 time and writes, for each weight the theme uses, a nova-os font file of
-fixed little-endian records (`include/font_format.h`):
+fixed little-endian records ([font-format.md](font-format.md),
+`include/font_format.h`):
 
 | Record | What it holds |
 |---|---|
-| Header | `NOVAFONT`, a version, the units to the em, the ascender, descender and line gap (from `OS/2`'s typographic values, since Inter sets `USE_TYPO_METRICS`), the x-height and cap height, the counts and offsets of the records below |
+| Header | `NOVAFONT`, a version, the units to the em, the ascender, descender and line gap (from `OS/2`'s typographic values, since Inter sets `USE_TYPO_METRICS`), the x-height and cap height, and the counts of the records below, which follow one another with no offset stored |
 | Map | Sorted ranges of code points, each to its first glyph |
 | Glyphs | For each glyph its advance (`hmtx`) and its outline: contours of points, each two signed 16-bit coordinates and an on-curve flag; composites flattened into their components' contours |
 | Kerning | Classes of first and second glyphs and a matrix of advance adjustments in font units, resolved at build time from `GPOS` for the glyphs kept |
-| Notice | Inter's copyright line and the OFL's text, as condition 2 requires |
 
 The reader takes a file only whole and exact, as the accounts service
-takes a record ([accounts.md A3](accounts.md#a3-records)): every count
-and offset is checked once when the font is loaded, against the file's
-size and each other, and a glyph is then read with no length to follow.
+takes a record ([accounts.md A3](accounts.md#a3-records)): the counts
+are checked once when the font is loaded, against the file's size, and
+every record against the counts and the records before it, and a glyph
+is then read with no length to follow.
 Instructions, `GSUB` and every `GPOS` feature but `kern` are left out.
 
 The trade-offs:
@@ -173,7 +174,8 @@ the copyright statement(s)" (OFL, definitions), and Inter's
 Inter. It must be distributed under the OFL and no other licence
 (condition 5), with the copyright notice and the licence (condition 2),
 so the font's store path holds Inter's `LICENSE.txt` beside the font,
-and the notice record repeats it. The rest of nova-os keeps its own
+which condition 2 allows: the notice and licence "can be included ...
+as stand-alone text files". The rest of nova-os keeps its own
 licence: "Only the portions based on the Font Software are required to
 be released under the OFL" (OFL FAQ 1.3).
 
