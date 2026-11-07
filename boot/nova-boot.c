@@ -15,6 +15,12 @@
 static EFI_GUID graphics_output_guid = {
     0x9042a9de, 0x23dc, 0x4a38,
     {0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a}};
+static EFI_GUID edid_active_guid = {
+    0xbd8c1056, 0x9f36, 0x44ec,
+    {0x92, 0xa8, 0xa6, 0x33, 0x7f, 0x81, 0x79, 0x86}};
+static EFI_GUID edid_discovered_guid = {
+    0x1c0c34f6, 0xd380, 0x41fa,
+    {0xa0, 0x49, 0x8a, 0xd0, 0x6c, 0x1a, 0x66, 0xaa}};
 static EFI_GUID loaded_image_guid = {
     0x5b1b31a1, 0x9562, 0x11d2,
     {0x8e, 0x3f, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
@@ -23,10 +29,6 @@ static EFI_GUID simple_file_system_guid = {
     {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
 
 static CHAR16 kernel_path[] = L"\\nova\\kernel.exe";
-
-/* The largest mode the screen is switched to. */
-#define MAX_WIDTH 1920
-#define MAX_HEIGHT 1080
 
 #define CALIBRATION_MICROSECONDS 50000
 
@@ -74,36 +76,164 @@ static int drawable(const EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info)
     return info->PixelFormat == PIXEL_RGB || info->PixelFormat == PIXEL_BGR;
 }
 
-/* Switch to the largest drawable mode within MAX_WIDTH x MAX_HEIGHT, if
-   it is larger than the current mode or the current mode is not
-   drawable. */
-static void largest_mode(EFI_BOOT_SERVICES *boot,
-                         EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
-{
-    UINT32 mode, best = gop->Mode->Mode;
-    INT64 best_area = drawable(gop->Mode->Info)
-                          ? (INT64)gop->Mode->Info->HorizontalResolution *
-                                gop->Mode->Info->VerticalResolution
-                          : 0;
+/* An EDID base block (VESA E-EDID Release A, Revision 2, Table 3.1): an
+   8-byte header (3.3), a checksum that makes its 128 bytes sum to zero
+   (3.11), and the display's preferred timing in the first 18-byte
+   descriptor (3.10.1). Feature Support bit 1 vouches for that timing:
+   EDID 1.3 requires the bit, and in EDID 1.4 it says the timing is the
+   display's native format (Table 3.14, note 4). Before EDID 1.3 the
+   first descriptor may be a display descriptor instead, which a zero
+   pixel clock marks (Table 3.1, note 3; Table 3.21). */
+#define EDID_BLOCK_SIZE 128
+#define EDID_HEADER_SIZE 8
+#define EDID_CHECKSUM_MODULUS 256
+#define EDID_FEATURE_SUPPORT 0x18
+#define EDID_PREFERRED_NATIVE 0x02
+#define EDID_PREFERRED_TIMING 0x36
 
+/* Detailed timing descriptor fields (Tables 3.21 and 3.22): the pixel
+   clock in bytes 0 and 1; the low 8 bits of the addressable width and
+   height in bytes 2 and 5 and their high 4 bits in the upper nibbles of
+   bytes 4 and 7; and the interlace flag. An interlaced timing's height
+   counts the lines of one field, half the frame, as Appendix A's
+   1920 x 1080i example gives 540 lines. */
+#define DTD_CLOCK_LOW 0
+#define DTD_CLOCK_HIGH 1
+#define DTD_WIDTH_LOW 2
+#define DTD_WIDTH_HIGH 4
+#define DTD_HEIGHT_LOW 5
+#define DTD_HEIGHT_HIGH 7
+#define DTD_FLAGS 17
+#define DTD_HIGH_NIBBLE 0xf0
+#define DTD_HIGH_SHIFT 4
+#define DTD_INTERLACED 0x80
+
+static const UINT8 edid_header[EDID_HEADER_SIZE] = {0x00, 0xff, 0xff, 0xff,
+                                                    0xff, 0xff, 0xff, 0x00};
+
+/* The size of the preferred timing in the size bytes at edid, or 0 x 0 if
+   they hold no valid EDID base block or it vouches for no preferred
+   timing. Every read lies in the first EDID_BLOCK_SIZE bytes, after size
+   is checked to cover them. */
+static void edid_preferred(const UINT8 *edid, UINT32 size, UINT32 *width,
+                           UINT32 *height)
+{
+    const UINT8 *timing;
+    UINT32 i, sum = 0;
+
+    *width = 0;
+    *height = 0;
+    if (!edid || size < EDID_BLOCK_SIZE)
+        return;
+    for (i = 0; i < EDID_HEADER_SIZE; i++)
+        if (edid[i] != edid_header[i])
+            return;
+    for (i = 0; i < EDID_BLOCK_SIZE; i++)
+        sum += edid[i];
+    timing = edid + EDID_PREFERRED_TIMING;
+    if (sum % EDID_CHECKSUM_MODULUS != 0 ||
+        !(edid[EDID_FEATURE_SUPPORT] & EDID_PREFERRED_NATIVE) ||
+        (timing[DTD_CLOCK_LOW] == 0 && timing[DTD_CLOCK_HIGH] == 0))
+        return;
+    *width = timing[DTD_WIDTH_LOW] |
+             (UINT32)(timing[DTD_WIDTH_HIGH] & DTD_HIGH_NIBBLE)
+                 << DTD_HIGH_SHIFT;
+    *height = timing[DTD_HEIGHT_LOW] |
+              (UINT32)(timing[DTD_HEIGHT_HIGH] & DTD_HIGH_NIBBLE)
+                  << DTD_HIGH_SHIFT;
+    if (timing[DTD_FLAGS] & DTD_INTERLACED)
+        *height *= 2;
+}
+
+/* The preferred size the EDID on the display's handle gives, or 0 x 0:
+   the active EDID, which a platform override may have replaced, else the
+   one read from the display (UEFI 12.9.2.4, 12.9.2.5). A handle that
+   drives several displays as one carries neither (UEFI 12.10). */
+static void display_preferred(EFI_BOOT_SERVICES *boot, EFI_HANDLE display,
+                              UINT32 *width, UINT32 *height)
+{
+    EFI_EDID_ACTIVE_PROTOCOL *edid;
+
+    *width = 0;
+    *height = 0;
+    if (boot->HandleProtocol(display, &edid_active_guid, (VOID **)&edid) ==
+            EFI_SUCCESS ||
+        boot->HandleProtocol(display, &edid_discovered_guid,
+                             (VOID **)&edid) == EFI_SUCCESS)
+        edid_preferred(edid->Edid, edid->SizeOfEdid, width, height);
+}
+
+/* Whether a mode is drawable and width x height, with 0 x 0 matching
+   none. */
+static int native(const EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info,
+                  UINT32 width, UINT32 height)
+{
+    return width != 0 && info->HorizontalResolution == width &&
+           info->VerticalResolution == height && drawable(info);
+}
+
+/* The mode to draw in: a drawable mode of the display's preferred size
+   width x height, the current one if it qualifies; else the current mode,
+   the firmware's choice, if it is drawable; else the drawable mode with
+   the most pixels. That mode comes last because it need not be the
+   display's: it can be larger than the display or another shape, and be
+   scaled to fit. */
+static UINT32 choose_mode(EFI_BOOT_SERVICES *boot,
+                          EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, UINT32 width,
+                          UINT32 height)
+{
+    UINT32 mode, largest = gop->Mode->Mode;
+    UINT64 largest_area = 0;
+
+    if (native(gop->Mode->Info, width, height))
+        return gop->Mode->Mode;
     for (mode = 0; mode < gop->Mode->MaxMode; mode++) {
         EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
         UINTN size;
-        INT64 area;
+        UINT64 area;
+        int found;
 
         if (gop->QueryMode(gop, mode, &size, &info) != EFI_SUCCESS)
             continue;
-        area = (INT64)info->HorizontalResolution * info->VerticalResolution;
-        if (info->HorizontalResolution <= MAX_WIDTH &&
-            info->VerticalResolution <= MAX_HEIGHT && area > best_area &&
-            drawable(info)) {
-            best = mode;
-            best_area = area;
+        found = native(info, width, height);
+        area = (UINT64)info->HorizontalResolution * info->VerticalResolution;
+        if (drawable(info) && area > largest_area) {
+            largest = mode;
+            largest_area = area;
         }
         boot->FreePool(info);
+        if (found)
+            return mode;
     }
-    if (best != gop->Mode->Mode)
-        gop->SetMode(gop, best);
+    return drawable(gop->Mode->Info) ? gop->Mode->Mode : largest;
+}
+
+/* Open the first Graphics Output Protocol instance and switch it to the
+   mode choose_mode picks. Whether or not SetMode succeeds, the mode in
+   effect afterwards is the one drawn in. */
+static EFI_STATUS open_screen(EFI_BOOT_SERVICES *boot,
+                              EFI_GRAPHICS_OUTPUT_PROTOCOL **gop)
+{
+    EFI_HANDLE *handles;
+    UINTN count;
+    UINT32 width, height, mode;
+    EFI_STATUS status;
+
+    /* Success means at least one handle (UEFI 7.3.15). */
+    status = boot->LocateHandleBuffer(BY_PROTOCOL, &graphics_output_guid, 0,
+                                      &count, &handles);
+    if (status != EFI_SUCCESS)
+        return status;
+    status = boot->HandleProtocol(handles[0], &graphics_output_guid,
+                                  (VOID **)gop);
+    if (status == EFI_SUCCESS) {
+        display_preferred(boot, handles[0], &width, &height);
+        mode = choose_mode(boot, *gop, width, height);
+        if (mode != (*gop)->Mode->Mode)
+            (*gop)->SetMode(*gop, mode);
+    }
+    boot->FreePool(handles);
+    return status;
 }
 
 /* ------------------------------------------------------------------------
@@ -714,10 +844,9 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
        application (UEFI 2.11, 3.1.2). */
     boot->SetWatchdogTimer(0, 0, 0, 0);
 
-    status = boot->LocateProtocol(&graphics_output_guid, 0, (VOID **)&gop);
+    status = open_screen(boot, &gop);
     if (status != EFI_SUCCESS)
         return status;
-    largest_mode(boot, gop);
     mode = gop->Mode->Info;
     if (!drawable(mode))
         return EFI_LOAD_ERROR;

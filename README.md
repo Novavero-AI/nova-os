@@ -49,7 +49,7 @@ gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `BOOTX64.EFI` | 20,480 | `49780ef50dcbbfe6098f771b6ec7fc616972dc853151e44cd91092f228d8fa45` |
+| `BOOTX64.EFI` | 21,504 | `50c723d73886d96f27428de3f1878baf644858b015d104d44a754b15d673d8a1` |
 | `kernel.exe` | 22,016 | `26b53a7ffe1752a6dc2f7e03fd85bc5f7f924f6197dca3021624ec075916ea6c` |
 
 ## Disk image
@@ -70,8 +70,8 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `8c2c8c2ba35a906154c48ed4b006f7b04ad20956cf4b503c4e21544bfcc610fb` |
-| `disk.vhdx` | 71,303,168 | `33b28808f38d3311cb3fd84f633b716f7f53abfcf2c7c6e8b772a39a378bede2` |
+| `disk.img` | 67,108,864 | `b8d28f3bcba32f5ebbb21b12bf0d1e108daf25c59ae5a586b4e771abd3182124` |
+| `disk.vhdx` | 71,303,168 | `6afc2a1e87dc486e1e790e90a70f4592bd4ba5e95b216eb990fe3c1dbac469fe` |
 
 To boot either file in QEMU, replace the `fat:esp` drive in the command
 below with `-drive if=virtio,format=raw,file=disk.img` or
@@ -101,5 +101,16 @@ as a read-only virtio disk, since QEMU's default IDE disk cannot be
 read-only. The USB tablet gives the window an absolute pointer, so QEMU does
 not capture the mouse; on a Mac, `-display cocoa,zoom-to-fit=on
 -full-screen` gives it a full-screen Space.
+
+nova-boot draws in the display's native mode. For a demo pixel for
+pixel, give the VM a display the size of the host's screen by adding
+`-vga none -device VGA,edid=on,xres=2560,yres=1600` with the screen's
+width and height; `system_profiler SPDisplaysDataType` prints a Mac's as
+its Resolution. The firmware takes that size from the EDID QEMU writes
+if the video memory holds `xres` x `yres` x 4 bytes (`vgamem_mb`, 16 MiB
+by default) and the EDID's first detailed timing carries the size, which
+it does only while `xres` and `yres` are below 4096 and the timing's
+pixel clock at `refresh_rate` (in millihertz, 75000 by default) is at
+most 655.35 MHz. For 3840 x 2160, add `refresh_rate=50000,vgamem_mb=32`.
 
 nova-os is licensed under the Apache License 2.0; see [LICENSE](LICENSE).

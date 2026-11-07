@@ -7,7 +7,8 @@ record. This document is the contract between the two as
 `boot/nova-boot.c`, `include/boot_info.h`, `include/memory_layout.h` and
 `kernel/main.c` implement it. Specifications are cited by the versions in
 [README.md](README.md): "UEFI 7.4.6" is section 7.4.6 of UEFI 2.11, "SDM"
-the Intel manual's Volume 3, "EDK II" the tag pinned there.
+the Intel manual's Volume 3, "EDK II" the tag pinned there, "E-EDID" the
+VESA standard listed there.
 
 ## Sequence
 
@@ -15,12 +16,22 @@ nova-boot, in order:
 
 1. Disables the watchdog timer the boot manager arms for five minutes
    before starting it (UEFI 3.1.2, 7.5.1).
-2. Locates the first Graphics Output Protocol instance (UEFI 7.3.16). Of
-   its modes no larger than 1920 x 1080 whose pixel format is
-   `PixelRedGreenBlueReserved8BitPerColor` (0) or
-   `PixelBlueGreenRedReserved8BitPerColor` (1) (UEFI 12.9.2), it switches
-   to the one with the most pixels if that is more than the current mode
-   has or the current mode has another format, then draws the boot
+2. Takes the first handle `LocateHandleBuffer` returns for the Graphics
+   Output Protocol (UEFI 7.3.15) and chooses among its modes whose pixel
+   format is `PixelRedGreenBlueReserved8BitPerColor` (0) or
+   `PixelBlueGreenRedReserved8BitPerColor` (1) (UEFI 12.9.2):
+   - the display's native mode, one the size of the preferred timing in
+     the EDID on that handle, from `EFI_EDID_ACTIVE_PROTOCOL` or, where
+     the handle has none, `EFI_EDID_DISCOVERED_PROTOCOL` (UEFI 12.9.2.4,
+     12.9.2.5). The timing is the first 18-byte descriptor of the EDID's
+     128-byte base block, read only when `SizeOfEdid` covers the block,
+     its header and checksum are valid and Feature Support bit 1 is set,
+     which in EDID 1.4 marks the timing as the display's native format
+     (E-EDID 3.3, 3.10.1, 3.11, Table 3.14);
+   - failing that, the mode the firmware started in;
+   - failing that, the mode with the most pixels.
+
+   It calls `SetMode` only to change the mode, then draws the boot
    screen. It fails if no mode it can draw to is in use.
 3. Reads and places the kernel image ([Kernel image](#kernel-image)).
 4. Allocates the kernel's stack and builds the kernel's page tables
@@ -347,7 +358,15 @@ This version leaves open:
   what it must preserve until then.
 - **The framebuffer.** `FrameBufferSize` is not passed; `PixelBitMask`
   and `PixelBltOnly` modes fail the boot; only the first Graphics Output
-  instance is considered.
+  instance is considered. The native mode comes only from the EDID base
+  block. A display whose native timing does not fit a base-block
+  descriptor (4095 x 4095 pixels at up to 655.35 MHz, E-EDID Table 3.21)
+  gives it in an extension block, which nova-boot does not read; it
+  keeps the firmware's mode unless the base block still marks its first
+  descriptor native, in which case nova-boot switches to that smaller
+  mode where it is offered. A Graphics Output handle that drives several
+  displays as one carries no EDID (UEFI 12.10) and keeps the firmware's
+  mode.
 - **Timekeeping.** Whether nova-boot checks for an invariant TSC and what
   the kernel falls back to without one.
 - **The serial console.** Which port the kernel uses and who programs it;

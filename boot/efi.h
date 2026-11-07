@@ -2,9 +2,10 @@
    Specification 2.11: 2.3 (data types, x64 calling convention), 4.3.1
    (EFI_SYSTEM_TABLE), 4.4.1 (EFI_BOOT_SERVICES), 7.2 (AllocatePages,
    FreePages, GetMemoryMap, AllocatePool, FreePool), 7.3
-   (HandleProtocol, LocateProtocol), 7.4.6 (ExitBootServices), 7.5
+   (HandleProtocol, LocateHandleBuffer), 7.4.6 (ExitBootServices), 7.5
    (Stall, SetWatchdogTimer), 9.1 (EFI_LOADED_IMAGE_PROTOCOL), 12.9
-   (EFI_GRAPHICS_OUTPUT_PROTOCOL), 13.4 and 13.5 (simple file system, file
+   (EFI_GRAPHICS_OUTPUT_PROTOCOL, EFI_EDID_DISCOVERED_PROTOCOL,
+   EFI_EDID_ACTIVE_PROTOCOL), 13.4 and 13.5 (simple file system, file
    protocol). Members nova-boot never calls are VOID * so the offsets of
    those it does call stay right; the static assertions pin them. */
 
@@ -38,6 +39,7 @@ typedef UINT16 CHAR16;
 #define EFI_MEMORY_DESCRIPTOR_VERSION 1
 #define EFI_FILE_MODE_READ 1
 #define EFI_FILE_END 0xFFFFFFFFFFFFFFFFULL /* SetPosition to end of file */
+#define BY_PROTOCOL 2 /* EFI_LOCATE_SEARCH_TYPE ByProtocol */
 
 typedef struct {
     UINT32 Data1;
@@ -62,7 +64,8 @@ typedef struct {
     UINT64 Attribute;
 } EFI_MEMORY_DESCRIPTOR;
 
-/* The table through LocateProtocol, the last member nova-boot calls. */
+/* The table through LocateHandleBuffer, the last member nova-boot
+   calls. */
 typedef struct {
     EFI_TABLE_HEADER Hdr;
     VOID *RaiseTPL;
@@ -106,9 +109,9 @@ typedef struct {
     VOID *CloseProtocol;
     VOID *OpenProtocolInformation;
     VOID *ProtocolsPerHandle;
-    VOID *LocateHandleBuffer;
-    EFI_STATUS (*LocateProtocol)(EFI_GUID *Protocol, VOID *Registration,
-                                 VOID **Interface);
+    EFI_STATUS (*LocateHandleBuffer)(UINTN SearchType, EFI_GUID *Protocol,
+                                     VOID *SearchKey, UINTN *NoHandles,
+                                     EFI_HANDLE **Buffer);
 } EFI_BOOT_SERVICES;
 
 _Static_assert(offsetof(EFI_BOOT_SERVICES, AllocatePages) == 0x28, "");
@@ -120,7 +123,7 @@ _Static_assert(offsetof(EFI_BOOT_SERVICES, HandleProtocol) == 0x98, "");
 _Static_assert(offsetof(EFI_BOOT_SERVICES, ExitBootServices) == 0xE8, "");
 _Static_assert(offsetof(EFI_BOOT_SERVICES, Stall) == 0xF8, "");
 _Static_assert(offsetof(EFI_BOOT_SERVICES, SetWatchdogTimer) == 0x100, "");
-_Static_assert(offsetof(EFI_BOOT_SERVICES, LocateProtocol) == 0x140, "");
+_Static_assert(offsetof(EFI_BOOT_SERVICES, LocateHandleBuffer) == 0x138, "");
 
 typedef struct {
     EFI_TABLE_HEADER Hdr;
@@ -214,5 +217,13 @@ struct EFI_GRAPHICS_OUTPUT_PROTOCOL {
     VOID *Blt;
     EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *Mode;
 };
+
+/* The two EDID protocols share one layout. */
+typedef struct {
+    UINT32 SizeOfEdid;
+    UINT8 *Edid;
+} EFI_EDID_ACTIVE_PROTOCOL;
+
+typedef EFI_EDID_ACTIVE_PROTOCOL EFI_EDID_DISCOVERED_PROTOCOL;
 
 #endif

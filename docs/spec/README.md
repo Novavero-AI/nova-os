@@ -230,6 +230,12 @@ Computer Systems 34(1), April 2016, DOI 10.1145/2893177.
 
 ## Not pinned
 
+- **VESA Enhanced Extended Display Identification Data Standard**
+  (E-EDID), Release A, Revision 2, September 25, 2006, which defines
+  EDID 1.4. VESA lists it among its free standards but serves those only
+  after a registration form, so no copy is pinned. Used by: nova-boot's
+  choice of the display's native mode (the base block's header, 3.3; its
+  checksum, 3.11; the preferred timing, 3.10.1, Tables 3.21 and 3.22).
 - **16550 UART.** `kernel/main.c` drives COM1 through the 16550 register
   interface (line status register at offset 5, transmitter-empty bit
   0x20). The register reference, a 16550 datasheet, is not pinned.
