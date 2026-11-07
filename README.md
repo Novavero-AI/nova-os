@@ -52,6 +52,32 @@ gives the same bytes:
 | `BOOTX64.EFI` | 13,824 | `ca1e6d23da16987618f74974839962dbbbc1b38cb0607fd77bb5cd54ff8e25a6` |
 | `kernel.exe` | 20,480 | `48180bf81a346a7b0fa7601d1db1aa0c98f33e69b3c0c362cfb1bd1066ce618a` |
 
+## Disk image
+
+`tools/mkimage.c` writes the boot disk twice: `disk.img`, a raw 64 MiB
+disk, and `disk.vhdx`, the same disk in a fixed VHDX file, the format a
+Hyper-V Generation 2 virtual machine boots. The disk has a GPT with one EFI
+System Partition, formatted FAT32, holding `\EFI\BOOT\BOOTX64.EFI` and
+`\NOVA\KERNEL.EXE`. The tool is C99 with only the standard library, so the
+host compiler or TinyCC builds it.
+
+```sh
+cc -o mkimage tools/mkimage.c
+./mkimage disk.img disk.vhdx BOOTX64.EFI kernel.exe
+```
+
+From the images above, each run gives the same bytes:
+
+| Image | Size | sha256 |
+|---|---|---|
+| `disk.img` | 67,108,864 | `8f3b2c71b977b2fd8e578b4d467ea7943c8931fe603c8adb5258f6bf96d4ca63` |
+| `disk.vhdx` | 71,303,168 | `df8d3489a481c46980b961c225963e79ee6ef9c49217774edbd1e90ae0d373f5` |
+
+To boot either file in QEMU, replace the `fat:esp` drive in the command
+below with `-drive if=virtio,format=raw,file=disk.img` or
+`-drive if=virtio,format=vhdx,file=disk.vhdx`; the `esp` folder is then not
+needed.
+
 ## Run
 
 With QEMU and the EDK2 firmware it bundles (under `$(brew --prefix)/share/qemu`

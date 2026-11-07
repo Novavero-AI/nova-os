@@ -7,3 +7,6 @@ x86_64-win32-tcc
 *.exe
 esp/
 vars.fd
+mkimage
+disk.img
+disk.vhdx
