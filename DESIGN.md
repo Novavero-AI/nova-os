@@ -115,8 +115,9 @@ CI checks every pull request and every push to main:
   `-Wall -Werror`.
 - **Lint** checks that tracked text is ASCII and that clang's `-Wall
   -Wextra -pedantic -Wshadow` find nothing in any C source, built with
-  its `compile_flags.txt`; it runs `tools/check-masks.c` and
-  `design/backgrounds/check-limb.sh`, and actionlint over the workflow.
+  its `compile_flags.txt`; it runs `tools/check-masks.c`,
+  `tools/check-fade.c` and `design/backgrounds/check-limb.sh`, and
+  actionlint over the workflow.
 - **Boot** boots the reproduced `disk.img` under QEMU with Ubuntu 24.04's
   OVMF, with a copy of `data.img` as its data disk: on QEMU's default
   processor, on Skylake-Client, which needs page-table isolation, on

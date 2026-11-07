@@ -1,27 +1,23 @@
 /* The desktop background's arrival. Limb is drawn once into memory from
    the page allocator and the part of the screen the boot screen drew on
    is saved; then each frame mixes the two images in linear light, as the
-   boot screen's anti-aliasing mixes ink with black, one step of
-   FADE_FRAMES further toward Limb. The timer paces the steps over FADE_MS,
-   and none is skipped: a step that comes due while the one before is
-   still being drawn follows straight after it, so a slow machine shows
-   every step, only later. */
+   boot screen's anti-aliasing mixes ink with black, by a step of the
+   fade's schedule (fade.h). A frame shows the step due when it will be
+   done, judged by the longest frame so far: where a frame and a timer
+   tick fit in a step, every step is shown, and where they do not, steps
+   are skipped to keep to the fade's length. The last step, Limb alone, is
+   always drawn. Judged by the longest, a frame runs past its step only
+   when it is the slowest yet, and after a slow frame the rest of the fade
+   comes early by up to as much. */
 
 #include "background.h"
-#include "cpu.h"
+#include "fade.h"
 #include "limb.h"
 #include "memory_layout.h"
 #include "mm/page.h"
-#include "x86_64/arch.h"
+#include "sched/wait.h"
+#include "x86_64/clock.h"
 #include "x86_64/serial.h"
-
-/* A step per refresh of a 60 Hz display, which shows no more than that,
-   over four tenths of a second; each step moves a twenty-fourth of the
-   light. */
-#define FADE_FRAMES 24
-#define FADE_MS 400
-#define MS_PER_SECOND 1000
-#define FADE_TICKS (FADE_MS * TIMER_HZ / MS_PER_SECOND)
 
 /* A pixel holds three 8-bit channels from bit 0 up, in the screen's
    order, which both images share; the fade treats each alike. */
@@ -179,8 +175,8 @@ static void save(const SCREEN *screen, const RECT *box, PIXEL_PAGE *saved)
 /* ------------------------------------------------------------------------
    The fade. */
 
-/* One frame's mix, weight steps of FADE_FRAMES toward Limb. Where the
-   boot screen is black, a channel's mix depends on Limb's code alone, so
+/* One frame's mix, weight of FADE_WEIGHT toward Limb. Where the boot
+   screen is black, a channel's mix depends on Limb's code alone, so
    over_black holds it for every code; that covers every pixel but the
    strokes. */
 typedef struct {
@@ -195,7 +191,7 @@ static void mix_start(MIX *mix, INT64 weight)
     mix->weight = weight;
     for (code = 0; code < CODES; code++)
         mix->over_black[code] =
-            (UINT32)gfx_cross_fade(0, code, weight, FADE_FRAMES);
+            (UINT32)gfx_cross_fade(0, code, weight, FADE_WEIGHT);
 }
 
 static UINT32 mix_pixels(const MIX *mix, UINT32 from, UINT32 to)
@@ -206,7 +202,7 @@ static UINT32 mix_pixels(const MIX *mix, UINT32 from, UINT32 to)
     for (shift = 0; shift < CHANNELS * CHANNEL_BITS; shift += CHANNEL_BITS)
         out |= (UINT32)gfx_cross_fade(from >> shift & CHANNEL_MASK,
                                       to >> shift & CHANNEL_MASK,
-                                      mix->weight, FADE_FRAMES)
+                                      mix->weight, FADE_WEIGHT)
                << shift;
     return out;
 }
@@ -273,20 +269,22 @@ static void fade_frame(const SCREEN *screen, const RECT *box,
 }
 
 /* ------------------------------------------------------------------------
-   Timing and the log. Durations come from the timestamp counter, finer
-   than the timer's millisecond ticks; under QEMU's TCG the ticks also
-   fall behind while the processor is busy. */
+   Timing and the log. Times come from the kernel's clock (clock.h), which
+   reads the timestamp counter, and the fade's deadlines are times on it.
+   A sleep still ends on a timer tick, but the ticks fall behind under
+   QEMU's TCG while the processor is busy, and a schedule counted in them
+   would fall behind with them. */
 
 #define TENTHS_PER_MS 10
 
-/* How long each part took, in timestamp-counter cycles. */
+/* How long each part took, in nanoseconds, and the frames drawn. */
 typedef struct {
-    UINT64 drawn, faded, busy, busiest;
+    UINT64 drawn, faded, busy, busiest, frames;
 } TIMES;
 
-static void serial_ms(UINT64 cycles, UINT64 tsc_per_ms)
+static void serial_ms(UINT64 ns)
 {
-    UINT64 tenths = cycles * TENTHS_PER_MS / tsc_per_ms;
+    UINT64 tenths = ns * TENTHS_PER_MS / NS_PER_MS;
 
     serial_number(tenths / TENTHS_PER_MS);
     serial_write(".");
@@ -294,47 +292,51 @@ static void serial_ms(UINT64 cycles, UINT64 tsc_per_ms)
     serial_write(" ms");
 }
 
-static void report(const TIMES *times, UINT64 tsc_per_ms)
+static void report(const TIMES *times)
 {
     UINT64 flags = serial_lock();
 
     serial_write("nova: background drawn in ");
-    serial_ms(times->drawn, tsc_per_ms);
+    serial_ms(times->drawn);
     serial_write(", faded in over ");
-    serial_number(FADE_FRAMES);
+    serial_number(times->frames);
     serial_write(" frames in ");
-    serial_ms(times->faded, tsc_per_ms);
+    serial_ms(times->faded);
     serial_write(" (");
-    serial_ms(times->busy / FADE_FRAMES, tsc_per_ms);
+    serial_ms(times->busy / times->frames);
     serial_write(" a frame on average, ");
-    serial_ms(times->busiest, tsc_per_ms);
+    serial_ms(times->busiest);
     serial_write(" at most)\r\n");
     serial_unlock(flags);
 }
 
-/* Show step k of the fade k / FADE_FRAMES of FADE_MS after it begins,
-   or as soon as step k - 1 is done if that is later. */
+/* Draw frames until one shows the last step, each started and given its
+   step by the schedule. The first, with no frame before it, is judged to
+   take no time. */
 static void fade(const SCREEN *screen, const RECT *box, PIXEL_PAGE *image,
                  PIXEL_PAGE *saved, TIMES *times)
 {
-    UINT64 began = timer_ticks(), start = rdtsc();
-    INT64 weight;
+    FADE_SCHEDULE schedule;
+    UINT64 began = clock_monotonic();
 
+    fade_begin(&schedule);
     times->busy = 0;
-    times->busiest = 0;
-    for (weight = 1; weight <= FADE_FRAMES; weight++) {
+    times->frames = 0;
+    while (schedule.step < FADE_STEPS) {
         UINT64 frame, took;
 
-        timer_sleep_until(began + weight * FADE_TICKS / FADE_FRAMES);
-        frame = rdtsc();
-        fade_frame(screen, box, image, saved, weight);
+        sleep_until(began + fade_next(&schedule));
+        frame = clock_monotonic();
+        fade_frame(screen, box, image, saved,
+                   fade_weight(fade_show(&schedule, frame - began)));
         gfx_flush();
-        took = rdtsc() - frame;
+        took = clock_monotonic() - frame;
+        fade_took(&schedule, took);
         times->busy += took;
-        if (took > times->busiest)
-            times->busiest = took;
+        times->frames++;
     }
-    times->faded = rdtsc() - start;
+    times->busiest = schedule.longest;
+    times->faded = clock_monotonic() - began;
 }
 
 void background_fade_in(const BOOT_INFO *info)
@@ -357,22 +359,22 @@ void background_fade_in(const BOOT_INFO *info)
         !chain_alloc((box.right - box.left) * (box.bottom - box.top),
                      &saved)) {
         chain_free(image);
-        start = rdtsc();
+        start = clock_monotonic();
         draw_onscreen(screen, &limb);
         gfx_flush();
         flags = serial_lock();
         serial_write("nova: background drawn in ");
-        serial_ms(rdtsc() - start, info->tsc_per_ms);
+        serial_ms(clock_monotonic() - start);
         serial_write(", with no memory to fade it in\r\n");
         serial_unlock(flags);
         return;
     }
-    start = rdtsc();
+    start = clock_monotonic();
     draw_offscreen(screen, &limb, image);
-    times.drawn = rdtsc() - start;
+    times.drawn = clock_monotonic() - start;
     save(screen, &box, saved);
     fade(screen, &box, image, saved, &times);
     chain_free(image);
     chain_free(saved);
-    report(&times, info->tsc_per_ms);
+    report(&times);
 }

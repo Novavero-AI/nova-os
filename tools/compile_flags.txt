@@ -6,3 +6,5 @@
 -I../kernel/random
 -I../console
 -I../fs
+-I../gfx
+-I../kernel
