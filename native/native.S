@@ -99,6 +99,14 @@ debug_write:
     syscall
     ret
 
+/* UINT32 random_read(void *bytes, UINT64 count) */
+    .globl random_read
+random_read:
+    movq %rcx, %r10
+    movl $CALL_RANDOM_READ, %eax
+    syscall
+    ret
+
 /* UINT32 object_wait_one(UINT32 handle, UINT32 signals, UINT64 deadline,
                           UINT32 *observed) */
     .globl object_wait_one

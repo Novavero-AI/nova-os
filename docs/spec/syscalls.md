@@ -387,7 +387,7 @@ cancelled by a closing handle the signals it observed,
 | 5 | `ERR_WRONG_TYPE` | The handle names an object of another type |
 | 6 | `ERR_ACCESS_DENIED` | The handle lacks a right the call needs, or the rights asked for are not a subset of the handle's |
 | 7 | `ERR_NO_MEMORY` | Kernel memory, or the job's quota of handles, objects, message bytes or pages, is exhausted |
-| 8 | `ERR_OUT_OF_RANGE` | A count past a fixed limit (`CHANNEL_MAX_BYTES`, `CHANNEL_MAX_HANDLES`, `WAIT_MANY_MAX`, `DEBUG_WRITE_MAX_BYTES`), or an offset past an object's size or a resource's range |
+| 8 | `ERR_OUT_OF_RANGE` | A count past a fixed limit (`CHANNEL_MAX_BYTES`, `CHANNEL_MAX_HANDLES`, `WAIT_MANY_MAX`, `DEBUG_WRITE_MAX_BYTES`, `RANDOM_READ_MAX_BYTES`), or an offset past an object's size or a resource's range |
 | 9 | `ERR_SHOULD_WAIT` | The operation would block: a queue is empty or full |
 | 10 | `ERR_TIMED_OUT` | The deadline passed |
 | 11 | `ERR_CANCELED` | A handle being waited on was closed, or a request was cancelled |
@@ -527,6 +527,17 @@ process's job until the interrupt's last handle closes; past the job's
 quota, or with no vector free, the call fails with `ERR_NO_RESOURCES`.
 `pin_release` ends the pin and removes its handle together, so no other
 thread of the process can quarantine it between the two.
+
+`random_read` writes at most `RANDOM_READ_MAX_BYTES` (256) bytes, more
+than any one key or salt needs; a larger count fails with
+`ERR_OUT_OF_RANGE`, and a program that wants more calls again. The
+kernel generates them on its own stack, since its generator runs with
+interrupts disabled and so cannot take a fault on a user buffer, then
+copies them out and wipes its copy. While no source of real entropy has
+seeded the generator, as the kernel logs at boot, the call fails with
+`ERR_BAD_STATE` rather than return bytes an attacker could predict.
+Zircon's `zx_cprng_draw` has no error condition but an invalid buffer,
+for which it terminates the caller ([cprng_draw][zx-cprng]).
 
 `thread_start` starts a further thread of a process `process_start` has
 started; it fails with `ERR_BAD_STATE` if the thread has been started, or

@@ -43,6 +43,11 @@ _Noreturn void thread_exit(void);
    log. Needs RESOURCE_RIGHT_USE on a resource that covers the debug log. */
 UINT32 debug_write(UINT32 resource, const void *bytes, UINT64 count);
 
+/* Write count random bytes, at most RANDOM_READ_MAX_BYTES, from the
+   kernel's generator to bytes. ERR_BAD_STATE while the generator has no
+   seed. */
+UINT32 random_read(void *bytes, UINT64 count);
+
 /* Wait until any of signals is active on the object handle names, which
    needs RIGHT_WAIT, or the deadline on the monotonic clock passes
    (ERR_TIMED_OUT), and report the signals observed. If another thread
