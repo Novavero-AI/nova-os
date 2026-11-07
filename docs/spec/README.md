@@ -68,6 +68,16 @@ BSD-2-Clause-Patent).
 - Used by: nova-boot (paging) and the kernel (paging, GDT, TSS, IDT,
   Local APIC, TSC); the system-call entry ([syscalls.md](syscalls.md)).
 
+**Intel 64 and IA-32 Architectures Software Developer's Manual, Volume 1:
+Basic Architecture**, order number 253665-093US, September 2026, the same
+release as Volume 3.
+
+- Document: <https://cdrdv2.intel.com/v1/dl/getContent/671436>
+- Access: free download.
+- sha256: `f6ffc430dfa2dada4f791b1ecb462810e59827befe9a9c23f9160941eea642f9`
+- Used by: user-mode drivers' I/O-port access ([ipc.md](ipc.md), I6), for
+  the I/O permission bitmap (20.5.2).
+
 **AMD64 Architecture Programmer's Manual, Volume 2: System Programming**,
 publication 24593, revision 3.46, October 2026.
 
@@ -77,6 +87,33 @@ publication 24593, revision 3.46, October 2026.
 - Used by: nova-boot and the kernel on AMD processors, for the same areas
   as the Intel manual; IA32_EFER's address (3.1.7), which the Intel
   volume pinned here does not give; memory encryption (7.10).
+
+## IOMMUs
+
+**Intel Virtualization Technology for Directed I/O Architecture
+Specification**, revision 5.20, April 2026, order number D51397-019.
+
+- Document: <https://cdrdv2.intel.com/v1/dl/getContent/671081>
+- Access: free download. It states that it grants no licence to Intel's
+  intellectual property except to publish an unmodified copy.
+- sha256: `44179074934b5d28f49e0302805d69e74bd4e7ad323525ef127d6e99e0c0a2fa`
+- Used by: DMA confinement on Intel platforms ([ipc.md](ipc.md), I8): the
+  remapping tables (3), invalidation (6.5) and the DMAR table (8); the
+  IOMMU registers kept out of `RESOURCE_MMIO` (I6).
+
+**AMD I/O Virtualization Technology (IOMMU) Specification**, publication
+48882-PUB, revision 3.11, April 2026.
+
+- Document: <https://docs.amd.com/api/khub/documents/2oKZlc87KNCKiT3B~xJjHg/content>
+- Access: free download under the Specification Agreement printed in it,
+  which permits review as a reference for designing a product that
+  interfaces with an AMD product, and forbids duplicating any part of it
+  or giving it to anyone else. The specifications cite it by section and
+  copy none of its text.
+- sha256: `f7c375a15db5ed63de760356867211063d164a2ed59f2d38613daec95894ce22`
+- Used by: DMA confinement on AMD platforms ([ipc.md](ipc.md), I8): the
+  Device Table and I/O page tables (2.2), commands (2.4) and the IVRS
+  table (5.2); the IOMMU registers kept out of `RESOURCE_MMIO` (I6).
 
 ## Executable format and calling convention
 

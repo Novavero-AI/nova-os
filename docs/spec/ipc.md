@@ -8,9 +8,11 @@ back. Object types, handles, rights, signals and lifetime are specified in
 registers in [syscalls.md](syscalls.md).
 
 Specifications are cited by the versions in [README.md](README.md): "SDM"
-is the Intel manual's Volume 3, "ACPI" ACPI 6.6. "seL4 8.1" is section 8.1
-of the seL4 Reference Manual, and "Liedtke 1993", "Liedtke 1995" and
-"Heiser and Elphinstone 2016" the papers, at the versions pinned under
+is the Intel manual's Volume 3 and "SDM Vol. 1" its Volume 1, "VT-d" the
+Intel VT-d specification, "AMD IOMMU" the AMD IOMMU specification, and
+"ACPI" ACPI 6.6. "seL4 8.1" is section 8.1 of the seL4 Reference Manual,
+and "Liedtke 1993", "Liedtke 1995" and "Heiser and Elphinstone 2016" the
+papers, at the versions pinned under
 [Design references](README.md#design-references). Microsoft Learn and
 Fuchsia pages are linked under [References](#references).
 
@@ -241,7 +243,7 @@ with the root job, to the first user process in its bootstrap message:
 
 | Kind | Range |
 |---|---|
-| `RESOURCE_MMIO` | All physical addresses outside RAM ([boot-protocol.md](boot-protocol.md#memory)), except the registers of devices the kernel drives itself: the local APIC and the range FEE0_0000h to FEEF_FFFFh that message-signalled interrupts are written to (SDM 13.11.1), the I/O APICs (ACPI 5.2.12), and any IOMMU |
+| `RESOURCE_MMIO` | All physical addresses outside RAM ([boot-protocol.md](boot-protocol.md#memory)), except the registers of devices the kernel drives itself: the local APIC and the range FEE0_0000h to FEEF_FFFFh that message-signalled interrupts are written to (SDM 13.11.1), the I/O APICs (ACPI 5.2.12), and any IOMMU (VT-d 8.3, AMD IOMMU 5.2.2.1) |
 | `RESOURCE_IRQ` | All interrupt sources: ACPI global system interrupts (ACPI 5.2.13) and message-signalled vectors |
 | `RESOURCE_IOPORT` | I/O ports 0 to 65,535, except those of the serial port the kernel logs to (COM1, from 0x3F8) |
 | `RESOURCE_DMA` | All bus requester IDs ([I8](#i8-dma)) |
@@ -272,9 +274,12 @@ covers. The I/O permission bitmap lies inside the TSS, at an offset from
 its base (SDM 10.7, "I/O map base address"), so the kernel keeps a bitmap
 for each process that has allowed ports and copies it into the CPU's TSS
 when it switches to that process. IOPL stays 0, so user code reaches only
-allowed ports (SDM 2.3, IOPL). Like a mapping, an allowance outlasts the
-resource handle it was made with: it ends when the process denies it or
-exits.
+allowed ports (SDM 2.3, IOPL): when CPL is greater than IOPL, the
+processor checks one bit per port and raises #GP if the bit of any port
+an access covers is set. Ports past the bitmap's end count as set, and the
+bitmap is followed by a byte with every bit set (SDM Vol. 1 20.5.2). Like
+a mapping, an allowance outlasts the resource handle it was made with: it
+ends when the process denies it or exits.
 
 - **Why:** the authority to touch a device is then a handle like any
   other, delegated down a chain the platform driver controls. Zircon hands
@@ -355,8 +360,10 @@ Decisions). **Decided:** the mechanism.
 1. `initiator_create(resource, requester_id)` makes an initiator object for
    one bus requester ID that a DMA resource covers. For PCI the ID is 32
    bits: the segment group in the high 16, and the bus, device and
-   function number in the low 16 (seL4 8.2.3 describes the low half). The
-   bus driver holds it and passes it to the device's driver.
+   function number in the low 16 (seL4 8.2.3 describes the low half).
+   Each IOMMU serves one segment group and indexes its tables by the low
+   half (VT-d 8.3 and 3.4.1, AMD IOMMU 5.2.2.1 and 2.2.2). The bus driver
+   holds the initiator and passes it to the device's driver.
 2. `section_pin(initiator, section, offset, size, options, addresses)`
    pins pages of a section for the device and writes one device address
    per page into `addresses`. `options` says whether the device reads,
@@ -375,6 +382,52 @@ Decisions). **Decided:** the mechanism.
    driver that can start DMA can reach all memory. With one, the kernel
    maps the pinned pages into the initiator's IOMMU domain, returns I/O
    virtual addresses, and unmaps them when the pin ends.
+
+With an IOMMU, confinement rests on three things its specification
+defines.
+
+**Remapping tables.** The IOMMU looks up each request's requester ID in a
+table that names the device's domain and the domain's I/O page tables: on
+Intel the root and context tables (VT-d 3.4.2, or 3.4.3 in scalable mode)
+over second-stage page tables (VT-d 3.7), on AMD the Device Table (AMD
+IOMMU 2.2.2) over I/O page tables (AMD IOMMU 2.2.3). Requester IDs with
+no initiator must be blocked as well (VT-d 3.2). VT-d blocks a request
+whose root or context entry is not present (VT-d 7.1.1, 7.1.3), but an
+AMD Device Table entry whose valid bit is clear passes every address
+through untranslated (AMD IOMMU 2.2.2.1, Table 8), so every Device Table
+entry needs its valid bit set.
+
+**Device scope.** Firmware's ACPI tables say which IOMMU serves which
+requester IDs: the DMAR table's remapping hardware unit structures and
+their device scopes (VT-d 8.3, 8.3.1), and the IVRS table's IVHD blocks
+and their device entries (AMD IOMMU 5.2.2.1). Requester IDs and devices
+are not always one to one: devices behind a conventional PCI bridge carry
+the bridge's ID and can only be assigned to a domain together (VT-d
+3.12.2), a device using phantom functions issues several IDs whose
+entries must match (VT-d 3.12.5, AMD IOMMU 2.2.2), and IVRS alias entries
+name the ID a device's requests carry (AMD IOMMU 5.2.2.1). The same
+tables also list memory that particular devices must keep reaching,
+identity-mapped for them (VT-d 3.16 and 8.4, AMD IOMMU 5.2.2.2).
+
+**Invalidation.** The IOMMU caches translations, so ending a pin clears
+its page-table entries, invalidates the cached translations and waits for
+the invalidation to complete before the pages are freed. On Intel this is
+an IOTLB invalidation of the pages, which also drains requests to them
+that the IOMMU has already processed, then an invalidation wait
+descriptor (VT-d 6.5.2.3, 6.5.2.9, 6.5.4), through the queued
+invalidation interface, the only one hardware past major version 5
+accepts (VT-d 6.5). On AMD it is `INVALIDATE_IOMMU_PAGES` then
+`COMPLETION_WAIT`, after which no transaction in flight reads or writes
+the pages (AMD IOMMU 2.4.3, 2.4.1). Changing a present context entry or a
+valid Device Table entry needs its own invalidation too (VT-d 6.5.3.3,
+Table 28; AMD IOMMU 2.2.2.2). An Intel IOMMU that reports caching mode,
+as emulated ones may, needs an invalidation after every change, a new
+pin's mappings included (VT-d 6.1).
+
+Device writes to the interrupt address range are interrupt requests,
+which bypass the page tables (VT-d 3.15, AMD IOMMU 2.1.4.2); only
+interrupt remapping governs them (VT-d 5.1.4, AMD IOMMU 2.2.2.1,
+Table 9).
 
 - **Why:** a device keeps writing to memory after the driver that started
   it has died, so freeing pinned pages when the driver exits would hand
