@@ -188,9 +188,11 @@ UINT64 paging_map_uncached(UINT64 physical)
     return entry ? linear : 0;
 }
 
-/* Clearing P alone keeps the rest of the entry, which the processor
-   ignores while P is 0 (SDM Vol. 3A 5.5.4, Figure 5-11), for
-   paging_restore_direct to bring back. The flush drops the old
+/* The entry is cleared whole, not just its P flag: a load through a
+   not-present entry can still read the L1D line at the frame the entry
+   names (Intel L1TF, "How L1TF Works"), so every not-present entry the
+   kernel makes names page 0, which holds nothing of the kernel or of any
+   process (docs/spec/speculation.md M12). The flush drops the old
    translation, which may be the large page the guard was split from. */
 int paging_unmap_direct(UINT64 physical)
 {
@@ -198,20 +200,24 @@ int paging_unmap_direct(UINT64 physical)
     UINT64 *entry = page_entry(DIRECT_MAP_BASE + physical);
 
     if (entry) {
-        *entry &= ~PTE_PRESENT;
+        *entry = 0;
         flush_translations();
     }
     restore_interrupts(flags);
     return entry != 0;
 }
 
-/* No TLB or paging-structure cache entry is made from an entry whose P
-   flag is 0, so setting it needs no invalidation (SDM Vol. 3A 5.10.4.3). */
+/* The page is RAM the allocator gave the caller, which the direct map
+   maps writable, not executable and write-back, with no PAT, PCD or PWT
+   bit (nova-boot, map_direct). No TLB or paging-structure cache entry is
+   made from an entry whose P flag is 0, so setting it needs no
+   invalidation (SDM Vol. 3A 5.10.4.3). */
 void paging_restore_direct(UINT64 physical)
 {
     UINT64 flags = save_and_disable_interrupts();
 
-    *page_entry(DIRECT_MAP_BASE + physical) |= PTE_PRESENT;
+    *page_entry(DIRECT_MAP_BASE + physical) =
+        physical | PTE_PRESENT | PTE_WRITABLE | no_execute;
     restore_interrupts(flags);
 }
 
