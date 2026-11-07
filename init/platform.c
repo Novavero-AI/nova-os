@@ -237,13 +237,18 @@ static void note(FUNCTION *kind, UINT32 requester, UINT64 config,
 }
 
 /* Note a virtio endpoint function, by its PCI device ID, if a driver
-   serves it. */
+   serves it. The boot disk's function seen again, as two ECAM ranges
+   over one bus show it, is not the data disk. */
 static void note_virtio(FOUND *found, UINT32 id, UINT32 requester,
                         UINT64 config, volatile UINT8 *mapped)
 {
-    if (id == VIRTIO_BLK_PCI_DEVICE || id == VIRTIO_BLK_PCI_TRANSITIONAL)
-        note(found->block.config ? &found->data : &found->block, requester,
-             config, mapped);
+    int block =
+        id == VIRTIO_BLK_PCI_DEVICE || id == VIRTIO_BLK_PCI_TRANSITIONAL;
+
+    if (block && !found->block.config)
+        note(&found->block, requester, config, mapped);
+    else if (block && requester != found->block.requester)
+        note(&found->data, requester, config, mapped);
     else if (id == VIRTIO_INPUT_PCI_DEVICE)
         note(&found->input, requester, config, mapped);
 }

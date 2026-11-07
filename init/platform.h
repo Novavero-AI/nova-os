@@ -25,9 +25,13 @@ typedef struct {
    started again as the restart policy allows (platform.c). Returns 1 if
    the block driver ended with VIRTIO_BLK_EXIT_DONE, or if there is no
    block function or no driver file; 0, logged, if it was given up, and
-   then before the input driver starts, so that init can end with
-   nothing it started left running unsupervised; 0, logged, too if
-   waiting on the supervisor's port fails. The input driver does not
+   then before the input driver starts, so that init can end with no
+   driver this function started left running unsupervised; 0, logged,
+   too if waiting on the supervisor's port fails. The data disk's driver
+   and file system service, which data.c starts before this and nothing
+   supervises, outlive such an end and wind down on their own: the
+   service once init's end of its root closes, the driver once the
+   service's end of its channel does. The input driver does not
    count: a system without a keyboard runs on, as one whose keyboard
    driver failed does. */
 int platform_start(const PLATFORM *platform);
