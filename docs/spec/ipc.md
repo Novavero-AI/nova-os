@@ -263,9 +263,11 @@ its device; in the first set the first process is the platform driver.
 `resource_create` derives a resource covering a subrange of its parent's;
 a resource's range never changes.
 
-The kernel also creates a section over the boot framebuffer that nova-boot
-reports in `BOOT_INFO` and passes it in the same message, for the
-compositor.
+The message's bytes also describe the framebuffer nova-boot reports in
+`BOOT_INFO`, which the root MMIO resource covers; once the kernel has
+released the display, the first process gives the console a resource
+covering only the framebuffer
+([console.md C1](console.md#c1-the-display-handoff)).
 
 The kernel reads the ACPI tables that name registers it keeps (the MADT
 for the I/O APICs, the DMAR and IVRS for IOMMUs) and the MCFG, and passes

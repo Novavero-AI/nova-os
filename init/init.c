@@ -8,7 +8,8 @@
    volume holds the chain's inputs (chain.c), and starts the virtio
    drivers as the platform driver (platform.c). Then it reports to the
    kernel on its bootstrap channel that its startup is done
-   (docs/spec/boot-protocol.md, Startup done), and runs on as the
+   (docs/spec/boot-protocol.md, Startup done), hands the display to the
+   console once the kernel releases it (console.c), and runs on as the
    drivers' supervisor (ipc.md I10).
    A failed check is logged, if the log is reachable, and ends the
    process with EXIT_CHECK_FAILED, with no report, which the kernel reads
@@ -16,6 +17,7 @@
    waiting for the drivers fails. */
 
 #include "init.h"
+#include "console.h"
 #include "platform.h"
 
 #define EXIT_CHECK_FAILED 1
@@ -273,8 +275,8 @@ static void check_watches(void)
     handle_close(port);
 }
 
-/* Report to the kernel that startup is done, and close the channel,
-   which has nothing more to carry. */
+/* Report to the kernel that startup is done. The channel stays open: the
+   kernel's close of its end releases the display (console.c). */
 static void report_startup_done(UINT32 bootstrap)
 {
     UINT32 transaction = 0;
@@ -282,7 +284,6 @@ static void report_startup_done(UINT32 bootstrap)
     check(channel_write(bootstrap, &transaction, BOOTSTRAP_DONE_SIZE,
                         no_handles, 0) == OK,
           "the kernel took no startup report");
-    handle_close(bootstrap);
 }
 
 static void check_clock(void)
@@ -310,6 +311,7 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     check(platform_start(&platform), "the platform driver's startup failed");
     say("nova-init: checks passed\r\n");
     report_startup_done(bootstrap);
+    console_start(&platform, bootstrap);
     status = platform_supervise(&platform);
     say("nova-init: supervision stopped, status ");
     say_number(status);

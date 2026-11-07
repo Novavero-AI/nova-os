@@ -4,3 +4,4 @@
 -pedantic
 -I../include
 -I../kernel/random
+-I../console

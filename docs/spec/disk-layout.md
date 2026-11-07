@@ -85,7 +85,8 @@ Both disks hold:
 \NOVA\NTDLL.DLL          ntdll for 32-bit processes
 \NOVA\VIRTBLK.EXE        the virtio block driver
 \NOVA\VIRTINP.EXE        the virtio input driver
-\NOVA\INPUTLOG.EXE       the input driver's client
+\NOVA\CONSOLE.EXE        the console, the input driver's client
+\NOVA\CONECHO.EXE        the console's demo client
 \NOVA\STORE.IMG          the store image
 ```
 
@@ -134,7 +135,8 @@ a directory takes as many clusters as its entries fill:
 | `\NOVA\NTDLL.DLL` | `NTDLL   DLL` |
 | `\NOVA\VIRTBLK.EXE` | `VIRTBLK EXE` |
 | `\NOVA\VIRTINP.EXE` | `VIRTINP EXE` |
-| `\NOVA\INPUTLOG.EXE` | `INPUTLOGEXE` |
+| `\NOVA\CONSOLE.EXE` | `CONSOLE EXE` |
+| `\NOVA\CONECHO.EXE` | `CONECHO EXE` |
 | `\NOVA\STORE.IMG` | `STORE   IMG` |
 | `\NOVA\HEX0SEED.EXE` | `HEX0SEEDEXE` |
 | `\NOVA\` *name*`.`*ext* | *name* padded to 8 bytes with spaces, then *ext* padded to 3 |

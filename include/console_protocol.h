@@ -72,11 +72,13 @@ _Static_assert(sizeof(CONSOLE_REQUEST) + CONSOLE_WRITE_MAX <=
    handle it carries is. CONSOLE_SETUP_DISPLAY carries an MMIO resource
    covering the framebuffer's pages, followed by the display's
    BOOTSTRAP_DISPLAY; CONSOLE_SETUP_SESSION carries the console's end of a
-   session. */
+   session, with CHANNEL_RIGHT_READ, CHANNEL_RIGHT_WRITE and RIGHT_WAIT.
+   The channel queues the display and a session for each the console
+   serves. */
 #define CONSOLE_SETUP_DISPLAY 1
 #define CONSOLE_SETUP_SESSION 2
 #define CONSOLE_SETUP_SIZE 8
-#define CONSOLE_CONTROL_CAPACITY 4
+#define CONSOLE_CONTROL_CAPACITY (CONSOLE_SESSIONS + 1)
 
 typedef struct {
     UINT32 transaction; /* 0 */
@@ -91,10 +93,18 @@ typedef struct {
 _Static_assert(sizeof(CONSOLE_SETUP) == CONSOLE_SETUP_SIZE,
                "one layout on every target");
 
-/* A session endpoint's rights, at either end: the console reads requests
-   and writes replies on its own, the client the reverse, and the
-   client's may move to the program that is to use it. */
+/* A client's end of a session: it writes requests and reads replies,
+   and the end may move to the program that is to use it. */
 #define CONSOLE_SESSION_RIGHTS                                            \
     (CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT | RIGHT_TRANSFER)
+
+/* ------------------------------------------------------------------------
+   A program the first process starts on the console (init/console.h):
+   its bootstrap message is CONSOLE_PROGRAM_MESSAGE_SIZE bytes, a
+   transaction ID of 0, and these handles in this order. */
+#define CONSOLE_PROGRAM_MESSAGE_SIZE 4
+#define CONSOLE_PROGRAM_DEBUG_LOG 0
+#define CONSOLE_PROGRAM_SESSION 1 /* with CONSOLE_SESSION_RIGHTS */
+#define CONSOLE_PROGRAM_HANDLES 2
 
 #endif

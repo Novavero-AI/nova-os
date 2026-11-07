@@ -1,0 +1,255 @@
+/* The panel. Its backdrop is computed once, Limb's pixels mixed with the
+   tint in linear light, so that the framebuffer, which is mapped
+   write-combining and slow to read, is only written; a cell is drawn by
+   mixing its masks' coverage into the backdrop through tables. */
+
+#include "panel.h"
+#include "font.h"
+#include "limb.h"
+#include "text.h"
+
+/* A cell is a hundredth of the screen's height wide, so the panel's 30
+   lines take three fifths of the height: 8 x 16 pixels at 1280 x 800,
+   16 x 32 at 2560 x 1600 (console.md C5). */
+#define CELLS_PER_HEIGHT 100
+
+/* The padding around the text, and the corners' radius, in quarters of
+   a cell's width: the side padding is wider by the strokes' bearing, so
+   that the text's edges stand as far from the panel's on every side. */
+#define QUARTER 4
+#define SIDE_PADDING 5
+#define END_PADDING 4
+#define CORNER_RADIUS 5
+
+/* The panel's centre lies this far down the screen, so that it sits
+   clear above the planet's edge, which Limb puts at 78 percent. */
+#define CENTRE_PERCENT 40
+#define PERCENT 100
+
+/* The tint, mixed into the background at PANEL_OPACITY percent; the
+   text's ink, a little softer than the wordmark's; and the caret's, the
+   warm light of Limb's sunrise. */
+#define PANEL_OPACITY 68
+static const UINT8 tint[PANEL_CHANNELS] = {18, 22, 32};
+static const UINT8 ink[PANEL_INKS][PANEL_CHANNELS] = {
+    [PANEL_TEXT] = {232, 234, 240},
+    [PANEL_CARET] = {236, 170, 96},
+};
+
+#define CHANNEL_BITS 8
+#define CHANNEL_MASK 0xFFu
+
+static INT64 smaller(INT64 a, INT64 b) { return a < b ? a : b; }
+
+static INT64 larger(INT64 a, INT64 b) { return a > b ? a : b; }
+
+int panel_layout(LAYOUT *layout, INT64 width, INT64 height)
+{
+    INT64 cell = larger(FONT_WIDTH_MIN, smaller(FONT_WIDTH_MAX,
+                                                height / CELLS_PER_HEIGHT));
+    INT64 side = cell * SIDE_PADDING / QUARTER;
+    INT64 end = cell * END_PADDING / QUARTER;
+    INT64 line = font_height(cell);
+    INT64 columns = smaller(TEXT_COLUMNS_MAX, (width - 2 * side) / cell);
+    INT64 rows = smaller(PANEL_ROWS, (height - 2 * end) / line);
+    INT64 panel_width, panel_height;
+
+    if (columns < 1 || rows < 1)
+        return 0;
+    panel_width = columns * cell + 2 * side;
+    panel_height = rows * line + 2 * end;
+    layout->cell_width = cell;
+    layout->cell_height = line;
+    layout->columns = (UINT32)columns;
+    layout->rows = (UINT32)rows;
+    layout->box.left = (width - panel_width) / 2;
+    layout->box.top =
+        larger(0, smaller(height - panel_height,
+                          height * CENTRE_PERCENT / PERCENT -
+                              panel_height / 2));
+    layout->box.right = layout->box.left + panel_width;
+    layout->box.bottom = layout->box.top + panel_height;
+    layout->radius = cell * CORNER_RADIUS / QUARTER;
+    layout->text_left = layout->box.left + side;
+    layout->text_top = layout->box.top + end;
+    return 1;
+}
+
+static INT64 box_width(const LAYOUT *layout)
+{
+    return layout->box.right - layout->box.left;
+}
+
+static INT64 box_height(const LAYOUT *layout)
+{
+    return layout->box.bottom - layout->box.top;
+}
+
+UINT64 panel_backdrop_size(const LAYOUT *layout)
+{
+    return (UINT64)(box_width(layout) * box_height(layout)) * sizeof(UINT32);
+}
+
+/* ------------------------------------------------------------------------
+   The backdrop. */
+
+static INT64 clamp(INT64 v, INT64 low, INT64 high)
+{
+    return v < low ? low : v > high ? high : v;
+}
+
+/* How many of the samples of panel pixel (x, y) lie inside the panel's
+   rounded rectangle, at the rasterizer's sample points: within the
+   radius of the nearest point of the rectangle the corners' centres
+   span. */
+static INT64 corner_coverage(const LAYOUT *layout, INT64 x, INT64 y)
+{
+    INT64 r = layout->radius * SUBPIXEL;
+    INT64 right = box_width(layout) * SUBPIXEL - r;
+    INT64 bottom = box_height(layout) * SUBPIXEL - r;
+    INT64 sx, sy, hits = 0;
+
+    for (sy = 0; sy < SAMPLES; sy++)
+        for (sx = 0; sx < SAMPLES; sx++) {
+            INT64 px = x * SUBPIXEL + sx * (SUBPIXEL / SAMPLES) + 1;
+            INT64 py = y * SUBPIXEL + sy * (SUBPIXEL / SAMPLES) + 1;
+            INT64 dx = px - clamp(px, r, right);
+            INT64 dy = py - clamp(py, r, bottom);
+
+            if (dx * dx + dy * dy <= r * r)
+                hits++;
+        }
+    return hits;
+}
+
+/* The tint over code at coverage of the panel. */
+static UINT32 tinted(UINT32 rgb, INT64 coverage)
+{
+    UINT32 out = 0;
+    int k;
+
+    for (k = 0; k < PANEL_CHANNELS; k++) {
+        INT64 shift = (PANEL_CHANNELS - 1 - k) * CHANNEL_BITS;
+
+        out |= (UINT32)gfx_cross_fade(rgb >> shift & CHANNEL_MASK, tint[k],
+                                      PANEL_OPACITY * coverage,
+                                      PERCENT * COVERAGE_MAX)
+               << shift;
+    }
+    return out;
+}
+
+int panel_backdrop(const LAYOUT *layout, INT64 width, INT64 height,
+                   UINT32 *backdrop)
+{
+    UINT8 over[PANEL_CHANNELS][PANEL_CODES];
+    INT64 w = box_width(layout), h = box_height(layout), x, y;
+    INT64 r = layout->radius;
+    LIMB limb;
+    int k, code;
+
+    if (!limb_init(&limb, width, height))
+        return 0;
+    for (k = 0; k < PANEL_CHANNELS; k++)
+        for (code = 0; code < PANEL_CODES; code++)
+            over[k][code] = (UINT8)gfx_cross_fade(code, tint[k], PANEL_OPACITY,
+                                                  PERCENT);
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++) {
+            UINT32 rgb =
+                limb_pixel(&limb, layout->box.left + x, layout->box.top + y);
+            int corner = (x < r || x >= w - r) && (y < r || y >= h - r);
+
+            backdrop[y * w + x] =
+                corner ? tinted(rgb, corner_coverage(layout, x, y))
+                       : (UINT32)over[0][rgb >> 2 * CHANNEL_BITS &
+                                         CHANNEL_MASK]
+                                 << 2 * CHANNEL_BITS |
+                             (UINT32)over[1][rgb >> CHANNEL_BITS &
+                                             CHANNEL_MASK]
+                                 << CHANNEL_BITS |
+                             over[2][rgb & CHANNEL_MASK];
+        }
+    return 1;
+}
+
+void panel_inks(INKS *inks)
+{
+    int i, k, coverage, code;
+
+    for (i = 0; i < PANEL_INKS; i++)
+        for (k = 0; k < PANEL_CHANNELS; k++)
+            for (coverage = 0; coverage <= COVERAGE_MAX; coverage++)
+                for (code = 0; code < PANEL_CODES; code++)
+                    inks->mix[i][k][coverage][code] = (UINT8)gfx_cross_fade(
+                        code, ink[i][k], coverage, COVERAGE_MAX);
+}
+
+/* ------------------------------------------------------------------------
+   Drawing. */
+
+static UINT32 screen_pixel(const SCREEN *screen, UINT32 rgb)
+{
+    return gfx_pixel(screen, rgb >> 2 * CHANNEL_BITS & CHANNEL_MASK,
+                     rgb >> CHANNEL_BITS & CHANNEL_MASK, rgb & CHANNEL_MASK);
+}
+
+void panel_show(const SCREEN *screen, const LAYOUT *layout,
+                const UINT32 *backdrop)
+{
+    INT64 w = box_width(layout), h = box_height(layout), x, y;
+
+    for (y = 0; y < h; y++) {
+        UINT32 *row = screen->pixels +
+                      (layout->box.top + y) * screen->stride +
+                      layout->box.left;
+
+        for (x = 0; x < w; x++)
+            row[x] = screen_pixel(screen, backdrop[y * w + x]);
+    }
+    gfx_flush();
+}
+
+/* rgb with ink mixed in at coverage. */
+static UINT32 under(const INKS *inks, int which, UINT32 rgb, UINT8 coverage)
+{
+    UINT32 out = 0;
+    int k;
+
+    for (k = 0; k < PANEL_CHANNELS; k++) {
+        INT64 shift = (PANEL_CHANNELS - 1 - k) * CHANNEL_BITS;
+
+        out |= (UINT32)inks->mix[which][k][coverage][rgb >> shift &
+                                                     CHANNEL_MASK]
+               << shift;
+    }
+    return out;
+}
+
+void panel_cell(const SCREEN *screen, const LAYOUT *layout,
+                const UINT32 *backdrop, const INKS *inks,
+                const UINT8 *glyph, const UINT8 *caret, UINT32 row,
+                UINT32 column)
+{
+    INT64 w = box_width(layout), cw = layout->cell_width;
+    INT64 left = layout->text_left + column * cw;
+    INT64 top = layout->text_top + row * layout->cell_height;
+    INT64 x, y;
+
+    for (y = 0; y < layout->cell_height; y++) {
+        const UINT32 *from = backdrop + (top + y - layout->box.top) * w +
+                             (left - layout->box.left);
+        UINT32 *to = screen->pixels + (top + y) * screen->stride + left;
+
+        for (x = 0; x < cw; x++) {
+            UINT32 rgb = from[x];
+            UINT8 a = glyph[y * cw + x];
+
+            if (a)
+                rgb = under(inks, PANEL_TEXT, rgb, a);
+            if (caret && caret[y * cw + x])
+                rgb = under(inks, PANEL_CARET, rgb, caret[y * cw + x]);
+            to[x] = screen_pixel(screen, rgb);
+        }
+    }
+}

@@ -1,8 +1,8 @@
 # Input
 
 How a key press reaches a process: the virtio input driver
-(`drivers/virtio_input.c`), the messages it sends its client
-(`include/input_protocol.h`), its report to the platform driver
+(`drivers/virtio_input.c`), the messages it sends its client, the
+console (`include/input_protocol.h`), its report to the platform driver
 (`drivers/virtio_input.h`), and how the platform driver, the first
 process, starts and supervises it and its client (`init/platform.c`).
 
@@ -119,18 +119,20 @@ takes the report only if it is exactly that; otherwise it logs it and
 closes the channel, which destroys the endpoint, and the driver's watch
 finds the client gone and stops it (K2).
 
-The platform driver starts the client, `\nova\inputlog.exe`, in the root
-job when the driver first reports, and keeps its end of the client's
-bootstrap channel for as long as it supervises the client. Every
-message on that channel is 4 bytes, a transaction ID of 0, and one
-handle: the first, the bootstrap message, carries the debug log; each
-after it carries an endpoint, as the driver reported it, one for the
-driver's first report and one for each report after a restart (K4).
-The client logs each key event on its endpoint as `nova-input-log: key`
-*code* `pressed`, `released` or `repeated at` *time* `ns`. Once the
-driver has closed the endpoint and every event queued there is logged,
-the client takes the next endpoint from the channel, waiting for one,
-and exits once the platform driver has closed the channel.
+The platform driver starts the client, the console,
+`\nova\console.exe`, in the root job when the driver first reports, and
+keeps its end of the client's bootstrap channel for as long as it
+supervises the client. Every message on that channel is 4 bytes and a
+transaction ID of 0: the first, the bootstrap message, carries the
+handles the console needs
+([console.md C2](console.md#c2-starting-the-console)); each after it
+carries one handle, an endpoint the driver reported, with `READ` and
+`WAIT` alone, one for the driver's first report and one for each report
+after a restart (K4).
+The console takes each key event on its endpoint as a key typed at it
+([console.md C3](console.md#c3-keys)); once the driver has closed the
+endpoint it takes the next from the channel when one comes, and it
+exits once the platform driver has closed the channel.
 
 - **Why the driver creates the endpoint:** it is the driver's service,
   passed to clients through its supervisor, as

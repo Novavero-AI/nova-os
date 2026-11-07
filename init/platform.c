@@ -10,8 +10,9 @@
    The first virtio block function goes to \nova\virtblk.exe, which reads
    the boot disk and ends. The first virtio input function goes to
    \nova\virtinp.exe, which runs on: once its device is live it reports
-   with an endpoint, which init hands to \nova\inputlog.exe, the client
-   that logs the key events the driver sends there (docs/spec/input.md).
+   with an endpoint, which init hands to its client, the console,
+   \nova\console.exe, whose bootstrap message console.c writes
+   (docs/spec/input.md, docs/spec/console.md).
 
    init supervises the three for the life of the system (ipc.md I10). It
    waits for them through one port, on which a watch of each one's
@@ -26,6 +27,7 @@
    one after each restart of the driver. */
 
 #include "platform.h"
+#include "console.h"
 #include "init.h"
 #include "input_protocol.h"
 #include "loader.h"
@@ -41,13 +43,17 @@
 #define ALL_ONES 0xffffffffu
 #define BLOCK_FILE "virtblk.exe"
 #define INPUT_FILE "virtinp.exe"
-#define CLIENT_FILE "inputlog.exe"
+#define CLIENT_FILE "console.exe"
 
 /* The rights the driver's handles carry: its own process with MAP, to
    map its sections, and the initiator with PIN, so that releasing the
    quarantine stays with the supervisor. */
 #define DRIVER_SELF_RIGHTS (PROCESS_RIGHT_MAP | RIGHT_TRANSFER)
 #define DRIVER_INITIATOR_RIGHTS (INITIATOR_RIGHT_PIN | RIGHT_TRANSFER)
+
+/* The rights a client's endpoint travels with: it reads key events and
+   waits for them, and passes the endpoint nowhere. */
+#define CLIENT_ENDPOINT_RIGHTS (CHANNEL_RIGHT_READ | RIGHT_WAIT)
 
 /* The interrupt vectors a driver's job may hold: each driver takes one,
    for its queues, and none for configuration changes. */
@@ -166,7 +172,7 @@ static CHILD children[CHILDREN] = {
                      .file = INPUT_FILE,
                      .kind = KIND_REPORTS,
                      .function = &found_functions.input},
-    [CHILD_CLIENT] = {.name = "virtio input driver's client",
+    [CHILD_CLIENT] = {.name = "console",
                       .file = CLIENT_FILE,
                       .kind = KIND_CLIENT},
 };
@@ -649,31 +655,22 @@ static int start_driver(const PLATFORM *platform, CHILD *child)
     return 1;
 }
 
-/* Start child, the input driver's client, in the root job with a
-   bootstrap message carrying its debug log, keeping init's end of the
+/* Start child, the input driver's client, the console, in the root job
+   with the bootstrap message console.c writes, keeping init's end of the
    channel, on which its endpoints follow (input_protocol.h). Returns 1
    with its process and that end in child; 0, logged, with nothing left
    open, if it did not start. */
 static int start_client(const PLATFORM *platform, CHILD *child)
 {
-    HANDLE_TRANSFER log;
     PROGRAM program;
-    UINT32 mine = HANDLE_INVALID, theirs = HANDLE_INVALID, transaction = 0;
+    UINT32 mine = HANDLE_INVALID, theirs = HANDLE_INVALID;
     UINT32 status =
         loader_load(platform->job, boot_file(child->file), &program);
 
-    log.handle = HANDLE_INVALID;
-    log.rights = RIGHTS_SAME;
-    if (status == OK)
-        status = resource_create(platform->debug_log,
-                                 SYSTEM_PRIVILEGE_DEBUG_LOG, 1, &log.handle);
     if (status == OK)
         status = channel_create(CLIENT_CHANNEL_CAPACITY, &mine, &theirs);
     if (status == OK)
-        status = channel_write(mine, &transaction, INPUT_CLIENT_MESSAGE_SIZE,
-                               &log, 1);
-    if (status != OK && log.handle != HANDLE_INVALID)
-        handle_close(log.handle);
+        status = console_bootstrap(platform, program.process, mine);
     if (status == OK)
         status = watch(child, program.process, PROCESS_TERMINATED,
                        EVENT_ENDED);
@@ -689,6 +686,7 @@ static int start_client(const PLATFORM *platform, CHILD *child)
     }
     child->process = program.process;
     child->channel = mine;
+    console_started(platform);
     return 1;
 }
 
@@ -870,7 +868,7 @@ static void hand_endpoint(CHILD *driver, UINT32 endpoint)
     UINT32 status = ERR_BAD_STATE;
 
     transfer.handle = endpoint;
-    transfer.rights = RIGHTS_SAME;
+    transfer.rights = CLIENT_ENDPOINT_RIGHTS;
     if (client->state == STATE_RUNNING)
         status = channel_write(client->channel, &transaction,
                                INPUT_CLIENT_MESSAGE_SIZE, &transfer, 1);

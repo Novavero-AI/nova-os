@@ -1,7 +1,7 @@
 /* init as the platform driver (docs/spec/ipc.md I6, I10): it holds the
    root device resources, enumerates PCI, starts the virtio block and
    input drivers with resources covering only their functions, and
-   supervises them and the input driver's client. */
+   supervises them and the input driver's client, the console. */
 
 #ifndef NOVA_PLATFORM_H
 #define NOVA_PLATFORM_H
@@ -20,7 +20,7 @@ typedef struct {
    \nova\virtblk.exe, to its end, then stop the function and reset its
    device. Then find the first virtio input function and start its
    driver, \nova\virtinp.exe, and, once the driver reports, its client,
-   \nova\inputlog.exe, leaving both running. A driver that fails is
+   the console, \nova\console.exe, leaving both running. A driver that fails is
    started again as the restart policy allows (platform.c). Returns 1 if
    the block driver ended with VIRTIO_BLK_EXIT_DONE, or if there is no
    block function or no driver file; 0, logged, if it was given up, and

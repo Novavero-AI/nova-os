@@ -75,21 +75,26 @@ with one handle:
 | Kind | Bytes after the setup | Handle |
 |---|---|---|
 | `CONSOLE_SETUP_DISPLAY` (1) | The `BOOTSTRAP_DISPLAY` | An MMIO resource covering the framebuffer (C1) |
-| `CONSOLE_SETUP_SESSION` (2) | None | The console's end of a session (C4), with `CONSOLE_SESSION_RIGHTS` |
+| `CONSOLE_SETUP_SESSION` (2) | None | The console's end of a session (C4), with `READ`, `WRITE` and `WAIT` |
 
 The display comes once, after the release; a console restarted after it
-gets it at once. Until it comes the console draws nothing, but serves
-its sessions and keeps what they write, and draws it all when it does.
+gets it once it has started. Until it comes the console draws nothing,
+but serves its sessions and keeps what they write, and draws it all
+when it does; on a screen too narrow for 80 columns, lines written
+before then are cut at its width.
 
 A program gets a session from the first process: it creates a channel
 of `CONSOLE_SESSION_CAPACITY` messages, sends one end to the console and
-passes the other, with `CONSOLE_SESSION_RIGHTS`, to the program
-(`console_session` in `init/console.h`). At the end of startup, after
-the release, the first process starts `\nova\conecho.exe`, a demo client
-that writes a greeting and echoes each line it reads, with a session.
-A console that ends closes every session; when the platform driver
-restarts it, the first process starts the demo client again with a new
-session.
+passes the other to the program with `CONSOLE_SESSION_RIGHTS`, which
+include `TRANSFER`, so that the program can hand it on
+(`console_session` in `init/console.h`). The program's bootstrap message
+is `CONSOLE_PROGRAM_MESSAGE_SIZE` (4) bytes, a transaction ID of 0, and
+two handles: the debug log and its session. At the end of startup,
+after the release, the first process starts `\nova\conecho.exe`, a
+demo client that writes a greeting, echoes each line it reads, and
+reads a line without echo when the line is `secret`. A console that
+ends closes every session; when the platform driver restarts it, the
+first process starts the demo client again with a new session.
 
 - **Why the keyboard's client:** the console is where keys are typed,
   and the platform driver already supervises the client and hands it a
@@ -117,8 +122,9 @@ the character a US keyboard gives: a key's name in the evdev header is
 its unshifted label, so `KEY_A` (30) gives `a` and `KEY_1` (2) gives
 `1`. Shift, either one, gives the shifted character; Caps Lock, which
 each press toggles, shifts the letters alone, and Shift with Caps Lock
-gives them unshifted. A repeat (value 2) acts as a press. Control and
-Alt make a key give nothing.
+gives them unshifted. A repeat (value 2) acts as a press. With Control
+or Alt held a character key gives nothing; the editing keys still
+edit.
 
 While a read waits (C4) the keys edit its line:
 
@@ -129,12 +135,12 @@ While a read waits (C4) the keys edit its line:
 | Delete | Deletes the character at the caret |
 | Left, Right | Move the caret one character |
 | Home, End | Move the caret to the line's start or end |
-| Enter | Ends the line |
+| Enter, or the keypad's | Ends the line |
 | Page Up, Page Down | Scroll the panel half its height back or forward through what it has shown |
 
 Keys typed while no read waits are kept, up to `CONSOLE_LINE_MAX`, and
 edit the next read's line as though typed then. Any key but Page Up and
-Page Down scrolls the panel back to its end.
+Page Down scrolls the panel back to its end, and so does a write.
 
 - **Why a US layout:** QEMU's keyboard reports positions, which evdev
   names by their US labels; another layout is a table more, and choosing
@@ -163,7 +169,9 @@ its output position and does not reply. Each printable ASCII byte, 20h
 to 7Eh, is drawn and moves the position a column; LF (0Ah) moves it to
 the start of the next line, CR (0Dh) to the start of its own, and TAB
 (09h) to the next column that is a multiple of 8. Any other byte is
-drawn as `?`. A line wider than the panel continues on the next.
+drawn as `?`. A line wider than the panel continues on the next. While
+a read with echo waits, a write goes before the line being edited,
+which moves on after it.
 
 **Read.** Nothing follows the request, and `length` is the most bytes
 the line may hold, 1 to `CONSOLE_LINE_MAX` (256). The console replies
@@ -174,11 +182,10 @@ it is edited, and Enter moves the output position to the next line;
 with `CONSOLE_READ_NO_ECHO` nothing of it is drawn, its end included,
 and the position stays where it was. The caret blinks at the editing
 position while a read waits. A session has at most one read waiting;
-reads from several sessions are served in the order they came, and the
-keys go to the first.
-
-Since the reply carries the read's transaction ID, a client can read a
-line with `channel_call` ([ipc.md I3](ipc.md#i3-synchronous-call-and-asynchronous-queues)).
+reads from several sessions are served in the order the console takes
+them from their queues, and the keys go to the first. The reply carries
+the read's transaction ID, as a reply to a call does
+([ipc.md I3](ipc.md#i3-synchronous-call-and-asynchronous-queues)).
 
 Any other message ends the session: one shorter than a request, an
 unknown operation, a write whose `length` is above `CONSOLE_WRITE_MAX`
@@ -202,7 +209,9 @@ while a read waits drops the read. The console serves up to
   and a reply to every write would double the messages of the common
   case.
 - **Cost:** a client cannot move the output position, clear the panel
-  or colour text.
+  or colour text. Keys go to whichever read waits first, and keys typed
+  ahead to whichever read comes next, of any session, so sessions that
+  read at once share one keyboard.
 - **Not taken:** a byte stream with a terminal's escape sequences, as
   VT100 descendants take. Its cost is a parser and a state machine for
   every byte, and editing that each client does itself in a raw mode.
@@ -213,8 +222,8 @@ while a read waits drops the read. The console serves up to
 
 The console draws, over the desktop background, one dark translucent
 panel with rounded corners, and in it the text in the console font,
-80 columns by 30 lines on a 16:10 screen, with a caret that blinks
-while a read waits. It keeps the last 1,024 lines it has shown, for
+80 columns by 30 lines, fewer columns on a screen too narrow for 80,
+with a caret that blinks while a read waits. It keeps the last 1,024 lines it has shown, for
 Page Up. The panel's colour mixes with the background in linear light,
 as the boot screen mixes ink with black, so nothing of the background
 is read back from the framebuffer: the console draws Limb's pixels
