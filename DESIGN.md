@@ -128,6 +128,9 @@ CI checks every pull request and every push to main:
   `whoami`. A further boot of the same data disk logs in with that
   account, which it must still hold. Other boots corrupt the data disk's
   GPT, and the log must show the file system service refusing the disk.
+  A boot of `specimen.img` takes QMP's screendump once the type
+  specimen has drawn, which must equal its prototype's render pixel for
+  pixel.
 - **Chain** boots `chain.img` and checks that each step of the bootstrap
   chain runs and each pinned link matches.
 

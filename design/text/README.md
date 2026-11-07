@@ -6,7 +6,8 @@ a nova-os font ([docs/spec/font-format.md](../../docs/spec/font-format.md))
 and set text in it: `outline.py` and `typeface.py`, in the same integer
 arithmetic, so the C draws the same pixels. `sheet.txt` is a reference
 sheet of the approved designs' faces and sizes and of their rounded
-rectangles and circles over Limb.
+rectangles and circles over Limb, and `specimen.py` the type specimen's
+screen, which `test/specimen.c` draws in nova-os.
 
 ## The rasterizer
 
@@ -83,19 +84,22 @@ directory:
 
 ```sh
 python3 -I design/text/sheet.py design/text/sheet.txt FONTS sheet.ppm
+python3 -I design/text/specimen.py FONTS 2880 1800 specimen.ppm
 ```
 
 ## Checking the port
 
 ```sh
-design/text/check-text.sh FONTS
+design/text/check-text.sh FONTS                  # the sheet, and the specimen at 1280x800 and 2880x1800
+design/text/check-text.sh FONTS 1920x1200 ...    # the specimen at other sizes
 design/text/compare-freetype.sh FONTS
 ```
 
 `check-text.sh` builds `render-text.c` with `lib/` for the host, with
-`$CC` or else `cc`, renders the sheet with it and with the prototype,
-and compares the two images byte for byte. It prints `identical` or how
-many bytes differ, and exits nonzero if they differ.
+`$CC` or else `cc`, renders the sheet and the specimen with it and with
+the prototypes, and compares each pair of images byte for byte. It
+prints `identical` or how many bytes differ for each, and exits nonzero
+if any differ.
 
 `compare-freetype.sh` builds `compare-freetype.c` with FreeType and
 draws each of the sheet's lines both with `lib/` and with FreeType's

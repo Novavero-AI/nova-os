@@ -147,11 +147,8 @@ static UINT32 start(PROGRAM *program, const void *bytes, UINT32 byte_count,
     return program->process;
 }
 
-/* A sub-resource for the debug log, and program's own process with
-   MAP, as the first two handles of its bootstrap message. Returns 0,
-   with both HANDLE_INVALID, if either call fails. */
-static int common_handles(UINT32 debug_log, const PROGRAM *program,
-                          HANDLE_TRANSFER *handles)
+int launch_handles(UINT32 debug_log, const PROGRAM *program,
+                   HANDLE_TRANSFER *handles)
 {
     handles[0].rights = RIGHTS_SAME;
     handles[1].rights = RIGHTS_SAME;
@@ -264,7 +261,7 @@ static UINT32 start_store(UINT32 job, UINT32 debug_log,
         handles[i].handle = HANDLE_INVALID;
         handles[i].rights = RIGHTS_SAME;
     }
-    if (!common_handles(debug_log, &program, handles) ||
+    if (!launch_handles(debug_log, &program, handles) ||
         handle_duplicate(file->section, IMAGE_RIGHTS,
                          &handles[STORE_BOOTSTRAP_IMAGE].handle) != OK ||
         channel_create(SERVICE_CHANNEL_CAPACITY, control,
@@ -294,10 +291,8 @@ static UINT32 start_store(UINT32 job, UINT32 debug_log,
 /* ------------------------------------------------------------------------
    Programs from /store, through the directory protocol. */
 
-/* Load the program at path in view: its file's section, which init maps
-   to read until it is laid out in a new process. */
-static UINT32 load_from_store(UINT32 job, const VIEW *view, const char *path,
-                              PROGRAM *program)
+UINT32 load_from_store(UINT32 job, const VIEW *view, const char *path,
+                       PROGRAM *program)
 {
     IO_ATTRIBUTES attributes;
     RECEIVED_HANDLE section;
@@ -459,7 +454,7 @@ static UINT32 start_hello(UINT32 job, UINT32 debug_log, const VIEW *view,
         say_status("the test program does not load", status);
         return HANDLE_INVALID;
     }
-    if (!common_handles(debug_log, &program, handles)) {
+    if (!launch_handles(debug_log, &program, handles)) {
         handle_close(closure);
         handle_close(program.thread);
         handle_close(program.process);

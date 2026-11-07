@@ -144,9 +144,7 @@ static UINT8 *read_all(const char *path, UINT64 *size)
     return bytes;
 }
 
-/* Read the font at path into face, whose bytes then last as long as
-   the program. */
-static void sheet_typeface(const char *path, TYPEFACE *face)
+void sheet_typeface(const char *path, TYPEFACE *face)
 {
     UINT64 size;
     UINT8 *bytes = read_all(path, &size);
@@ -155,8 +153,7 @@ static void sheet_typeface(const char *path, TYPEFACE *face)
         die("not a nova-os font", path);
 }
 
-/* A new width x height canvas holding Limb. */
-static void sheet_limb(CANVAS *canvas, INT64 width, INT64 height)
+void sheet_limb(CANVAS *canvas, INT64 width, INT64 height)
 {
     LIMB limb;
     INT64 x, y;

@@ -50,26 +50,34 @@ static void close_handles(HANDLE_TRANSFER *handles, UINT32 count)
         }
 }
 
-/* Send the display and a resource covering exactly the framebuffer's
-   pages to the console. */
-static void send_display(const PLATFORM *platform)
+UINT32 display_message(const PLATFORM *platform,
+                       CONSOLE_SETUP_DISPLAY_MESSAGE *message,
+                       HANDLE_TRANSFER *framebuffer)
 {
     const BOOTSTRAP_DISPLAY *d = &platform->boot->display;
     UINT64 first = d->base - d->base % PAGE_SIZE;
     UINT64 end = (d->base + (UINT64)d->stride * d->height * PIXEL_BYTES +
                   PAGE_SIZE - 1) /
                  PAGE_SIZE * PAGE_SIZE;
+
+    framebuffer->handle = HANDLE_INVALID;
+    framebuffer->rights = FRAMEBUFFER_RIGHTS;
+    message->setup.transaction = 0;
+    message->setup.kind = CONSOLE_SETUP_DISPLAY;
+    message->display = *d;
+    return resource_create(platform->mmio, first, end - first,
+                           &framebuffer->handle);
+}
+
+/* Send the display and a resource covering exactly the framebuffer's
+   pages to the console. */
+static void send_display(const PLATFORM *platform)
+{
+    const BOOTSTRAP_DISPLAY *d = &platform->boot->display;
     CONSOLE_SETUP_DISPLAY_MESSAGE message;
     HANDLE_TRANSFER framebuffer;
-    UINT32 status;
+    UINT32 status = display_message(platform, &message, &framebuffer);
 
-    framebuffer.handle = HANDLE_INVALID;
-    framebuffer.rights = FRAMEBUFFER_RIGHTS;
-    message.setup.transaction = 0;
-    message.setup.kind = CONSOLE_SETUP_DISPLAY;
-    message.display = *d;
-    status = resource_create(platform->mmio, first, end - first,
-                             &framebuffer.handle);
     if (status == OK)
         status = channel_write(control, &message, sizeof message,
                                &framebuffer, 1);
@@ -82,11 +90,7 @@ static void send_display(const PLATFORM *platform)
     say_number(d->width);
     say("x");
     say_number(d->height);
-    say(", sent to the console with a resource over ");
-    say_hex(first);
-    say(" to ");
-    say_hex(end);
-    say("\r\n");
+    say(", sent to the console\r\n");
 }
 
 UINT32 console_session(void)
@@ -157,7 +161,7 @@ void console_started(const PLATFORM *platform)
     login_console_started();
 }
 
-void console_start(const PLATFORM *platform, UINT32 bootstrap)
+int display_released(UINT32 bootstrap)
 {
     UINT32 observed;
     UINT32 status = object_wait_one(bootstrap, CHANNEL_PEER_CLOSED,
@@ -166,10 +170,17 @@ void console_start(const PLATFORM *platform, UINT32 bootstrap)
     handle_close(bootstrap);
     if (status != OK) {
         say_status("cannot wait for the display's release", status);
-        return;
+        return 0;
     }
-    released = 1;
     say("nova-init: the kernel released the display\r\n");
+    return 1;
+}
+
+void console_start(const PLATFORM *platform, UINT32 bootstrap)
+{
+    if (!display_released(bootstrap))
+        return;
+    released = 1;
     if (control == HANDLE_INVALID) {
         say("nova-init: no console to draw on it\r\n");
         return;

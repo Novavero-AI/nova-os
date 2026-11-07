@@ -1,6 +1,7 @@
 /* The reference sheet, as render-text.c and compare-freetype.c read and
    draw it: the items sheet.py's header gives, over Limb at the sheet's
-   size. Built for the host. */
+   size; and the fonts and Limb the specimen's render draws with. Built
+   for the host. */
 
 #ifndef NOVA_SHEET_H
 #define NOVA_SHEET_H
@@ -27,6 +28,13 @@ typedef void SHEET_TEXT(const CANVAS *canvas, const SHEET_FACE *face,
    line on any error. */
 void sheet_render(const char *path, const char *fonts, SHEET_TEXT *text,
                   CANVAS *canvas);
+
+/* Read the font at path into face, whose bytes then last as long as
+   the program. Exits with a message if it is not a nova-os font. */
+void sheet_typeface(const char *path, TYPEFACE *face);
+
+/* A new width x height canvas holding Limb. */
+void sheet_limb(CANVAS *canvas, INT64 width, INT64 height);
 
 /* The outline both programs fill with. */
 extern OUTLINE sheet_outline;

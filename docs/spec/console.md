@@ -39,7 +39,11 @@ runs, and the console before a compositor exists and once the first
 process has given the compositor up
 ([display.md D3](display.md#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)).
 So after the release only that process and the first process, which
-holds every device's authority, can draw. A console that takes the
+holds every device's authority, can draw. On a boot disk whose
+`\nova\` holds a file named `SPECIMEN`, the first process gives the
+display to the type specimen from `/store` (`test/specimen.c`) in the
+console's place, after its launch message on its bootstrap channel,
+and the console never gets it. A console that takes the
 display from a compositor draws Limb over the whole screen and then its
 panel, so nothing of the compositor's last frame stays.
 

@@ -170,7 +170,9 @@ jobs:
           path: |
             ${{ runner.temp }}/reproduce/disk.img
             ${{ runner.temp }}/reproduce/chain.img
+            ${{ runner.temp }}/reproduce/specimen.img
             ${{ runner.temp }}/reproduce/data.img
+            ${{ runner.temp }}/reproduce/inter/*.nvf
           if-no-files-found: error
           retention-days: 7
 
@@ -205,6 +207,9 @@ jobs:
   # pool's entry moved below the usable LBAs, or with them, over the
   # table, or a second entry over it, and check that the file system
   # service refuses the disk and that login does not start without it.
+  # The specimen boot takes QMP's screendump once the type specimen has
+  # drawn, keeps it as an artifact, and checks it against the specimen's
+  # prototype, rendered from the fonts the reproduce job built.
   boot:
     name: ${{ matrix.name }}
     needs: reproduce
@@ -278,6 +283,12 @@ jobs:
             disk: chain.img
             accel: tcg
             minutes: 60
+          - name: Boot (specimen)
+            mode: specimen
+            disk: specimen.img
+            accel: tcg
+            fonts: disk-images/inter
+            minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -314,11 +325,22 @@ jobs:
           CPU: ${{ matrix.cpu }}
           EXPECT: ${{ matrix.expect }}
           CORRUPT: ${{ matrix.corrupt }}
+          FONTS: ${{ matrix.fonts }}
         run: |
           python3 -I ci/boot.py --code "$OVMF_CODE" --vars "$OVMF_VARS" \
             --log "$RUNNER_TEMP/serial.log" ${EXPECT:+--expect "$EXPECT"} \
             --data disk-images/data.img ${CORRUPT:+--corrupt-gpt "$CORRUPT"} \
+            ${FONTS:+--fonts "$FONTS" --screen "$RUNNER_TEMP/screen.ppm"} \
             "$MODE" "$DISK" -- -accel "$ACCEL" ${CPU:+-cpu "$CPU"}
+
+      - name: Upload the specimen's screendump
+        if: matrix.mode == 'specimen' && always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: specimen screendump
+          path: ${{ runner.temp }}/screen.ppm
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload the serial log
         if: failure()

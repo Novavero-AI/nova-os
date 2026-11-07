@@ -9,6 +9,7 @@
 
 #include "log.h"
 #include "native.h"
+#include "path.h"
 #include "program.h"
 
 /* init's address space above its image: the seed chain's outputs from
@@ -78,6 +79,19 @@ typedef struct {
     UINT32 names;
     UINT32 control;
 } STORE_SERVICES;
+
+/* Load the program at path in view into a new process in job: its
+   file's section, which init maps to read until it is laid out. Returns
+   a status; on failure nothing is left open. */
+UINT32 load_from_store(UINT32 job, const VIEW *view, const char *path,
+                       PROGRAM *program);
+
+/* A sub-resource of debug_log for the debug log, and program's own
+   process with MAP, as the first two handles of a launch message
+   (launch.h), at handles. Returns 0, with both HANDLE_INVALID, if either
+   call fails. */
+int launch_handles(UINT32 debug_log, const PROGRAM *program,
+                   HANDLE_TRANSFER *handles);
 
 /* Start the store service over image and the namespace server, publish
    /store, and run the test program from /store in job with a view of
