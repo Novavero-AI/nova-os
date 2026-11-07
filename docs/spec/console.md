@@ -91,15 +91,15 @@ include `TRANSFER`, so that the program can hand it on
 is `CONSOLE_PROGRAM_MESSAGE_SIZE` (4) bytes, a transaction ID of 0, and
 two handles: the debug log and its session. At the end of startup,
 after the release, the first process starts `\nova\conecho.exe`, a
-demo client that writes a greeting, echoes each line it reads, and
-reads a line without echo when the line is `secret`. A console that
+demo client that writes a greeting, echoes each line it reads and logs
+its length (never its bytes), and reads a line without echo when the
+line is `secret`, logging nothing of it. A console that
 ends closes every session; when the platform driver restarts it, the
 first process starts the demo client again with a new session.
 
 - **Why the keyboard's client:** the console is where keys are typed,
   and the platform driver already supervises the client and hands it a
-  restarted driver's endpoint (input.md K4); `inputlog.exe`, the client
-  that logged keys, is no longer started.
+  restarted driver's endpoint (input.md K4).
 - **Why a control channel of its own:** the platform driver owns the
   bootstrap channel and its messages; the display and the sessions come
   from the part of the first process that starts programs on the

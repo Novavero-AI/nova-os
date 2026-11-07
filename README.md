@@ -171,7 +171,7 @@ build gives the same bytes:
 | `virtblk.exe` | 15,872 | `a8eeec9d33961612a7b6a8dd5def8b9f5484ed438b07dad934c34727868cd7d0` |
 | `virtinp.exe` | 15,872 | `6eeae2fd7f9aa438f70d64b15875303de4c8a742a833d0a0da8dfd2af6258993` |
 | `console.exe` | 36,352 | `6f253fa95047e4c4ce65ae5c69e3be1bc4beb1998a80e854d7b8a4cc4435dc32` |
-| `conecho.exe` | 6,144 | `5e0c998ae702b0a088c7000b57dd3ccf7182c44b25b95e14be928cb7fc7b4244` |
+| `conecho.exe` | 6,144 | `a78a008998f676d00669164bf89be404226613d70c214801a7fb677801ec3dde` |
 | `ntdll.dll` | 10,240 | `9a43b4e3b773c1b5a3b6eb541fd0de9c3f3675d2867d1193b707118648853d10` |
 | `store.exe` | 28,160 | `6c2004434bd1aa91c9e797d04398c8baf6353bbb7541687c2fd8c763d7a226a1` |
 | `namespace.exe` | 10,752 | `82b0360f1e11f9c0a36256ab6bfd14c1b11bdacf561d06b33c7a1074229ae026` |
@@ -294,10 +294,10 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `39574a2abfd69964d64c6098524478f0aef407d8e4ae8b5f261eb60a560cdef4` |
-| `disk.vhdx` | 71,303,168 | `b8b0b70ef66fd3a27215a2d17cf09f350461afde2a09c3f5a33c0a185573aa43` |
-| `chain.img` | 67,108,864 | `af84c9cb3271303b285ee17b82ccf70be9c07cda79297f851cd3c743e6b17071` |
-| `chain.vhdx` | 71,303,168 | `140b9d80fda5564792712c90dba5e90985bdcf2ccec23bebc5d4d988c8b2f9f1` |
+| `disk.img` | 67,108,864 | `3408cc54c5703192e5311794b53e2a47648a36c5174947e8cc3adc0640873ff8` |
+| `disk.vhdx` | 71,303,168 | `ef422543fef7e4df5b43ae8ffa6723aae1baa13ae832e8215dd2765c1075c0af` |
+| `chain.img` | 67,108,864 | `5005965917ddf98ac258c4907027dd9f15cc3e3083f4b7a420791d4f6fa552e6` |
+| `chain.vhdx` | 71,303,168 | `44c8662ba3b456f7067476bde9d6fc98605b84f8e15b3ca03341e1c1412aae1e` |
 
 ## Run
 
