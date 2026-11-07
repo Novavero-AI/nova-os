@@ -86,6 +86,7 @@ Both disks hold:
 \NOVA\VIRTBLK.EXE        the virtio block driver
 \NOVA\VIRTINP.EXE        the virtio input driver
 \NOVA\INPUTLOG.EXE       the input driver's client
+\NOVA\STORE.IMG          the store image
 ```
 
 The test disk adds the inputs of the bootstrap check, the chain the first
@@ -105,7 +106,9 @@ under it holds the images used to recover booting (UEFI 13.3.1.3).
 
 `\NOVA\KERNEL.EXE` is the file nova-boot opens as `\nova\kernel.exe`, and
 the others in `\NOVA` are the boot files it reads beside it
-([boot-protocol.md](boot-protocol.md#boot-files)). None is a UEFI image,
+([boot-protocol.md](boot-protocol.md#boot-files)), `\NOVA\STORE.IMG`
+among them as the store image
+([store-image.md](store-image.md)). None is a UEFI image,
 and UEFI sets no location for files an application reads (UEFI
 13.3.1.3). The seed and the other inputs of its chain are the files of
 stage0-pe32 and of the trees it builds from, unmodified, under 8.3 names
@@ -132,6 +135,7 @@ a directory takes as many clusters as its entries fill:
 | `\NOVA\VIRTBLK.EXE` | `VIRTBLK EXE` |
 | `\NOVA\VIRTINP.EXE` | `VIRTINP EXE` |
 | `\NOVA\INPUTLOG.EXE` | `INPUTLOGEXE` |
+| `\NOVA\STORE.IMG` | `STORE   IMG` |
 | `\NOVA\HEX0SEED.EXE` | `HEX0SEEDEXE` |
 | `\NOVA\` *name*`.`*ext* | *name* padded to 8 bytes with spaces, then *ext* padded to 3 |
 

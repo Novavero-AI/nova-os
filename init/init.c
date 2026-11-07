@@ -2,11 +2,13 @@
    with one bootstrap handle (docs/spec/ipc.md I6). It reads the bootstrap
    message, writes to the kernel's debug log with the root system
    resource the message carries, checks the answers of the calls it has
-   to the cases their contracts name, runs stage0-pe32's chain from its
-   seed as 32-bit processes when the boot volume holds the chain's
-   inputs (chain.c), starts the virtio block driver as the platform
-   driver (platform.c), and exits with EXIT_CHECKS_PASSED, which the
-   kernel reads with process_info and logs.
+   to the cases their contracts name, starts the store service and the
+   namespace server and runs a test program from /store (store.c), runs
+   stage0-pe32's chain from its seed as 32-bit processes when the boot
+   volume holds the chain's inputs (chain.c), starts the virtio block
+   driver as the platform driver (platform.c), and exits with
+   EXIT_CHECKS_PASSED, which the kernel reads with process_info and
+   logs.
    A failed check is logged, if the log is reachable, and ends the
    process with EXIT_CHECK_FAILED. */
 
@@ -20,7 +22,7 @@
 
 /* The handles the bootstrap message carries (native_abi.h): the root
    system resource, the process itself, the root job, the root MMIO, IRQ
-   and DMA resources, then the boot files. */
+   and DMA resources, the store image, then the boot files. */
 #define BOOTSTRAP_HANDLES (BOOTSTRAP_FIRST_FILE + BOOT_FILES_MAX)
 #define BOOTSTRAP_RESOURCE 0
 #define BOOTSTRAP_SELF 1
@@ -31,12 +33,18 @@
 #define KERNEL_ADDRESS 0xffff800000000000ULL
 #define UNMAPPED_USER_ADDRESS 0x10000ULL
 
-/* The bootstrap message's bytes: the platform record, then the files'
-   names (native_abi.h). */
+/* The bootstrap message's bytes: the platform record, then the store
+   image's name and size and the files' (native_abi.h). */
 typedef struct {
     BOOTSTRAP_PLATFORM platform;
+    BOOTSTRAP_FILE store_image;
     BOOTSTRAP_FILE names[BOOT_FILES_MAX];
 } BOOTSTRAP_BYTES;
+
+/* The rights the kernel gives every section it passes: read, and pass
+   on, never write. */
+#define BOOT_SECTION_RIGHTS                                               \
+    (SECTION_RIGHT_READ | RIGHT_DUPLICATE | RIGHT_TRANSFER)
 
 static UINT32 debug_log = HANDLE_INVALID;
 static UINT32 self = HANDLE_INVALID;
@@ -45,6 +53,7 @@ static PLATFORM platform;
 static UINT64 scratch = SCRATCH_BASE;
 static BOOT_FILE_VIEW files[BOOT_FILES_MAX];
 static UINT32 file_count;
+static BOOT_FILE_VIEW store_image;
 
 static int lower(int c)
 {
@@ -99,13 +108,32 @@ static void check(int passed, const char *what)
     process_exit(EXIT_CHECK_FAILED);
 }
 
+/* A section the kernel passed, named and sized at name, as a read-only
+   view into init. */
+static void take_section(const RECEIVED_HANDLE *handle,
+                         const BOOTSTRAP_FILE *name, BOOT_FILE_VIEW *view)
+{
+    UINT32 j;
+
+    check(handle->type == TYPE_SECTION && handle->rights == BOOT_SECTION_RIGHTS,
+          "a boot file is not a read-only section");
+    for (j = 0; j < BOOT_FILE_NAME_SIZE; j++)
+        view->name[j] = name->name[j];
+    view->name[BOOT_FILE_NAME_SIZE - 1] = 0;
+    view->section = handle->handle;
+    view->size = name->size;
+    view->data = name->size ? map_into_init(view->section, name->size, MAP_READ)
+                            : (const UINT8 *)0;
+    check(!name->size || view->data, "a boot file did not map");
+}
+
 /* Take the debug log's resource, the process's own handle, the root job,
-   the root device resources and the boot files from the bootstrap
-   message, checking that a buffer too small for its handles leaves it
-   queued and reports how much it holds; that read whole it holds them in
-   that order, with the platform record and a name and size for each
-   file; and that once it is read the queue is empty and the kernel's end
-   closed. */
+   the root device resources, the store image and the boot files from the
+   bootstrap message, checking that a buffer too small for its handles
+   leaves it queued and reports how much it holds; that read whole it
+   holds them in that order, with the platform record and a name and size
+   for the store image and each file; and that once it is read the queue
+   is empty and the kernel's end closed. */
 static UINT32 read_bootstrap(UINT32 bootstrap)
 {
     BOOTSTRAP_FILE *names = bytes.names;
@@ -119,7 +147,7 @@ static UINT32 read_bootstrap(UINT32 bootstrap)
     if (channel_read(bootstrap, &bytes, sizeof bytes, handles,
                      BOOTSTRAP_HANDLES, &byte_count, &handle_count) != OK ||
         handle_count < BOOTSTRAP_FIRST_FILE ||
-        byte_count != sizeof bytes.platform +
+        byte_count != sizeof bytes.platform + sizeof bytes.store_image +
                           (handle_count - BOOTSTRAP_FIRST_FILE) *
                               sizeof(BOOTSTRAP_FILE) ||
         handles[BOOTSTRAP_RESOURCE].type != TYPE_RESOURCE ||
@@ -140,25 +168,11 @@ static UINT32 read_bootstrap(UINT32 bootstrap)
     platform.irq = handles[BOOTSTRAP_ROOT_IRQ].handle;
     platform.dma = handles[BOOTSTRAP_ROOT_DMA].handle;
     platform.boot = &bytes.platform;
-    for (i = BOOTSTRAP_FIRST_FILE; i < handle_count; i++) {
-        BOOT_FILE_VIEW *file = &files[file_count++];
-        const BOOTSTRAP_FILE *name = &names[i - BOOTSTRAP_FIRST_FILE];
-        UINT32 j;
-
-        check(handles[i].type == TYPE_SECTION &&
-                  handles[i].rights == (SECTION_RIGHT_READ | RIGHT_DUPLICATE |
-                                        RIGHT_TRANSFER),
-              "a boot file is not a read-only section");
-        for (j = 0; j < BOOT_FILE_NAME_SIZE; j++)
-            file->name[j] = name->name[j];
-        file->name[BOOT_FILE_NAME_SIZE - 1] = 0;
-        file->section = handles[i].handle;
-        file->size = name->size;
-        file->data = name->size ? map_into_init(file->section, name->size,
-                                                MAP_READ)
-                                : (const UINT8 *)0;
-        check(!name->size || file->data, "a boot file did not map");
-    }
+    take_section(&handles[BOOTSTRAP_STORE_IMAGE], &bytes.store_image,
+                 &store_image);
+    for (i = BOOTSTRAP_FIRST_FILE; i < handle_count; i++)
+        take_section(&handles[i], &names[i - BOOTSTRAP_FIRST_FILE],
+                     &files[file_count++]);
     check(channel_read(bootstrap, &bytes, sizeof bytes, handles,
                        BOOTSTRAP_HANDLES, &byte_count,
                        &handle_count) == ERR_PEER_CLOSED,
@@ -221,6 +235,8 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     say("nova-init: running in user mode, bootstrap message read\r\n");
     check_errors(bootstrap);
     check_clock();
+    check(store_run(job, debug_log, &store_image),
+          "the test program did not pass from /store");
     check(chain_run(job), "the seed chain did not build nova-nix's links");
     check(platform_run(&platform), "the virtio block driver failed");
     say("nova-init: checks passed\r\n");

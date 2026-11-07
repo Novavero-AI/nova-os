@@ -2,9 +2,10 @@
    processes, as process_map does (docs/spec/syscalls.md S8). A memory
    section is zero-filled pages it holds for its whole life; a device
    section is a range of physical addresses outside RAM that an MMIO
-   resource covers (docs/spec/ipc.md I6). A mapping holds a reference to
-   its section, so a memory section's pages outlive every mapping of
-   them. */
+   resource covers (docs/spec/ipc.md I6); a loaded section is the pages
+   nova-boot loaded the store image into, which only read
+   (docs/spec/storage.md F16). A mapping holds a reference to its
+   section, so a memory section's pages outlive every mapping of them. */
 
 #ifndef NOVA_SECTION_H
 #define NOVA_SECTION_H
@@ -13,16 +14,23 @@
 #include "../x86_64/paging.h"
 
 /* The rights a new section's handle carries: every right a section has
-   (O5, rule 1), and for a device section neither EXECUTE nor PIN (ipc.md
-   I6). A section is not waitable, so neither handle has WAIT. */
+   (O5, rule 1), for a device section neither EXECUTE nor PIN (ipc.md
+   I6), and for a loaded section READ alone of them. A section is not
+   waitable, so no handle has WAIT. */
 #define SECTION_RIGHTS                                                    \
     (SECTION_RIGHT_READ | SECTION_RIGHT_WRITE | SECTION_RIGHT_EXECUTE |   \
      SECTION_RIGHT_PIN | RIGHT_DUPLICATE | RIGHT_TRANSFER)
 #define DEVICE_SECTION_RIGHTS                                             \
     (SECTION_RIGHT_READ | SECTION_RIGHT_WRITE | RIGHT_DUPLICATE |         \
      RIGHT_TRANSFER)
+#define LOADED_SECTION_RIGHTS                                             \
+    (SECTION_RIGHT_READ | RIGHT_DUPLICATE | RIGHT_TRANSFER)
 
-typedef enum { SECTION_MEMORY = 1, SECTION_DEVICE } SECTION_KIND;
+typedef enum {
+    SECTION_MEMORY = 1,
+    SECTION_DEVICE,
+    SECTION_LOADED
+} SECTION_KIND;
 
 typedef struct SECTION SECTION;
 
@@ -32,7 +40,8 @@ struct SECTION {
     USER_MEMORY_TYPE memory_type; /* what its mappings give its pages */
     UINT64 pages;     /* how many */
     UINT64 *physical; /* a memory section's pages, in a page of their own */
-    UINT64 base;      /* a device section's first physical address */
+    UINT64 base;      /* a device or loaded section's first physical
+                         address */
     SECTION *next_device; /* on the list of live device sections */
 };
 
@@ -63,6 +72,19 @@ STATUS section_create(UINT64 size, SECTION **section);
    type already; or ERR_NO_MEMORY. */
 STATUS section_create_device(const RESOURCE *resource, UINT64 base,
                              UINT64 size, UINT32 cache, SECTION **section);
+
+/* section_create_loaded: a loaded section over the size bytes at
+   physical, from a page boundary, rounded up to whole pages, and its
+   creator's handle, which carries LOADED_SECTION_RIGHTS. The pages must
+   lie in EfiLoaderData, which the page allocator never hands out, so no
+   other owner can receive them; the section never frees them. Returns
+   OK; ERR_INVALID_ARGS for an empty, unaligned or wrapping range or one
+   outside loader data; or ERR_NO_MEMORY. */
+STATUS section_create_loaded(UINT64 physical, UINT64 size, SECTION **section);
+
+/* The MAP_ protections section may be mapped with whatever rights its
+   handle carries: a loaded section only MAP_READ, others all. */
+UINT32 section_protections(const SECTION *section);
 
 /* The physical address of page index of section, index below its
    pages. */

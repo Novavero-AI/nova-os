@@ -1,6 +1,7 @@
 /* nova-boot: the UEFI loader. It draws the boot screen, loads the kernel
    from \nova\kernel.exe on the volume it was booted from and reads every
-   other file in \nova\, the first process's image init.exe among them,
+   other file in \nova\, the first process's image init.exe and the
+   store image store.img among them,
    builds the kernel's page tables, measures the timestamp counter
    against Stall, asks the firmware's random number generators for seeds,
    takes the ACPI RSDP's address from the configuration table, takes the
@@ -435,6 +436,11 @@ static int ascii_name(const CHAR16 *name, char *out)
     return 0;
 }
 
+static UINT64 pages_of(UINT64 bytes)
+{
+    return (bytes + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE;
+}
+
 static void free_files(EFI_BOOT_SERVICES *boot)
 {
     UINT64 i;
@@ -442,14 +448,63 @@ static void free_files(EFI_BOOT_SERVICES *boot)
     for (i = 0; i < boot_info.file_count; i++)
         boot->FreePool(boot_info.files[i].data);
     boot_info.file_count = 0;
+    if (boot_info.store_image.data)
+        boot->FreePages((EFI_PHYSICAL_ADDRESS)boot_info.store_image.data,
+                        pages_of(boot_info.store_image.size));
+    boot_info.store_image.data = 0;
 }
 
-/* Read each file of directory except the kernel into boot_info.files. A
-   name that is not printable ASCII or does not fit BOOT_FILE_NAME_SIZE,
-   a file larger than SECTION_MAX_SIZE, the most the kernel passes on in
-   one section, or more than BOOT_FILES_MAX files, fail the boot with
-   EFI_UNSUPPORTED, so that the kernel is handed every file there or
-   none. */
+/* Read the store image into pages of its own, from a page boundary, and
+   zero the rest of its last page, so that the kernel can give the first
+   process a section over exactly those pages that holds nothing else
+   (docs/spec/storage.md F16). Its size has no limit but memory's. An
+   empty image fails the boot with EFI_UNSUPPORTED, since a section is
+   never empty. */
+static EFI_STATUS read_store_image(EFI_BOOT_SERVICES *boot,
+                                   EFI_FILE_PROTOCOL *directory,
+                                   EFI_FILE_INFO *info)
+{
+    BOOT_FILE *image = &boot_info.store_image;
+    EFI_FILE_PROTOCOL *file;
+    EFI_PHYSICAL_ADDRESS address;
+    UINT64 pages, i;
+    UINTN read;
+    EFI_STATUS status;
+
+    if (info->FileSize == 0 || !ascii_name(info->FileName, image->name))
+        return EFI_UNSUPPORTED;
+    pages = pages_of(info->FileSize);
+    status = boot->AllocatePages(ALLOCATE_ANY_PAGES, EFI_LOADER_DATA, pages,
+                                 &address);
+    if (status != EFI_SUCCESS)
+        return status;
+    status = directory->Open(directory, &file, info->FileName,
+                             EFI_FILE_MODE_READ, 0);
+    if (status == EFI_SUCCESS) {
+        read = info->FileSize;
+        status = file->Read(file, &read, (VOID *)address);
+        if (status == EFI_SUCCESS && read != info->FileSize)
+            status = EFI_LOAD_ERROR;
+        file->Close(file);
+    }
+    if (status != EFI_SUCCESS) {
+        boot->FreePages(address, pages);
+        return status;
+    }
+    for (i = info->FileSize; i < pages * EFI_PAGE_SIZE; i++)
+        ((UINT8 *)address)[i] = 0;
+    image->data = (UINT8 *)address;
+    image->size = info->FileSize;
+    return EFI_SUCCESS;
+}
+
+/* Read each file of directory except the kernel into boot_info.files,
+   and the store image into boot_info.store_image. A name that is not
+   printable ASCII or does not fit BOOT_FILE_NAME_SIZE, a file other than
+   the store image larger than SECTION_MAX_SIZE, the most the kernel
+   passes on in one section, or more than BOOT_FILES_MAX files, fail the
+   boot with EFI_UNSUPPORTED, so that the kernel is handed every file
+   there or none. */
 static EFI_STATUS read_files(EFI_BOOT_SERVICES *boot,
                              EFI_FILE_PROTOCOL *directory)
 {
@@ -468,6 +523,12 @@ static EFI_STATUS read_files(EFI_BOOT_SERVICES *boot,
         if ((info->Attribute & EFI_FILE_DIRECTORY) ||
             same_name(info->FileName, KERNEL_NAME))
             continue;
+        if (same_name(info->FileName, STORE_IMAGE_NAME)) {
+            status = read_store_image(boot, directory, info);
+            if (status != EFI_SUCCESS)
+                return status;
+            continue;
+        }
         if (boot_info.file_count == BOOT_FILES_MAX ||
             info->FileSize > SECTION_MAX_SIZE ||
             !ascii_name(info->FileName, file->name))
@@ -495,8 +556,8 @@ static int init_read(void)
     return 0;
 }
 
-/* Read \nova\'s files, which must include the first process's image,
-   into boot_info. On failure none stays read. */
+/* Read \nova\'s files, which must include the first process's image
+   and the store image, into boot_info. On failure none stays read. */
 static EFI_STATUS read_nova_files(EFI_HANDLE image, EFI_BOOT_SERVICES *boot)
 {
     EFI_FILE_PROTOCOL *root, *directory;
@@ -510,7 +571,7 @@ static EFI_STATUS read_nova_files(EFI_HANDLE image, EFI_BOOT_SERVICES *boot)
         directory->Close(directory);
     }
     root->Close(root);
-    if (status == EFI_SUCCESS && !init_read())
+    if (status == EFI_SUCCESS && (!init_read() || !boot_info.store_image.data))
         status = EFI_NOT_FOUND;
     if (status != EFI_SUCCESS)
         free_files(boot);
@@ -1107,6 +1168,8 @@ _Noreturn static void enter_kernel(const KERNEL_IMAGE *kernel,
     boot_info.screen.pixels = direct_map((UINT64)boot_info.screen.pixels);
     for (i = 0; i < boot_info.file_count; i++)
         boot_info.files[i].data = direct_map((UINT64)boot_info.files[i].data);
+    boot_info.store_image.data =
+        direct_map((UINT64)boot_info.store_image.data);
     wrmsr(IA32_PAT, NOVA_PAT);
     if (tables->no_execute)
         wrmsr(IA32_EFER, rdmsr(IA32_EFER) | EFER_NO_EXECUTE);

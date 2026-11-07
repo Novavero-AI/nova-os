@@ -1,7 +1,8 @@
 /* Sections. A memory section's pages come from page_alloc_mapped, so they
    start zeroed, and go back to the allocator when the section is
    destroyed. A device section maps the same physical addresses for its
-   whole life and frees none.
+   whole life and frees none, as a loaded section does: its pages are
+   loader data, which the page allocator keeps reserved (page.c).
 
    A device section also gives its pages their memory type. Every live
    device section is on a list, and a new one over a page that the
@@ -49,7 +50,7 @@ static void destroy(OBJECT *object)
         for (i = 0; i < section->pages; i++)
             page_free_mapped(direct_map(section->physical[i]));
         page_free_mapped(section->physical);
-    } else {
+    } else if (section->kind == SECTION_DEVICE) {
         flags = save_and_disable_interrupts();
         for (link = &device_sections; *link != section;
              link = &(*link)->next_device)
@@ -180,12 +181,43 @@ STATUS section_create_device(const RESOURCE *resource, UINT64 base,
     return OK;
 }
 
+STATUS section_create_loaded(UINT64 physical, UINT64 size, SECTION **out)
+{
+    SECTION *section;
+    UINT64 pages = size / PAGE_SIZE + (size % PAGE_SIZE != 0);
+
+    if (size == 0 || physical % PAGE_SIZE != 0 ||
+        pages > (~0ULL - physical) / PAGE_SIZE ||
+        !memory_map_covers(physical, pages * PAGE_SIZE,
+                           MEMORY_TYPE(EFI_LOADER_DATA)))
+        return ERR_INVALID_ARGS;
+    section = page_alloc_mapped();
+    if (!section)
+        return ERR_NO_MEMORY;
+    section->kind = SECTION_LOADED;
+    section->memory_type = USER_WRITE_BACK;
+    section->pages = pages;
+    section->physical = 0;
+    section->base = physical;
+    object_init(&section->object, &section_type);
+    *out = section;
+    return OK;
+}
+
+UINT32 section_protections(const SECTION *section)
+{
+    return section->kind == SECTION_LOADED ? MAP_READ
+                                           : MAP_READ | MAP_WRITE | MAP_EXECUTE;
+}
+
 /* index comes from a caller's offset, which process_map and
    initiator_pin have checked against the section's size, so it is
-   masked before it selects an entry (docs/spec/speculation.md M4). */
+   masked before it selects an entry (docs/spec/speculation.md M4). A
+   device or loaded section's pages are consecutive, and no entry is
+   selected. */
 UINT64 section_page(const SECTION *section, UINT64 index)
 {
-    if (section->kind == SECTION_DEVICE)
+    if (section->kind != SECTION_MEMORY)
         return section->base + index * PAGE_SIZE;
     return section->physical[index_masked(index, section->pages)];
 }

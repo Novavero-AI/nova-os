@@ -1,5 +1,6 @@
-/* The file protocol between a process and the server of its view of
-   storage, a stand-in until the storage design defines the I/O protocol
+/* The file protocol between a 32-bit process and the server of its view
+   of storage, a stand-in until a server speaks the directory protocol
+   (directory_protocol.h) for directories a process writes
    (docs/spec/compat.md, Files; ipc.md I9 gives its shape). Every message
    starts with a FILE_REQUEST or a FILE_REPLY; both are little-endian and
    laid out alike on x86-64 and in 32-bit code.

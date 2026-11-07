@@ -15,7 +15,7 @@
 #define BOOT_INFO_MAGIC 0x544F4F4241564F4EULL
 
 /* The layout below and the machine state that comes with it. */
-#define BOOT_INFO_VERSION 7
+#define BOOT_INFO_VERSION 8
 
 /* The EFI_RNG_PROTOCOL instances nova-boot asks for a seed, at most, and
    the bytes it asks each for: 256 bits, the security level UEFI 37.5
@@ -30,6 +30,10 @@ typedef struct {
     UINT64 status; /* the EFI_STATUS of asking; bytes is a seed only if 0 */
     UINT8 bytes[BOOT_RANDOM_SEED_SIZE];
 } BOOT_RANDOM_SEED;
+
+/* The store image's name in \nova\ (docs/spec/storage.md F16), which
+   nova-boot loads into pages of its own rather than among the files. */
+#define STORE_IMAGE_NAME "store.img"
 
 /* A file nova-boot read from \nova\: its name, ASCII and NUL-terminated
    as the firmware reported it, and its contents. */
@@ -53,6 +57,7 @@ typedef struct {
     UINT64 file_count; /* entries of files filled in */
     BOOT_FILE files[BOOT_FILES_MAX]; /* \nova\init.exe among them */
     UINT64 acpi_rsdp; /* the ACPI RSDP's physical address, or 0 */
+    BOOT_FILE store_image; /* from a page boundary, zero to its page's end */
 } BOOT_INFO;
 
 #endif

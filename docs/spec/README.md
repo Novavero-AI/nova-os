@@ -18,6 +18,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [compat.md](compat.md) | How a 32-bit Windows program runs: its process, ntdll, paths and the stand-in file protocol |
 | [storage.md](storage.md) | The directory protocol and per-process views, the native file system, the store at `/store`, its builds and garbage collection, and the first milestone |
 | [input.md](input.md) | The virtio input driver, the key events it sends a client, its report to the platform driver and how that supervises it |
+| [store-image.md](store-image.md) | The store image the first milestone boots from: its header, registrations, nodes, blobs and their hash trees |
 
 ## Firmware and platform
 
@@ -257,7 +258,7 @@ May 2011 (IETF).
   (RFC 6234)
 - Used by: the kernel's SHA-256 (FIPS 180-4) and its boot-time test
   (RFC 6234, 8.5); the checksums and digests of
-  [storage.md](storage.md).
+  [storage.md](storage.md) and [store-image.md](store-image.md).
 
 **Fast-key-erasure random-number generators**, D. J. Bernstein, the
 cr.yp.to blog, July 23, 2017.
@@ -409,6 +410,16 @@ December 6, 2000; legal agreement updated March 30, 2011.
   and `2f6dc41d529c03e0596219fb2a734221ba3261837e14bab61168cde5a3226c30`
 - Used by: an NVMe storage driver for real hardware;
   [storage.md](storage.md), for the Flush command (7.2).
+
+**UTF-8, a transformation format of ISO 10646**, RFC 3629, November 2003
+(IETF).
+
+- Document: <https://www.rfc-editor.org/rfc/rfc3629.txt>
+- Access: free.
+- sha256: `a2a3a39457d30420c812f87a38cc2b9194832f6982ef17e619de7d816879d6a6`
+- Used by: names in the namespace and the store
+  ([store-image.md](store-image.md); `lib/name.c` and `tools/mkstore.c`,
+  section 4).
 
 ## Devices
 

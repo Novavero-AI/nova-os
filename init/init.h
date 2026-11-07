@@ -1,6 +1,7 @@
 /* What init's parts share: its debug log (log.h), the files nova-boot
-   read from \nova\, which the kernel passed as read-only sections, and
-   the mapping of sections into init's own address space. */
+   read from \nova\ and the store image, which the kernel passed as
+   read-only sections, and the mapping of sections into init's own
+   address space. */
 
 #ifndef NOVA_INIT_H
 #define NOVA_INIT_H
@@ -14,7 +15,7 @@
 #define OUTPUT_BASE 0x0000000100000000ULL
 #define SCRATCH_BASE 0x0000000200000000ULL
 
-/* A boot file, mapped read-only into init. */
+/* A boot file or the store image, mapped read-only into init. */
 typedef struct {
     char name[BOOT_FILE_NAME_SIZE];
     UINT32 section;
@@ -45,5 +46,12 @@ UINT8 *map_into_init_at(UINT32 section, UINT64 address, UINT64 size,
    nova-nix's (chain.c). Returns 1 if every link matched or the boot
    volume holds none of the chain's inputs, 0 if not. */
 int chain_run(UINT32 job);
+
+/* Start the store service over image and the namespace server, publish
+   /store, and run the test program from /store in job with a view of
+   its closure (store.c), creating each program's debug log from
+   debug_log. Returns 1 if the program passed its checks and both
+   services ended once init closed its channels to them, 0 if not. */
+int store_run(UINT32 job, UINT32 debug_log, const BOOT_FILE_VIEW *image);
 
 #endif

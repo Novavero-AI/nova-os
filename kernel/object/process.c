@@ -280,6 +280,8 @@ STATUS process_map(PROCESS *process, SECTION *section, UINT64 offset,
         !page_aligned(offset) || !page_aligned(address) ||
         !page_aligned(size) || size == 0 || !user_range_valid(address, size))
         return ERR_INVALID_ARGS;
+    if (protection & ~section_protections(section))
+        return ERR_ACCESS_DENIED;
     if (user_protection == USER_READ_WRITE_EXECUTE &&
         !(process->options & PROCESS_OPTION_WRITE_EXECUTE))
         return ERR_ACCESS_DENIED;

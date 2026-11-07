@@ -222,16 +222,17 @@ static UINT32 map_stack(UINT32 process)
     return status;
 }
 
-UINT32 loader_load(UINT32 job, const BOOT_FILE_VIEW *file, PROGRAM *program)
+UINT32 loader_load_image(UINT32 job, const UINT8 *image, UINT64 size,
+                         PROGRAM *program)
 {
     UINT32 status;
     PE pe;
 
     program->process = HANDLE_INVALID;
     program->thread = HANDLE_INVALID;
-    if (!file->data)
+    if (!image)
         return ERR_INVALID_ARGS;
-    status = parse(file->data, file->size, &pe);
+    status = parse(image, size, &pe);
     if (status == OK)
         status = process_create(job, 0, &program->process);
     if (status == OK)
@@ -249,6 +250,11 @@ UINT32 loader_load(UINT32 job, const BOOT_FILE_VIEW *file, PROGRAM *program)
     program->entry = pe.entry;
     program->stack = STACK_TOP - STACK_START_DEPTH;
     return OK;
+}
+
+UINT32 loader_load(UINT32 job, const BOOT_FILE_VIEW *file, PROGRAM *program)
+{
+    return loader_load_image(job, file->data, file->size, program);
 }
 
 UINT32 loader_start(PROGRAM *program, UINT32 bootstrap)

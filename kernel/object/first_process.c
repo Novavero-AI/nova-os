@@ -10,19 +10,22 @@
    3. the root job, with which it creates processes;
    4. the root MMIO, IRQ and DMA resources, the authority over every
       device it gives drivers a part of (I6);
-   5. from BOOTSTRAP_FIRST_FILE on, each file nova-boot read from \nova\,
-      as a section holding its bytes that the process may only read.
+   5. the store image, as a loaded section over the pages nova-boot read
+      it into, which only reads (docs/spec/storage.md F16; section.h);
+   6. from BOOTSTRAP_FIRST_FILE on, each other file nova-boot read from
+      \nova\, as a section holding its bytes that the process may only
+      read.
 
    The message's bytes are a BOOTSTRAP_PLATFORM naming the PCI Express
-   configuration space the ACPI MCFG table describes, then the files'
-   names and sizes (native_abi.h). The root I/O-port resource and the
-   framebuffer's section that I6 lists join the message as the kernel
-   implements their calls. The kernel's own end of the channel is
+   configuration space the ACPI MCFG table describes, then the store image's
+   and the files' names and sizes (native_abi.h). The root I/O-port resource
+   and the framebuffer's section that I6 lists join the message as the
+   kernel implements their calls. The kernel's own end of the channel is
    closed once the message is written; a message already queued stays
-   readable after its writer closes (I1). The first process itself is
-   not created with PROCESS_OPTION_WRITE_EXECUTE: the root job's handle
-   carries the right for it to pass on, and no mapping of its own may be
-   writable and executable (O5).
+   readable after its writer closes (I1). The first process itself is not
+   created with PROCESS_OPTION_WRITE_EXECUTE: the root job's handle carries
+   the right for it to pass on, and no mapping of its own may be writable
+   and executable (O5).
 
    The kernel then waits for the process to end, logs the exit code
    process_info reports and closes its handle to the process. */
@@ -60,9 +63,11 @@
    is made (section.h). */
 #define REQUESTER_IDS 0x100000000ULL
 
-/* The message's bytes: the platform record, then a name per file. */
+/* The message's bytes: the platform record, then a name per file, the
+   store image's first. */
 typedef struct {
     BOOTSTRAP_PLATFORM platform;
+    BOOTSTRAP_FILE store_image;
     BOOTSTRAP_FILE files[BOOT_FILES_MAX];
 } BOOTSTRAP_BYTES;
 
@@ -75,7 +80,8 @@ _Static_assert(BOOTSTRAP_HANDLES <= CHANNEL_MAX_HANDLES,
                "the bootstrap message holds every handle");
 _Static_assert(sizeof(BOOTSTRAP_BYTES) <= CHANNEL_MAX_BYTES,
                "the bootstrap message holds every file's name");
-_Static_assert(offsetof(BOOTSTRAP_BYTES, files) == sizeof(BOOTSTRAP_PLATFORM),
+_Static_assert(offsetof(BOOTSTRAP_BYTES, files) ==
+                   sizeof(BOOTSTRAP_PLATFORM) + sizeof(BOOTSTRAP_FILE),
                "the names follow the platform record directly");
 
 static void fail(const char *what, STATUS status)
@@ -140,20 +146,43 @@ static UINT64 map_stack(PROCESS *process)
     return top - STACK_START_DEPTH;
 }
 
+static void describe_file(const BOOT_FILE *file, BOOTSTRAP_FILE *entry)
+{
+    UINT32 i;
+
+    entry->size = file->size;
+    for (i = 0; i < BOOT_FILE_NAME_SIZE; i++)
+        entry->name[i] = file->name[i];
+}
+
 /* A section holding file's bytes, described at entry. An empty file gets
    a section of one page, since a section is never empty; its size in the
    message is still 0. */
 static SECTION *file_section(const BOOT_FILE *file, BOOTSTRAP_FILE *entry)
 {
     SECTION *section;
-    UINT32 i;
 
     check(section_create(file->size ? file->size : PAGE_SIZE, &section),
           "no memory for a boot file's section");
     section_fill(section, file->data, file->size);
-    entry->size = file->size;
-    for (i = 0; i < BOOT_FILE_NAME_SIZE; i++)
-        entry->name[i] = file->name[i];
+    describe_file(file, entry);
+    return section;
+}
+
+/* The store image's loaded section, over the pages nova-boot read it
+   into, described at entry. */
+static SECTION *store_image_section(const BOOT_FILE *image,
+                                    BOOTSTRAP_FILE *entry)
+{
+    SECTION *section;
+
+    check(section_create_loaded((UINT64)image->data - DIRECT_MAP_BASE,
+                                image->size, &section),
+          "the store image is not in pages nova-boot loaded");
+    describe_file(image, entry);
+    serial_write("nova: store image of ");
+    serial_number(image->size);
+    serial_write(" bytes passed as a read-only section over its pages\r\n");
     return section;
 }
 
@@ -206,6 +235,9 @@ static void send_bootstrap(PROCESS *process, JOB *job, ENDPOINT *kernel_end,
     handles[BOOTSTRAP_ROOT_DMA].object =
         root_resource(RESOURCE_DMA, 0, REQUESTER_IDS);
     handles[BOOTSTRAP_ROOT_DMA].rights = RESOURCE_RIGHTS;
+    handles[BOOTSTRAP_STORE_IMAGE].object =
+        &store_image_section(&info->store_image, &bytes.store_image)->object;
+    handles[BOOTSTRAP_STORE_IMAGE].rights = LOADED_SECTION_RIGHTS;
     for (i = 0; i < info->file_count; i++) {
         handles[count].object =
             &file_section(&info->files[i], &bytes.files[i])->object;
@@ -214,7 +246,7 @@ static void send_bootstrap(PROCESS *process, JOB *job, ENDPOINT *kernel_end,
     }
     check(channel_write_kernel(kernel_end, (const UINT8 *)&bytes,
                                (UINT32)(sizeof bytes.platform +
-                                        info->file_count *
+                                        (1 + info->file_count) *
                                             sizeof(BOOTSTRAP_FILE)),
                                handles, count),
           "the bootstrap message was refused");

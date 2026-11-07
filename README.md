@@ -6,21 +6,24 @@ a small kernel core, written in C and built entirely from source down to a
 seed and compared.
 
 It boots in a UEFI virtual machine. nova-boot, the loader, draws the boot
-screen, loads the kernel from `\nova\kernel.exe` and reads the other
-files in `\nova\`, the first process's `init.exe` among them, exits the
-firmware's boot services and jumps to the kernel, which runs the first
-process in user mode, reports itself and the process's exit code on the
-first serial port and, once started, fades the boot screen into the
-desktop background. From the test disk, which holds the inputs of
-stage0-pe32's chain, the first process runs the bootstrap check: the
-chain, from its hex0 seed to M1, as 32-bit Windows programs, with each
-link checked against the one nova-nix builds on Windows
-([docs/spec/compat.md](docs/spec/compat.md)). It then enumerates PCI and
-starts the virtio block driver, `virtblk.exe`, as a user-mode process of
-its own, which reads the boot disk's partition table and the EFI System
-Partition's boot sector through its virtqueue, and the virtio input
-driver, `virtinp.exe`, which sends each key pressed and released as a
-message to a client, `inputlog.exe`, that logs it
+screen, loads the kernel from `\nova\kernel.exe` and reads the other files
+in `\nova\`, the first process's `init.exe` and the store image among them,
+exits the firmware's boot services and jumps to the kernel, which runs the
+first process in user mode, reports itself and the process's exit code on
+the first serial port and, once started, fades the boot screen into the
+desktop background. The first process starts the store service and the
+namespace server from the store image as user-mode processes, publishes the
+store as `/store`, and runs a test program from `/store` with a view of its
+own closure and nothing else ([docs/spec/storage.md](docs/spec/storage.md),
+F16). From the test disk, which holds the inputs of stage0-pe32's chain,
+the first process runs the bootstrap check: the chain, from its hex0 seed
+to M1, as 32-bit Windows programs, with each link checked against the one
+nova-nix builds on Windows ([docs/spec/compat.md](docs/spec/compat.md)). It
+then enumerates PCI and starts the virtio block driver, `virtblk.exe`, as a
+user-mode process of its own, which reads the boot disk's partition table
+and the EFI System Partition's boot sector through its virtqueue, and
+the virtio input driver, `virtinp.exe`, which sends each key pressed and
+released as a message to a client, `inputlog.exe`, that logs it
 ([docs/spec/input.md](docs/spec/input.md)).
 [DESIGN.md](DESIGN.md) holds the principles, the decisions made so far and
 the stages; [design/backgrounds](design/backgrounds/README.md) holds the
@@ -29,7 +32,7 @@ pixels.
 
 ## Build
 
-The seven images are compiled by TinyCC at commit
+The ten images are compiled by TinyCC at commit
 cb41cbfe717e4c00d7bb70035cda5ee5f0ff9341, built twice: as a cross
 compiler that writes x86-64 PE, and as one that writes i386 PE for ntdll.
 The archive's sha256 is
@@ -70,12 +73,13 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   kernel/object/object_test.c kernel/syscall/syscall.c gfx/gfx.c \
   gfx/limb.c gfx/background.c
 ./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
-  -I include -I native -I lib -I drivers -I kernel/random \
-  -Wl,-subsystem=native -Wl,-e=init_main -Wl,-section-alignment=1000 \
-  -Wl,-file-alignment=200 -o init.exe init/init.c init/chain.c \
-  init/compat.c init/view.c init/platform.c init/loader.c drivers/pci.c \
-  drivers/virtio_pci.c \
-  lib/log.c native/native.S kernel/random/sha256.c
+  -I include -I native -I lib -I drivers -I kernel/random -I store \
+  -I test -Wl,-subsystem=native -Wl,-e=init_main \
+  -Wl,-section-alignment=1000 -Wl,-file-alignment=200 -o init.exe \
+  init/init.c init/chain.c init/compat.c init/view.c init/platform.c \
+  init/loader.c init/store.c drivers/pci.c drivers/virtio_pci.c \
+  store/reader.c lib/path.c lib/log.c native/native.S \
+  kernel/random/sha256.c
 ./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I native -I lib -I drivers -Wl,-subsystem=native \
   -Wl,-e=virtio_blk_main -Wl,-section-alignment=1000 \
@@ -97,32 +101,84 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   -I include -Wl,-subsystem=native -Wl,-e=ntdll_entry \
   -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
   -o ntdll.dll ntdll/ntdll.c ntdll/entry.S
+./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
+  -I include -I native -I lib -I kernel/random -Wl,-subsystem=native \
+  -Wl,-e=store_main -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
+  -o store.exe store/store.c store/reader.c lib/name.c lib/log.c \
+  native/native.S kernel/random/sha256.c
+./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
+  -I include -I native -I lib -Wl,-subsystem=native \
+  -Wl,-e=namespace_main -Wl,-section-alignment=1000 \
+  -Wl,-file-alignment=200 -o namespace.exe namespace/namespace.c \
+  lib/name.c lib/log.c native/native.S
+cc -o mknar -I include -I kernel/random tools/mknar.c tools/store_path.c \
+  kernel/random/sha256.c
+cc -o mkstore -I include -I kernel/random tools/mkstore.c \
+  tools/store_path.c kernel/random/sha256.c
+greeting=$(./mknar greeting greeting file . test/greeting.txt)
+./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
+  -I include -I native -I lib -I test -Wl,-subsystem=native \
+  -Wl,-e=hello_main -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
+  -D "GREETING_PATH=\"/store/$greeting\"" -o hello.exe test/hello.c \
+  lib/path.c lib/log.c native/native.S
+services=$(./mknar services nova-services dir bin \
+  exec bin/store.exe store.exe exec bin/namespace.exe namespace.exe)
+./mknar hello hello -r $greeting dir bin exec bin/hello.exe hello.exe \
+  dir share link share/greeting /store/$greeting \
+  link share/greeting-relative ../../$greeting \
+  link share/greeting-windows C:/nix/store/$greeting
+./mkstore store.img $services greeting.narinfo greeting.nar \
+  services.narinfo services.nar hello.narinfo hello.nar
 ```
 
 `-shared` makes TinyCC write base relocations, which the firmware needs to
 load nova-boot, and nova-boot to load the kernel, at addresses of their
 choosing; TinyCC writes them only for a DLL-style image. `init.exe` is
 linked without it: the kernel places the first process at the image's own
-base address, and the first process places the drivers, `virtblk.exe` and
-`virtinp.exe`, and the input driver's client, `inputlog.exe`, at their
-own. `ntdll.dll` is linked with `-shared` for its export table, which
-TinyCC writes only for a DLL, and is placed at its own base address too.
-For the native subsystem TinyCC aligns sections to 32 bytes but still
-writes the 4096 and 512 byte alignments into the header, so the links of
-the kernel, `init.exe`, the drivers, the client and `ntdll.dll` set those
-alignments (in hexadecimal) to make their layout match. TinyCC also writes
-`ntdll.def`, its exports, which nothing reads. Each build gives the same
-bytes:
+base address, and the first process places each program it starts, the
+drivers `virtblk.exe` and `virtinp.exe`, the input driver's client
+`inputlog.exe` and the programs from `/store`, at its own. `ntdll.dll` is
+linked with `-shared` for its export table, which TinyCC writes only for a
+DLL, and is placed at its own base address too. For the native subsystem
+TinyCC aligns sections to 32 bytes but still writes the 4096 and 512 byte
+alignments into the header, so the links of the kernel and of every
+program set those alignments (in hexadecimal) to make their layout match.
+TinyCC also writes `ntdll.def`, its exports, which nothing reads. Each
+build gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `BOOTX64.EFI` | 28,160 | `04b0989e077d4ca8838dac1b3007b744025370165c1846903b010f4c3853ba44` |
-| `kernel.exe` | 195,072 | `36142e4c5b9179166561b7246ee58bbb11f7f2c271e1a9eefcb3d5b1c765eba5` |
-| `init.exe` | 46,592 | `27e81f9a114b562920cbbe6d07c6fbcb1149de7bd9cf06b9672688443a555a15` |
+| `BOOTX64.EFI` | 29,184 | `4a30a01cfd4237a0de0be3d693e5231fcdfc4ff050e65ca81bd262b89eed8228` |
+| `kernel.exe` | 195,584 | `7eb4c24a9d936c9369fef2b017a3864eaa1c2bd537eed46c3ecffa028dd17600` |
+| `init.exe` | 71,168 | `08544ff3ae6ef0a2a5173558a201bd0a1c442718c4a97a6709f4fa50fda2d467` |
 | `virtblk.exe` | 15,872 | `360420a6dc21766f2f9f5c32490879ec72a8ee05cff47556701d4918fabaf469` |
 | `virtinp.exe` | 15,872 | `2536fbc06c0baf1da004c9e03ec05d0bf6deb82bd423ef8f4767102a8c8d8797` |
 | `inputlog.exe` | 5,120 | `b58d1bb4a4bfce1b1da66478479fe6e14ce46e7b2e64f0fc89e32c270fa3fed7` |
 | `ntdll.dll` | 10,240 | `9a43b4e3b773c1b5a3b6eb541fd0de9c3f3675d2867d1193b707118648853d10` |
+| `store.exe` | 27,136 | `10f4f631e75dcb4edaa7662aac0500e60fa14cb4cb2555ad323be46f71ed335b` |
+| `namespace.exe` | 10,240 | `1c3bd121f11570178ddf2e03bfc0a55972b9ce33c805123ac118ae47aa194cbb` |
+| `hello.exe` | 19,456 | `521c6b4eabd579bdf5edb4e3470510bb350261260f3b97470be7a2ecc971a5b7` |
+
+The block also writes the store image, `store.img`
+([docs/spec/store-image.md](docs/spec/store-image.md)), from three
+store paths: `nova-services`, holding the store service and the
+namespace server, which the image's header names as the programs the
+first process starts; `greeting`, a file; and `hello`, holding the test
+program, which records the greeting's path and so refers to it, and
+links to the greeting. `tools/mknar.c` writes each path as nova-nix
+exports one, a NAR and a narinfo, and prints its base name;
+`tools/mkstore.c` checks each NAR against its narinfo and writes the
+image. nova-nix does not run in this build, so mknar stands in for its
+export: every path is content-addressed, named from its NAR hash and its
+references as upstream Nix names a recursive SHA-256 path
+(`makeFixedOutputPath`, hashing `/nix/store` as every host does), which
+for a path without references is the name nova-nix gives the same tree.
+No path is a derivation's output; the test program is compiled by the
+block above. Each build gives the same bytes:
+
+| Image | Size | sha256 |
+|---|---|---|
+| `store.img` | 69,632 | `bd3045f1db6bbea081bf220d8b870dd9db2f9b3c9c0b341864e7e6e1d800c106` |
 
 ## Disk image
 
@@ -136,8 +192,8 @@ with only the standard library, so the host compiler or TinyCC builds it.
 
 The block below writes two disks. The system's, `disk.img` and
 `disk.vhdx`, holds in `\NOVA\` the kernel, `INIT.EXE`, `NTDLL.DLL`,
-`VIRTBLK.EXE`, `VIRTINP.EXE` and `INPUTLOG.EXE`. The test disk,
-`chain.img` and `chain.vhdx`, holds the same files and the inputs of
+`VIRTBLK.EXE`, `VIRTINP.EXE`, `INPUTLOG.EXE` and `STORE.IMG`. The test
+disk, `chain.img` and `chain.vhdx`, holds the same files and the inputs of
 stage0-pe32's chain up to M1, which the bootstrap check reads: its seed
 and the files of stage0-pe32 and of the M2libc, M2-Planet and mescc-tools
 trees it builds from, at the commits nova-nix's stage0-pe32 package pins.
@@ -179,9 +235,9 @@ m1-macro.c $mescc/M1-macro.c
 EOF
 cc -o mkimage tools/mkimage.c
 ./mkimage disk.img disk.vhdx BOOTX64.EFI kernel.exe init.exe ntdll.dll \
-  virtblk.exe virtinp.exe inputlog.exe
+  virtblk.exe virtinp.exe inputlog.exe store.img
 ./mkimage chain.img chain.vhdx BOOTX64.EFI kernel.exe init.exe ntdll.dll \
-  virtblk.exe virtinp.exe inputlog.exe chain/*
+  virtblk.exe virtinp.exe inputlog.exe store.img chain/*
 ```
 
 The chain's inputs are those trees' files, unmodified:
@@ -219,10 +275,10 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `39d3d3296333b433ef8d070f322982bb238d7bf4997feae9fe3578de32dd26db` |
-| `disk.vhdx` | 71,303,168 | `c780b845d69551d2402bf219b55880fb8bda5b61e2e6167e4e8c57d29f693e26` |
-| `chain.img` | 67,108,864 | `af795fd8006c9cfd347484837189cef0a5c18f970d2a76f6226eb95e75848858` |
-| `chain.vhdx` | 71,303,168 | `f8354f899fd01edf73a19d00305c25796c2cceb05df4426dcf70430621a864ff` |
+| `disk.img` | 67,108,864 | `174e856830b8cade13d87ea34e01706e05e7612afe23f10c8465d518d91a4197` |
+| `disk.vhdx` | 71,303,168 | `5467071902f4f87fcd784c9bc926983979939e0d28346391b2ba27237753ea2b` |
+| `chain.img` | 67,108,864 | `68646c25033a89e145145eb2afdc1dac0a729a108265a493a10a78ab95a444cf` |
+| `chain.vhdx` | 71,303,168 | `621a41a6c1b8600b3ed1f7c82fb14f2e7ecc7caf5f1c0cb319699134485f0a6b` |
 
 ## Run
 
@@ -241,7 +297,8 @@ qemu-system-x86_64 -machine q35 -m 256M \
 ```
 
 The kernel prints its lines to the terminal through the serial port,
-among them the first process's, which say
+among them the first process's and the test program's from `/store`,
+which say `nova-hello: checks passed`,
 `nova-init: the bootstrap check is not on this disk` and end with
 `nova-init: checks passed`.
 

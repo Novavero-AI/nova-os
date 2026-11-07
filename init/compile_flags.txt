@@ -6,3 +6,5 @@
 -I../lib
 -I../drivers
 -I../kernel/random
+-I../store
+-I../test

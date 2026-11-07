@@ -154,8 +154,10 @@ ASCII case.
 
 **Decided** for this stage; the storage design replaces it.
 
-Until nova-os has a file system, the first process serves a 32-bit
-process's view itself, with the protocol of `include/file_protocol.h`,
+Until a server speaks the directory protocol
+([storage.md F1](storage.md#f1-the-directory-protocol)) for directories
+a process writes, the first process serves a 32-bit process's view
+itself, with the protocol of `include/file_protocol.h`,
 shaped as [ipc.md I9](ipc.md#i9-asynchronous-io-requests) shapes I/O
 requests: an open is a message on the directory channel carrying one
 endpoint of a new channel, which the server answers on and serves from
@@ -199,6 +201,13 @@ largest, `M2-0-0.M1`, is 1.7 MB.
   the outputs need nowhere to persist for the checks.
 - **Why only from the test disk:** the chain takes minutes under QEMU's
   emulation, and a boot of the system does not wait for it.
+- **Why not the directory protocol yet:** each step writes its output,
+  and the one server of that protocol so far, the store service, serves
+  the store read only ([storage.md F16](storage.md#f16-the-first-milestone)).
+  The steps' inputs are files of the boot volume, not store paths, and
+  their outputs need a writable directory, a build's scratch directory
+  or staging ([F12](storage.md#f12-builds-and-substitution)), whose
+  server is the one that replaces this one.
 - **Why some of the inputs fail:** such a volume is a test disk with
   inputs missing, and passing it would report the checks passed with the
   chain unrun.

@@ -1002,7 +1002,7 @@ not be recorded holds for each only as follows.
    nodes, and the blobs with their hash trees, laid out as
    [F11](#f11-reproducible-images) lays out a pool. It is the store volume
    without the pool: no allocator, no superblocks, nothing written after
-   it is built.
+   it is built. [store-image.md](store-image.md) specifies it.
 2. **A host tool,** built by the chain beside `mkimage`, writes the image
    from NARs that nova-nix exports, with their references. Taking NARs
    keeps the tool from reading NTFS, where the executable flag is an
@@ -1013,12 +1013,12 @@ not be recorded holds for each only as follows.
    `\NOVA\INIT.EXE`. It is the milestone's boot image.
 4. **nova-boot** reads it whole and uninterpreted, as it reads the first
    process's image, and passes its address and size in `BOOT_INFO` beside
-   `init_image`; this is an addition to the boot protocol
-   (boot-protocol.md, undecided "Load options and further files").
+   the boot files ([boot-protocol.md](boot-protocol.md#store-image),
+   Store image).
 5. **The kernel** gives the first process a read-only section over those
-   pages, in its bootstrap message. A section is zero-filled memory or
-   device memory (objects.md O2), so this is a kernel addition; neither
-   the kernel nor nova-boot reads the image's format.
+   pages, in its bootstrap message: a third kind of section beside
+   zero-filled memory and device memory (objects.md O2). Neither the
+   kernel nor nova-boot reads the image's format.
 6. **The first process** starts the store service, which serves `/store`
    from the image's section with no pool, no writes and no collector. It
    copies each blob it serves into a section of its own, checking its

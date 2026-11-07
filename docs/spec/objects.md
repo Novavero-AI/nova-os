@@ -43,7 +43,7 @@ a channel.
 |---|---|---|---|
 | Process | An address space and a handle table; the unit of isolation and of termination | Page tables and the handle table need privilege | Decided |
 | Thread | A schedulable processor context running in one process | Scheduling needs privilege | Decided |
-| Section | A range of pages that can be mapped into processes: zero-filled memory, or a physical range of device memory | Mapping pages needs privilege; sharing them is how bulk data moves ([ipc.md](ipc.md#i5-bulk-data)) | Decided |
+| Section | A range of pages that can be mapped into processes: zero-filled memory, a physical range of device memory, or the pages nova-boot loaded the store image into, which only read ([storage.md F16](storage.md#f16-the-first-milestone)) | Mapping pages needs privilege; sharing them is how bulk data moves ([ipc.md](ipc.md#i5-bulk-data)) | Decided |
 | Event | Eight user-settable signal bits that threads wait on | Waiting across processes needs the scheduler | Decided |
 | Channel | A pair of endpoints carrying messages of bytes and handles | Moving handles between handle tables needs the kernel; DESIGN.md keeps messages between processes in the core | Decided |
 | Port | A queue of packets: user packets, signal packets from watched objects, interrupt packets | One thread must wait on many sources, including interrupts, which only the kernel can deliver | Decided |

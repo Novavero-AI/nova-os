@@ -2,3 +2,5 @@
 -Wall
 -Wextra
 -pedantic
+-I../include
+-I../kernel/random

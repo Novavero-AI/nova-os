@@ -1,0 +1,7 @@
+--target=x86_64-pc-windows-gnu
+-std=c11
+-ffreestanding
+-I../include
+-I../native
+-I../lib
+-DGREETING_PATH="/store/00000000000000000000000000000000-greeting"

@@ -395,9 +395,13 @@ cancelled by a closing handle the signals it observed,
 | 13 | `ERR_BUFFER_TOO_SMALL` | A receive buffer cannot hold the message |
 | 14 | `ERR_BAD_STATE` | The object's state forbids the call: a thread already started, an interrupt already bound, a process already terminated, a device page another mapping gives another memory type |
 | 15 | `ERR_NO_RESOURCES` | A resource other than memory is exhausted: the job's quota of interrupt vectors, or the vectors the kernel has for message-signalled interrupts |
+| 16 | `ERR_NOT_FOUND` | A name a directory does not hold ([storage.md F1](storage.md#f1-the-directory-protocol)) |
+| 17 | `ERR_ALREADY_EXISTS` | A name a directory holds already, as a publication's ([storage.md F4](storage.md#f4-publishing-file-systems)) |
+| 18 | `ERR_DATA_INTEGRITY` | Data that fails the check of its digest ([storage.md F9](storage.md#f9-reading-and-verifying-the-store)) |
 
 The same codes report the outcome of an I/O request in its completion
-message ([ipc.md I9](ipc.md#i9-asynchronous-io-requests)). A Win32-style
+message ([ipc.md I9](ipc.md#i9-asynchronous-io-requests)), and codes
+16 to 18 only those: no call of the kernel's returns them. A Win32-style
 subsystem translates them to its own codes in user mode.
 
 - **Why:** a caller tests one value against zero. The codes name the

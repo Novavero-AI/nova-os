@@ -97,12 +97,12 @@ UINT32 process_map_rights(UINT32 protection);
    process_map_rights(protection). Returns OK; ERR_INVALID_ARGS for a
    protection that is not read, read-write, read-execute or all three, or
    an offset, address or size that is not a whole number of pages or
-   leaves user memory; ERR_ACCESS_DENIED if the protection is writable
-   and executable and the process was not created with
-   PROCESS_OPTION_WRITE_EXECUTE (O5); ERR_OUT_OF_RANGE if the range
-   passes the section's end; ERR_BAD_STATE if the process is terminating
-   or a page of the range is mapped; or ERR_NO_MEMORY. A call that fails
-   maps nothing. */
+   leaves user memory; ERR_ACCESS_DENIED if the protection is more than
+   section_protections allows, or writable and executable and the
+   process was not created with PROCESS_OPTION_WRITE_EXECUTE (O5);
+   ERR_OUT_OF_RANGE if the range passes the section's end; ERR_BAD_STATE
+   if the process is terminating or a page of the range is mapped; or
+   ERR_NO_MEMORY. A call that fails maps nothing. */
 STATUS process_map(PROCESS *process, SECTION *section, UINT64 offset,
                    UINT64 address, UINT64 size, UINT32 protection);
 

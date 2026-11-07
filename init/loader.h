@@ -1,8 +1,8 @@
-/* Starting a program from a PE32+ image file the boot volume holds: a
-   new process holding a copy of the image laid out as the kernel lays
-   out the first process (docs/spec/boot-protocol.md, First process
-   image), each page with the rights of the sections on it, and a stack
-   below the top of user memory. */
+/* Starting a program from a PE32+ image, a file the boot volume or the
+   store holds: a new process holding a copy of the image laid out as the
+   kernel lays out the first process (docs/spec/boot-protocol.md, First
+   process image), each page with the rights of the sections on it, and a
+   stack below the top of user memory. */
 
 #ifndef NOVA_LOADER_H
 #define NOVA_LOADER_H
@@ -17,9 +17,13 @@ typedef struct {
     UINT64 stack;
 } PROGRAM;
 
-/* Create a process in job and lay file out in it. Returns a status;
-   ERR_INVALID_ARGS if file is not a PE32+ image this loader places. On
-   failure nothing is left open. */
+/* Create a process in job and lay out in it the size bytes at image.
+   Returns a status; ERR_INVALID_ARGS if they are not a PE32+ image this
+   loader places. On failure nothing is left open. */
+UINT32 loader_load_image(UINT32 job, const UINT8 *image, UINT64 size,
+                         PROGRAM *program);
+
+/* loader_load_image of a boot file's bytes. */
 UINT32 loader_load(UINT32 job, const BOOT_FILE_VIEW *file, PROGRAM *program);
 
 /* Start program at its entry with bootstrap, which moves into the

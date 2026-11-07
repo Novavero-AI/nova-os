@@ -28,6 +28,13 @@
 #define ERR_BAD_STATE 14
 #define ERR_NO_RESOURCES 15
 
+/* Status codes only I/O completions carry (S7): a name a directory does
+   not hold, a name it holds already, and data that fails the check of
+   its digest. */
+#define ERR_NOT_FOUND 16
+#define ERR_ALREADY_EXISTS 17
+#define ERR_DATA_INTEGRITY 18
+
 /* The numbers of the calls this kernel implements (S8). Number 0 is
    reserved and names no call. */
 #define CALL_HANDLE_CLOSE 1
@@ -204,15 +211,18 @@
 
 /* The first process's bootstrap message (ipc.md I6): the root system
    resource, the process itself, the root job, the root MMIO, IRQ and DMA
-   resources, then one read-only section for each file nova-boot read
-   from \nova\. Its bytes are a BOOTSTRAP_PLATFORM, then a BOOTSTRAP_FILE
-   for each file, in the order of the sections. A name is ASCII,
-   NUL-terminated, as the firmware reported it. The boot files are as
-   many as the message has room for, one handle each. */
+   resources, a read-only section over the store image nova-boot loaded
+   (storage.md F16), then one read-only section for each other file
+   nova-boot read from \nova\. Its bytes are a BOOTSTRAP_PLATFORM, then a
+   BOOTSTRAP_FILE for the store image and one for each file, in the order
+   of the sections. A name is ASCII, NUL-terminated, as the firmware
+   reported it. The boot files are as many as the message has room for,
+   one handle each. */
 #define BOOTSTRAP_ROOT_MMIO 3
 #define BOOTSTRAP_ROOT_IRQ 4
 #define BOOTSTRAP_ROOT_DMA 5
-#define BOOTSTRAP_FIRST_FILE 6
+#define BOOTSTRAP_STORE_IMAGE 6
+#define BOOTSTRAP_FIRST_FILE 7
 #define BOOTSTRAP_ECAM_RANGES_MAX 8
 #define BOOT_FILES_MAX (CHANNEL_MAX_HANDLES - BOOTSTRAP_FIRST_FILE)
 #define BOOT_FILE_NAME_SIZE 32
