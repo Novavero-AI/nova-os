@@ -1370,17 +1370,18 @@ What an external program holds when it starts is the union of:
    closure. A path with no deriver, such as a source, has none and gets
    only its closure, its arguments and its streams.
 2. **Services from the launcher.** For each service or device the
-   derivation declares, the launcher makes the program's handle from
-   the session's own channel to that service: a network grant with
-   exactly the declared rules, on the session's network control channel,
-   or for a program a script runs on the script's
-   ([network.md N15](network.md#n15-declared-authority)), and a display
-   connection, minted from the session's
-   ([display.md D5](display.md#d5-connections-labels-and-layers)). One
-   the session's channel does not cover, or for a program a script runs
-   one the script's declaration does not name, fails the launch with
-   `launch`, naming it. The shell asks the launcher to run the program and sends
-   it no handle to a service, its own included.
+   derivation declares, the launcher makes the program's handle from the
+   session's own channel to that service: a network grant with exactly
+   the declared rules, on the session's network control channel, or for
+   a program a script runs on the script's ([network.md
+   N15](network.md#n15-declared-authority)), and a display connection,
+   minted from the session's ([display.md
+   D5](display.md#d5-connections-labels-and-layers)). One the session's
+   channel does not cover, or for a program a script runs one the
+   script's declaration does not name, fails the launch with `launch`,
+   naming it. The shell asks the launcher to run the program and sends
+   it no handle to a service, its own included; it holds no network
+   grant ([network.md N15](network.md#n15-declared-authority)).
 3. **Consent.** Installing a program into a profile, the user's or the
    system's ([storage.md F13](storage.md#f13-profiles-system-and-garbage-collection)),
    is consent to what its derivation declares. A program run from a

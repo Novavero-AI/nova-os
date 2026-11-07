@@ -289,7 +289,6 @@ handles (`include/session.h`), and its view is the two directories:
 | The store's root | `/store` | Read, list |
 | A console session, which login relays | | The console's session protocol |
 | A launcher channel, to login | | `LAUNCHER_RUN`, and while a compositor runs `LAUNCHER_TERMINAL` |
-| A network grant, `SESSION_NETWORK` | | The rules the system recipe gives the account ([network.md N15](network.md#n15-declared-authority)) |
 | The administrator channel, for an administrator | | `ACCOUNTS_CREATE` |
 | The debug log | | Writing lines to the kernel's log |
 
@@ -300,8 +299,9 @@ session without the administrator channel cannot create accounts.
 
 For each session, login makes a network control channel of the
 session's from its own, with the rules the system recipe gives the
-account, and keeps it; through it it gives the shell the session's
-grant ([network.md N15](network.md#n15-declared-authority)).
+account, and keeps it, and gives on it the grants of the programs and
+scripts it starts; the shell gets no network grant
+([network.md N15](network.md#n15-declared-authority)).
 
 `run` asks login, the session's launcher, to start a program from
 `/store`. Login creates a job for it in the sessions' job, which the
@@ -349,6 +349,11 @@ holds.
   programs; each is one handle, and the view is the user's tree. The
   whole store, not a closure, since a shell exists to name programs to
   run, and the store holds no user's data.
+- **Why the shell holds no network:** no built-in uses the network,
+  and every program and script gets its grant from login, so a grant in
+  the shell would be idle authority in the process that parses
+  everything typed, and each shell, the HUD's and every terminal's
+  included, would take one of the session's network clients.
 - **Why login launches:** the shell then holds no job and no store
   control channel, the authority to create processes and to open the
   closure of any path, which it would hold only to do what login does
@@ -375,7 +380,9 @@ holds.
   processes.
 - **Not taken:** a child that inherits its parent's handles, as NT
   handle inheritance and Unix file descriptors do. Its cost is a
-  program holding handles nobody chose for it (objects.md O6).
+  program holding handles nobody chose for it (objects.md O6). A
+  session-wide network grant in the shell; its cost is that idle
+  authority and a network client for every shell.
 
 ## A8. The shell
 
@@ -496,7 +503,7 @@ next, so:
 | The service | A new service with a new login channel, which login takes when its old one fails: login says the service restarted and asks again. An administrator's session loses its administrator channel |
 | The console | The console's restart, and a new session for login, which carries on, a session in progress included |
 | The compositor | A new compositor, in the attention state, and a new connection for login, which shows its screen again before it answers the session's grant channels, through which the session's programs reconnect ([display.md D3](display.md#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)); a session that was locked stays locked |
-| The network service | A new network control channel for login; an open session is without the network until its user logs in again ([network.md N5](network.md#n5-supervision)) |
+| The network service | A new network control channel for login, on which it makes each open session's channel again; a program running when the service ended is without the network until it is started again ([network.md N5](network.md#n5-supervision)) |
 
 - **Why:** a crashed login or service must come back, or the console
   sits with no one to log in. Handing channels over, as the first

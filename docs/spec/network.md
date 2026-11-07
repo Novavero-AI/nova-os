@@ -318,11 +318,12 @@ the console ([input.md K3](input.md#k3-the-report-and-the-client),
    resolver and every system service its grant again
    ([N15](#n15-declared-authority), item 2), and login a new control
    channel, as it gives login a new console session after a restart of
-   the console ([accounts.md A10](accounts.md#a10-supervision)). Login
-   has no way to hand a running shell a new grant, so an open session
-   is without the network until its user logs in again, and a running
-   program until it is started again, as a program whose view entry
-   died cannot reopen it
+   the console ([accounts.md A10](accounts.md#a10-supervision)). On it
+   login makes each open session's control channel, and each running
+   script's, again ([N15](#n15-declared-authority)), so a program
+   started after the restart gets its grant; a program running when the
+   service ended is without the network until it is started again, as a
+   program whose view entry died cannot reopen it
    ([storage.md F5](storage.md#f5-per-process-views)).
 5. **The resolver ends.** The service fails the names it had asked and
    asks the restarted resolver from then on.
@@ -341,11 +342,11 @@ the console ([input.md K3](input.md#k3-the-report-and-the-client),
   part that made it, so a faulty service does not use up the driver's
   restarts.
 - **Cost:** a restart of the service loses every connection and every
-  grant in the system, and the open sessions' network until their next
-  login; a service that breaks the frame protocol twice in a minute
-  costs the network until the next boot, while the kernel cannot end
-  it; the service's section stays pinned, its slots unusable, between a
-  driver's death and the reset of its device.
+  grant in the system, and every running program's network until the
+  program is started again; a service that breaks the frame protocol
+  twice in a minute costs the network until the next boot, while the
+  kernel cannot end it; the service's section stays pinned, its slots
+  unusable, between a driver's death and the reset of its device.
 - **Not taken:** the service supervising its own driver. Its cost is a
   second supervisor that must stop a PCI function, which needs the
   function's configuration space, outside the platform driver that
@@ -972,16 +973,16 @@ directory protocol's rights narrow at each open
 ### N15. Declared authority
 
 **Decided** (by the owner): a session's network is set per account in
-the system recipe, and an account it names none for gets outbound only
-(item 4). **Decided:** the rest.
+the system recipe, and an account it names none for gets outbound only;
+the shell holds no network grant (item 4). **Decided:** the rest.
 
 Every grant comes from a control channel, and every control channel
 from the one above it, so each level can only narrow the one above.
 
 1. **The root.** The first process holds the service's control channel,
    with every right, the root's rules ([N12](#n12-grants)), which cover
-   every rule, and all `NET_CLIENTS` clients. It is the only control
-   channel the service starts with.
+   every name and every address, and all `NET_CLIENTS` clients. It is
+   the only control channel the service starts with.
 2. **System services.** The first process gives each service that needs
    the network a grant through `NET_GRANT` on the root, with the rules
    the system recipe declares for it, from `NET_SYSTEM_CLIENTS` (4)
@@ -1002,11 +1003,12 @@ from the one above it, so each level can only narrow the one above.
    recipe gives that account, or for an account it names none for,
    outbound only: `connect tcp * *`, `connect udp * *` and
    `connect icmp *`. The channel has `NET_SESSION_CLIENTS` (4) clients,
-   and login keeps it. Through it it gives the shell a grant, which
-   joins the session's handles as `SESSION_NETWORK`
-   ([accounts.md A7](accounts.md#a7-the-session)). When the session
-   ends, login closes the session's control
-   channel, and its clients return as the programs that hold them end.
+   and login keeps it. The shell gets no grant, nor does the HUD's or a
+   terminal's: the session's channel serves only the grants of the
+   programs and scripts login starts (items 5 and 6;
+   [accounts.md A7](accounts.md#a7-the-session)). When the session ends,
+   login closes the session's control channel, and its clients return
+   as the programs that hold them end.
 5. **Programs.** A program's derivation declares its rules in a
    `network` attribute, a list of rule strings as [N12](#n12-grants)
    writes them. Login, the launcher, reads the declaration from the
@@ -1037,7 +1039,7 @@ from the one above it, so each level can only narrow the one above.
 
 Until login reads declarations, it gives programs no grant, and a
 program run from the shell of [accounts.md A8](accounts.md#a8-the-shell)
-has no network, as today.
+has no network.
 
 - **Why:** each holder's rules are read from a recipe before anything
   runs (principle 7), each control channel narrows the one it came
@@ -1050,6 +1052,12 @@ has no network, as today.
   has to trust a handle passed to it. Each program is a client of its
   own, so it cannot take another's share
   ([N18](#n18-limits-on-clients)).
+- **Why the shell holds no grant:** no built-in uses the network, and
+  every program and script gets its grant from login on the session's
+  channel, so a grant in the shell would be idle authority, the
+  session's listen rules among it, in the process that parses
+  everything typed; and each shell, the HUD's and every terminal's
+  included, would take one of the session's clients.
 - **Why outbound only by default:** the recipe states each account's
   network as it states the rest of the system, and an account it says
   nothing about can reach out but not be reached. Each program is still
@@ -1057,7 +1065,7 @@ has no network, as today.
   not what its programs get.
 - **Cost:** login holds the network authority of every open session
   ([N17](#n17-the-threat-model)); at most three sessions hold the
-  network at once, each with its shell and three programs; a program
+  network at once, each with four programs; a program
   that declares no rules cannot use the network, even to reach a server
   its user names on its command line; the system recipe names each
   account's rules, and an account it names none for neither listens nor
@@ -1076,6 +1084,10 @@ has no network, as today.
     paths. Its cost is a rule language on the command line for the
     common case of a program that always talks to one service, which
     its recipe can say once.
+  - A session-wide grant in the shell, `SESSION_NETWORK`, from the
+    session's channel. Its cost is the idle authority above, and a
+    client for each shell, which would leave a session with the HUD
+    and one terminal two clients for its programs.
   - No network for an account the recipe names none for. Its cost is a
     new account that reaches nothing until an administrator changes the
     recipe. Everything for every session, listening and loopback
@@ -1365,10 +1377,10 @@ by password or by a public key the user's home holds
 session protocol carried over an SSH channel, which the shell already
 speaks to login ([accounts.md A7](accounts.md#a7-the-session)); and the
 SSH protocol's cryptography in the server's process, as TLS's is
-([N19](#n19-tls)). Session grants and declared grants
-([N15](#n15-declared-authority), items 4 and 5) come in this step, so a
-remote session holds the network its account is given, as a console
-session does.
+([N19](#n19-tls)). Sessions' control channels and declared grants
+([N15](#n15-declared-authority), items 4 to 6) come in this step, so a
+remote session's programs hold the network its account is given, as a
+console session's do.
 
 - **Why this order:** each step needs the one before and proves one
   layer: the link and IP before TCP, TCP before names, which need it for
@@ -1506,16 +1518,15 @@ What this design needs outside this document:
   service's interface description, as a new service's header is
   ([shell.md L24](shell.md#l24-settings-and-service-commands));
   `services.h`, the service's and the resolver's bootstrap messages;
-  `session.h`, `SESSION_NETWORK` and a `LOGIN_SETUP_NETWORK` for login's
-  control channel; `native_abi.h`, the three statuses.
-  `drivers/virtio_net.h`, the driver's face to the platform driver, as
-  `virtio_input.h` is, with `VIRTIO_NET_EXIT_CLIENT_BROKE` beside its
-  done and failure codes.
+  `session.h`, a `LOGIN_SETUP_NETWORK` for login's control channel;
+  `native_abi.h`, the three statuses. `drivers/virtio_net.h`, the
+  driver's face to the platform driver, as `virtio_input.h` is, with
+  `VIRTIO_NET_EXIT_CLIENT_BROKE` beside its done and failure codes.
 - **`lib/`:** BLAKE2b, from `accounts/`, for the service and the
   accounts service both ([N9](#n9-one-thread-one-port-time-and-randomness)).
 - **[accounts.md](accounts.md):** A1 and A7, login's control channel
-  for each session, the session's grant, and the grants login gives the
-  programs it runs from their declarations; A10, login's network
+  for each session and the grants login gives the programs it runs from
+  their declarations, with none for the shell; A10, login's network
   control channel and its hand-over.
 - **[shell.md](shell.md):** L20 takes a program's network grant from
   the launcher's session control channel, and L19 a script's from a
