@@ -1,0 +1,46 @@
+# The reference sheet: text in each face and size the approved login
+# and desktop designs use, at their sizes on a 2880 x 1800 screen, and
+# the rounded rectangles and circles they draw, over Limb. sheet.py's
+# header gives the items. check-text.sh draws it with lib/ and with
+# sheet.py and compares the two; compare-freetype.c compares its text
+# with FreeType's.
+sheet 1600 1320
+at 48.5 8
+text InterDisplay-Light 128 F2F2F6 devon
+text InterDisplay-Light 104 F2F2F6 Choose an account
+text InterDisplay-Regular 64 717A8C alice, devon, ben
+text InterDisplay-SemiBold 48 F2F2F6 Grants, Backgrounds and the HUD
+text Inter-Regular 40 F2F2F6 Search, open or run: setting set desktop.background limb
+text Inter-Regular 34 A9B0BE Welcome back,
+text Inter-Regular 32 A9B0BE Protecting your password. This takes a few seconds.
+text Inter-Regular 28 8C95A8 Incorrect password. 2 attempts left.
+wrap Inter-Regular 26 1180.25 F2F2F6 Every action the HUD takes is a shell command, and the HUD says which one; typing that command directly does the same. Values the shell renders are drawn as structure, not characters: a record as two columns, a table with its header in capitals, sizes right-aligned.
+text Inter-Regular 24 A9B0BE Subtitles and descriptions: 19.9 MiB, 4 rows, read and write
+text Inter-Regular 22 8C95A8 Hints, footers and sources: Tab, Shift+Tab, Enter
+text Inter-Medium 28 FF7A6B Incorrect password.
+text Inter-Medium 26 F2F2F6 Rename, Cancel, Allow, Refuse
+text Inter-Medium 24 F2F2F6 Files    Terminal    Settings    devon
+text Inter-Medium 20 F2F2F6 Enter  Tab  Esc  Super  Ctrl+Enter  \u2190 \u2191 \u2192 \u2193
+text Inter-SemiBold 26 F2F2F6 Documents, Terminal, paint asks to save a file
+text Inter-SemiBold 20 8C95A8 PASSWORD   YOUR VIEW   NAME   SIZE   MODIFIED
+text Inter-Regular 26 E6D5B8 \u00C0\u00C1\u00C2\u00C3\u00C4\u00C5\u00C6\u00C7\u00C8\u00C9\u00CA\u00CB\u00CC\u00CD\u00CE\u00CF\u00D0\u00D1\u00D2\u00D3\u00D4\u00D5\u00D6\u00D8\u00D9\u00DA\u00DB\u00DC\u00DD\u00DE\u00DF\u00E0\u00E1\u00E2\u00E3\u00E4\u00E5\u00E6\u00E7\u00E8\u00E9\u00EA\u00EB\u00EC\u00ED\u00EE\u00EF\u00F0\u00F1\u00F2\u00F3\u00F4\u00F5\u00F6\u00F8\u00F9\u00FA\u00FB\u00FC\u00FD\u00FE\u00FF
+text Inter-Regular 26 E6D5B8 \u00A1\u00A2\u00A3\u00A4\u00A5\u00A6\u00A7\u00A8\u00A9\u00AA\u00AB\u00AC\u00AE\u00AF\u00B0\u00B1\u00B2\u00B3\u00B4\u00B5\u00B6\u00B7\u00B8\u00B9\u00BA\u00BB\u00BC\u00BD\u00BE\u00BF \u00D7 \u00F7 \u2018single\u2019 \u201Cdouble\u201D
+at 1180 680
+text Inter-SemiBold 63.36 F2F2F6 ABDE
+text Inter-SemiBold 42.24 F2F2F6 ABDE
+# A window's surface, a selected row, the search field, a chip, a
+# primary button and a keycap, then monograms of 144, 96, 44 and 32
+# pixels, whole and at half, and a 1.5 pixel hairline.
+rect 40.5 1020.25 760.5 1260.75 24 151A24 99
+rect 64 1044 736 1108 16 7EA8F8 9
+rect 64.25 1126.5 624.25 1170.5 22 FFFFFF 1.2
+rect 640 1126 736 1170 10 FFFFFF 2.5
+rect 64 1190 304 1238 12 7EA8F8 100
+rect 320.5 1198.5 400.5 1230.5 7.68 FFFFFF 10
+circle 880 1080 72 F6C177 100
+circle 1050.5 1080.5 48 8EB8FF 100
+circle 1180.25 1080.75 48 7EE0C8 50
+circle 1290 1080 22 C6A2FF 100
+circle 1350.5 1080.5 16 FFA3B5 100
+rect 800 1180.25 1560 1181.75 0 FFFFFF 10
+rect 800.33 1210 1560.66 1260 25 F0E8DA 6
