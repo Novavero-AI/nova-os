@@ -1,12 +1,15 @@
-/* The program loader. It checks every offset it uses against the file
-   and the image, as the kernel's loader does (kernel/object/image.c), so
-   a malformed file fails the load instead of faulting init. The image is
-   laid out in one section through a view of it in init, and that
-   section is mapped into the process at the image's base, each run of
-   pages with one protection as one mapping; then the view is unmapped,
-   so init keeps no mapping of a program it loads. */
+/* The program loader (program.h). It checks every offset it uses
+   against the file and the image, as the kernel's loader does
+   (kernel/object/image.c), so a malformed file fails the load instead
+   of faulting the launcher. The image is laid out in one section
+   through the launcher's window, and that section is mapped into the
+   process at the image's base, each run of pages with one protection
+   as one mapping; then the window is unmapped, so the launcher keeps no
+   mapping of a program it loads. A launcher loads one program at a
+   time through its window. */
 
-#include "loader.h"
+#include "program.h"
+#include "native.h"
 
 #define PE_SIGNATURE 0x00004550 /* "PE\0\0" */
 #define PE_MACHINE_AMD64 0x8664
@@ -170,18 +173,23 @@ static void copy(UINT8 *to, const UINT8 *from, UINT64 count)
         to[i] = from[i];
 }
 
-static UINT32 map_image(const PE *pe, UINT32 process)
+static UINT32 map_image(const LAYOUT_WINDOW *layout, const PE *pe,
+                        UINT32 process)
 {
     UINT64 start, run;
     UINT32 section, protection, i, unmapped;
-    UINT32 status = section_create(pe->image_size, 0, &section);
-    UINT8 *view;
+    UINT32 status;
+    UINT8 *view = 0;
 
+    if (pe->image_size > layout->window_size)
+        return ERR_OUT_OF_RANGE;
+    status = section_create(pe->image_size, 0, &section);
     if (status != OK)
         return status;
-    view = map_into_init(section, pe->image_size, MAP_READ | MAP_WRITE);
-    if (!view)
-        status = ERR_NO_MEMORY;
+    status = process_map(layout->self, section, 0, layout->window,
+                         pe->image_size, MAP_READ | MAP_WRITE);
+    if (status == OK)
+        view = (UINT8 *)layout->window;
     if (status == OK) {
         copy(view, pe->file, pe->headers_size);
         for (i = 0; i < pe->section_count; i++) {
@@ -206,7 +214,8 @@ static UINT32 map_image(const PE *pe, UINT32 process)
                              protection);
     }
     if (view) {
-        unmapped = unmap_from_init(view, pe->image_size);
+        unmapped = process_unmap(layout->self, layout->window,
+                                 pe->image_size);
         if (status == OK)
             status = unmapped;
     }
@@ -227,8 +236,8 @@ static UINT32 map_stack(UINT32 process)
     return status;
 }
 
-UINT32 loader_load_image(UINT32 job, const UINT8 *image, UINT64 size,
-                         PROGRAM *program)
+UINT32 program_load(const LAYOUT_WINDOW *layout, UINT32 job,
+                    const UINT8 *image, UINT64 size, PROGRAM *program)
 {
     UINT32 status;
     PE pe;
@@ -241,7 +250,7 @@ UINT32 loader_load_image(UINT32 job, const UINT8 *image, UINT64 size,
     if (status == OK)
         status = process_create(job, 0, &program->process);
     if (status == OK)
-        status = map_image(&pe, program->process);
+        status = map_image(layout, &pe, program->process);
     if (status == OK)
         status = map_stack(program->process);
     if (status == OK)
@@ -257,12 +266,7 @@ UINT32 loader_load_image(UINT32 job, const UINT8 *image, UINT64 size,
     return OK;
 }
 
-UINT32 loader_load(UINT32 job, const BOOT_FILE_VIEW *file, PROGRAM *program)
-{
-    return loader_load_image(job, file->data, file->size, program);
-}
-
-UINT32 loader_start(PROGRAM *program, UINT32 bootstrap)
+UINT32 program_start(PROGRAM *program, UINT32 bootstrap)
 {
     UINT32 status = process_start(program->process, program->thread,
                                   program->entry, program->stack, bootstrap,

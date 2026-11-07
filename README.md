@@ -92,8 +92,8 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   -I test -Wl,-subsystem=native -Wl,-e=init_main \
   -Wl,-section-alignment=1000 -Wl,-file-alignment=200 -o init.exe \
   init/init.c init/chain.c init/compat.c init/view.c init/platform.c \
-  init/loader.c init/store.c init/console.c init/data.c drivers/pci.c \
-  drivers/virtio_pci.c store/reader.c lib/path.c lib/log.c \
+  init/store.c init/console.c init/data.c drivers/pci.c \
+  drivers/virtio_pci.c store/reader.c lib/path.c lib/program.c lib/log.c \
   native/native.S kernel/random/sha256.c
 ./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I native -I lib -I drivers -Wl,-subsystem=native \
@@ -182,7 +182,7 @@ build gives the same bytes:
 |---|---|---|
 | `BOOTX64.EFI` | 29,696 | `ed744ea9428e8fd8a0cd1f8173cdfead7fc0d9ad98f1fa48b1f94f417337c70f` |
 | `kernel.exe` | 204,288 | `a9f73a46f26daba1bc2454cac2dfd80eeb369cae1a266e638fb76d215e018b0d` |
-| `init.exe` | 87,040 | `dd90b78648a4d57b2404b7f8217162766c5b2355a3fce79f83b5cd63a07ae982` |
+| `init.exe` | 87,040 | `7545643a72786fe09aa2547161261c20ef015d2eb26cb2a19d36e7c165b998c8` |
 | `virtblk.exe` | 19,456 | `14c68c048f14db914dc5a3164a7e9806625b2c4089f72a7b3cce835eaa24fc02` |
 | `virtinp.exe` | 15,872 | `f4322918ebc64193d49a56c2e638c2c4081afeb13251826c9e56f2371f448704` |
 | `console.exe` | 36,352 | `b3d3caa685145e77e152e6599e6aa8b6660a89ea70931ca57208b0b043f89ded` |
@@ -321,10 +321,10 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `13e41307202b34dcccf0bf9a738add2f90f5401ef64decec9facbf377f925522` |
-| `disk.vhdx` | 71,303,168 | `8ee9dc56aa472159007f1204db4150654f203d69f80cf201dda80b7289dccf07` |
-| `chain.img` | 67,108,864 | `98bad3eea5622a719bba6df0ed22746cfb462e2ac2568bcfc0d658a5929d91a5` |
-| `chain.vhdx` | 71,303,168 | `2d80fe9202b3f8ce4e633a3e4f48e8720cac6f422a9ee84a131127d179868901` |
+| `disk.img` | 67,108,864 | `a2364985924eb4b18603661b96e54e35443c9baddae77bf59ff92575f9bad9d8` |
+| `disk.vhdx` | 71,303,168 | `05b173f4c466e7c8809c006f96617d5778e6214529e064776db25ce97a1f3348` |
+| `chain.img` | 67,108,864 | `80449c2af4d57f903aa0799a600d91d0a438e2ffb770611647a09d97985be4f0` |
+| `chain.vhdx` | 71,303,168 | `b450dc65d0d95cee05222382b2799a8ad9f8ae51c2dde7ed563a57ddb4d6ae7e` |
 | `data.img` | 67,108,864 | `fc0e119b885b341b5385e351b1f334c4da7cb921ef2dfbd994e9e20917e27804` |
 
 ## Run

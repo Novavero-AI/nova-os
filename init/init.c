@@ -60,6 +60,7 @@ static const HANDLE_TRANSFER no_handles[1];
 
 static UINT32 debug_log = HANDLE_INVALID;
 static UINT32 self = HANDLE_INVALID;
+static LAYOUT_WINDOW layout;
 static BOOTSTRAP_BYTES bytes;
 static PLATFORM platform;
 static UINT64 scratch = SCRATCH_BASE;
@@ -89,6 +90,21 @@ const BOOT_FILE_VIEW *boot_file(const char *name)
         if (same_name(files[i].name, name))
             return &files[i];
     return 0;
+}
+
+const LAYOUT_WINDOW *init_layout(void)
+{
+    return &layout;
+}
+
+UINT32 load_boot_file(UINT32 job, const BOOT_FILE_VIEW *file,
+                      PROGRAM *program)
+{
+    program->process = HANDLE_INVALID;
+    program->thread = HANDLE_INVALID;
+    if (!file)
+        return ERR_NOT_FOUND;
+    return program_load(&layout, job, file->data, file->size, program);
 }
 
 UINT8 *map_into_init_at(UINT32 section, UINT64 address, UINT64 size,
@@ -179,6 +195,9 @@ static UINT32 read_bootstrap(UINT32 bootstrap)
     debug_log = handles[BOOTSTRAP_RESOURCE].handle;
     say_open(debug_log);
     self = handles[BOOTSTRAP_SELF].handle;
+    layout.self = self;
+    layout.window = LAYOUT_BASE;
+    layout.window_size = LAYOUT_SIZE;
     platform.debug_log = debug_log;
     platform.self = self;
     platform.job = handles[BOOTSTRAP_JOB].handle;

@@ -20,7 +20,6 @@
 #include "directory_protocol.h"
 #include "hello.h"
 #include "launch.h"
-#include "loader.h"
 #include "path.h"
 #include "reader.h"
 #include "services.h"
@@ -136,7 +135,7 @@ static UINT32 start(PROGRAM *program, const void *bytes, UINT32 byte_count,
         written = status == OK;
         handle_close(mine);
         if (status == OK)
-            status = loader_start(program, theirs);
+            status = program_start(program, theirs);
         if (status != OK)
             handle_close(theirs);
     }
@@ -259,7 +258,8 @@ static UINT32 start_store(UINT32 job, UINT32 debug_log,
     say("/" STORE_PROGRAM "\r\n");
     status = boot_program(image, STORE_PROGRAM, &blob);
     if (status == OK)
-        status = loader_load_image(job, blob.data, blob.length, &program);
+        status = program_load(init_layout(), job, blob.data, blob.length,
+                              &program);
     if (status != OK) {
         say_status("the store service does not load", status);
         return HANDLE_INVALID;
@@ -321,7 +321,7 @@ static UINT32 load_from_store(UINT32 job, const VIEW *view, const char *path,
     handle_close(section.handle);
     if (!mapped)
         return ERR_NO_MEMORY;
-    status = loader_load_image(job, mapped, size, program);
+    status = program_load(init_layout(), job, mapped, size, program);
     unmapped = unmap_from_init(mapped, size);
     if (status == OK && unmapped != OK) {
         handle_close(program->thread);

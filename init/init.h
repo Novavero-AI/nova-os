@@ -1,19 +1,27 @@
 /* What init's parts share: its debug log (log.h), the files nova-boot
    read from \nova\ and the store image, which the kernel passed as
-   read-only sections, and the mapping of sections into init's own
-   address space. */
+   read-only sections, the mapping of sections into init's own address
+   space, and the window init lays out the programs it starts through
+   (program.h). */
 
 #ifndef NOVA_INIT_H
 #define NOVA_INIT_H
 
 #include "log.h"
 #include "native.h"
+#include "program.h"
 
 /* init's address space above its image: the seed chain's outputs from
    OUTPUT_BASE up to SCRATCH_BASE (view.c), and from SCRATCH_BASE up the
    sections map_into_init maps, each at the next free address. */
 #define OUTPUT_BASE 0x0000000100000000ULL
 #define SCRATCH_BASE 0x0000000200000000ULL
+
+/* The window init lays out each program it starts through: at 64 TiB,
+   far above what map_into_init reaches from SCRATCH_BASE, and
+   SECTION_MAX_SIZE bytes, the largest image a section holds. */
+#define LAYOUT_BASE 0x0000400000000000ULL
+#define LAYOUT_SIZE SECTION_MAX_SIZE
 
 /* A boot file or the store image, mapped read-only into init. */
 typedef struct {
@@ -29,6 +37,14 @@ int same_name(const char *a, const char *b);
 
 /* The boot file named name, regardless of case, or 0. */
 const BOOT_FILE_VIEW *boot_file(const char *name);
+
+/* init's window for laying out the programs it starts (program.h). */
+const LAYOUT_WINDOW *init_layout(void);
+
+/* program_load of the boot file file's bytes through init's window;
+   ERR_NOT_FOUND if file is 0. */
+UINT32 load_boot_file(UINT32 job, const BOOT_FILE_VIEW *file,
+                      PROGRAM *program);
 
 /* Map size bytes of section, from its start, at a fresh address in
    init's own space with MAP_ protection, and return the address; 0 if
