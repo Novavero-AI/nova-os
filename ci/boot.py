@@ -2,8 +2,8 @@
 
 Usage: python3 -I ci/boot.py --code CODE.fd --vars VARS.fd --log LOG
                              [--timeout SECONDS] [--expect TEXT ...]
-                             [--data DATA [--corrupt-gpt {header,entries}]]
-                             {system,chain} DISK [-- QEMU_ARG ...]
+                             [--data DATA [--corrupt-gpt KIND]]
+                             {system,persist,chain} DISK [-- QEMU_ARG ...]
 
 Boots DISK with the machine and devices of README.md's Run section,
 headless, with the firmware CODE.fd and a copy of VARS.fd, a writable
@@ -15,9 +15,15 @@ In system mode, the boot of disk.img must report each kernel self-test
 passing, the store service serving, the test program from /store
 passing its checks, the virtio block driver reading the GPT, init's
 checks passing, startup done, the background drawn and the console
-drawn with its demo client running; then a line typed through QMP,
-QEMU's monitor protocol, must come back from the demo client. In chain
-mode, the boot of chain.img must report each of the
+drawn. With a data disk whose GPT is whole, the accounts service must
+report no account and login must start; then, typed through QMP,
+QEMU's monitor protocol, the first account is created, the shell
+starts, and the shell must report running whoami for it; the
+password, typed at the shell's prompt too, must appear nowhere in the
+log. In persist mode the same copy of the data disk is booted twice:
+the first boot is system mode's, and the second must report the
+account the first made and, typed again, log in with it and run
+whoami. In chain mode, the boot of chain.img must report each of the
 bootstrap chain's steps, each pinned link and init's checks passing.
 Each --expect TEXT adds a line the boot must report. With a data disk,
 the boot must also report the file system service opening its pool,
@@ -28,7 +34,8 @@ extent moves the pool's entry to start at LBA 0, below the first usable
 LBA; usable moves the entry and the first usable LBA both to LBA 1, the
 header's; overlap adds a second entry over the pool's blocks; the last
 three with every CRC made to match. The boot must then report the service
-refusing the disk and /data and /users not published.
+refusing the disk, /data and /users not published, and the accounts
+service and login not started.
 
 The check fails at once on a line from nova-os that reports a failure,
 a halt, a fault or a supervised process restarted or given up, or if
@@ -72,7 +79,6 @@ SYSTEM_LINES = SELF_TESTS + [
     STARTUP_DONE,
     "nova: background drawn in ",
     "nova-console: drawing on the ",
-    "nova-console-echo: writing the greeting",
 ]
 
 # init prints a link's line before comparing it with its pin, and stops
@@ -89,7 +95,7 @@ CHAIN_LINES = (
        + ", ".join(CHAIN_LINKS[:-1]) + " and " + CHAIN_LINKS[-1],
        INIT_PASSED, STARTUP_DONE])
 
-DEFAULT_TIMEOUTS = {"system": 300, "chain": 2700}
+DEFAULT_TIMEOUTS = {"system": 300, "persist": 300, "chain": 2700}
 
 DATA_LINES = [
     "nova-fs: pool at lba ",
@@ -137,11 +143,39 @@ GPT_REFUSED = {
     "overlap": EXTENT_REFUSED,
 }
 DATA_REFUSED = "nova-init: /data and /users are not published"
+LOGIN_ABSENT = ("nova-init: no /data and /users; the accounts service and "
+                "login do not start")
 
-# A line typed as QMP's send-key names its keys, and what the demo
-# client logs once it has echoed the line, which gives the length alone.
-LINE_KEYS = ["h", "i", "ret"]
-LINE_ECHOED = "nova-console-echo: echoed a line of 2 bytes"
+# The account the boots make and log in with: a name and a password
+# typed as QMP's send-key names their keys. The name is logged, as the
+# accounts service and the shell log it; the password must never be,
+# and is typed once more at the shell's prompt, where a person who took
+# a drawn prompt for login's would type it, to check that the shell
+# keeps it out of the log too. It has no space, so that a log of the
+# first word typed would hold all of it.
+ACCOUNT_NAME = "ci"
+ACCOUNT_PASSWORD = "civerifies"
+QCODES = {" ": "spc"}
+
+# What login and the accounts service report before login reads its
+# first line, and then on the first boot and on a later one.
+FIRST_BOOT_READY = ["nova-accounts: 0 accounts", "nova-login: on the console"]
+LATER_BOOT_READY = ["nova-accounts: 1 account", "nova-login: on the console"]
+CREATED = ["nova-accounts: created %s, id 1, an administrator" % ACCOUNT_NAME,
+           "nova-shell: a session for %s, with the administrator handle"
+           % ACCOUNT_NAME]
+LOGGED_IN = ["nova-accounts: %s logged in" % ACCOUNT_NAME,
+             "nova-shell: a session for %s, with the administrator handle"
+             % ACCOUNT_NAME]
+WHOAMI = "whoami"
+WHOAMI_RAN = "nova-shell: whoami: %s, id 1, an administrator" % ACCOUNT_NAME
+NO_COMMAND = "nova-shell: %s runs no command" % ACCOUNT_NAME
+
+# The accounts service hashes each password with Argon2id over 64 MiB in
+# 3 passes, which takes about 12 seconds under TCG on an Apple M2 and
+# can take several times that on a shared runner; a line typed and
+# answered without a hash takes a second or two.
+HASH_TIMEOUT = 300
 KEY_TIMEOUT = 60
 
 # What a nova-os line says when something went wrong: a check failed, a
@@ -161,11 +195,13 @@ class BootFailed(Exception):
 
 
 class Serial:
-    """The guest's serial lines, read from QEMU's standard output."""
+    """The guest's serial lines, read from QEMU's standard output. A line
+    that holds the account's password is noted in leaked."""
 
     def __init__(self, stream, log):
         self.lines = queue.Queue()
         self.start = time.monotonic()
+        self.leaked = False
         self.reader = threading.Thread(target=self.read, args=(stream, log))
         self.reader.start()
 
@@ -174,6 +210,8 @@ class Serial:
             log.write(raw)
             log.flush()
             text = raw.rstrip(b"\r\n").replace(b"\r", b"")
+            if ACCOUNT_PASSWORD.encode("ascii") in text:
+                self.leaked = True
             self.lines.put(text.decode("ascii", "replace"))
         self.lines.put(None)
 
@@ -229,17 +267,32 @@ class Qmp:
                 return reply["return"]
 
 
-def type_line(serial, qmp_path):
+def type_line(qmp, text, shown=True):
+    """Type text and Enter; a password is not printed."""
+    print("          send-key %s, Enter" % (text if shown else "(password)"),
+          flush=True)
+    for name in [QCODES.get(c, c) for c in text] + ["ret"]:
+        qmp.execute("send-key", keys=[{"type": "qcode", "data": name}])
+
+
+def log_in(serial, qmp_path, first):
+    """Create the account on a first boot, or log in with it on a later
+    one, then run whoami in its shell."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(QMP_TIMEOUT)
         connection.connect(qmp_path)
         with connection.makefile("rwb") as stream:
             qmp = Qmp(stream)
-            for name in LINE_KEYS:
-                print("          send-key %s" % name, flush=True)
-                qmp.execute("send-key",
-                            keys=[{"type": "qcode", "data": name}])
-            serial.wait_for([LINE_ECHOED], time.monotonic() + KEY_TIMEOUT)
+            type_line(qmp, ACCOUNT_NAME)
+            type_line(qmp, ACCOUNT_PASSWORD, shown=False)
+            if first:
+                type_line(qmp, ACCOUNT_PASSWORD, shown=False)
+            serial.wait_for(CREATED if first else LOGGED_IN,
+                            time.monotonic() + HASH_TIMEOUT)
+            type_line(qmp, WHOAMI)
+            serial.wait_for([WHOAMI_RAN], time.monotonic() + KEY_TIMEOUT)
+            type_line(qmp, ACCOUNT_PASSWORD, shown=False)
+            serial.wait_for([NO_COMMAND], time.monotonic() + KEY_TIMEOUT)
 
 
 def stop(qemu):
@@ -340,15 +393,21 @@ def data_disk(args, scratch):
     if args.corrupt_gpt:
         with open(copy, "r+b") as disk:
             corrupt_gpt(disk, args.corrupt_gpt)
-        lines = [GPT_REFUSED[args.corrupt_gpt], DATA_REFUSED]
+        lines = [GPT_REFUSED[args.corrupt_gpt], DATA_REFUSED, LOGIN_ABSENT]
     return ["-drive", "if=virtio,format=raw,file=" + copy], lines
 
 
-def boot(args, scratch, log):
+def boot(args, scratch, log, data_drive, data_lines, first):
+    """Boot once with data_drive, the data disk's arguments, and check
+    the boot's lines; with a data disk whose GPT is whole, create the
+    account if first or log in with it, and run whoami."""
     vars_copy = os.path.join(scratch, "vars.fd")
     shutil.copyfile(args.vars, vars_copy)
     qmp_path = os.path.join(scratch, "qmp.sock")
-    data_drive, data_lines = data_disk(args, scratch)
+    accounts = args.mode != "chain" and data_drive and not args.corrupt_gpt
+    ready = []
+    if accounts:
+        ready = FIRST_BOOT_READY if first else LATER_BOOT_READY
     command = (
         ["qemu-system-x86_64", "-machine", "q35", "-m", MEMORY,
          "-drive", "if=pflash,format=raw,readonly=on,file=" + args.code,
@@ -365,16 +424,18 @@ def boot(args, scratch, log):
     serial = None
     try:
         serial = Serial(qemu.stdout, log)
-        lines = SYSTEM_LINES if args.mode == "system" else CHAIN_LINES
-        serial.wait_for(lines + data_lines + args.expect,
+        lines = CHAIN_LINES if args.mode == "chain" else SYSTEM_LINES
+        serial.wait_for(lines + data_lines + ready + args.expect,
                         serial.start + args.timeout)
-        if args.mode == "system":
-            type_line(serial, qmp_path)
+        if accounts:
+            log_in(serial, qmp_path, first)
     finally:
         stop(qemu)
         if serial:
             serial.reader.join()
         qemu.stdout.close()
+    if serial.leaked:
+        raise BootFailed("the serial log holds the account's password")
 
 
 def main():
@@ -400,12 +461,18 @@ def main():
     args = parser.parse_args()
     if args.corrupt_gpt and not args.data:
         parser.error("--corrupt-gpt needs --data")
+    if args.mode == "persist" and (not args.data or args.corrupt_gpt):
+        parser.error("persist needs --data, whole")
     if args.timeout is None:
         args.timeout = DEFAULT_TIMEOUTS[args.mode]
     with tempfile.TemporaryDirectory() as scratch, \
             open(args.log, "wb") as log:
         try:
-            boot(args, scratch, log)
+            data_drive, data_lines = data_disk(args, scratch)
+            boot(args, scratch, log, data_drive, data_lines, first=True)
+            if args.mode == "persist":
+                print("booting the same data disk again", flush=True)
+                boot(args, scratch, log, data_drive, data_lines, first=False)
         except (BootFailed, OSError) as failure:
             print("FAILED: %s" % failure, flush=True)
             return 1

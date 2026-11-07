@@ -125,8 +125,10 @@ CI checks every pull request and every push to main:
   self-tests, the store, the data disk's pool opened, `/data` and
   `/users` published and their check passing, the test program, the
   virtio block driver reading the GPT, init's checks, startup done, the
-  background and the console, and a line typed through QEMU's monitor
-  must come back from the console's demo client. Five more boots change
+  background and the console; then, typed through QEMU's monitor, the
+  first boot's account is created on the fresh data disk and the shell
+  runs `whoami`. A further boot of the same data disk logs in with that
+  account, which it must still hold. Five more boots change
   the data disk's GPT, a byte of its header's CRC or of its entry array,
   or, with the CRCs made to match, its pool entry moved below the usable
   LBAs, or with them over the table, or a second entry over it, and the
