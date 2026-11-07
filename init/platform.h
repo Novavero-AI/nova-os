@@ -7,6 +7,7 @@
 #define NOVA_PLATFORM_H
 
 #include "native.h"
+#include "pci.h"
 
 typedef struct {
     UINT32 debug_log; /* the root system resource */
@@ -30,6 +31,27 @@ typedef struct {
    count: a system without a keyboard runs on, as one whose keyboard
    driver failed does. */
 int platform_start(const PLATFORM *platform);
+
+/* The data disk, the second virtio block function in the order of the
+   walk platform_start makes, whose first is the boot disk: whether there
+   is one, and if so its driver's bootstrap record, BARs sized, in
+   device. The walk is made once, for both. */
+int platform_data_disk(const PLATFORM *platform, PCI_DEVICE_BOOTSTRAP *device);
+
+/* The handles of a driver's bootstrap message for the function device
+   describes, as pci.h orders them: the debug log, process with MAP, the
+   initiator with PIN alone, and resources covering the function's
+   interrupts, configuration space and BARs. Returns their count, or 0,
+   with none left open, if a call fails. */
+UINT32 platform_driver_handles(const PLATFORM *platform,
+                               const PCI_DEVICE_BOOTSTRAP *device,
+                               UINT32 process, UINT32 initiator,
+                               HANDLE_TRANSFER *handles);
+
+/* A job of its own for a driver, a child of the root job that grants it
+   the one interrupt vector a driver takes, as I10 has a supervisor do;
+   HANDLE_INVALID, logged, if it cannot be made. */
+UINT32 platform_driver_job(const PLATFORM *platform);
 
 /* Supervise what platform_start left running for the life of the
    system: restart a driver or its client that ends, as the policy

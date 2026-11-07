@@ -50,6 +50,13 @@ UINT32 view_add(VIEW *view, const char *prefix, UINT32 directory);
 UINT32 view_open(const VIEW *view, const char *path, UINT32 rights,
                  UINT32 *channel, IO_ATTRIBUTES *attributes);
 
+/* view_open with flags, IO_OPEN_ bits: with IO_OPEN_CREATE, a missing
+   file, or directory with IO_OPEN_DIRECTORY, at the path's end is
+   created (directory_protocol.h). */
+UINT32 view_create(const VIEW *view, const char *path, UINT32 rights,
+                   UINT32 flags, UINT32 *channel,
+                   IO_ATTRIBUTES *attributes);
+
 /* Call each(context, name, length, kind) for every entry of the
    directory at path, in bytewise order of name: the server's entries,
    with the next component of any view prefix nested below path (F5,
@@ -75,6 +82,27 @@ UINT32 io_open(UINT32 directory, UINT32 operation, const UINT8 *path,
    file open on channel into buffer, and report how many in *count. */
 UINT32 io_read(UINT32 channel, UINT64 offset, void *buffer, UINT32 length,
                UINT32 *count);
+
+/* Write length bytes, at most IO_TRANSFER_MAX, from buffer at offset of
+   the file open on channel, and report how many in *count. */
+UINT32 io_write(UINT32 channel, UINT64 offset, const void *buffer,
+                UINT32 length, UINT32 *count);
+
+/* Set the size of the file open on channel. */
+UINT32 io_truncate(UINT32 channel, UINT64 size);
+
+/* Return once every change to the volume channel's node is on is
+   durable. */
+UINT32 io_flush(UINT32 channel);
+
+/* Remove the file or empty directory at the length bytes of path below
+   the directory open on channel. */
+UINT32 io_remove(UINT32 channel, const UINT8 *path, UINT32 length);
+
+/* Move the node at from to to, each of its length's bytes and below the
+   directory open on channel, with flags, IO_RENAME_ bits. */
+UINT32 io_rename(UINT32 channel, const UINT8 *from, UINT32 from_length,
+                 const UINT8 *to, UINT32 to_length, UINT32 flags);
 
 /* A section holding the file open on channel, with rights, IO_RIGHT_READ
    and IO_RIGHT_EXECUTE, and the file's size. *received is the handle as

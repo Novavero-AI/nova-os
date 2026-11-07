@@ -29,8 +29,10 @@
    is set or it is not of the kind the open would create, which fails
    with ERR_ALREADY_EXISTS. IO_OPEN_EXCLUSIVE and IO_OPEN_DIRECTORY
    without IO_OPEN_CREATE, and any other bit, fail with
-   ERR_INVALID_ARGS. A server that creates nothing refuses
-   IO_OPEN_CREATE on its own directories.
+   ERR_INVALID_ARGS. The namespace server passes the flags on with an
+   open below a publication, and refuses IO_OPEN_CREATE of its root or
+   of a name its root does not hold with ERR_NOT_SUPPORTED; the store
+   service refuses any flag.
 
    Read a directory: IO_READ_DIR with offset the cookie, 0 to start, and
    length the entries wanted. The reply's information is the cookie to
@@ -62,8 +64,9 @@
 
    Flush: IO_FLUSH, on a file or a directory, with length 0. The reply
    comes once every change the volume holds, through any channel, is
-   durable: the server commits its transaction group (F6), and a failed
-   commit is the reply's status. Needs WRITE.
+   durable: the server commits its transaction group (F6). A server that
+   cannot commit closes its channels rather than answer, so a client
+   whose flush is answered OK has its changes on disk. Needs WRITE.
 
    Remove: IO_REMOVE on a directory with length the path's bytes, which
    follow; it removes the file or empty directory there. A directory that

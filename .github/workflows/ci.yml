@@ -112,6 +112,7 @@ jobs:
           path: |
             ${{ runner.temp }}/reproduce/disk.img
             ${{ runner.temp }}/reproduce/chain.img
+            ${{ runner.temp }}/reproduce/data.img
           if-no-files-found: error
           retention-days: 7
 
@@ -136,7 +137,10 @@ jobs:
   # processor, so each CPU model gives the kernel the features it names:
   # Skylake-Client is an Intel model that needs page-table isolation, and
   # max offers every feature TCG has. The KVM boot runs on the runner's
-  # own processor.
+  # own processor. Every boot attaches a writable copy of data.img as the
+  # data disk, as README.md's Run command does; the two bad-GPT boots
+  # change a byte of its GPT, a CRC's or the entry array's, and check
+  # that the file system service refuses the disk.
   boot:
     name: ${{ matrix.name }}
     needs: reproduce
@@ -169,6 +173,18 @@ jobs:
             disk: disk.img
             accel: kvm
             cpu: host
+            minutes: 15
+          - name: Boot (bad GPT header)
+            mode: system
+            disk: disk.img
+            accel: tcg
+            corrupt: header
+            minutes: 15
+          - name: Boot (bad GPT entries)
+            mode: system
+            disk: disk.img
+            accel: tcg
+            corrupt: entries
             minutes: 15
           - name: Chain
             mode: chain
@@ -210,9 +226,11 @@ jobs:
           ACCEL: ${{ matrix.accel }}
           CPU: ${{ matrix.cpu }}
           EXPECT: ${{ matrix.expect }}
+          CORRUPT: ${{ matrix.corrupt }}
         run: |
           python3 -I ci/boot.py --code "$OVMF_CODE" --vars "$OVMF_VARS" \
             --log "$RUNNER_TEMP/serial.log" ${EXPECT:+--expect "$EXPECT"} \
+            --data disk-images/data.img ${CORRUPT:+--corrupt-gpt "$CORRUPT"} \
             "$MODE" "$DISK" -- -accel "$ACCEL" ${CPU:+-cpu "$CPU"}
 
       - name: Upload the serial log

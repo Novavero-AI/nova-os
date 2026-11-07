@@ -1138,6 +1138,89 @@ among their clients, so that no client can take what another holds.
   the service's own job pays for the sections it fills whichever client
   asks.
 
+### F18. The writable milestone
+
+**Decided.** The smallest system that keeps files across a reboot:
+
+1. **A data disk:** a second virtio disk holding one pool partition, the
+   pool holding one data volume ([pool-format.md](pool-format.md)).
+   `tools/mkdata.c` writes it empty, reproducibly
+   ([F11](#f11-reproducible-images)).
+2. **The virtio block driver serves it:** the platform's second virtio
+   block function gets the driver in a mode that serves one client the
+   block protocol (`include/block_protocol.h`), I9's requests over a
+   channel with the data in a section the client shares and the driver
+   pins: read, write, and flush, which answers once the writes before it
+   are stable (virtio 5.2.6.2).
+3. **The file system service** opens the pool from its newest commit and
+   serves the volume through the directory protocol with its write
+   requests ([F1](#f1-the-directory-protocol)), every change copy-on-write
+   and committed as [F6](#f6-pools-volumes-and-the-commit) orders it, at
+   each `flush`; every block checked against its pointer
+   ([F7](#f7-checksums)). Its channels are divided among clients as
+   [F17](#f17-limits-on-clients) divides the store service's, each open
+   through its starter's root starting one.
+4. **The first process** creates `data` and `users` in the volume's root
+   at first boot and publishes them as `/data` and `/users`
+   ([F4](#f4-publishing-file-systems)). The namespace server's root
+   carries `WRITE`, so that a writable directory published there opens
+   writable through it; what is opened gets at most the published
+   directory's rights. A program then checks `/data` through a view that
+   holds it read-write and read-only ([F5](#f5-per-process-views)).
+
+Done when:
+
+- a file created under `/data` survives a reboot and reads back byte for
+  byte;
+- a power cut mid-commit leaves the previous state or the new one, never
+  a mix;
+- a corrupted block is reported, never returned as data.
+
+What it builds of the decided items, and what it leaves:
+
+| Item | Built | Left |
+|---|---|---|
+| [F1](#f1-the-directory-protocol) | Create, exclusive create, write, truncate, flush, remove, rename with replace | Links on a data volume: no request makes one |
+| [F2](#f2-attributes) | Kind, size, the executable flag kept; a node ID kept as slot and generation | Reporting the node ID; modification times, for want of a wall-clock service; a request that sets the executable flag |
+| [F6](#f6-pools-volumes-and-the-commit) | Copy-on-write, both superblock rings, the commit's order, blocks freed only once their commit is durable | Pools named by the recipe ([F14](#f14-disks-and-the-system-recipe)); several volumes in a pool; transactions of several requests |
+| [F7](#f7-checksums) | SHA-256 in every pointer and superblock, checked on every read; two copies of metadata | Rewriting a copy that fails from the other; a scrub |
+| [F10](#f10-data-volumes-and-snapshots) | Nodes by node ID in a node table; one volume holding `data` and `users` | Snapshots and dead lists; a volume per user and per service; directories as B-trees and contents as extents, for sorted entries of at most 64 KiB and block trees |
+| [F11](#f11-reproducible-images) | An empty data pool, every identifier a constant | The store volume's image |
+| [F8](#f8-the-store-volume), [F9](#f9-reading-and-verifying-the-store), [F12](#f12-builds-and-substitution), [F13](#f13-profiles-system-and-garbage-collection), [F15](#f15-store-reads-and-replay) | None | All of them: the store stays the image of [F16](#f16-the-first-milestone) |
+
+Left out besides: a map of free blocks on disk (opening walks every
+metadata block instead), the intent log, restarting the data disk's
+driver and service ([ipc.md I10](ipc.md#i10-driver-failure-and-restart)),
+and the data disk as a VHDX file.
+
+- **Why:** a user's account needs `/users` to outlast a reboot, and
+  every part is one the full design keeps: the pool's commit and
+  checksums, the directory protocol, publication and views. A change is
+  applied whole within one commit, so a crash leaves each request whole
+  or absent, as F6 promises of a transaction.
+- **Cost:**
+  - Opening a pool reads every metadata block, which grows with the
+    volume.
+  - The service's cache, 2 MiB less spare pages, bounds the changes one
+    commit holds; past its limit the next change commits first, so a
+    commit holds whole requests but not every request a client sends
+    between two flushes.
+  - A directory change reads the directory whole and rewrites it from
+    the change on.
+  - A request checks what can refuse it, the room it needs and the
+    blocks it reads in part, before it changes anything; one that fails
+    after, which takes a metadata block failing both copies or the
+    device failing, stops the service, as a failed commit does, and its
+    clients see their channels close with the pool at its last commit.
+    With no restart, the data disk is then gone until the next boot.
+  - Every `/data` and `/users` client of the namespace shares one service
+    client each, eight channels, as `/store`'s share the store service's
+    root.
+- **Not taken:** a map of free blocks kept on disk and rewritten at each
+  commit. Its cost is one more structure every commit writes and opening
+  trusts, which can disagree with the tree it describes; walking the tree
+  costs a longer open and cannot.
+
 ## Changes elsewhere
 
 What this design needs outside this document:
@@ -1150,9 +1233,10 @@ What this design needs outside this document:
   ([F16](#f16-the-first-milestone)); a kernel, first process and boot
   image per system generation, and a boot menu
   ([F13](#f13-profiles-system-and-garbage-collection)).
-- **Disk layout:** the pool partition's type GUID and identifiers
+- **Disk layout:** the pool partition's identifiers
   ([F6](#f6-pools-volumes-and-the-commit),
-  [F11](#f11-reproducible-images)).
+  [F11](#f11-reproducible-images)); its type GUID is
+  [pool-format.md](pool-format.md)'s.
 - **nova-os components:** a FAT writer for the ESP alone
   ([F13](#f13-profiles-system-and-garbage-collection)).
 - **nova-nix:** NAR export with references ([F16](#f16-the-first-milestone)),

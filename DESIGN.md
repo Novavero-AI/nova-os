@@ -119,12 +119,16 @@ CI checks every pull request and every push to main:
   its `compile_flags.txt`; it runs `tools/check-masks.c` and
   `design/backgrounds/check-limb.sh`, and actionlint over the workflow.
 - **Boot** boots the reproduced `disk.img` under QEMU with Ubuntu 24.04's
-  OVMF: on QEMU's default processor, on Skylake-Client, which needs
-  page-table isolation, on `-cpu max`, and under KVM. The serial log must
-  show the kernel's self-tests, the store, the test program, the virtio
-  block driver reading the GPT, init's checks, startup done, the
+  OVMF, with a copy of `data.img` as its data disk: on QEMU's default
+  processor, on Skylake-Client, which needs page-table isolation, on
+  `-cpu max`, and under KVM. The serial log must show the kernel's
+  self-tests, the store, the data disk's pool opened, `/data` and
+  `/users` published and their check passing, the test program, the
+  virtio block driver reading the GPT, init's checks, startup done, the
   background and the console, and a line typed through QEMU's monitor
-  must come back from the console's demo client.
+  must come back from the console's demo client. Two more boots change a
+  byte of the data disk's GPT, its header's CRC or its entry array, and
+  the log must show the file system service refusing the disk.
 - **Chain** boots `chain.img` and checks that each step of the bootstrap
   chain runs and each pinned link matches.
 

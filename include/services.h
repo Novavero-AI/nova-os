@@ -1,6 +1,7 @@
-/* The store service and the namespace server, which the first process
-   starts (docs/spec/storage.md F16): their bootstrap messages, the store
-   service's own request, their limits on clients, and their exit codes. */
+/* The store service, the namespace server and the file system service,
+   which the first process starts (docs/spec/storage.md F16, F18): their
+   bootstrap messages, the store service's own request, their limits on
+   clients, and their exit codes. */
 
 #ifndef NOVA_SERVICES_H
 #define NOVA_SERVICES_H
@@ -48,10 +49,22 @@ typedef struct {
 
 /* The namespace server's bootstrap message: the debug log's resource,
    then the server end of its root directory's channel, which carries
-   IO_RIGHT_READ, _EXECUTE, _LIST and _PUBLISH. */
+   IO_RIGHT_READ, _WRITE, _EXECUTE, _LIST and _PUBLISH: WRITE so that a
+   writable directory published there opens writable through it. */
 #define NAMESPACE_BOOTSTRAP_DEBUG_LOG 0
 #define NAMESPACE_BOOTSTRAP_ROOT 1
 #define NAMESPACE_BOOTSTRAP_HANDLES 2
+
+/* The file system service's bootstrap message (docs/spec/storage.md
+   F18): these handles in this order and no bytes. The block channel is
+   a block driver's client endpoint (block_protocol.h); the root
+   directory is the server end of the pool's volume's root, which carries
+   IO_RIGHT_READ, _WRITE and _LIST. */
+#define FS_BOOTSTRAP_DEBUG_LOG 0
+#define FS_BOOTSTRAP_SELF 1 /* its process, with MAP */
+#define FS_BOOTSTRAP_BLOCK 2
+#define FS_BOOTSTRAP_ROOT 3
+#define FS_BOOTSTRAP_HANDLES 4
 
 /* A service ends once no channel it serves is left open, with
    SERVICE_EXIT_DONE, nonzero so that its creator tells it from a

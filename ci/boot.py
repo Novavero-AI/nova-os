@@ -2,12 +2,14 @@
 
 Usage: python3 -I ci/boot.py --code CODE.fd --vars VARS.fd --log LOG
                              [--timeout SECONDS] [--expect TEXT ...]
+                             [--data DATA [--corrupt-gpt {header,entries}]]
                              {system,chain} DISK [-- QEMU_ARG ...]
 
 Boots DISK with the machine and devices of README.md's Run section,
-headless, with the firmware CODE.fd and a copy of VARS.fd, and the
-QEMU arguments given after --. The guest's serial port is echoed with
-the time since QEMU started and written to LOG.
+headless, with the firmware CODE.fd and a copy of VARS.fd, a writable
+copy of DATA as the data disk after it, and the QEMU arguments given
+after --. The guest's serial port is echoed with the time since QEMU
+started and written to LOG.
 
 In system mode, the boot of disk.img must report each kernel self-test
 passing, the store service serving, the test program from /store
@@ -17,7 +19,13 @@ drawn with its demo client running; then a line typed through QMP,
 QEMU's monitor protocol, must come back from the demo client. In chain
 mode, the boot of chain.img must report each of the
 bootstrap chain's steps, each pinned link and init's checks passing.
-Each --expect TEXT adds a line the boot must report.
+Each --expect TEXT adds a line the boot must report. With a data disk,
+the boot must also report the file system service opening its pool,
+/data and /users published, and the data disk's check passing. With
+--corrupt-gpt, a byte of each of the copy's two GPT headers' CRCs, or
+of each of its two entry arrays, is changed first, and the boot must
+report the service refusing the disk and /data and /users not
+published.
 
 The check fails at once on a line from nova-os that reports a failure,
 a halt, a fault or a supervised process restarted or given up, or if
@@ -78,6 +86,31 @@ CHAIN_LINES = (
        INIT_PASSED, STARTUP_DONE])
 
 DEFAULT_TIMEOUTS = {"system": 300, "chain": 2700}
+
+DATA_LINES = [
+    "nova-fs: pool at lba ",
+    "nova-init: /data and /users published from the data disk",
+    "nova-fstest: checks passed",
+]
+
+# What --corrupt-gpt changes in the data disk (UEFI 2.11 5.3.2, 5.3.3): a
+# byte of each GPT header's HeaderCRC32, or a byte of the first entry's
+# PartitionName in each entry array, in the primary table at LBA 1 and
+# the backup it names. Each leaves every check but a CRC's passing, so
+# only the CRC can refuse the disk. Both tables are changed because
+# firmware restores a primary table that fails from a backup that
+# passes, as 5.3.2 asks and EDK2 does on a writable disk.
+SECTOR = 512
+PRIMARY_LBA = 1
+ALTERNATE_LBA = 32
+ENTRIES_LBA = 72
+HEADER_CRC = 16
+ENTRY_NAME = 56
+GPT_REFUSED = {
+    "header": "nova-fs: the disk's GPT header fails its check",
+    "entries": "nova-fs: the disk's GPT entry array fails its check",
+}
+DATA_REFUSED = "nova-init: /data and /users are not published"
 
 # A line typed as QMP's send-key names its keys, and what the demo
 # client logs once it has echoed the line, which gives the length alone.
@@ -193,15 +226,55 @@ def stop(qemu):
             qemu.wait()
 
 
+def read_u64(disk, offset):
+    disk.seek(offset)
+    return int.from_bytes(disk.read(8), "little")
+
+
+def flip(disk, offset):
+    disk.seek(offset)
+    byte = disk.read(1)[0]
+    disk.seek(offset)
+    disk.write(bytes([byte ^ 0xff]))
+
+
+def corrupt_gpt(disk, what):
+    """Change a byte of both GPT headers' CRCs, or of both entry arrays."""
+    backup = read_u64(disk, PRIMARY_LBA * SECTOR + ALTERNATE_LBA)
+    for header in (PRIMARY_LBA, backup):
+        if what == "header":
+            flip(disk, header * SECTOR + HEADER_CRC)
+        else:
+            entries = read_u64(disk, header * SECTOR + ENTRIES_LBA)
+            flip(disk, entries * SECTOR + ENTRY_NAME)
+
+
+def data_disk(args, scratch):
+    """A writable copy of the data disk, damaged as --corrupt-gpt asks;
+    its drive's arguments, and the lines the boot must then report."""
+    if not args.data:
+        return [], []
+    copy = os.path.join(scratch, "data.img")
+    shutil.copyfile(args.data, copy)
+    lines = DATA_LINES
+    if args.corrupt_gpt:
+        with open(copy, "r+b") as disk:
+            corrupt_gpt(disk, args.corrupt_gpt)
+        lines = [GPT_REFUSED[args.corrupt_gpt], DATA_REFUSED]
+    return ["-drive", "if=virtio,format=raw,file=" + copy], lines
+
+
 def boot(args, scratch, log):
     vars_copy = os.path.join(scratch, "vars.fd")
     shutil.copyfile(args.vars, vars_copy)
     qmp_path = os.path.join(scratch, "qmp.sock")
+    data_drive, data_lines = data_disk(args, scratch)
     command = (
         ["qemu-system-x86_64", "-machine", "q35", "-m", MEMORY,
          "-drive", "if=pflash,format=raw,readonly=on,file=" + args.code,
          "-drive", "if=pflash,format=raw,file=" + vars_copy,
          "-drive", "if=virtio,format=raw,readonly=on,file=" + args.disk]
+        + data_drive
         + DEVICES
         + ["-display", "none", "-serial", "stdio",
            "-qmp", "unix:%s,server=on,wait=off" % qmp_path]
@@ -213,7 +286,7 @@ def boot(args, scratch, log):
     try:
         serial = Serial(qemu.stdout, log)
         lines = SYSTEM_LINES if args.mode == "system" else CHAIN_LINES
-        serial.wait_for(lines + args.expect,
+        serial.wait_for(lines + data_lines + args.expect,
                         serial.start + args.timeout)
         if args.mode == "system":
             type_line(serial, qmp_path)
@@ -237,10 +310,16 @@ def main():
                         help="seconds the boot may take")
     parser.add_argument("--expect", action="append", default=[],
                         metavar="TEXT", help="a line the boot must report")
+    parser.add_argument("--data",
+                        help="the data disk, attached as a writable copy")
+    parser.add_argument("--corrupt-gpt", choices=sorted(GPT_REFUSED),
+                        help="change a byte of the data disk's GPT")
     parser.add_argument("mode", choices=sorted(DEFAULT_TIMEOUTS))
     parser.add_argument("disk")
     parser.add_argument("qemu_args", nargs="*", metavar="QEMU_ARG")
     args = parser.parse_args()
+    if args.corrupt_gpt and not args.data:
+        parser.error("--corrupt-gpt needs --data")
     if args.timeout is None:
         args.timeout = DEFAULT_TIMEOUTS[args.mode]
     with tempfile.TemporaryDirectory() as scratch, \

@@ -20,6 +20,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [input.md](input.md) | The virtio input driver, the key events it sends a client, its report to the platform driver and how that supervises it |
 | [console.md](console.md) | The console: how it takes the display from the kernel, how the first process starts it, its keys, the session protocol programs write text and read lines with, and its panel and font |
 | [store-image.md](store-image.md) | The store image the first milestone boots from: its header, registrations, nodes, blobs and their hash trees |
+| [pool-format.md](pool-format.md) | A data disk's pool: its partition, superblock rings, block pointers, node table and directories, and its commit |
 
 ## Firmware and platform
 
@@ -31,7 +32,9 @@ sha256 identifies the exact copy the pin was taken from.
 - Access: free download.
 - sha256: `a64b8e442004b91becc3de9afaf8ca61b259a9a3b436accb6b3711ab5400cee9`
 - Used by: nova-boot (`boot/efi.h`, `boot/nova-boot.c`), the boot
-  protocol, including its random seeds (37.5), the disk layout.
+  protocol, including its random seeds (37.5), the disk layout, and the
+  data disk's GPT ([pool-format.md](pool-format.md), `tools/mkdata.c`,
+  `fs/fs.c`).
 
 **Advanced Configuration and Power Interface (ACPI) Specification**,
 Release 6.6, May 13, 2025 (UEFI Forum).
@@ -259,7 +262,8 @@ May 2011 (IETF).
   (RFC 6234)
 - Used by: the kernel's SHA-256 (FIPS 180-4) and its boot-time test
   (RFC 6234, 8.5); the checksums and digests of
-  [storage.md](storage.md) and [store-image.md](store-image.md).
+  [storage.md](storage.md), [store-image.md](store-image.md) and
+  [pool-format.md](pool-format.md).
 
 **Fast-key-erasure random-number generators**, D. J. Bernstein, the
 cr.yp.to blog, July 23, 2017.
@@ -418,9 +422,9 @@ December 6, 2000; legal agreement updated March 30, 2011.
 - Document: <https://www.rfc-editor.org/rfc/rfc3629.txt>
 - Access: free.
 - sha256: `a2a3a39457d30420c812f87a38cc2b9194832f6982ef17e619de7d816879d6a6`
-- Used by: names in the namespace and the store
-  ([store-image.md](store-image.md); `lib/name.c` and `tools/mkstore.c`,
-  section 4).
+- Used by: names in the namespace, the store and a pool's directories
+  ([store-image.md](store-image.md), [pool-format.md](pool-format.md);
+  `lib/name.c` and `tools/mkstore.c`, section 4).
 
 ## Devices
 
