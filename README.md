@@ -35,8 +35,10 @@ cc -o x86_64-win32-tcc -I cfg -I tinycc-$rev \
   -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
   -o kernel.exe kernel/main.c kernel/x86_64/arch.c kernel/x86_64/gdt.c \
   kernel/x86_64/idt.c kernel/x86_64/apic.c kernel/x86_64/paging.c \
-  kernel/x86_64/serial.c kernel/x86_64/entry.S kernel/mm/page.c \
-  kernel/mm/page_test.c gfx/gfx.c
+  kernel/x86_64/serial.c kernel/x86_64/clock.c kernel/x86_64/context.c \
+  kernel/x86_64/entry.S kernel/x86_64/switch.S kernel/mm/page.c \
+  kernel/mm/page_test.c kernel/sched/thread.c kernel/sched/wait.c \
+  kernel/sched/sched_test.c gfx/gfx.c
 ```
 
 `-shared` makes TinyCC write base relocations, which the firmware needs to
@@ -50,7 +52,7 @@ gives the same bytes:
 | Image | Size | sha256 |
 |---|---|---|
 | `BOOTX64.EFI` | 22,528 | `18cdff4d1b68ac995a9f0fa98d7338ba38e53084b332740769a9cb434d047808` |
-| `kernel.exe` | 23,040 | `4546d990bc26ffd035526d202b1cea04965e1017c25a22091c5b6b251be75618` |
+| `kernel.exe` | 35,840 | `1c9042e21376020f5d9a469febfeef57583bf2a3179b129f9a835b92075b05a7` |
 
 ## Disk image
 
@@ -70,8 +72,8 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `94057b61d30d33590b61e027870c5190054e30c8aa7c42d00ff84f51adb2e064` |
-| `disk.vhdx` | 71,303,168 | `83982b7ff5bc7b23e1443481f1d70546758741d4a2682b374f70861c0ce7ee74` |
+| `disk.img` | 67,108,864 | `a848aeeda1b7d73ef12ec980af2dfc38f8baf646b9fd4e1ebf0f1b06f433dbf9` |
+| `disk.vhdx` | 71,303,168 | `e79a72220dd88703dcb423cb02ee2be68dcfc2ee1af60b17a7dda0e9cb200c32` |
 
 To boot either file in QEMU, replace the `fat:esp` drive in the command
 below with `-drive if=virtio,format=raw,file=disk.img` or

@@ -3,6 +3,7 @@
    direct map, at the physical address the entry above it holds. */
 
 #include "paging.h"
+#include "cpu.h"
 #include "memory_layout.h"
 #include "page_table.h"
 #include "serial.h"
@@ -151,16 +152,46 @@ static UINT64 *page_entry(UINT64 linear)
 UINT64 paging_map_uncached(UINT64 physical)
 {
     UINT64 linear = DIRECT_MAP_BASE + physical;
-    UINT64 memory_type;
+    UINT64 memory_type, flags;
     UINT64 *entry;
 
     if (physical % PAGE_SIZE != 0 || physical >= DIRECT_MAP_SIZE ||
         !uncached_bits(&memory_type))
         return 0;
+    flags = save_and_disable_interrupts();
     entry = page_entry(linear);
-    if (!entry)
-        return 0;
-    *entry = physical | PTE_PRESENT | PTE_WRITABLE | no_execute | memory_type;
-    flush_translations();
-    return linear;
+    if (entry) {
+        *entry =
+            physical | PTE_PRESENT | PTE_WRITABLE | no_execute | memory_type;
+        flush_translations();
+    }
+    restore_interrupts(flags);
+    return entry ? linear : 0;
+}
+
+/* Clearing P alone keeps the rest of the entry, which the processor
+   ignores while P is 0 (SDM Vol. 3A 5.5.4, Figure 5-11), for
+   paging_restore_direct to bring back. The flush drops the old
+   translation, which may be the large page the guard was split from. */
+int paging_unmap_direct(UINT64 physical)
+{
+    UINT64 flags = save_and_disable_interrupts();
+    UINT64 *entry = page_entry(DIRECT_MAP_BASE + physical);
+
+    if (entry) {
+        *entry &= ~PTE_PRESENT;
+        flush_translations();
+    }
+    restore_interrupts(flags);
+    return entry != 0;
+}
+
+/* No TLB or paging-structure cache entry is made from an entry whose P
+   flag is 0, so setting it needs no invalidation (SDM Vol. 3A 5.10.4.3). */
+void paging_restore_direct(UINT64 physical)
+{
+    UINT64 flags = save_and_disable_interrupts();
+
+    *page_entry(DIRECT_MAP_BASE + physical) |= PTE_PRESENT;
+    restore_interrupts(flags);
 }

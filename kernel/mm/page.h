@@ -1,7 +1,8 @@
 /* The physical page allocator: the 4 KiB pages the UEFI memory map gives
-   the OS once boot services have exited, handed out one at a time by
-   physical address. The kernel reaches a page through the direct map
-   (memory_layout.h). */
+   the OS once boot services have exited, handed out by physical address,
+   one at a time or in runs. The kernel reaches a page through the direct
+   map (memory_layout.h). Allocating and freeing may be called from any
+   thread: each runs with interrupts disabled. */
 
 #ifndef NOVA_PAGE_H
 #define NOVA_PAGE_H
@@ -15,6 +16,11 @@ int page_init(const BOOT_INFO *info);
 
 /* A free page's physical address, now allocated, or 0 if none is free. */
 UINT64 page_alloc(void);
+
+/* The physical address of the first of pages consecutive free pages, now
+   allocated, or 0 if no such run is free or pages is 0. page_free frees
+   them one at a time. */
+UINT64 page_alloc_run(UINT64 pages);
 
 /* Free an allocated page. Returns 1, or 0 with nothing changed if address
    is not a page the allocator holds as allocated: unaligned, beyond the

@@ -6,19 +6,24 @@
    It checks that BOOT_INFO is the record it was built for; installs its
    own descriptor tables and exception handlers and removes the lower-half
    mapping nova-boot left for the switch; builds the physical page
-   allocator, checks it and reports on the first serial port; starts the
-   timer; and keeps the boot screen's spinner turning on the timer's
-   ticks. */
+   allocator, checks it and reports on the first serial port; starts its
+   clock, the scheduler and the timer; starts a thread that keeps the boot
+   screen's spinner turning and one that tests the threads; and becomes
+   the idle thread. */
 
 #include "boot_info.h"
 #include "cpu.h"
 #include "mm/page.h"
+#include "sched/thread.h"
 #include "x86_64/arch.h"
+#include "x86_64/clock.h"
 #include "x86_64/serial.h"
 
 #define FRAME_MS 33
-#define FRAME_TICKS (FRAME_MS * TIMER_HZ / 1000)
 #define BYTES_PER_MIB (1024 * 1024)
+
+static THREAD spinner_thread;
+static THREAD test_thread;
 
 static void serial_mib(UINT64 pages)
 {
@@ -62,10 +67,44 @@ static void check_boot_info(const BOOT_INFO *info)
     halt_forever();
 }
 
+/* A frame every FRAME_MS, on absolute deadlines, so that a late frame
+   does not delay the ones after it. */
+static void spin(void *argument)
+{
+    BOOT_INFO *info = argument;
+    UINT64 next = clock_monotonic();
+
+    for (;;) {
+        gfx_spinner_step(&info->screen, &info->spinner);
+        next += FRAME_MS * NS_PER_MS;
+        sleep_until(next);
+    }
+}
+
+static void start_clock(UINT64 tsc_per_ms)
+{
+    if (!clock_init(tsc_per_ms)) {
+        serial_write("nova: boot info gives no timestamp counter rate, "
+                     "halted\r\n");
+        halt_forever();
+    }
+    serial_write("nova: clock from the timestamp counter at ");
+    serial_number(tsc_per_ms);
+    serial_write(" ticks per ms\r\n");
+}
+
+/* A thread just created is new, so thread_start cannot refuse it. */
+static void start_thread(THREAD *thread, THREAD_ENTRY entry, void *argument)
+{
+    if (thread_create(thread, entry, argument) != OK) {
+        serial_write("nova: no memory for a thread, halted\r\n");
+        halt_forever();
+    }
+    thread_start(thread);
+}
+
 VOID kernel_main(BOOT_INFO *info)
 {
-    UINT64 next;
-
     serial_write("nova: kernel running, boot services exited\r\n");
     check_boot_info(info);
     serial_write("nova: screen ");
@@ -79,12 +118,13 @@ VOID kernel_main(BOOT_INFO *info)
         halt_forever();
     }
     report_memory(info);
+    start_clock(info->tsc_per_ms);
+    sched_init();
     arch_start_timer(info->tsc_per_ms);
-
-    next = timer_ticks();
-    for (;;) {
-        gfx_spinner_step(&info->screen, &info->spinner);
-        next += FRAME_TICKS;
-        timer_sleep_until(next);
-    }
+    serial_write("nova: scheduler running, time slice ");
+    serial_number(TIME_SLICE_MS);
+    serial_write(" ms\r\n");
+    start_thread(&spinner_thread, spin, info);
+    start_thread(&test_thread, sched_self_test, &spinner_thread);
+    sched_idle();
 }

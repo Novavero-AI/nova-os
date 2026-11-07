@@ -6,9 +6,10 @@
    A bitmap rather than a free list threaded through the free pages: at
    one bit per page (32 KiB per GiB of address space) it sits in one
    place, so building it writes to no page but its own and nothing needs
-   the free pages mapped, and page_free can refuse a page that is already
-   free. page_alloc scans from the lowest word that can hold a free page,
-   so the lowest free page goes first.
+   the free pages mapped, page_free can refuse a page that is already
+   free, and consecutive free pages are a run of clear bits. page_alloc
+   scans from the lowest word that can hold a free page, so the lowest
+   free page goes first.
 
    General memory is EfiConventionalMemory, EfiBootServicesCode and
    EfiBootServicesData, which the OS owns once boot services have exited
@@ -20,6 +21,7 @@
    stays reserved, since page_alloc returns 0 for no page. */
 
 #include "page.h"
+#include "cpu.h"
 #include "efi.h"
 
 _Static_assert(PAGE_SIZE == EFI_PAGE_SIZE, "a page is a memory map page");
@@ -204,30 +206,62 @@ static UINT64 lowest_clear_bit(UINT64 word)
 
 UINT64 page_alloc(void)
 {
-    UINT64 page;
+    UINT64 flags = save_and_disable_interrupts();
+    UINT64 address = 0;
 
     for (; search_word < bitmap_words; search_word++)
         if (bitmap[search_word] != ALL_SET)
             break;
-    if (search_word == bitmap_words)
-        return 0;
-    page = search_word * BITS_PER_WORD +
-           lowest_clear_bit(bitmap[search_word]);
-    hold(page);
-    return page * PAGE_SIZE;
+    if (search_word < bitmap_words) {
+        UINT64 page = search_word * BITS_PER_WORD +
+                      lowest_clear_bit(bitmap[search_word]);
+
+        hold(page);
+        address = page * PAGE_SIZE;
+    }
+    restore_interrupts(flags);
+    return address;
+}
+
+/* The lowest run goes first, as with single pages. The scan starts at
+   search_word, below which no page is free, and leaves it there: the
+   words it passes may still hold free pages. */
+UINT64 page_alloc_run(UINT64 pages)
+{
+    UINT64 flags = save_and_disable_interrupts();
+    UINT64 page, run = 0, address = 0;
+
+    for (page = search_word * BITS_PER_WORD; pages && page < limit_page;
+         page++) {
+        if (is_set(page)) {
+            run = 0;
+        } else if (++run == pages) {
+            hold_run(page + 1 - pages, pages);
+            address = (page + 1 - pages) * PAGE_SIZE;
+            break;
+        }
+    }
+    restore_interrupts(flags);
+    return address;
 }
 
 int page_free(UINT64 address)
 {
     UINT64 page = address / PAGE_SIZE;
+    UINT64 flags;
+    int freed = 0;
 
-    if (address % PAGE_SIZE != 0 || page == 0 || page >= limit_page ||
-        !is_set(page))
+    if (address % PAGE_SIZE != 0 || page == 0 || page >= limit_page)
         return 0;
-    release(page);
-    if (word_of(page) < search_word)
-        search_word = word_of(page);
-    return 1;
+    flags = save_and_disable_interrupts();
+    if (is_set(page)) {
+        release(page);
+        if (word_of(page) < search_word)
+            search_word = word_of(page);
+        freed = 1;
+    }
+    restore_interrupts(flags);
+    return freed;
 }
 
 UINT64 page_free_count(void) { return free_pages; }

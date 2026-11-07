@@ -124,6 +124,26 @@ static inline void disable_interrupts(void)
     __asm__ volatile("cli" : : : "memory");
 }
 
+/* RFLAGS.IF, which lets maskable interrupts in (SDM Vol. 3A 2.3). */
+#define RFLAGS_INTERRUPT_ENABLE (1ULL << 9)
+
+/* Disable interrupts and return the RFLAGS they were disabled from, for
+   restore_interrupts. With one processor, a section between the two runs
+   without being interrupted or preempted. */
+static inline UINT64 save_and_disable_interrupts(void)
+{
+    UINT64 flags;
+
+    __asm__ volatile("pushfq\n\tpopq %0\n\tcli" : "=r"(flags) : : "memory");
+    return flags;
+}
+
+static inline void restore_interrupts(UINT64 flags)
+{
+    if (flags & RFLAGS_INTERRUPT_ENABLE)
+        enable_interrupts();
+}
+
 /* Halt until an interrupt has been handled; called and returning with
    interrupts disabled. Interrupts stay inhibited on the instruction
    boundary after STI (SDM Vol. 2B, STI), so one that became pending after

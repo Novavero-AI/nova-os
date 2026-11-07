@@ -5,6 +5,7 @@
 #include "x86_64.h"
 #include "cpu.h"
 #include "serial.h"
+#include "../sched/thread.h"
 
 #define VECTOR_COUNT 256
 
@@ -104,6 +105,7 @@ void interrupt_dispatch(const INTERRUPT_FRAME *frame)
         break;
     case TIMER_VECTOR:
         apic_timer_interrupt();
+        sched_timer_interrupt();
         break;
     case SPURIOUS_VECTOR:
         /* Never set in the in-service register, so it takes no EOI (SDM
