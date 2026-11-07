@@ -21,6 +21,17 @@
    start a client the server has no room for, fails with
    ERR_NO_RESOURCES (storage.md F17).
 
+   Create: an open's flags are IO_OPEN_ bits. With IO_OPEN_CREATE, a
+   missing last component of the path is created, a file, or a directory
+   with IO_OPEN_DIRECTORY, in a directory that exists; this needs WRITE
+   on the directory the open is sent to, whatever rights are wanted for
+   the endpoint. A node already there is opened, unless IO_OPEN_EXCLUSIVE
+   is set or it is not of the kind the open would create, which fails
+   with ERR_ALREADY_EXISTS. IO_OPEN_EXCLUSIVE and IO_OPEN_DIRECTORY
+   without IO_OPEN_CREATE, and any other bit, fail with
+   ERR_INVALID_ARGS. A server that creates nothing refuses
+   IO_OPEN_CREATE on its own directories.
+
    Read a directory: IO_READ_DIR with offset the cookie, 0 to start, and
    length the entries wanted. The reply's information is the cookie to
    continue from, and IO_DIRECTORY_ENTRYs follow it in bytewise order of
@@ -39,6 +50,41 @@
    and it carries one handle, a section holding the file's bytes from
    its start with SECTION_RIGHT_READ, SECTION_RIGHT_EXECUTE if EXECUTE
    was wanted, and never SECTION_RIGHT_WRITE (F9).
+
+   Write a file: IO_WRITE with offset where and length the bytes, at most
+   IO_TRANSFER_MAX, which follow; the reply's information is the bytes
+   written, all of them. A write past the end extends the file, and the
+   bytes between the old end and offset read as zero. Needs WRITE.
+
+   Truncate a file: IO_TRUNCATE with offset the file's new size and
+   length 0. Bytes past it are dropped; a size past the end extends the
+   file with zeros. Needs WRITE.
+
+   Flush: IO_FLUSH, on a file or a directory, with length 0. The reply
+   comes once every change the volume holds, through any channel, is
+   durable: the server commits its transaction group (F6), and a failed
+   commit is the reply's status. Needs WRITE.
+
+   Remove: IO_REMOVE on a directory with length the path's bytes, which
+   follow; it removes the file or empty directory there. A directory that
+   is not empty fails with ERR_BAD_STATE. Channels already open on the
+   node removed answer ERR_NOT_FOUND from then on. Needs WRITE.
+
+   Rename: IO_RENAME on a directory with offset the bytes of the path
+   moved from and length those of both paths, which follow, from first,
+   then to; both are resolved against the directory, and to's parent must
+   exist. A node already at to fails with ERR_ALREADY_EXISTS, unless
+   flags hold IO_RENAME_REPLACE: then a file replaces a file and a
+   directory an empty directory, in the same step, and any other pair
+   fails with ERR_ALREADY_EXISTS. Moving a directory into itself or below
+   it fails with ERR_INVALID_ARGS; renaming a node to its own path does
+   nothing. Channels open on the node moved stay open on it. Needs
+   WRITE.
+
+   A change by write, truncate, create, remove or rename is seen at once
+   by every channel of the volume, and is durable once a flush that
+   follows it has answered, or the server has committed on its own; a
+   crash keeps every commit whole or none of it (F6).
 
    Publish, replace and unpublish (F4), on the namespace server's own
    directories: IO_PUBLISH, IO_REPLACE or IO_UNPUBLISH with length the
@@ -69,6 +115,21 @@
 #define IO_UNPUBLISH 6
 #define IO_READ 7
 #define IO_GET_SECTION 8
+#define IO_WRITE 9
+#define IO_TRUNCATE 10
+#define IO_FLUSH 11
+#define IO_REMOVE 12
+#define IO_RENAME 13
+
+/* An open's flags: create a missing node, fail if one is there, and
+   create a directory rather than a file. */
+#define IO_OPEN_CREATE 0x1
+#define IO_OPEN_EXCLUSIVE 0x2
+#define IO_OPEN_DIRECTORY 0x4
+#define IO_OPEN_FLAGS (IO_OPEN_CREATE | IO_OPEN_EXCLUSIVE | IO_OPEN_DIRECTORY)
+
+/* A rename's flags: replace the node already at the destination. */
+#define IO_RENAME_REPLACE 0x1
 
 /* The rights a directory or file channel carries, which its server
    records and checks (O8): read a file, write or create, map a file
@@ -111,7 +172,7 @@ typedef struct {
     UINT64 offset;
     UINT32 length;
     UINT32 rights;
-    UINT32 flags; /* none defined: 0 */
+    UINT32 flags; /* IO_OPEN_ or IO_RENAME_ bits; 0 for any other */
     UINT32 reserved;
 } IO_REQUEST;
 
