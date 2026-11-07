@@ -28,8 +28,12 @@ the one nova-nix builds on Windows
 [DESIGN.md](DESIGN.md) holds the principles, the decisions made so far and
 the stages; [design/backgrounds](design/backgrounds/README.md) holds the
 background's prototypes and the check that `gfx/limb.c` draws Limb's
-pixels, and [design/font](design/font/README.md) the console font's
-prototype and the check that `gfx/font.c` draws its glyphs.
+pixels, [design/font](design/font/README.md) the console font's
+prototype and the check that `gfx/font.c` draws its glyphs, and
+[design/text](design/text/README.md) the prototypes of the filled
+outlines and text programs draw with, `lib/outline.c`,
+`lib/typeface.c` and `lib/typeset.c`, and the check that the library
+draws the prototypes' pixels.
 
 ## Build
 

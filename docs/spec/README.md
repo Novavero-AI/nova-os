@@ -732,6 +732,16 @@ revision 52, for Unicode 18.0.0, September 1, 2026 ("UAX #9").
 - Used by: [ui.md](ui.md), for what left-to-right layout leaves out:
   right-to-left text (1) and shaping (3.5).
 
+**Approximate a circle with cubic Bezier curves**, Spencer Mortensen,
+web page, fetched on November 7, 2026, which shows no date.
+
+- Document: <https://spencermortensen.com/articles/bezier-circle/>
+- Access: free web page.
+- sha256: `b7e8894026c882ebbffa3018eb6c495a2f247c37ba1de3c3b0d5806080c948d4`
+- Used by: `lib/outline.c`, for the control points of a quarter circle,
+  its standard approximation, and that approximation's largest radial
+  drift.
+
 ## PCI Express configuration space
 
 The PCI Express Base Specification and the PCI Firmware Specification

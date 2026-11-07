@@ -53,6 +53,13 @@ jobs:
           fi
           [ "$status" -eq 1 ]
 
+      # design/text/compare-freetype.c includes FreeType's headers.
+      - name: Install FreeType's headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libfreetype-dev
+          dpkg-query --show libfreetype-dev
+
       - name: Clang gives no warning
         env:
           CLANG: clang-18

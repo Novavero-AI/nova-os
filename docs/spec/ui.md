@@ -33,9 +33,9 @@ table.
 
 | Layer | Where | What | Used by |
 |---|---|---|---|
-| Pixels | `gfx/` | sRGB and linear light, the strokes, filled outlines ([U2](#u2-the-rasterizer)) | nova-boot, the kernel, the console, the compositor, the renderer |
-| Fonts | `lib/font/` | The font format's reader and a cache of glyph masks ([U3](#u3-fonts)) | The compositor, the renderer |
-| Text | `lib/text/` | UTF-8 to positioned glyphs and lines ([U4](#u4-text-layout)) | The compositor, the renderer |
+| Pixels | `gfx/`, `lib/outline.c` | sRGB and linear light and the strokes in `gfx/`; filled outlines in `lib/outline.c`, mixed with `gfx/`'s sRGB tables ([U2](#u2-the-rasterizer)) | nova-boot, the kernel, the console, the compositor, the renderer |
+| Fonts | `lib/typeface.c` | The font format's reader ([U3](#u3-fonts)), and later a cache of glyph masks | The compositor, the renderer |
+| Text | `lib/typeset.c` | UTF-8 to positioned glyphs and lines ([U4](#u4-text-layout)) | The compositor, the renderer |
 | Values | `lib/value/` | The shell's value encoding, CBOR with the core deterministic encoding ([shell.md L7](shell.md#l7-pipelines), rule 9) | The shell, the HUD, the renderer, programs |
 | Display | `lib/display/` | The display protocol's client ([display.md D5 to D7](display.md#d5-connections-labels-and-layers)) | Every graphical program |
 | Interface | `lib/ui/` | The interface as data: nodes, layout, widgets, themes, drawing and input ([U5](#u5-the-interface-as-data) to [U10](#u10-accessibility)) | The renderer, and login, the powerbox and the HUD in their own processes |
@@ -57,58 +57,79 @@ links a C runtime (`gfx/gfx.h`).
 
 ## U2. The rasterizer
 
-**Proposed.** `gfx/` keeps its strokes, the capsules, rings and arcs of
-the wordmark and the console font, and adds filled outlines.
+**Decided.** `lib/outline.c` fills outlines beside `gfx/`'s strokes,
+the capsules, rings and arcs of the wordmark and the console font, and
+mixes them with `gfx/raster.c`'s sRGB tables, which nova-boot, the
+kernel and the console share. `design/text/README.md` gives its design
+and its checks.
 
 1. **Outlines.** A path is contours of segments, each a line, a
-   quadratic Bezier or a cubic Bezier, in 256ths of a pixel. TrueType's
-   quadratics come with implied points: "Two successive conic 'off'
-   points force the rasterizer to create ... a virtual 'on' point
-   inbetween, at their exact middle" (FreeType, Glyph Conventions,
-   1.a). Cubics are for the theme's icons and for fonts with cubic
+   quadratic Bezier or a cubic Bezier, in 256ths of a pixel, within
+   65,536 pixels of the origin. TrueType's quadratics come with implied
+   points: "Two successive conic 'off' points force the rasterizer to
+   create ... a virtual 'on' point inbetween, at their exact middle"
+   (FreeType, Glyph Conventions, 1.a). Cubics are for rounded
+   rectangles and circles, the theme's icons and fonts with cubic
    outlines (OpenType, `CFF2`).
-2. **Flattening.** A curve is split at its midpoint, in integers, until
-   each piece lies within `FLATNESS` (a sixteenth of a pixel) of its
-   chord, at most `SPLIT_DEPTH_MAX` (16) times, and drawn as lines.
-3. **Nonzero winding.** "A point is considered to be an interior point
-   of a glyph if it has a non-zero winding number" (OpenType, TrueType
-   fundamentals), and Apple TrueType, chapter 1, gives the same rule.
-   Each pixel row is
-   `SUBSCANLINES` (16) rows of samples; on each, the lines' crossings,
-   each with its direction, give the spans where the winding number is
-   not zero, exactly, and each span adds its horizontal extent, in
-   256ths of a pixel, to the pixels it covers. A pixel's total over its
-   sixteen rows is 0 to 4,096, and its coverage is that total times
-   `OUTLINE_COVERAGE_MAX` (255) over 4,096, rounded to the nearest.
+2. **Flattening.** A curve is cut at equal steps of its parameter into
+   the fewest lines, at most 64, that its second difference bounds
+   within a sixteenth of a pixel of it, each point computed in integers
+   and rounded to the nearest 256th.
+3. **Nonzero winding, exact area.** "A point is considered to be an
+   interior point of a glyph if it has a non-zero winding number"
+   (OpenType, TrueType fundamentals), and Apple TrueType, chapter 1,
+   gives the same rule. Each pixel row is cut into slices at every
+   line's ends and at every crossing of two lines within the row; within
+   a slice the lines keep their order across it, so counting their
+   directions from the left gives the winding number between each two,
+   and only the lines where it turns from zero to nonzero, or back,
+   bound what the slice fills. Each of those adds the area to its right
+   within each pixel it passes, and the running sum across the row is
+   each pixel's area inside the outline, exact but for rounding to a
+   256th of a pixel where lines are cut. A pixel's coverage is that
+   area times `OUTLINE_COVERAGE_MAX` (255), rounded to the nearest.
 4. **Linear light.** Coverage scales light, not codes, as the strokes'
    does (`gfx/raster.c`): a pixel an outline covers in part emits that
    share of the ink's light over the rest of the background's, decoded,
    mixed and encoded with the same tables.
-5. **Checked on the host.** A prototype in Python, in the same integer
-   arithmetic, renders every glyph of the font at several sizes, and
-   `design/outline/check-outline.sh` compares the C port's masks with
-   it byte for byte, as `check-limb.sh` and `check-font.sh` do.
+5. **Checked on the host.** A prototype in Python, `design/text/`, in
+   the same integer arithmetic; `design/text/check-text.sh` renders a
+   reference sheet of the approved designs' faces and sizes, rounded
+   rectangles and circles over Limb with the C built for the host and
+   with the prototype, and compares them byte for byte, as
+   `check-limb.sh` and `check-font.sh` do;
+   `design/text/compare-freetype.sh` bounds the text's distance from
+   FreeType's unhinted rendering of the same glyphs.
 
-- **Why exact nonzero on each row:** Inter's TrueType outlines hold
-  composite glyphs whose contours overlap in the same direction (the
-  stroke of U+0141, L with stroke, over its L, measured with fontTools),
-  and "Black filled areas when placed over other black filled areas will
-  remain black" (Apple TrueType, chapter 1); a rule that is exact on
-  every row of samples fills them as the font means.
+- **Why exact area:** Inter's static fonts hold glyphs whose contours
+  overlap in the same direction: in Latin-1, U+00C7, U+00D0, U+00D8,
+  U+00E7 and U+00F8, where a cedilla, a bar or a stroke overlies the
+  letter; beyond it, composites such as U+0141, L with stroke, whose
+  stroke overlies its L (measured with fontTools). "Black filled areas
+  when placed over other black filled areas will remain black" (Apple
+  TrueType, chapter 1). Signed area summed over the same lines covers
+  those five glyphs' overlapping pixels by up to 59 of 255 more, at 26
+  pixels in each of the six static faces measured, while every other
+  Latin-1 glyph differs by at most 1 of 255, its rounding.
 - **Why linear light:** "The correct way of rendering a glyph image on
   a surface is to alpha blend it onto the surface in linear space and
   then apply gamma correction" (FreeType), and the rest of the system
   mixes that way, so text and shapes agree at their edges.
-- **Cost:** sixteen rows of crossings a pixel row, where an exact area
-  computed per pixel takes one pass; text blended in linear light
-  "thins out, making it harder to read" at small sizes (FreeType),
-  which [U4](#u4-text-layout), rule 7, addresses.
-- **Not taken:** the exact area of each pixel accumulated from signed
-  edges in one pass. Its cost is a winding
-  number summed over a pixel rather than tested at each sample, so a
-  pixel half under two overlapping contours counts as fully covered,
-  which Inter's overlapping composites would show at every overlap's
-  edge.
+- **Cost:** a row's crossings come from testing each pair of its
+  lines, and each slice's lines are sorted, so a row of k lines costs
+  k squared tests; each glyph is filled on its own, which keeps k to a
+  glyph's lines across a row. Text blended in linear light "thins out,
+  making it harder to read" at small sizes (FreeType), which
+  [U4](#u4-text-layout), rule 7, addresses.
+- **Not taken:** the signed area of every line summed into each pixel
+  in one pass, its magnitude clamped at a whole pixel, as font-rs,
+  stb_truetype's second rasterizer and FreeType's smooth rasterizer
+  compute coverage. Its cost is the over-coverage above, at every pixel
+  where the edges of two overlapping contours meet. Nonzero winding
+  tested exactly on sixteen rows of samples a pixel row, each span's
+  horizontal extent exact. Its cost is sixteen passes of crossings a
+  row, and an edge's coverage down the row in sixteenths, up to a
+  thirty-second of a pixel from its area.
 
 ## U3. Fonts
 
@@ -205,28 +226,35 @@ be released under the OFL" (OFL FAQ 1.3).
 
 ## U4. Text layout
 
-**Decided** (by the owner): small text, rule 7. **Proposed:** the rest.
+**Decided.**
 
-`lib/text/` turns UTF-8 into positioned glyphs and lines:
+`lib/typeset.c` turns UTF-8 into positioned glyphs and lines, from a
+font `lib/typeface.c` reads:
 
-1. **Decoding.** UTF-8 as RFC 3629 gives it; an ill-formed sequence is
-   U+FFFD.
+1. **Decoding.** UTF-8 as RFC 3629 gives it; each byte that does not
+   start a well-formed sequence is U+FFFD.
 2. **Glyphs.** The font's map gives each code point its glyph, and one
    it does not hold gets glyph 0, the font's missing-glyph shape, as
    `cmap` asks of fonts (OpenType, `cmap`).
 3. **Advances and kerning.** Each glyph advances by its width, and the
    kerning matrix adjusts the advance between each pair of neighbours.
-   Positions are kept in 256ths of a pixel; a glyph's mask is drawn at
-   the nearest quarter pixel across, from a cache of masks per glyph,
-   size and quarter, and at whole pixels down.
+   A line's advances and kerning add up in font units, and each point
+   of each glyph is placed from that exact sum, to a 256th of a pixel,
+   so nothing drifts along a line; the baseline sits on a whole pixel
+   row (rule 4). Each glyph is filled where it stands; a cache of masks would hold one
+   per glyph, size and fraction of a pixel, or round positions to
+   quarters, at most an eighth of a pixel from where they fall.
 4. **Lines.** The line's height is the ascender, descender and line gap,
-   scaled; the baseline sits on a whole pixel. A line breaks at a space,
-   after a hyphen, or, for a word wider than the line, anywhere.
-5. **Alignment and fitting.** Start, centre or end, and a line too long
-   for its box ends in an ellipsis.
-6. **Carets.** A caret stands between code points; the text field moves
-   it by one, and by words at spaces.
-7. **Small text.** Below scale 2
+   scaled and rounded to whole pixels; the baseline sits on a whole
+   pixel. A line breaks at a space, and the spaces at the break go with
+   neither line; a first word wider than the line, with any spaces
+   before it, is a line alone. Breaks after a hyphen, and within a word
+   wider than the line, are to come.
+5. **Alignment and fitting**, to come. Start, centre or end, and a line
+   too long for its box ends in an ellipsis.
+6. **Carets**, to come. A caret stands between code points; the text
+   field moves it by one, and by words at spaces.
+7. **Small text**, to come. Below scale 2
    ([display.md D7](display.md#d7-presenting-and-pacing), rule 5), each
    size's baseline and x-height are snapped to whole pixels, the
    vertical snapping FreeType's light hinting does, and stems are
@@ -637,14 +665,15 @@ action it offers is an nvo command the shell can run.
 
 ## Changes elsewhere
 
-- **`gfx/`:** filled outlines beside the strokes ([U2](#u2-the-rasterizer)).
-- **`lib/`:** `font/`, `text/`, `value/`, `display/` and `ui/`
-  ([U1](#u1-the-layers)).
+- **`lib/`:** `outline.c`, `typeface.c` and `typeset.c`
+  ([U2](#u2-the-rasterizer) to [U4](#u4-text-layout)), then `value/`,
+  `display/` and `ui/` ([U1](#u1-the-layers)).
 - **`tools/`:** `mkfont.c` ([U3](#u3-fonts)).
 - **`include/`:** `font_format.h`; and `ui_protocol.h`, generated from
   the renderer's interface description, as a new service's header is
   ([shell.md L24](shell.md#l24-settings-and-service-commands)).
-- **`design/`:** `outline/`, the rasterizer's prototype and its check.
+- **`design/`:** `text/`, the prototypes of the outlines and the text
+  and their checks.
 - **README.md:** the build fetches Inter's release by its SHA-256 and
   converts it; the font's store path carries Inter's licence.
 - **accounts.md and the first process:** login with `CREATE_JOB` on the
