@@ -209,6 +209,43 @@ otherwise read-only, as the headers are. The image starts at
 links it with `-subsystem=native`, `-e=init_main`, and section and file
 alignments of 4096 and 512 bytes, without `-shared`.
 
+### Startup done
+
+The kernel keeps the boot screen's spinner turning until the first
+process reports that its startup is done, then stops it and fades the
+boot screen into the desktop background (`kernel/main.c`). The first
+process does not end there: it stays as the supervisor of the drivers
+it started ([ipc.md I10](ipc.md#i10-driver-failure-and-restart)).
+
+The report is one message on the first process's bootstrap channel:
+`BOOTSTRAP_DONE_SIZE` (4) bytes, a transaction ID of 0, and no handles
+(`include/native_abi.h`). The kernel keeps its own end of the channel
+open until the report comes, and takes the first message there as the
+report. The first process's endpoint carries `READ`, `WRITE` and `WAIT`
+but not `TRANSFER`, so it can never leave the first process, in a
+message or as another process's bootstrap handle, and no other process
+can report in its place. If the first process's endpoint closes with
+no message, by `handle_close` or because the process ends, the kernel
+logs it, stops the spinner and leaves the boot screen. Either way it
+logs the process's end and exit code if they come.
+
+- **Why the bootstrap channel:** it already joins the kernel and the
+  first process and nothing else, so the report needs no new object or
+  call, and the authority to make it is the handle's, which the kernel
+  confines by leaving out `TRANSFER`. A driver reports to its supervisor
+  on its bootstrap channel the same way
+  ([input.md K3](input.md#k3-the-report-and-the-client)).
+- **Cost:** the kernel holds its end of the channel, a page, until the
+  report, and a first process that closes its endpoint before it
+  reports gets no fade.
+- **Not taken:** an event passed in the bootstrap message, which the
+  first process signals with `object_signal`. Its cost is a handle more
+  in a message whose handles also carry the boot files, so one file
+  fewer and another `BOOT_INFO` layout. A call that only the first
+  process may make: its cost is authority that comes from who the
+  caller is rather than from a handle
+  ([objects.md O6](objects.md#o6-no-ambient-authority)).
+
 ## Entry
 
 ```c

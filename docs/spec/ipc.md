@@ -614,8 +614,13 @@ system (DESIGN.md, principle 2). **Decided:** how.
 
 A supervisor starts each driver in a job of its own, whose limits grant
 the interrupt vectors the driver needs and no more, and keeps the
-driver's resources, initiator and job handles. When the driver's process
-asserts `TERMINATED`:
+driver's resources, initiator and job handles. It waits for all its
+drivers on one port: before it starts a driver it registers a watch of
+the driver's process for `TERMINATED` ([I4](#i4-ports)), so one thread
+hears of every end whenever it comes, at startup or long after. The
+first process is that supervisor for the drivers it starts, for the
+life of the system ([input.md K4](input.md#k4-supervision)). When the
+driver's process asserts `TERMINATED`:
 
 1. The kernel has already closed the driver's handles: its interrupts are
    masked, its pins quarantined, its channels closed.
@@ -624,7 +629,10 @@ asserts `TERMINATED`:
 3. The supervisor resets the device, releases the initiator's quarantine,
    starts a new driver with the same resources, and publishes it again in
    the namespace.
-4. Clients open the device again by name.
+4. Clients open the device again by name. A device not yet published by
+   name gets its new endpoint to its clients through the supervisor, on
+   the channel each client keeps to it, as the input driver's client does
+   ([input.md K3](input.md#k3-the-report-and-the-client)).
 
 The supervisor first clears the function's Bus Master Enable, so it
 starts no DMA while the reset runs. A virtio device's reset is a write
@@ -637,16 +645,38 @@ quarantine needs: a driver "MUST ensure a virtqueue isn't live (by device
 reset) before removing exposed buffers" (3.3.1). A device that does not
 finish its reset keeps its quarantine and gets no new driver.
 
+**Restart policy.** A driver that ends, or does not start, is started
+again unless it was restarted within the last minute; then the
+supervisor gives it up, its function stays stopped, and the system runs
+on without it. A driver that fails on every start therefore runs twice.
+The bound is kept per driver, and holds for a client the supervisor
+starts too (`RESTART_PERIOD_SECONDS` in `init/platform.c`). A driver
+that ends because its work is done, as the block driver does once it
+has read the disk, is not started again; one that ends because the
+client it served failed and was restarted starts again without
+counting a restart of its own, since the client's bound holds that.
+
 - **Why:** everything the dead driver held is released by the kernel's
   ordinary lifetime rules ([objects.md O10](objects.md#o10-object-lifetime));
-  the supervisor needs no cooperation from it.
+  the supervisor needs no cooperation from it. A failure that comes back
+  within a minute of a restart is one a restart does not cure, and
+  starting the driver again would repeat it as fast as the driver can
+  fail, resetting the device each time; a minute is far longer than a
+  driver takes to start and fail, under a second even emulated, and
+  short enough that a fault that comes back only now and then is
+  restarted each time.
 - **Cost:** in-flight requests fail and clients must reopen; a driver that
   fails while its device is mid-transfer depends on the supervisor's reset
-  for the device to be usable again.
+  for the device to be usable again. A driver whose fault recurs within a
+  minute is lost until the next boot, even if a third start would have
+  held.
 - **Not taken:** a supervisor that holds the client channels itself and
   replays outstanding requests to the restarted driver. Its cost is a
   supervisor that tracks every request in flight, and replayed requests
-  that may already have reached the device.
+  that may already have reached the device. Restarting with a growing
+  delay and never giving up: its cost is a driver that can never work
+  restarted for the life of the system, its device reset at each start,
+  and a supervisor that keeps a timer per driver.
 
 ## References
 

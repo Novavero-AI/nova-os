@@ -20,15 +20,18 @@
    configuration space the ACPI MCFG table describes, then the store image's
    and the files' names and sizes (native_abi.h). The root I/O-port resource
    and the framebuffer's section that I6 lists join the message as the
-   kernel implements their calls. The kernel's own end of the channel is
-   closed once the message is written; a message already queued stays
-   readable after its writer closes (I1). The first process itself is not
+   kernel implements their calls. The first process itself is not
    created with PROCESS_OPTION_WRITE_EXECUTE: the root job's handle carries
    the right for it to pass on, and no mapping of its own may be writable
    and executable (O5).
 
-   The kernel then waits for the process to end, logs the exit code
-   process_info reports and closes its handle to the process. */
+   The kernel keeps its own end of the channel until the process reports
+   on it that its startup is done, or closes its end without reporting
+   (docs/spec/boot-protocol.md, Startup done). The process's endpoint
+   lacks TRANSFER, so no other process can ever hold it and report in
+   the first process's place. Later the kernel waits for the process to
+   end, logs the exit code process_info reports and closes its handle to
+   the process. */
 
 #include <stddef.h>
 
@@ -74,6 +77,8 @@ typedef struct {
 #define SELF_RIGHTS                                                   \
     (PROCESS_RIGHT_MAP | PROCESS_RIGHT_CREATE_THREAD | RIGHT_DUPLICATE | \
      RIGHT_TRANSFER | RIGHT_WAIT)
+#define BOOTSTRAP_ENDPOINT_RIGHTS                                     \
+    (CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT)
 #define FILE_RIGHTS (SECTION_RIGHT_READ | RIGHT_DUPLICATE | RIGHT_TRANSFER)
 
 _Static_assert(BOOTSTRAP_HANDLES <= CHANNEL_MAX_HANDLES,
@@ -83,6 +88,9 @@ _Static_assert(sizeof(BOOTSTRAP_BYTES) <= CHANNEL_MAX_BYTES,
 _Static_assert(offsetof(BOOTSTRAP_BYTES, files) ==
                    sizeof(BOOTSTRAP_PLATFORM) + sizeof(BOOTSTRAP_FILE),
                "the names follow the platform record directly");
+
+/* The first process, held from its start until it has ended. */
+static PROCESS *first;
 
 static void fail(const char *what, STATUS status)
 {
@@ -250,10 +258,35 @@ static void send_bootstrap(PROCESS *process, JOB *job, ENDPOINT *kernel_end,
                                             sizeof(BOOTSTRAP_FILE)),
                                handles, count),
           "the bootstrap message was refused");
-    object_close(&kernel_end->object);
 }
 
-void first_process_run(void *boot_info)
+/* The line comes whole, though the process already runs and writes to
+   the log too. */
+static void say_started(const IMAGE *image, UINT64 stack)
+{
+    UINT64 flags = serial_lock();
+
+    serial_write("nova: first process started: image ");
+    serial_hex(image->base);
+    serial_write(" to ");
+    serial_hex(image->end);
+    serial_write(", entry ");
+    serial_hex(image->entry);
+    serial_write(", stack ");
+    serial_hex(stack);
+    serial_write("\r\n");
+    serial_unlock(flags);
+}
+
+static void say_line(const char *line)
+{
+    UINT64 flags = serial_lock();
+
+    serial_write(line);
+    serial_unlock(flags);
+}
+
+int first_process_start(void *boot_info)
 {
     const BOOT_INFO *info = boot_info;
     const BOOT_FILE *init = find_init(info);
@@ -262,8 +295,8 @@ void first_process_run(void *boot_info)
     USER_THREAD *thread;
     ENDPOINT *kernel_end, *process_end;
     IMAGE image;
-    UINT64 stack, flags;
-    UINT32 observed, state, exit_code;
+    UINT64 stack;
+    UINT32 observed;
 
     if (!job)
         fail("no memory for the root job", ERR_NO_MEMORY);
@@ -278,24 +311,31 @@ void first_process_run(void *boot_info)
           "no memory for the bootstrap channel");
     send_bootstrap(process, job, kernel_end, info);
     check(process_start(process, thread, image.entry, stack,
-                        &process_end->object, CHANNEL_RIGHTS, 0),
+                        &process_end->object, BOOTSTRAP_ENDPOINT_RIGHTS, 0),
           "the process did not start");
     object_close(&thread->object);
-    flags = serial_lock();
-    serial_write("nova: first process started: image ");
-    serial_hex(image.base);
-    serial_write(" to ");
-    serial_hex(image.end);
-    serial_write(", entry ");
-    serial_hex(image.entry);
-    serial_write(", stack ");
-    serial_hex(stack);
-    serial_write("\r\n");
-    serial_unlock(flags);
+    first = process;
+    say_started(&image, stack);
+    wait_one(&kernel_end->waitable, CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
+             DEADLINE_INFINITE, &observed);
+    object_close(&kernel_end->object);
+    if (observed & CHANNEL_READABLE) {
+        say_line("nova: first process reports startup done\r\n");
+        return 1;
+    }
+    say_line("nova: first process closed its bootstrap channel without "
+             "reporting startup done\r\n");
+    return 0;
+}
 
-    wait_one(&process->waitable, PROCESS_TERMINATED, DEADLINE_INFINITE,
+void first_process_wait(void)
+{
+    UINT32 observed, state, exit_code;
+    UINT64 flags;
+
+    wait_one(&first->waitable, PROCESS_TERMINATED, DEADLINE_INFINITE,
              &observed);
-    process_info(process, &state, &exit_code);
+    process_info(first, &state, &exit_code);
     flags = serial_lock();
     serial_write("nova: first process ended: process_info reports state ");
     serial_number(state);
@@ -303,5 +343,5 @@ void first_process_run(void *boot_info)
     serial_number(exit_code);
     serial_write("\r\n");
     serial_unlock(flags);
-    object_close(&process->object);
+    object_close(&first->object);
 }

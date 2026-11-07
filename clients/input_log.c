@@ -1,17 +1,17 @@
 /* The input driver's client in the first set, \nova\inputlog.exe: it
-   logs each key event the driver sends (docs/spec/input.md) until the
-   driver closes the endpoint. The platform driver starts it with the
-   endpoint the driver reported. */
+   logs each key event the driver sends (docs/spec/input.md), on each
+   endpoint the platform driver hands it in turn on its bootstrap
+   channel, and ends once the platform driver closes that channel. */
 
 #include "input_protocol.h"
 #include "log.h"
 #include "native.h"
 
-/* It ends with EXIT_DRIVER_GONE once the driver has closed the endpoint
-   and every event queued there is logged, else with EXIT_FAILED. Both lie
-   above the exception vectors a faulting process ends with
-   (docs/spec/objects.md O10). */
-#define EXIT_DRIVER_GONE 100
+/* It ends with EXIT_SUPERVISOR_GONE once the platform driver has closed
+   its bootstrap channel, else with EXIT_FAILED. Both lie above the
+   exception vectors a faulting process ends with (docs/spec/objects.md
+   O10). */
+#define EXIT_SUPERVISOR_GONE 100
 #define EXIT_FAILED 101
 
 /* A message as large as a channel carries, so that one which is not a
@@ -23,20 +23,36 @@ static union {
 
 static RECEIVED_HANDLE handles[CHANNEL_MAX_HANDLES];
 
-/* The endpoint, from the bootstrap message, once the log is open. */
-static UINT32 read_bootstrap(UINT32 bootstrap)
+/* The handle the next message on the bootstrap channel carries, waiting
+   for one, which must be of type; HANDLE_INVALID once the platform
+   driver has closed the channel and none is left. A message of another
+   shape ends the client. */
+static UINT32 take_handle(UINT32 bootstrap, UINT32 type)
 {
-    UINT32 byte_count, handle_count, transaction;
-    RECEIVED_HANDLE received[INPUT_CLIENT_HANDLES];
+    RECEIVED_HANDLE handle;
+    UINT32 transaction, byte_count, handle_count, observed, status;
 
-    if (channel_read(bootstrap, &transaction, sizeof transaction, received,
-                     INPUT_CLIENT_HANDLES, &byte_count, &handle_count) != OK ||
-        handle_count != INPUT_CLIENT_HANDLES ||
-        received[INPUT_CLIENT_HANDLE_EVENTS].type != TYPE_CHANNEL)
-        process_exit(EXIT_FAILED);
-    say_open(received[INPUT_CLIENT_HANDLE_DEBUG_LOG].handle);
-    handle_close(bootstrap);
-    return received[INPUT_CLIENT_HANDLE_EVENTS].handle;
+    for (;;) {
+        status = channel_read(bootstrap, &transaction, sizeof transaction,
+                              &handle, 1, &byte_count, &handle_count);
+        if (status != ERR_SHOULD_WAIT)
+            break;
+        status = object_wait_one(bootstrap,
+                                 CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
+                                 DEADLINE_INFINITE, &observed);
+        if (status != OK)
+            break;
+    }
+    if (status == ERR_PEER_CLOSED)
+        return HANDLE_INVALID;
+    if (status == OK && byte_count == INPUT_CLIENT_MESSAGE_SIZE &&
+        transaction == 0 && handle_count == 1 && handle.type == type)
+        return handle.handle;
+    say("nova-input-log: a message from the platform driver that is not "
+        "the one expected, status ");
+    say_number(status);
+    say("\r\n");
+    process_exit(EXIT_FAILED);
 }
 
 static void say_event(const INPUT_EVENT *event)
@@ -80,12 +96,11 @@ static UINT32 take(UINT32 events)
     return OK;
 }
 
-_Noreturn void input_log_main(UINT32 bootstrap, UINT64 argument)
+/* Log the key events on events until the driver closes it. */
+static void log_events(UINT32 events)
 {
-    UINT32 events = read_bootstrap(bootstrap);
     UINT32 status, observed;
 
-    (void)argument;
     for (;;) {
         status = take(events);
         if (status == ERR_SHOULD_WAIT)
@@ -94,7 +109,7 @@ _Noreturn void input_log_main(UINT32 bootstrap, UINT64 argument)
                                      DEADLINE_INFINITE, &observed);
         if (status == ERR_PEER_CLOSED) {
             say("nova-input-log: the input driver closed the endpoint\r\n");
-            process_exit(EXIT_DRIVER_GONE);
+            return;
         }
         if (status != OK) {
             say("nova-input-log: cannot read a key event, status ");
@@ -103,4 +118,22 @@ _Noreturn void input_log_main(UINT32 bootstrap, UINT64 argument)
             process_exit(EXIT_FAILED);
         }
     }
+}
+
+_Noreturn void input_log_main(UINT32 bootstrap, UINT64 argument)
+{
+    UINT32 log = take_handle(bootstrap, TYPE_RESOURCE);
+    UINT32 events;
+
+    (void)argument;
+    if (log == HANDLE_INVALID)
+        process_exit(EXIT_FAILED);
+    say_open(log);
+    while ((events = take_handle(bootstrap, TYPE_CHANNEL)) !=
+           HANDLE_INVALID) {
+        log_events(events);
+        handle_close(events);
+    }
+    say("nova-input-log: the platform driver closed its channel\r\n");
+    process_exit(EXIT_SUPERVISOR_GONE);
 }

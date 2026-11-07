@@ -10,16 +10,20 @@
    The first virtio block function goes to \nova\virtblk.exe, which reads
    the boot disk and ends. The first virtio input function goes to
    \nova\virtinp.exe, which runs on: once its device is live it reports
-   with an endpoint, and init starts \nova\inputlog.exe, the client that
-   logs the key events the driver sends there (docs/spec/input.md).
+   with an endpoint, which init hands to \nova\inputlog.exe, the client
+   that logs the key events the driver sends there (docs/spec/input.md).
 
-   A driver that does not start, or ends before it has done its work,
-   the block driver without VIRTIO_BLK_EXIT_DONE and the input driver
-   before its report, gets its function stopped: init clears Bus Master
-   Enable, resets the device, releases the initiator's quarantine and
-   starts the driver once more (ipc.md I10). init supervises the input driver only until the
-   report: it ends once its checks are done, and the driver and its
-   client run on with no supervisor. */
+   init supervises the three for the life of the system (ipc.md I10). It
+   waits for them through one port, on which a watch of each one's
+   process queues a packet when it ends, and a watch of the input
+   driver's bootstrap channel one when it reports. One that ends, or does
+   not start, is started again as the restart policy below allows, a
+   driver once init has stopped its function: cleared Bus Master Enable,
+   reset the device and released the initiator's quarantine. The block
+   driver's end with VIRTIO_BLK_EXIT_DONE is the end of its work, and it
+   is not started again. The client keeps its bootstrap channel to init,
+   which hands it each endpoint the input driver reports: the first, and
+   one after each restart of the driver. */
 
 #include "platform.h"
 #include "init.h"
@@ -51,24 +55,55 @@
 
 static const JOB_LIMITS driver_limits = {DRIVER_INTERRUPT_VECTORS};
 
-/* How many times init starts a driver: once, and once more if it fails,
-   since a failure that repeats at once is not one a restart cures. */
-#define DRIVER_STARTS 2
+/* The restart policy (ipc.md I10). A program that ends, or does not
+   start, is started again unless it was restarted within the last
+   RESTART_PERIOD_SECONDS; then it is given up, and a driver's function
+   stays stopped. A failure that comes back that soon after a restart is
+   one a restart does not cure, and starting the program again would
+   only repeat it as fast as the program fails, so a program that fails
+   on every start runs twice. A minute is far longer than a driver takes
+   to start and fail, under a second even emulated, and short enough
+   that a fault that comes back only now and then gets its restart each
+   time. */
+#define RESTART_PERIOD_SECONDS 60
+#define NS_PER_SECOND 1000000000ULL
+#define RESTART_PERIOD_NS (RESTART_PERIOD_SECONDS * NS_PER_SECOND)
 
-/* What init waits for once it has started the input driver: its process
-   to end or its report to come. */
-#define WAIT_DRIVER 0
-#define WAIT_REPORT 1
-#define INPUT_WAITS 2
+/* The port init waits on queues only watches' packets, none of the user
+   packets its capacity counts. */
+#define SUPERVISOR_PORT_CAPACITY 1
 
-/* A driver init starts: what its log lines call it, and its file. */
-typedef struct {
-    const char *name;
-    const char *file;
-} DRIVER;
+/* The client's bootstrap channel queues its bootstrap message and the
+   endpoints it has yet to take: the one from the driver's start and the
+   one from the restart the policy allows within RESTART_PERIOD_SECONDS,
+   should the client take neither meanwhile. */
+#define CLIENT_CHANNEL_CAPACITY 3
 
-static const DRIVER block_driver = {"virtio block driver", BLOCK_FILE};
-static const DRIVER input_driver = {"virtio input driver", INPUT_FILE};
+/* A packet's key: the child's index in bits 7:0, what the watch waits
+   for in bits 15:8, and the child's start number from bit 16 on, so a
+   packet from a watch of an earlier start is told apart. */
+#define KEY_EVENT_SHIFT 8
+#define KEY_START_SHIFT 16
+#define KEY_FIELD_MASK 0xff
+#define EVENT_ENDED 0
+#define EVENT_REPORTED 1
+
+/* What a child does once started: a driver that does its work and ends,
+   one that reports with an endpoint and runs on, or that driver's
+   client. */
+#define KIND_FINISHES 0
+#define KIND_REPORTS 1
+#define KIND_CLIENT 2
+
+/* How a child stands: not started, or not to be; started, with what it
+   was started for still awaited, its end for one that finishes and its
+   report for one that reports; running; done with its work; or given
+   up. */
+#define STATE_STOPPED 0
+#define STATE_STARTING 1
+#define STATE_RUNNING 2
+#define STATE_DONE 3
+#define STATE_GIVEN_UP 4
 
 typedef struct {
     UINT32 requester;
@@ -91,6 +126,51 @@ typedef struct {
 } SEGMENT;
 
 static SEGMENT segment;
+
+/* A program init supervises: what its log lines call it, its file, what
+   it does once started, its function if it is a driver, and how it
+   stands. While it runs, init holds its process, its job if it is a
+   driver, and its end of the program's bootstrap channel, which init
+   keeps for a client, and for a driver that reports until it has.
+   starts numbers its starts, for its packets' keys; restarted is the
+   time of its last restart, if it has had one. client_start, for a
+   driver that reports, is the start of the client its endpoint went to
+   since its own last start, or 0. */
+typedef struct {
+    const char *name;
+    const char *file;
+    UINT32 kind;
+    FUNCTION *function;
+    PCI_DEVICE_BOOTSTRAP device;
+    UINT32 initiator;
+    UINT32 state;
+    UINT32 job, process, channel;
+    UINT32 starts;
+    UINT32 has_restarted;
+    UINT64 restarted;
+    UINT32 client_start;
+} CHILD;
+
+#define CHILD_BLOCK 0
+#define CHILD_INPUT 1
+#define CHILD_CLIENT 2
+#define CHILDREN 3
+
+static FOUND found_functions;
+static CHILD children[CHILDREN] = {
+    [CHILD_BLOCK] = {.name = "virtio block driver",
+                     .file = BLOCK_FILE,
+                     .kind = KIND_FINISHES,
+                     .function = &found_functions.block},
+    [CHILD_INPUT] = {.name = "virtio input driver",
+                     .file = INPUT_FILE,
+                     .kind = KIND_REPORTS,
+                     .function = &found_functions.input},
+    [CHILD_CLIENT] = {.name = "virtio input driver's client",
+                      .file = CLIENT_FILE,
+                      .kind = KIND_CLIENT},
+};
+static UINT32 supervisor_port;
 
 /* Map size bytes of device memory at physical, uncached, into init. */
 static volatile UINT8 *map_device(const PLATFORM *platform, UINT64 physical,
@@ -118,13 +198,22 @@ static void say_function(UINT32 requester, UINT32 vendor, UINT32 id)
     say("\r\n");
 }
 
-static void say_driver(const char *before, const DRIVER *driver,
-                       const char *after)
+static void say_child(const char *before, const CHILD *child,
+                      const char *after)
 {
     say("nova-init: ");
     say(before);
-    say(driver->name);
+    say(child->name);
     say(after);
+}
+
+static void say_status(const char *before, const CHILD *child,
+                       const char *after, UINT32 status)
+{
+    say_child(before, child, after);
+    say(", status ");
+    say_number(status);
+    say("\r\n");
 }
 
 /* Note the function in kind unless one is noted there already. */
@@ -277,21 +366,22 @@ static void size_bars(volatile UINT8 *config, PCI_DEVICE_BOOTSTRAP *device)
     mmio_write16(config + PCI_COMMAND, command);
 }
 
-/* The bootstrap record for function, with its BARs sized, and an
-   initiator for its requester ID. Returns 0, with nothing left open, if
-   the initiator cannot be made. */
-static int prepare(const PLATFORM *platform, const DRIVER *driver,
-                   const FUNCTION *function, PCI_DEVICE_BOOTSTRAP *device,
-                   UINT32 *initiator)
+/* The bootstrap record for child's function, with its BARs sized, and an
+   initiator for its requester ID. Returns 0, logged, with nothing left
+   open, if the initiator cannot be made. */
+static int prepare(const PLATFORM *platform, CHILD *child)
 {
+    const FUNCTION *function = child->function;
+    PCI_DEVICE_BOOTSTRAP *device = &child->device;
+
     size_bars(function->mapped, device);
     device->requester = function->requester;
     device->reserved = 0;
     device->config = function->config;
-    if (initiator_create(platform->dma, function->requester, initiator) ==
-        OK)
+    if (initiator_create(platform->dma, function->requester,
+                         &child->initiator) == OK)
         return 1;
-    say_driver("cannot create the initiator for the ", driver, "\r\n");
+    say_child("cannot create the initiator for the ", child, "\r\n");
     return 0;
 }
 
@@ -346,15 +436,15 @@ static UINT32 driver_handles(const PLATFORM *platform,
 
 /* Log what the driver's resources cover, before it starts, so that the
    line comes whole ahead of the driver's own. */
-static void say_start(const DRIVER *driver, const FUNCTION *function,
-                      const PCI_DEVICE_BOOTSTRAP *device)
+static void say_start(const CHILD *child)
 {
+    const PCI_DEVICE_BOOTSTRAP *device = &child->device;
     UINT32 i;
 
-    say_driver("starting the ", driver, " for ");
-    pci_say_function(function->requester);
+    say_child("starting the ", child, " for ");
+    pci_say_function(child->function->requester);
     say(", with its configuration space at ");
-    say_hex(function->config);
+    say_hex(child->function->config);
     for (i = 0; i < PCI_BARS; i++)
         if (device->bar_size[i]) {
             say(", BAR ");
@@ -366,95 +456,6 @@ static void say_start(const DRIVER *driver, const FUNCTION *function,
             say(" bytes)");
         }
     say(", its MSIs and an initiator with PIN\r\n");
-}
-
-/* A job of its own for a driver, a child of the root job that grants it
-   driver_limits, as I10 has a supervisor do; HANDLE_INVALID, logged, if
-   it cannot be made. */
-static UINT32 driver_job(const PLATFORM *platform)
-{
-    UINT32 job;
-    UINT32 status = job_create(platform->job, &driver_limits, &job);
-
-    if (status == OK)
-        return job;
-    say("nova-init: cannot create a driver's job, status ");
-    say_number(status);
-    say("\r\n");
-    return HANDLE_INVALID;
-}
-
-/* Start driver in job with function's bootstrap message. Returns 1 with
-   its process in *process and init's end of its bootstrap channel in
-   *channel; 0, logged, with nothing left open, if it did not start. */
-static int start_driver(const PLATFORM *platform, const DRIVER *driver,
-                        UINT32 job, const FUNCTION *function,
-                        PCI_DEVICE_BOOTSTRAP *device, UINT32 initiator,
-                        UINT32 *process, UINT32 *channel)
-{
-    HANDLE_TRANSFER handles[PCI_HANDLES_MAX];
-    PROGRAM program;
-    UINT32 theirs, count;
-    UINT32 status = loader_load(job, boot_file(driver->file), &program);
-
-    if (status != OK) {
-        say_driver("cannot load the ", driver, ", status ");
-        say_number(status);
-        say("\r\n");
-        return 0;
-    }
-    count = driver_handles(platform, function, device, program.process,
-                           initiator, handles);
-    if (!count || channel_create(CHANNEL_CAPACITY, channel, &theirs) != OK) {
-        close_handles(handles, count);
-        status = ERR_NO_MEMORY;
-    } else {
-        say_start(driver, function, device);
-        status = channel_write(*channel, device, sizeof *device, handles,
-                               count);
-        if (status != OK)
-            close_handles(handles, count);
-        if (status == OK)
-            status = loader_start(&program, theirs);
-        if (status != OK) {
-            handle_close(theirs);
-            handle_close(*channel);
-        }
-    }
-    if (status != OK) {
-        say_driver("cannot start the ", driver, ", status ");
-        say_number(status);
-        say("\r\n");
-        if (program.thread != HANDLE_INVALID)
-            handle_close(program.thread);
-        handle_close(program.process);
-        return 0;
-    }
-    *process = program.process;
-    return 1;
-}
-
-/* The exit code of driver's process, which a wait that gave status saw
-   terminate; *ended is 0, and the code 0, if init cannot tell that it
-   ended, when it may still run. */
-static UINT32 exit_code_of(const DRIVER *driver, UINT32 process,
-                           UINT32 status, int *ended)
-{
-    UINT32 state = 0, exit_code = 0;
-
-    if (status == OK)
-        status = process_info(process, &state, &exit_code);
-    *ended = status == OK && state == PROCESS_STATE_TERMINATED;
-    if (!*ended) {
-        say_driver("the ", driver, "'s end was not seen, status ");
-        say_number(status);
-        say("\r\n");
-        return 0;
-    }
-    say_driver("", driver, " ended, exit code ");
-    say_number(exit_code);
-    say("\r\n");
-    return exit_code;
 }
 
 /* The function's virtio common configuration structure (VIRTIO 1.4
@@ -531,71 +532,308 @@ static int stop_function(const PLATFORM *platform, FUNCTION *function,
     return 1;
 }
 
-/* Whether driver's file is on the boot volume; logged if not. */
-static int have_file(const DRIVER *driver)
+/* Whether child's file is on the boot volume; logged if not. */
+static int have_file(const CHILD *child)
 {
-    if (boot_file(driver->file))
+    if (boot_file(child->file))
         return 1;
     say("nova-init: no \\nova\\");
-    say(driver->file);
+    say(child->file);
     say(", the ");
-    say(driver->name);
+    say(child->name);
     say("\r\n");
     return 0;
 }
 
-/* ------------------------------------------------------------------------
-   The block driver. */
-
-/* Run the block driver to its end, and once more if it fails. A driver
-   that does not start counts as failed, and its function is stopped
-   before the second start as after a failed run. Returns 1 if it ended
-   with VIRTIO_BLK_EXIT_DONE, or if there is no block function or no
-   driver file; 0 if it failed. */
-static int run_block(const PLATFORM *platform, FUNCTION *function)
+/* Close *handle if it holds one, and leave HANDLE_INVALID there. */
+static void close_if_open(UINT32 *handle)
 {
-    PCI_DEVICE_BOOTSTRAP device;
-    UINT32 initiator, job, process, channel, observed, start;
-    UINT32 exit_code = 0;
-    int ended;
-
-    if (!function->config) {
-        say("nova-init: no virtio block function\r\n");
-        return 1;
-    }
-    if (!have_file(&block_driver))
-        return 1;
-    if (!prepare(platform, &block_driver, function, &device, &initiator))
-        return 0;
-    for (start = 0; start < DRIVER_STARTS; start++) {
-        if (start)
-            say("nova-init: restarting the virtio block driver\r\n");
-        ended = 1;
-        exit_code = 0;
-        job = driver_job(platform);
-        if (job != HANDLE_INVALID) {
-            if (start_driver(platform, &block_driver, job, function, &device,
-                             initiator, &process, &channel)) {
-                handle_close(channel);
-                exit_code = exit_code_of(
-                    &block_driver, process,
-                    object_wait_one(process, PROCESS_TERMINATED,
-                                    DEADLINE_INFINITE, &observed),
-                    &ended);
-                handle_close(process);
-            }
-            handle_close(job);
-        }
-        if (!ended || !stop_function(platform, function, &device, initiator) ||
-            exit_code == VIRTIO_BLK_EXIT_DONE)
-            break;
-    }
-    handle_close(initiator);
-    return exit_code == VIRTIO_BLK_EXIT_DONE;
+    if (*handle != HANDLE_INVALID)
+        handle_close(*handle);
+    *handle = HANDLE_INVALID;
 }
 
 /* ------------------------------------------------------------------------
-   The input driver and its client. */
+   Starting a child. Each start is watched before the process runs, so
+   neither watch can fire at registration: its end through a watch of
+   its process, and a driver's report through a watch of its bootstrap
+   channel. Packets queue in the order their watches fire, and a driver
+   writes its report before it can end, so a report always comes ahead
+   of the end that may follow it. A watch that cannot be registered
+   fails the start, and the process, never started, goes with its
+   handle. */
+
+/* Watch handle for signals through init's port, keyed with child's
+   current start and event. Returns the status, logged if not OK. */
+static UINT32 watch(const CHILD *child, UINT32 handle, UINT32 signals,
+                    UINT32 event)
+{
+    UINT64 key = (UINT64)child->starts << KEY_START_SHIFT |
+                 (UINT64)event << KEY_EVENT_SHIFT |
+                 (UINT64)(child - children);
+    UINT32 status =
+        object_wait_async(handle, supervisor_port, key, signals);
+
+    if (status != OK)
+        say_status("cannot watch the ", child, "", status);
+    return status;
+}
+
+/* A job of its own for a driver, a child of the root job that grants it
+   driver_limits, as I10 has a supervisor do; HANDLE_INVALID, logged, if
+   it cannot be made. */
+static UINT32 driver_job(const PLATFORM *platform)
+{
+    UINT32 job;
+    UINT32 status = job_create(platform->job, &driver_limits, &job);
+
+    if (status == OK)
+        return job;
+    say("nova-init: cannot create a driver's job, status ");
+    say_number(status);
+    say("\r\n");
+    return HANDLE_INVALID;
+}
+
+/* Start child, a driver, in a job of its own with its function's
+   bootstrap message. Returns 1 with its job, its process and, for one
+   that reports, init's end of its bootstrap channel in child; 0, logged,
+   with nothing left open, if it did not start. */
+static int start_driver(const PLATFORM *platform, CHILD *child)
+{
+    HANDLE_TRANSFER handles[PCI_HANDLES_MAX];
+    PROGRAM program;
+    UINT32 job = driver_job(platform);
+    UINT32 mine = HANDLE_INVALID, theirs = HANDLE_INVALID, count = 0;
+    UINT32 status = ERR_NO_MEMORY;
+
+    program.process = HANDLE_INVALID;
+    program.thread = HANDLE_INVALID;
+    if (job != HANDLE_INVALID)
+        status = loader_load(job, boot_file(child->file), &program);
+    if (status == OK) {
+        count = driver_handles(platform, child->function, &child->device,
+                               program.process, child->initiator, handles);
+        status = count ? channel_create(CHANNEL_CAPACITY, &mine, &theirs)
+                       : ERR_NO_MEMORY;
+    }
+    if (status == OK) {
+        say_start(child);
+        status = channel_write(mine, &child->device, sizeof child->device,
+                               handles, count);
+    }
+    if (status != OK)
+        close_handles(handles, count);
+    if (status == OK && child->kind == KIND_REPORTS)
+        status = watch(child, mine, CHANNEL_READABLE, EVENT_REPORTED);
+    if (status == OK)
+        status = watch(child, program.process, PROCESS_TERMINATED,
+                       EVENT_ENDED);
+    if (status == OK)
+        status = loader_start(&program, theirs);
+    if (status != OK) {
+        say_status("cannot start the ", child, "", status);
+        close_if_open(&theirs);
+        close_if_open(&mine);
+        close_if_open(&program.thread);
+        close_if_open(&program.process);
+        close_if_open(&job);
+        return 0;
+    }
+    child->job = job;
+    child->process = program.process;
+    if (child->kind == KIND_REPORTS)
+        child->channel = mine;
+    else
+        handle_close(mine);
+    return 1;
+}
+
+/* Start child, the input driver's client, in the root job with a
+   bootstrap message carrying its debug log, keeping init's end of the
+   channel, on which its endpoints follow (input_protocol.h). Returns 1
+   with its process and that end in child; 0, logged, with nothing left
+   open, if it did not start. */
+static int start_client(const PLATFORM *platform, CHILD *child)
+{
+    HANDLE_TRANSFER log;
+    PROGRAM program;
+    UINT32 mine = HANDLE_INVALID, theirs = HANDLE_INVALID, transaction = 0;
+    UINT32 status =
+        loader_load(platform->job, boot_file(child->file), &program);
+
+    log.handle = HANDLE_INVALID;
+    log.rights = RIGHTS_SAME;
+    if (status == OK)
+        status = resource_create(platform->debug_log,
+                                 SYSTEM_PRIVILEGE_DEBUG_LOG, 1, &log.handle);
+    if (status == OK)
+        status = channel_create(CLIENT_CHANNEL_CAPACITY, &mine, &theirs);
+    if (status == OK)
+        status = channel_write(mine, &transaction, INPUT_CLIENT_MESSAGE_SIZE,
+                               &log, 1);
+    if (status != OK && log.handle != HANDLE_INVALID)
+        handle_close(log.handle);
+    if (status == OK)
+        status = watch(child, program.process, PROCESS_TERMINATED,
+                       EVENT_ENDED);
+    if (status == OK)
+        status = loader_start(&program, theirs);
+    if (status != OK) {
+        say_status("cannot start the ", child, "", status);
+        close_if_open(&theirs);
+        close_if_open(&mine);
+        close_if_open(&program.thread);
+        close_if_open(&program.process);
+        return 0;
+    }
+    child->process = program.process;
+    child->channel = mine;
+    return 1;
+}
+
+/* ------------------------------------------------------------------------
+   The restart policy. */
+
+/* Whether the restart policy lets child be restarted now; if it does,
+   the restart is counted. */
+static int restart_allowed(CHILD *child)
+{
+    UINT64 now;
+
+    if (clock_monotonic(&now) != OK ||
+        (child->has_restarted && now - child->restarted < RESTART_PERIOD_NS))
+        return 0;
+    child->has_restarted = 1;
+    child->restarted = now;
+    return 1;
+}
+
+/* Leave child down for good, with its initiator closed: a driver's
+   function is stopped already or keeps its quarantine (ipc.md I10). A
+   driver that finishes is one of init's checks, which fails without
+   it; the system runs on without any other. */
+static void give_up(CHILD *child, const char *why)
+{
+    child->state = STATE_GIVEN_UP;
+    if (child->initiator != HANDLE_INVALID) {
+        handle_close(child->initiator);
+        child->initiator = HANDLE_INVALID;
+    }
+    say_child("the ", child, " is given up: ");
+    say(why);
+    say(child->kind == KIND_FINISHES ? "\r\n"
+                                     : "; the system runs on without it\r\n");
+}
+
+/* Stop child's function, if it is a driver, once its process has ended
+   or did not start. Returns 1 if there is none or it stopped; 0, with
+   the child given up, if not. */
+static int stopped(const PLATFORM *platform, CHILD *child)
+{
+    if (!child->function ||
+        stop_function(platform, child->function, &child->device,
+                      child->initiator))
+        return 1;
+    give_up(child, "its function did not stop");
+    return 0;
+}
+
+/* Whether child, ended or not started and its function stopped, may
+   start again; logged either way, and given up if not. */
+static int restarting(CHILD *child)
+{
+    if (!restart_allowed(child)) {
+        say_child("the ", child, " is down again within ");
+        say_number(RESTART_PERIOD_SECONDS);
+        say(" s of its restart\r\n");
+        give_up(child, "a restart does not keep it up");
+        return 0;
+    }
+    say_child("restarting the ", child, "\r\n");
+    return 1;
+}
+
+/* Start child, and again while it does not start and the policy allows.
+   A driver that reports is awaited, one that finishes too; a client
+   runs. */
+static void launch(const PLATFORM *platform, CHILD *child)
+{
+    for (;;) {
+        child->starts++;
+        child->client_start = 0;
+        if (child->kind == KIND_CLIENT ? start_client(platform, child)
+                                       : start_driver(platform, child)) {
+            child->state = child->kind == KIND_CLIENT ? STATE_RUNNING
+                                                      : STATE_STARTING;
+            return;
+        }
+        if (!stopped(platform, child) || !restarting(child))
+            return;
+    }
+}
+
+/* ------------------------------------------------------------------------
+   What init does when a packet comes. */
+
+/* The exit code of child's process, which has ended, logged. */
+static UINT32 exit_code_of(const CHILD *child)
+{
+    UINT32 state = 0, exit_code = 0;
+    UINT32 status = process_info(child->process, &state, &exit_code);
+
+    if (status != OK) {
+        say_status("cannot read the end of the ", child, "", status);
+        return 0;
+    }
+    say_child("the ", child, " ended, exit code ");
+    say_number(exit_code);
+    say("\r\n");
+    return exit_code;
+}
+
+/* child's process has ended. A driver's function is stopped first,
+   whatever the end; the block driver's end with VIRTIO_BLK_EXIT_DONE is
+   the end of its work, whose function keeps its quarantine if it does
+   not stop, as any driver's does; the input driver is not started again
+   for a client given up, which would leave each endpoint it reports
+   with nobody to read it. The input driver's end with
+   VIRTIO_INPUT_EXIT_DONE once the client it served has been restarted
+   is the client's failure, not the driver's, and the driver starts
+   again without counting a restart; the client's own policy bounds how
+   often that comes. Any other child starts again as the policy
+   allows. */
+static void ended(const PLATFORM *platform, CHILD *child)
+{
+    UINT32 exit_code = exit_code_of(child);
+
+    close_if_open(&child->process);
+    close_if_open(&child->job);
+    close_if_open(&child->channel);
+    if (child->kind == KIND_FINISHES && exit_code == VIRTIO_BLK_EXIT_DONE) {
+        stop_function(platform, child->function, &child->device,
+                      child->initiator);
+        child->state = STATE_DONE;
+        close_if_open(&child->initiator);
+        return;
+    }
+    if (!stopped(platform, child))
+        return;
+    if (child->kind == KIND_REPORTS &&
+        children[CHILD_CLIENT].state == STATE_GIVEN_UP) {
+        give_up(child, "its client is given up");
+        return;
+    }
+    child->state = STATE_STOPPED;
+    if (child->kind == KIND_REPORTS && exit_code == VIRTIO_INPUT_EXIT_DONE &&
+        child->client_start &&
+        child->client_start != children[CHILD_CLIENT].starts) {
+        say_child("restarting the ", child, " for its restarted client\r\n");
+        launch(platform, child);
+    } else if (restarting(child)) {
+        launch(platform, child);
+    }
+}
 
 /* The client's endpoint from the driver's report, read from channel, if
    the report is the one virtio_input.h gives; else HANDLE_INVALID,
@@ -621,135 +859,142 @@ static UINT32 take_report(UINT32 channel)
     return HANDLE_INVALID;
 }
 
-/* Start the client in the root job with endpoint, which is the client's
-   from then on, or closed if the client does not start. */
-static void start_client(const PLATFORM *platform, UINT32 endpoint)
+/* Hand the client endpoint, from driver, which then is the client's or,
+   if the client cannot take it, closed, so that the driver sees its
+   client gone. */
+static void hand_endpoint(CHILD *driver, UINT32 endpoint)
 {
-    HANDLE_TRANSFER handles[INPUT_CLIENT_HANDLES];
-    PROGRAM program;
-    UINT32 mine, theirs, transaction = 0;
-    UINT32 status =
-        loader_load(platform->job, boot_file(CLIENT_FILE), &program);
+    CHILD *client = &children[CHILD_CLIENT];
+    HANDLE_TRANSFER transfer;
+    UINT32 transaction = 0;
+    UINT32 status = ERR_BAD_STATE;
 
-    handles[INPUT_CLIENT_HANDLE_DEBUG_LOG].handle = HANDLE_INVALID;
-    handles[INPUT_CLIENT_HANDLE_DEBUG_LOG].rights = RIGHTS_SAME;
-    handles[INPUT_CLIENT_HANDLE_EVENTS].handle = endpoint;
-    handles[INPUT_CLIENT_HANDLE_EVENTS].rights = RIGHTS_SAME;
-    if (status == OK)
-        status = resource_create(
-            platform->debug_log, SYSTEM_PRIVILEGE_DEBUG_LOG, 1,
-            &handles[INPUT_CLIENT_HANDLE_DEBUG_LOG].handle);
-    if (status == OK)
-        status = channel_create(CHANNEL_CAPACITY, &mine, &theirs);
+    transfer.handle = endpoint;
+    transfer.rights = RIGHTS_SAME;
+    if (client->state == STATE_RUNNING)
+        status = channel_write(client->channel, &transaction,
+                               INPUT_CLIENT_MESSAGE_SIZE, &transfer, 1);
     if (status == OK) {
-        say("nova-init: the virtio input driver reported; starting its "
-            "client, \\nova\\" CLIENT_FILE "\r\n");
-        status = channel_write(mine, &transaction, sizeof transaction,
-                               handles, INPUT_CLIENT_HANDLES);
-        handle_close(mine);
-        if (status == OK)
-            status = loader_start(&program, theirs);
-        else
-            close_handles(handles, INPUT_CLIENT_HANDLES);
-        if (status != OK)
-            handle_close(theirs);
-    } else {
-        close_handles(handles, INPUT_CLIENT_HANDLES);
+        driver->client_start = client->starts;
+        return;
     }
-    if (program.thread != HANDLE_INVALID)
-        handle_close(program.thread);
-    if (program.process != HANDLE_INVALID)
-        handle_close(program.process);
-    if (status != OK) {
-        say("nova-init: cannot start the input driver's client, status ");
-        say_number(status);
-        say("\r\n");
-    }
+    handle_close(endpoint);
+    say_status("the endpoint reached no ", client, "", status);
 }
 
-/* Wait until the input driver, started as process with init's end of
-   its bootstrap channel in channel, reports or ends, and close channel.
-   Returns 1 once it has reported, with its client started if the report
-   is well formed; 0 once it has ended, or if init cannot tell, with
-   *ended as exit_code_of sets it. */
-static int await_report(const PLATFORM *platform, UINT32 process,
-                        UINT32 channel, int *ended)
+/* child, the input driver, has reported: its endpoint goes to its
+   client, which is started the first time. */
+static void reported(const PLATFORM *platform, CHILD *child)
 {
-    WAIT_ENTRY waits[INPUT_WAITS];
-    UINT32 endpoint;
-    UINT32 status;
+    CHILD *client = &children[CHILD_CLIENT];
+    UINT32 endpoint = take_report(child->channel);
 
-    waits[WAIT_DRIVER].handle = process;
-    waits[WAIT_DRIVER].signals = PROCESS_TERMINATED;
-    waits[WAIT_REPORT].handle = channel;
-    waits[WAIT_REPORT].signals = CHANNEL_READABLE;
-    status = object_wait_many(waits, INPUT_WAITS, DEADLINE_INFINITE);
-    if (status == OK && !(waits[WAIT_DRIVER].observed & PROCESS_TERMINATED)) {
-        endpoint = take_report(channel);
-        handle_close(channel);
-        if (endpoint != HANDLE_INVALID)
-            start_client(platform, endpoint);
-        return 1;
+    close_if_open(&child->channel);
+    child->state = STATE_RUNNING;
+    if (endpoint == HANDLE_INVALID)
+        return;
+    if (client->state == STATE_STOPPED) {
+        say_child("the ", child, " reported; starting its client, \\nova\\");
+        say(client->file);
+        say("\r\n");
+        launch(platform, client);
+    } else if (client->state == STATE_RUNNING) {
+        say_child("the ", child, " reported; its client takes the new "
+                  "endpoint\r\n");
     }
-    handle_close(channel);
-    exit_code_of(&input_driver, process, status, ended);
+    hand_endpoint(child, endpoint);
+}
+
+/* A packet from a watch of a start before the child's current one finds
+   that start's handles closed already, and is passed over. */
+static void handle_packet(const PLATFORM *platform,
+                          const PORT_PACKET *packet)
+{
+    UINT32 index = (UINT32)(packet->key & KEY_FIELD_MASK);
+    UINT32 event = (UINT32)(packet->key >> KEY_EVENT_SHIFT & KEY_FIELD_MASK);
+    CHILD *child;
+
+    if (packet->type != PACKET_SIGNAL || index >= CHILDREN) {
+        say("nova-init: an unexpected packet on the supervisor's port\r\n");
+        return;
+    }
+    child = &children[index];
+    if (packet->key >> KEY_START_SHIFT != child->starts)
+        return;
+    if (event == EVENT_REPORTED && child->channel != HANDLE_INVALID)
+        reported(platform, child);
+    else if (event == EVENT_ENDED && child->process != HANDLE_INVALID)
+        ended(platform, child);
+}
+
+/* Take the packets on init's port as they come until child is no
+   longer starting. Returns OK, or port_wait's status if it fails. */
+static UINT32 supervise_start(const PLATFORM *platform, const CHILD *child)
+{
+    PORT_PACKET packet;
+    UINT32 status = OK;
+
+    while (status == OK && child->state == STATE_STARTING) {
+        status = port_wait(supervisor_port, DEADLINE_INFINITE, &packet);
+        if (status == OK)
+            handle_packet(platform, &packet);
+    }
+    return status;
+}
+
+/* Start child, a driver, if its function and file are there, and wait
+   until it has done what it was started for, or is given up. A missing
+   function or file leaves it stopped, logged. */
+static UINT32 start_up(const PLATFORM *platform, CHILD *child)
+{
+    if (!child->function->config) {
+        say_child("no function for the ", child, "\r\n");
+        return OK;
+    }
+    if (!have_file(child))
+        return OK;
+    if (child->kind == KIND_REPORTS && !have_file(&children[CHILD_CLIENT]))
+        return OK;
+    if (!prepare(platform, child)) {
+        child->state = STATE_GIVEN_UP;
+        return OK;
+    }
+    launch(platform, child);
+    return supervise_start(platform, child);
+}
+
+int platform_start(const PLATFORM *platform)
+{
+    CHILD *block = &children[CHILD_BLOCK];
+    UINT32 status = port_create(SUPERVISOR_PORT_CAPACITY, &supervisor_port);
+
+    scan(platform, &found_functions);
+    if (status == OK)
+        status = start_up(platform, block);
+    if (status == OK && block->state == STATE_GIVEN_UP)
+        return 0;
+    if (status == OK)
+        status = start_up(platform, &children[CHILD_INPUT]);
+    if (status == OK)
+        return 1;
+    say("nova-init: cannot supervise, status ");
+    say_number(status);
+    say("\r\n");
     return 0;
 }
 
-/* Start the input driver, and once more if it ends before it reports or
-   does not start, its function stopped between the two as for the block
-   driver; once it reports, start its client with the endpoint it gave.
-   init's handles to the driver's process, job and initiator close
-   then, and with them its supervision. */
-static void run_input(const PLATFORM *platform, FUNCTION *function)
+UINT32 platform_supervise(const PLATFORM *platform)
 {
-    PCI_DEVICE_BOOTSTRAP device;
-    UINT32 initiator, job, process, channel, start;
-    int ended, reported = 0;
+    PORT_PACKET packet;
+    UINT32 status, i;
 
-    if (!function->config) {
-        say("nova-init: no virtio input function\r\n");
-        return;
+    for (i = 0; i < CHILDREN; i++)
+        if (children[i].state == STATE_RUNNING)
+            say_child("supervising the ", &children[i], "\r\n");
+    for (;;) {
+        status = port_wait(supervisor_port, DEADLINE_INFINITE, &packet);
+        if (status != OK)
+            return status;
+        handle_packet(platform, &packet);
     }
-    if (!have_file(&input_driver))
-        return;
-    if (!boot_file(CLIENT_FILE)) {
-        say("nova-init: no \\nova\\" CLIENT_FILE ", the input driver's "
-            "client\r\n");
-        return;
-    }
-    if (!prepare(platform, &input_driver, function, &device, &initiator))
-        return;
-    for (start = 0; start < DRIVER_STARTS && !reported; start++) {
-        if (start)
-            say("nova-init: restarting the virtio input driver\r\n");
-        ended = 1;
-        job = driver_job(platform);
-        if (job != HANDLE_INVALID) {
-            if (start_driver(platform, &input_driver, job, function, &device,
-                             initiator, &process, &channel)) {
-                reported = await_report(platform, process, channel, &ended);
-                handle_close(process);
-            }
-            handle_close(job);
-        }
-        if (!reported &&
-            (!ended || !stop_function(platform, function, &device, initiator)))
-            break;
-    }
-    handle_close(initiator);
-    if (!reported)
-        say("nova-init: the virtio input driver never reported; the system "
-            "runs on without it\r\n");
-}
-
-int platform_run(const PLATFORM *platform)
-{
-    FOUND found;
-    int block;
-
-    scan(platform, &found);
-    block = run_block(platform, &found.block);
-    run_input(platform, &found.input);
-    return block;
 }

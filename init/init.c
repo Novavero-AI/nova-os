@@ -5,20 +5,21 @@
    to the cases their contracts name, starts the store service and the
    namespace server and runs a test program from /store (store.c), runs
    stage0-pe32's chain from its seed as 32-bit processes when the boot
-   volume holds the chain's inputs (chain.c), starts the virtio block
-   driver as the platform driver (platform.c), and exits with
-   EXIT_CHECKS_PASSED, which the kernel reads with process_info and
-   logs.
+   volume holds the chain's inputs (chain.c), and starts the virtio
+   drivers as the platform driver (platform.c). Then it reports to the
+   kernel on its bootstrap channel that its startup is done
+   (docs/spec/boot-protocol.md, Startup done), and runs on as the
+   drivers' supervisor (ipc.md I10).
    A failed check is logged, if the log is reachable, and ends the
-   process with EXIT_CHECK_FAILED. */
+   process with EXIT_CHECK_FAILED, with no report, which the kernel reads
+   with process_info and logs; so does EXIT_SUPERVISION_FAILED, if
+   waiting for the drivers fails. */
 
 #include "init.h"
 #include "platform.h"
 
-/* A nonzero code, so that the kernel's log shows the value process_exit
-   passed and not a default. */
-#define EXIT_CHECKS_PASSED 42
 #define EXIT_CHECK_FAILED 1
+#define EXIT_SUPERVISION_FAILED 2
 
 /* The key of the watches check_watches registers. */
 #define CHECK_KEY 1
@@ -48,6 +49,9 @@ typedef struct {
    on, never write. */
 #define BOOT_SECTION_RIGHTS                                               \
     (SECTION_RIGHT_READ | RIGHT_DUPLICATE | RIGHT_TRANSFER)
+
+/* channel_write needs a valid array even for no handles. */
+static const HANDLE_TRANSFER no_handles[1];
 
 static UINT32 debug_log = HANDLE_INVALID;
 static UINT32 self = HANDLE_INVALID;
@@ -142,7 +146,7 @@ static void take_section(const RECEIVED_HANDLE *handle,
    leaves it queued and reports how much it holds; that read whole it
    holds them in that order, with the platform record and a name and size
    for the store image and each file; and that once it is read the queue
-   is empty and the kernel's end closed. */
+   is empty and the kernel's end still open, for the startup report. */
 static UINT32 read_bootstrap(UINT32 bootstrap)
 {
     BOOTSTRAP_FILE *names = bytes.names;
@@ -184,20 +188,23 @@ static UINT32 read_bootstrap(UINT32 bootstrap)
                      &files[file_count++]);
     check(channel_read(bootstrap, &bytes, sizeof bytes, handles,
                        BOOTSTRAP_HANDLES, &byte_count,
-                       &handle_count) == ERR_PEER_CLOSED,
-          "a drained bootstrap channel is not peer-closed");
+                       &handle_count) == ERR_SHOULD_WAIT,
+          "a drained bootstrap channel is not empty and open");
     return handles[BOOTSTRAP_JOB].handle;
 }
 
 /* Each call checks its handle's value, type and rights in that order
    (docs/spec/objects.md O3), then its buffer, which must lie in user
-   memory and be mapped (docs/spec/syscalls.md S6). No mapping of init's
-   is writable and executable, nor may be: the kernel did not create it
+   memory and be mapped (docs/spec/syscalls.md S6). The bootstrap
+   endpoint cannot leave init, since it lacks TRANSFER, so no other
+   process can make init's startup report. No mapping of init's is
+   writable and executable, nor may be: the kernel did not create it
    with PROCESS_OPTION_WRITE_EXECUTE (O5). */
 static void check_errors(UINT32 bootstrap)
 {
     static const char line[] = "-";
-    UINT32 state, exit_code, section;
+    HANDLE_TRANSFER transfer;
+    UINT32 state, exit_code, section, mine, theirs, transaction = 0;
 
     check(debug_write(bootstrap, line, 1) == ERR_WRONG_TYPE,
           "debug_write took a channel");
@@ -213,8 +220,15 @@ static void check_errors(UINT32 bootstrap)
     check(debug_write(debug_log, line, DEBUG_WRITE_MAX_BYTES + 1) ==
               ERR_OUT_OF_RANGE,
           "debug_write took more than DEBUG_WRITE_MAX_BYTES");
-    check(handle_close(bootstrap) == OK, "the bootstrap handle did not close");
-    check(handle_close(bootstrap) == ERR_BAD_HANDLE,
+    check(channel_create(1, &mine, &theirs) == OK, "channel_create failed");
+    transfer.handle = bootstrap;
+    transfer.rights = RIGHTS_SAME;
+    check(channel_write(mine, &transaction, sizeof transaction, &transfer,
+                        1) == ERR_ACCESS_DENIED,
+          "the bootstrap endpoint moved in a message");
+    check(handle_close(mine) == OK && handle_close(theirs) == OK,
+          "a channel did not close");
+    check(handle_close(mine) == ERR_BAD_HANDLE,
           "a closed handle closed again");
     check(debug_write(HANDLE_INVALID, line, 1) == ERR_BAD_HANDLE,
           "HANDLE_INVALID named a handle");
@@ -259,6 +273,18 @@ static void check_watches(void)
     handle_close(port);
 }
 
+/* Report to the kernel that startup is done, and close the channel,
+   which has nothing more to carry. */
+static void report_startup_done(UINT32 bootstrap)
+{
+    UINT32 transaction = 0;
+
+    check(channel_write(bootstrap, &transaction, BOOTSTRAP_DONE_SIZE,
+                        no_handles, 0) == OK,
+          "the kernel took no startup report");
+    handle_close(bootstrap);
+}
+
 static void check_clock(void)
 {
     UINT64 first, second;
@@ -270,7 +296,7 @@ static void check_clock(void)
 
 _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
 {
-    UINT32 job;
+    UINT32 job, status;
 
     (void)argument;
     job = read_bootstrap(bootstrap);
@@ -281,7 +307,12 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     check(store_run(job, debug_log, &store_image),
           "the test program did not pass from /store");
     check(chain_run(job), "the seed chain did not build nova-nix's links");
-    check(platform_run(&platform), "the virtio block driver failed");
+    check(platform_start(&platform), "the platform driver's startup failed");
     say("nova-init: checks passed\r\n");
-    process_exit(EXIT_CHECKS_PASSED);
+    report_startup_done(bootstrap);
+    status = platform_supervise(&platform);
+    say("nova-init: supervision stopped, status ");
+    say_number(status);
+    say("\r\n");
+    process_exit(EXIT_SUPERVISION_FAILED);
 }

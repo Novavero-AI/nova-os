@@ -229,6 +229,15 @@
 #define BOOT_FILES_MAX (CHANNEL_MAX_HANDLES - BOOTSTRAP_FIRST_FILE)
 #define BOOT_FILE_NAME_SIZE 32
 
+/* The first process reports that its startup is done with one message
+   on its bootstrap channel: BOOTSTRAP_DONE_SIZE bytes, a transaction ID
+   of 0 (ipc.md I3), and no handles. The kernel holds the channel's other
+   end until the report comes, and the first process's endpoint carries
+   CHANNEL_RIGHT_READ, CHANNEL_RIGHT_WRITE and RIGHT_WAIT but not
+   RIGHT_TRANSFER, so it never leaves the first process
+   (docs/spec/boot-protocol.md, Startup done). */
+#define BOOTSTRAP_DONE_SIZE 4
+
 /* The most bytes one debug_write writes. The kernel copies them all
    before it writes any, so a call that fails on its buffer writes
    nothing (S7). */

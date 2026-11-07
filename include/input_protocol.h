@@ -29,11 +29,15 @@ typedef struct {
 
 _Static_assert(sizeof(INPUT_EVENT) == 24, "one layout on every target");
 
-/* A client's bootstrap message from the platform driver: a transaction
-   ID of 0 and two handles, the debug log and the endpoint it reads key
-   events from. */
-#define INPUT_CLIENT_HANDLE_DEBUG_LOG 0
-#define INPUT_CLIENT_HANDLE_EVENTS 1
-#define INPUT_CLIENT_HANDLES 2
+/* What the platform driver sends a client on its bootstrap channel,
+   which it keeps open while it supervises the client: messages of
+   INPUT_CLIENT_MESSAGE_SIZE bytes, a transaction ID of 0, and one handle
+   each. The first, the bootstrap message, carries the debug log; each
+   after it an endpoint to read key events from, as the driver reported
+   it, one once the driver has first reported and one after each
+   restart of the driver. The client takes the next endpoint once the
+   one it reads reports PEER_CLOSED, and ends once the platform driver
+   closes the channel. */
+#define INPUT_CLIENT_MESSAGE_SIZE 4
 
 #endif

@@ -7,24 +7,27 @@ seed and compared.
 
 It boots in a UEFI virtual machine. nova-boot, the loader, draws the boot
 screen, loads the kernel from `\nova\kernel.exe` and reads the other files
-in `\nova\`, the first process's `init.exe` and the store image among them,
-exits the firmware's boot services and jumps to the kernel, which runs the
-first process in user mode, reports itself and the process's exit code on
-the first serial port and, once started, fades the boot screen into the
-desktop background. The first process starts the store service and the
-namespace server from the store image as user-mode processes, publishes the
-store as `/store`, and runs a test program from `/store` with a view of its
-own closure and nothing else ([docs/spec/storage.md](docs/spec/storage.md),
-F16). From the test disk, which holds the inputs of stage0-pe32's chain,
-the first process runs the bootstrap check: the chain, from its hex0 seed
-to M1, as 32-bit Windows programs, with each link checked against the one
-nova-nix builds on Windows ([docs/spec/compat.md](docs/spec/compat.md)). It
-then enumerates PCI and starts the virtio block driver, `virtblk.exe`, as a
-user-mode process of its own, which reads the boot disk's partition table
-and the EFI System Partition's boot sector through its virtqueue, and
-the virtio input driver, `virtinp.exe`, which sends each key pressed and
-released as a message to a client, `inputlog.exe`, that logs it
-([docs/spec/input.md](docs/spec/input.md)).
+in `\nova\`, the first process's `init.exe` and the store image among
+them, exits the firmware's boot services and jumps to the kernel, which
+runs the first process in user mode, reports itself on the first serial
+port and, once the first process reports that its startup is done, fades
+the boot screen into the desktop background. The first process starts the
+store service and the namespace server from the store image as user-mode
+processes, publishes the store as `/store`, and runs a test program from
+`/store` with a view of its own closure and nothing else
+([docs/spec/storage.md](docs/spec/storage.md), F16). From the test disk,
+which holds the inputs of stage0-pe32's chain, the first process runs the
+bootstrap check: the chain, from its hex0 seed to M1, as 32-bit Windows
+programs, with each link checked against the one nova-nix builds on
+Windows ([docs/spec/compat.md](docs/spec/compat.md)). It then enumerates
+PCI and starts the virtio block driver, `virtblk.exe`, as a user-mode
+process of its own, which reads the boot disk's partition table and the
+EFI System Partition's boot sector through its virtqueue, and the virtio
+input driver, `virtinp.exe`, which sends each key pressed and released as
+a message to a client, `inputlog.exe`, that logs it
+([docs/spec/input.md](docs/spec/input.md)). It stays as their supervisor,
+and restarts a driver or client that ends
+([docs/spec/ipc.md](docs/spec/ipc.md), I10).
 [DESIGN.md](DESIGN.md) holds the principles, the decisions made so far and
 the stages; [design/backgrounds](design/backgrounds/README.md) holds the
 background's prototypes and the check that `gfx/limb.c` draws Limb's
@@ -149,11 +152,11 @@ build gives the same bytes:
 | Image | Size | sha256 |
 |---|---|---|
 | `BOOTX64.EFI` | 29,184 | `4a30a01cfd4237a0de0be3d693e5231fcdfc4ff050e65ca81bd262b89eed8228` |
-| `kernel.exe` | 203,264 | `695afc2a1178db369edfa169b9434f0f63727571e669ac8171e1d580c96872da` |
-| `init.exe` | 72,704 | `edb9ffd9b9ddb8c4c589d108db3e39f51029e5fd1c57058208cb836998261a1b` |
+| `kernel.exe` | 203,264 | `7f0a6fc89c836835fcb7ed4433723e3b1ccbc3f50cf4aedff4b1bcf33ce88fdd` |
+| `init.exe` | 75,776 | `227f7d7266c92c0edf86ef700c001b046bfb01b3d35d31e69366f5999911cacc` |
 | `virtblk.exe` | 15,872 | `a8eeec9d33961612a7b6a8dd5def8b9f5484ed438b07dad934c34727868cd7d0` |
 | `virtinp.exe` | 15,872 | `6eeae2fd7f9aa438f70d64b15875303de4c8a742a833d0a0da8dfd2af6258993` |
-| `inputlog.exe` | 5,632 | `6af5774a4870b83978b5a63f6a5413252d681a69c8a87216725eef54f2491f32` |
+| `inputlog.exe` | 5,632 | `72709de645045f1a2b3221f764b013756d870e28437db31bf43bbb51f6079032` |
 | `ntdll.dll` | 10,240 | `9a43b4e3b773c1b5a3b6eb541fd0de9c3f3675d2867d1193b707118648853d10` |
 | `store.exe` | 28,160 | `6c2004434bd1aa91c9e797d04398c8baf6353bbb7541687c2fd8c763d7a226a1` |
 | `namespace.exe` | 10,752 | `82b0360f1e11f9c0a36256ab6bfd14c1b11bdacf561d06b33c7a1074229ae026` |
@@ -275,10 +278,10 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `478e755060d4a4a93f40a69419584b042db6918acaae4b52c0b6aa3ad4156378` |
-| `disk.vhdx` | 71,303,168 | `454f4a34b66bcf964ecde74ef429794ef25f26264f49c4a28428e5b5e2783d81` |
-| `chain.img` | 67,108,864 | `c29e8717181e64c862c83c32ecdc22a0ebc98273dfcc4939c86c7756b64f6e6c` |
-| `chain.vhdx` | 71,303,168 | `c3fd64abba406126315a5f6f2da43f4ae2b806b1db90809f354975789d076a7f` |
+| `disk.img` | 67,108,864 | `e7951141cb1e413499cf9f05095cd7c4b8116c5cbb09fbd1018885dd48265690` |
+| `disk.vhdx` | 71,303,168 | `52a705d4175fc8655460cda0342ef84b35d9aea7821b9ebaaffa83fe7d728dbc` |
+| `chain.img` | 67,108,864 | `fb6602c72ea289b7a177fc3e81505e082c639fb354e4e5477e7e76de3850a49f` |
+| `chain.vhdx` | 71,303,168 | `dc60cc50933cc8fad2385131756b7bdb07fa7d956a53ead67f0e9e9f74f27f03` |
 
 ## Run
 
@@ -299,14 +302,15 @@ qemu-system-x86_64 -machine q35 -m 256M \
 The kernel prints its lines to the terminal through the serial port,
 among them the first process's and the test program's from `/store`,
 which say `nova-hello: checks passed`,
-`nova-init: the bootstrap check is not on this disk` and end with
-`nova-init: checks passed`.
+`nova-init: the bootstrap check is not on this disk` and
+`nova-init: checks passed`, after which the kernel says
+`nova: first process reports startup done` and fades into the desktop.
 
 For the bootstrap check, boot `chain.img` in place of `disk.img`. The
 first process then gives the size and sha256 of what each of the
 chain's 20 steps wrote, each link's the one nova-nix pins, and says
 `nova-init: the chain built nova-nix's hex0, hex1, hex2, catm, M0,
-cc_x86, M2 and M1` before it ends with `nova-init: checks passed`.
+cc_x86, M2 and M1` before `nova-init: checks passed`.
 Under QEMU's emulation, without hardware acceleration, the chain takes
 about 11 minutes on an Apple M2. With `format=vhdx`, the same drive
 boots `disk.vhdx` or `chain.vhdx`.

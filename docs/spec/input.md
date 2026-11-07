@@ -4,7 +4,7 @@ How a key press reaches a process: the virtio input driver
 (`drivers/virtio_input.c`), the messages it sends its client
 (`include/input_protocol.h`), its report to the platform driver
 (`drivers/virtio_input.h`), and how the platform driver, the first
-process, starts and supervises it (`init/platform.c`).
+process, starts and supervises it and its client (`init/platform.c`).
 
 Specifications are cited by the versions in [README.md](README.md):
 "VIRTIO 1.4" by section, and "evdev" for the Linux input documents
@@ -120,16 +120,28 @@ closes the channel, which destroys the endpoint, and the driver's watch
 finds the client gone and stops it (K2).
 
 The platform driver starts the client, `\nova\inputlog.exe`, in the root
-job with a bootstrap message of 4 bytes, a transaction ID of 0, and two
-handles: the debug log and the endpoint. The client logs each key event
-as `nova-input-log: key` *code* `pressed`, `released` or `repeated at`
-*time* `ns`, and exits once the driver has closed the endpoint.
+job when the driver first reports, and keeps its end of the client's
+bootstrap channel for as long as it supervises the client. Every
+message on that channel is 4 bytes, a transaction ID of 0, and one
+handle: the first, the bootstrap message, carries the debug log; each
+after it carries an endpoint, as the driver reported it, one for the
+driver's first report and one for each report after a restart (K4).
+The client logs each key event on its endpoint as `nova-input-log: key`
+*code* `pressed`, `released` or `repeated at` *time* `ns`. Once the
+driver has closed the endpoint and every event queued there is logged,
+the client takes the next endpoint from the channel, waiting for one,
+and exits once the platform driver has closed the channel.
 
 - **Why the driver creates the endpoint:** it is the driver's service,
   passed to clients through its supervisor, as
   [ipc.md I10](ipc.md#i10-driver-failure-and-restart) has a supervisor
   publish a driver; every PCI device driver keeps the same bootstrap
   message.
+- **Why the client keeps its channel:** a restarted driver serves a new
+  endpoint, and the client's channel to its supervisor is how it gets
+  one, the way the driver's report reaches the supervisor, until the
+  namespace publishes the device by name
+  ([ipc.md I10](ipc.md#i10-driver-failure-and-restart), step 4).
 - **Not taken:** the platform driver creating the channel and passing an
   end in the driver's bootstrap message. Its cost is a bootstrap message
   that differs for one driver, and an endpoint that exists before
@@ -139,36 +151,36 @@ as `nova-input-log: key` *code* `pressed`, `released` or `repeated at`
 
 **Decided.**
 
-The platform driver waits for the report or for the driver's process to
-assert `TERMINATED`. If the process ends first, or the driver does not
-start, it stops the function as
-[ipc.md I10](ipc.md#i10-driver-failure-and-restart) gives, clearing
-Bus Master Enable, resetting the device and releasing the initiator's
-quarantine, and starts the driver once more. Once the report has come it
-starts the client and closes its handles to the driver's process, job
-and initiator.
+The platform driver supervises the driver and its client for the life
+of the system, as [ipc.md I10](ipc.md#i10-driver-failure-and-restart)
+describes. It waits on one port, with a watch of each one's process for
+`TERMINATED` and of the driver's bootstrap channel for its report.
+Startup waits for the report, or for the driver to be given up; the
+first process then reports that its startup is done
+([boot-protocol.md](boot-protocol.md#startup-done)), and the fade into
+the desktop does not wait for a key.
 
-The first process ends once its checks are done, and the kernel runs
-its thread self-test and the fade into the desktop only after that
-(`kernel/main.c`). From then the driver and its client run with no
-supervisor: a driver that fails is not restarted, its pins stay
-quarantined for the life of the system ([ipc.md I8](ipc.md#i8-dma)),
-and its client sees `PEER_CLOSED` and exits.
+When the driver ends, whatever its exit code, or does not start, the
+platform driver stops the function as I10 gives, clearing Bus Master
+Enable, resetting the device and releasing the initiator's quarantine,
+and starts the driver again under I10's restart policy. The client,
+which saw `PEER_CLOSED`, takes the endpoint the new driver reports
+(K3). When the client ends it is started again under the same policy,
+and waits for an endpoint; its driver, whose watch saw the old endpoint
+close, ends and is restarted with it, without counting a restart of its
+own, so that a client's failure soon after the driver's own restart
+does not give the driver up. A driver whose client has been given up
+is not restarted, since nothing would read its endpoint.
 
-- **Why:** the boot finishes whether or not a key is ever pressed, and
-  the device's bring-up, the part with the most to go wrong, is
-  supervised.
-- **Cost:** no restart after the boot. A driver that dies then leaves
-  its device live, bus mastering on and its MSI-X entry naming a vector
-  the kernel frees, so whichever interrupt takes the vector next gets
-  spurious packets ([ipc.md I7](ipc.md#i7-interrupts)). The driver and
-  its client also run during the kernel's thread self-test, which counts
-  free pages on the assumption that no other thread allocates or frees
-  any, and halts the system on a mismatch (`kernel/sched/sched_test.c`);
-  a key event's message holds pages, as does the client's bootstrap
-  message, which the client frees when it first runs, so either falling
-  in that window halts the boot.
-- **Not taken:** the platform driver supervising the input driver for
-  the life of the system, as I10 describes. Its cost today is a boot
-  that never reaches the self-test and the fade, since the kernel waits
-  for the first process to end.
+- **Why:** a driver can fail at any time, not only while it starts;
+  unsupervised, one that died after startup would leave its device
+  live, bus mastering on and its MSI-X entry naming a vector the kernel
+  frees ([ipc.md I7](ipc.md#i7-interrupts)), and the keyboard dead
+  until the next boot.
+- **Cost:** a restart loses the events queued for the old endpoint and
+  any the device took while no driver ran; a client that ends takes its
+  driver down with it.
+- **Not taken:** keeping the driver running across its client's end and
+  having it serve a new endpoint. Its cost is a second protocol between
+  driver and supervisor for endpoints after the report, where the
+  restart reuses the one there is.

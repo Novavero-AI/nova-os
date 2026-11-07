@@ -10,9 +10,10 @@
    ACPI tables; starts its clock, the scheduler and the timer; seeds the
    random number generator; starts a thread that keeps the boot screen's
    spinner turning and a startup thread that tests the kernel's objects
-   and threads, runs the first user process, then stops the spinner and
-   fades the boot screen into the desktop background; and becomes the
-   idle thread. */
+   and threads, starts the first user process and, once it reports that
+   its startup is done, stops the spinner and fades the boot screen into
+   the desktop background, then logs the process's end if it ever comes;
+   and becomes the idle thread. */
 
 #include "background.h"
 #include "boot_info.h"
@@ -31,13 +32,14 @@
 #define FRAME_MS 33
 #define BYTES_PER_MIB (1024 * 1024)
 
-/* Signalled by the startup thread when startup has finished; the
-   spinner stops on it. */
-#define STARTUP_DONE USER_SIGNAL(0)
+/* Signalled by the startup thread once the first process has reported
+   that its startup is done, or cannot report it any more; the spinner
+   stops on it. */
+#define SPINNER_STOP USER_SIGNAL(0)
 
 static THREAD spinner_thread;
 static THREAD startup_thread;
-static EVENT startup_done;
+static EVENT spinner_stop;
 
 static void serial_mib(UINT64 pages)
 {
@@ -82,7 +84,7 @@ static void check_boot_info(const BOOT_INFO *info)
 }
 
 /* A frame every FRAME_MS, on absolute deadlines, so that a late frame
-   does not delay the ones after it, until startup is done. */
+   does not delay the ones after it, until it is told to stop. */
 static void spin(void *argument)
 {
     BOOT_INFO *info = argument;
@@ -92,30 +94,36 @@ static void spin(void *argument)
     for (;;) {
         gfx_spinner_step(&info->screen, &info->spinner);
         next += FRAME_MS * NS_PER_MS;
-        if (wait_one(&startup_done.waitable, STARTUP_DONE, next,
+        if (wait_one(&spinner_stop.waitable, SPINNER_STOP, next,
                      &observed) == OK)
             return;
     }
 }
 
-/* Test the kernel's objects and threads, run the first process to its
-   end, then stop the spinner and, once its thread has ended so that
-   nothing else draws, fade into the desktop background. The thread
-   self-test counts free pages, so no other thread may allocate or free
-   any while it runs; it runs before the first process, since processes
-   that process starts, such as drivers, outlive it. */
+/* Test the kernel's objects and threads and start the first process.
+   Once it has reported that its startup is done, stop the spinner and,
+   once its thread has ended so that nothing else draws, fade into the
+   desktop background; if it closed its bootstrap channel without the
+   report, stop the spinner and leave the boot screen. The first process
+   then runs on as the supervisor (docs/spec/ipc.md I10), and the thread
+   logs its end if it comes. The thread self-test counts free pages, so
+   no other thread may allocate or free any while it runs; it runs
+   before the first process, since the processes it starts run on. */
 static void startup(void *argument)
 {
     BOOT_INFO *info = argument;
     UINT32 observed;
+    int started;
 
     object_self_test(info);
     sched_self_test(&spinner_thread);
-    first_process_run(info);
-    event_signal(&startup_done, 0, STARTUP_DONE);
+    started = first_process_start(info);
+    event_signal(&spinner_stop, 0, SPINNER_STOP);
     wait_one(&spinner_thread.waitable, THREAD_TERMINATED, DEADLINE_INFINITE,
              &observed);
-    background_fade_in(info);
+    if (started)
+        background_fade_in(info);
+    first_process_wait();
 }
 
 static void start_clock(UINT64 tsc_per_ms)
@@ -164,7 +172,7 @@ VOID kernel_main(BOOT_INFO *info)
     serial_number(TIME_SLICE_MS);
     serial_write(" ms\r\n");
     random_init(info);
-    event_init(&startup_done);
+    event_init(&spinner_stop);
     start_thread(&spinner_thread, spin, info);
     start_thread(&startup_thread, startup, info);
     sched_idle();
