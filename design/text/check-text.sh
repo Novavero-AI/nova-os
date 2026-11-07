@@ -1,12 +1,15 @@
 #!/bin/sh
 # Checks lib/'s outlines and text against their prototype: renders the
-# reference sheet, sheet.txt, with render-text.c and with sheet.py, from
-# the nova-os fonts in FONTS, and compares the two images byte for byte.
-# Usage: check-text.sh FONTS
+# reference sheet, sheet.txt, and the type specimen's screen at each
+# size given, 1280x800 and 2880x1800 by default, with render-text.c and
+# with sheet.py and specimen.py, from the nova-os fonts in FONTS, and
+# compares each pair of images byte for byte.
+# Usage: check-text.sh FONTS [WIDTHxHEIGHT ...]
 set -eu
 
-[ $# -eq 1 ] || { echo "usage: $0 FONTS" >&2; exit 2; }
+[ $# -ge 1 ] || { echo "usage: $0 FONTS [WIDTHxHEIGHT ...]" >&2; exit 2; }
 fonts=$1
+shift
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 root=$(CDPATH='' cd -- "$here/../.." && pwd)
 work=$(mktemp -d)
@@ -14,10 +17,11 @@ trap 'rm -rf "$work"' EXIT
 
 # CC is left unquoted so that it can carry a wrapper, as in make.
 ${CC:-cc} -std=c99 -O2 -Wall -Wextra -pedantic -Werror \
-  -I "$root/include" -I "$root/gfx" -I "$root/lib" \
+  -I "$root/include" -I "$root/gfx" -I "$root/lib" -I "$root/test" \
   -o "$work/render-text" "$here/render-text.c" "$here/sheet.c" \
-  "$root/lib/outline.c" "$root/lib/typeface.c" "$root/lib/typeset.c" \
-  "$root/gfx/raster.c" "$root/gfx/limb.c"
+  "$root/test/specimen_draw.c" "$root/lib/outline.c" \
+  "$root/lib/typeface.c" "$root/lib/typeset.c" "$root/gfx/raster.c" \
+  "$root/gfx/limb.c"
 
 status=0
 compare() {
@@ -30,8 +34,21 @@ compare() {
   fi
 }
 
-"$work/render-text" "$here/sheet.txt" "$fonts" > "$work/c.ppm"
+"$work/render-text" sheet "$here/sheet.txt" "$fonts" > "$work/c.ppm"
 python3 -I "$here/sheet.py" "$here/sheet.txt" "$fonts" "$work/python.ppm"
 compare sheet
 
+[ $# -gt 0 ] || set -- 1280x800 2880x1800
+for size in "$@"; do
+  case $size in
+    *x*) ;;
+    *) echo "check-text.sh: $size is not WIDTHxHEIGHT" >&2; exit 2 ;;
+  esac
+  width=${size%%x*}
+  height=${size#*x}
+  "$work/render-text" specimen "$fonts" "$width" "$height" > "$work/c.ppm"
+  python3 -I "$here/specimen.py" "$fonts" "$width" "$height" \
+    "$work/python.ppm"
+  compare "specimen $size"
+done
 exit "$status"

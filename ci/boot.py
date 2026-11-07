@@ -3,7 +3,9 @@
 Usage: python3 -I ci/boot.py --code CODE.fd --vars VARS.fd --log LOG
                              [--timeout SECONDS] [--expect TEXT ...]
                              [--data DATA [--corrupt-gpt KIND]]
-                             {system,persist,chain} DISK [-- QEMU_ARG ...]
+                             [--fonts FONTS [--screen SCREEN.ppm]]
+                             {system,persist,chain,specimen} DISK
+                             [-- QEMU_ARG ...]
 
 Boots DISK with the machine and devices of README.md's Run section,
 headless, with the firmware CODE.fd and a copy of VARS.fd, a writable
@@ -33,7 +35,12 @@ second must report the account the first made and, typed again, log
 in with it, run whoami and show the file, which the disk must still
 hold. In chain mode, the boot of
 chain.img must report each of the bootstrap chain's steps, each pinned
-link and init's checks passing.
+link and init's checks passing. In specimen mode, the boot of
+specimen.img must report init's checks passing, the display sent to
+the type specimen from /store and the specimen drawn; then QMP's
+screendump, kept at SCREEN.ppm if given, must equal pixel for pixel
+the screen design/text/specimen.py draws at its size with the nova-os
+fonts in FONTS.
 Each --expect TEXT adds a line the boot must report. With a data disk,
 the boot must also report the file system service opening its pool,
 /data and /users published, and the data disk's check passing. With
@@ -105,7 +112,28 @@ CHAIN_LINES = (
        + ", ".join(CHAIN_LINKS[:-1]) + " and " + CHAIN_LINKS[-1],
        INIT_PASSED, STARTUP_DONE])
 
-DEFAULT_TIMEOUTS = {"system": 300, "persist": 300, "chain": 2700}
+# The specimen's boot reports what a system boot does up to the
+# display's release, and then the specimen drawing in the console's
+# place.
+SPECIMEN_LINES = SELF_TESTS + [
+    "nova-store: serving ",
+    "nova-hello: checks passed",
+    INIT_PASSED,
+    STARTUP_DONE,
+    "nova: background drawn in ",
+    "nova-init: the display sent to /store/",
+    "nova-specimen: drawn on the ",
+]
+SPECIMEN_PROTOTYPE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "..", "design", "text", "specimen.py")
+SCREEN_COPY = "screen.ppm"
+PROTOTYPE_COPY = "prototype.ppm"
+PPM_MAGIC = b"P6"
+PPM_MAXVAL = b"255"
+PPM_FIELDS = 4
+
+DEFAULT_TIMEOUTS = {"system": 300, "persist": 300, "chain": 2700,
+                    "specimen": 300}
 
 DATA_LINES = [
     "nova-fs: pool at lba ",
@@ -423,6 +451,57 @@ def log_in(serial, qmp_path, data, first):
                          data)
 
 
+def read_ppm(path):
+    """The width, height and pixel bytes of a binary PPM of maxval 255,
+    with no comment: the magic, width, height and maxval separated by
+    whitespace, then one whitespace byte, then the pixels (Netpbm's PPM
+    format)."""
+    with open(path, "rb") as f:
+        data = f.read()
+    fields, at = [], 0
+    for _ in range(PPM_FIELDS):
+        while at < len(data) and data[at:at + 1].isspace():
+            at += 1
+        start = at
+        while at < len(data) and not data[at:at + 1].isspace():
+            at += 1
+        fields.append(data[start:at])
+    if (fields[0] != PPM_MAGIC or not fields[1].isdigit()
+            or not fields[2].isdigit() or fields[3] != PPM_MAXVAL):
+        raise BootFailed("%s is not a binary PPM of maxval 255" % path)
+    width, height = int(fields[1]), int(fields[2])
+    pixels = data[at + 1:]
+    if len(pixels) != 3 * width * height:
+        raise BootFailed("%s holds %d pixel bytes, not %d"
+                         % (path, len(pixels), 3 * width * height))
+    return width, height, pixels
+
+
+def check_specimen(qmp_path, scratch, fonts, screen):
+    """Take QMP's screendump, keep it at screen if given, and compare it
+    with the prototype's specimen at its size."""
+    shot = screen or os.path.join(scratch, SCREEN_COPY)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(QMP_TIMEOUT)
+        connection.connect(qmp_path)
+        with connection.makefile("rwb") as stream:
+            Qmp(stream).execute("screendump",
+                                filename=os.path.abspath(shot))
+    width, height, pixels = read_ppm(shot)
+    wanted_path = os.path.join(scratch, PROTOTYPE_COPY)
+    subprocess.run([sys.executable, "-I", SPECIMEN_PROTOTYPE, fonts,
+                    str(width), str(height), wanted_path], check=True)
+    _, _, wanted = read_ppm(wanted_path)
+    differ = sum(1 for i in range(0, len(pixels), 3)
+                 if pixels[i:i + 3] != wanted[i:i + 3])
+    if differ:
+        raise BootFailed("the %dx%d screen differs from the specimen's "
+                         "prototype in %d pixels" % (width, height, differ))
+    print("          the %dx%d screen equals the specimen's prototype, "
+          "sha256 %s" % (width, height, hashlib.sha256(pixels).hexdigest()),
+          flush=True)
+
+
 def stop(qemu):
     if qemu.poll() is None:
         qemu.terminate()
@@ -690,7 +769,8 @@ def boot(args, scratch, log, data_drive, data_lines, first):
     vars_copy = os.path.join(scratch, "vars.fd")
     shutil.copyfile(args.vars, vars_copy)
     qmp_path = os.path.join(scratch, "qmp.sock")
-    accounts = args.mode != "chain" and data_drive and not args.corrupt_gpt
+    accounts = (args.mode not in ("chain", "specimen") and data_drive
+                and not args.corrupt_gpt)
     ready = []
     if accounts:
         ready = FIRST_BOOT_READY if first else LATER_BOOT_READY
@@ -710,9 +790,12 @@ def boot(args, scratch, log, data_drive, data_lines, first):
     serial = None
     try:
         serial = Serial(qemu.stdout, log)
-        lines = CHAIN_LINES if args.mode == "chain" else SYSTEM_LINES
+        lines = {"chain": CHAIN_LINES,
+                 "specimen": SPECIMEN_LINES}.get(args.mode, SYSTEM_LINES)
         serial.wait_for(lines + data_lines + ready + args.expect,
                         serial.start + args.timeout)
+        if args.mode == "specimen":
+            check_specimen(qmp_path, scratch, args.fonts, args.screen)
         if accounts:
             log_in(serial, qmp_path, os.path.join(scratch, DATA_COPY),
                    first)
@@ -743,6 +826,11 @@ def main():
                         help="the data disk, attached as a writable copy")
     parser.add_argument("--corrupt-gpt", choices=sorted(GPT_REFUSED),
                         help="change a byte of the data disk's GPT")
+    parser.add_argument("--fonts",
+                        help="the nova-os fonts the specimen's prototype "
+                        "draws with")
+    parser.add_argument("--screen",
+                        help="where to keep the specimen's screendump")
     parser.add_argument("mode", choices=sorted(DEFAULT_TIMEOUTS))
     parser.add_argument("disk")
     parser.add_argument("qemu_args", nargs="*", metavar="QEMU_ARG")
@@ -751,6 +839,10 @@ def main():
         parser.error("--corrupt-gpt needs --data")
     if args.mode == "persist" and (not args.data or args.corrupt_gpt):
         parser.error("persist needs --data, whole")
+    if (args.mode == "specimen") != bool(args.fonts):
+        parser.error("specimen needs --fonts, and only specimen takes it")
+    if args.screen and args.mode != "specimen":
+        parser.error("only specimen takes --screen")
     if args.timeout is None:
         args.timeout = DEFAULT_TIMEOUTS[args.mode]
     with tempfile.TemporaryDirectory() as scratch, \

@@ -9,9 +9,11 @@
    drivers as the platform driver (platform.c). Then it reports to the
    kernel on its bootstrap channel that its startup is done
    (docs/spec/boot-protocol.md, Startup done), hands the display to the
-   console once the kernel releases it (console.c), starts the accounts
-   service and login (login_start.c), and runs on as the supervisor of
-   the drivers, the console and those two (ipc.md I10). Before the store
+   console once the kernel releases it (console.c), or to the type
+   specimen from /store on a boot disk that asks for it
+   (specimen_start.c), starts the accounts service and login
+   (login_start.c), and runs on as the supervisor of the drivers, the
+   console and those two (ipc.md I10). Before the store
    service it starts the data disk's file system service, whose /data
    and /users the namespace then publishes beside /store (data.c). The
    store service and the namespace server run on after startup, and
@@ -26,6 +28,7 @@
 #include "data.h"
 #include "login_start.h"
 #include "platform.h"
+#include "specimen_start.h"
 
 #define EXIT_CHECK_FAILED 1
 #define EXIT_SUPERVISION_FAILED 2
@@ -339,7 +342,10 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     check(platform_start(&platform), "the platform driver's startup failed");
     say("nova-init: checks passed\r\n");
     report_startup_done(bootstrap);
-    console_start(&platform, bootstrap);
+    if (boot_file(SPECIMEN_MARKER))
+        specimen_start(&platform, &services, bootstrap);
+    else
+        console_start(&platform, bootstrap);
     login_start(&platform, &services);
     status = platform_supervise(&platform);
     say("nova-init: supervision stopped, status ");

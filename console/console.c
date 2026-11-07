@@ -16,8 +16,8 @@
 #include "font.h"
 #include "input_protocol.h"
 #include "keys.h"
-#include "limb.h"
 #include "log.h"
+#include "mapping.h"
 #include "native.h"
 #include "panel.h"
 #include "text.h"
@@ -39,7 +39,6 @@
 #define NS_PER_MS 1000000ULL
 #define CARET_BLINK_NS (500 * NS_PER_MS)
 
-#define PIXEL_BYTES 4
 #define TIMES_TEN_PER_MS 10
 
 /* The objects one wait watches: the bootstrap channel, the control
@@ -85,7 +84,6 @@ typedef struct {
 /* channel_write needs a valid array even for no handles. */
 static const HANDLE_TRANSFER no_handles[1];
 
-static UINT32 self = HANDLE_INVALID;
 static UINT32 bootstrap = HANDLE_INVALID;
 static UINT32 control = HANDLE_INVALID;
 static UINT32 keyboard = HANDLE_INVALID;
@@ -109,7 +107,7 @@ static UINT8 shown[PANEL_ROWS][TEXT_COLUMNS_MAX];
 static CARET shown_caret;
 static UINT32 caret_lit;
 static UINT64 blink_at;
-static UINT64 next_address = MAPPINGS_BASE;
+static MAPPING mapping = {HANDLE_INVALID, MAPPINGS_BASE};
 
 static union {
     CONSOLE_REQUEST request;
@@ -366,60 +364,6 @@ static void add_session(const RECEIVED_HANDLE *handle)
 /* ------------------------------------------------------------------------
    The display. */
 
-/* size bytes of new zeroed memory, mapped read-write at the next free
-   address, in sections of at most SECTION_MAX_SIZE; 0 if memory runs
-   out. A failure leaves what it mapped, which the console then never
-   uses. */
-static void *allocate(UINT64 size)
-{
-    UINT64 start = next_address, offset, piece;
-    UINT32 section, status;
-
-    for (offset = 0; offset < size; offset += piece) {
-        piece = size - offset < SECTION_MAX_SIZE ? size - offset
-                                                 : SECTION_MAX_SIZE;
-        piece = (piece + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE;
-        status = section_create(piece, 0, &section);
-        if (status == OK) {
-            status = process_map(self, section, 0, next_address, piece,
-                                 MAP_READ | MAP_WRITE);
-            handle_close(section);
-        }
-        if (status != OK) {
-            say_status("no memory for the panel", status);
-            return 0;
-        }
-        next_address += piece;
-    }
-    return (void *)start;
-}
-
-/* Map the framebuffer's pages, from first up to end, write-combining,
-   through resource; returns where first lies, or 0. */
-static UINT8 *map_framebuffer(UINT32 resource, UINT64 first, UINT64 end)
-{
-    UINT64 start = next_address, offset, piece;
-    UINT32 section, status;
-
-    for (offset = first; offset < end; offset += piece) {
-        piece = end - offset < SECTION_MAX_SIZE ? end - offset
-                                                : SECTION_MAX_SIZE;
-        status = section_create_physical(resource, offset, piece,
-                                         CACHE_WRITE_COMBINING, &section);
-        if (status == OK) {
-            status = process_map(self, section, 0, next_address, piece,
-                                 MAP_READ | MAP_WRITE);
-            handle_close(section);
-        }
-        if (status != OK) {
-            say_status("cannot map the framebuffer", status);
-            return 0;
-        }
-        next_address += piece;
-    }
-    return (UINT8 *)start;
-}
-
 static void say_ms(UINT64 nanoseconds)
 {
     UINT64 tenths = nanoseconds * TIMES_TEN_PER_MS / NS_PER_MS;
@@ -428,20 +372,6 @@ static void say_ms(UINT64 nanoseconds)
     say(".");
     say_number(tenths % TIMES_TEN_PER_MS);
     say(" ms");
-}
-
-/* Whether the display record describes a screen the console draws on:
-   one with a pixel format it knows, a side Limb draws, rows no shorter
-   than the screen is wide, and every pixel within the address space. */
-static int drawable(const BOOTSTRAP_DISPLAY *d)
-{
-    return (d->format == PIXEL_RGB || d->format == PIXEL_BGR) &&
-           d->width >= LIMB_MIN_SIDE && d->height >= LIMB_MIN_SIDE &&
-           d->width <= LIMB_MAX_SIDE && d->height <= LIMB_MAX_SIDE &&
-           d->stride >= d->width && d->stride <= LIMB_MAX_SIDE &&
-           d->base % PIXEL_BYTES == 0 &&
-           d->base <= ~0ULL - (UINT64)d->stride * d->height * PIXEL_BYTES -
-                          PAGE_SIZE;
 }
 
 /* The panel as panel_show leaves it: every cell blank, and no caret. */
@@ -475,35 +405,31 @@ static void fit_text(void)
    drawing. */
 static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
 {
-    UINT64 first = d->base - d->base % PAGE_SIZE;
-    UINT64 end = (d->base + (UINT64)d->stride * d->height * PIXEL_BYTES +
-                  PAGE_SIZE - 1) /
-                 PAGE_SIZE * PAGE_SIZE;
     UINT64 started = now();
-    UINT8 *mapped;
+    UINT32 status = drawing ? ERR_NOT_SUPPORTED
+                            : mapping_display(&mapping, resource, d, &screen);
 
-    if (drawing || !drawable(d)) {
+    handle_close(resource);
+    if (status == ERR_NOT_SUPPORTED) {
         say("nova-console: a display it cannot draw on, or a second\r\n");
-        handle_close(resource);
         return;
     }
-    mapped = map_framebuffer(resource, first, end);
-    handle_close(resource);
-    if (!mapped)
+    if (status != OK) {
+        say_status("cannot map the framebuffer", status);
         return;
-    screen.pixels = (UINT32 *)(mapped + (d->base - first));
-    screen.width = d->width;
-    screen.height = d->height;
-    screen.stride = d->stride;
-    screen.format = d->format;
+    }
     if (!panel_layout(&layout, screen.width, screen.height)) {
         say("nova-console: no room for a cell on the screen\r\n");
         return;
     }
-    backdrop = allocate(panel_backdrop_size(&layout));
-    masks = allocate(font_masks_size(layout.cell_width));
-    if (!backdrop || !masks)
+    backdrop = mapping_memory(&mapping, panel_backdrop_size(&layout), &status);
+    if (backdrop)
+        masks = mapping_memory(&mapping, font_masks_size(layout.cell_width),
+                               &status);
+    if (!backdrop || !masks) {
+        say_status("no memory for the panel", status);
         return;
+    }
     if (!panel_backdrop(&layout, screen.width, screen.height, backdrop)) {
         say("nova-console: no background for a screen this size\r\n");
         return;
@@ -638,7 +564,7 @@ static void take_bootstrap(void)
         (handles[CONSOLE_BOOTSTRAP_CONTROL].rights & CHANNEL_NEEDS) ==
             CHANNEL_NEEDS) {
         say_open(handles[CONSOLE_BOOTSTRAP_DEBUG_LOG].handle);
-        self = handles[CONSOLE_BOOTSTRAP_SELF].handle;
+        mapping.self = handles[CONSOLE_BOOTSTRAP_SELF].handle;
         control = handles[CONSOLE_BOOTSTRAP_CONTROL].handle;
         return;
     }

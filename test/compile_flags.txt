@@ -5,3 +5,5 @@
 -I../native
 -I../lib
 -DGREETING_PATH="/store/00000000000000000000000000000000-greeting"
+-I../gfx
+-DFONTS_PATH="/store/00000000000000000000000000000000-inter-4.1/share/fonts"

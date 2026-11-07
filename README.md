@@ -84,8 +84,9 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   -Wl,-section-alignment=1000 -Wl,-file-alignment=200 -o init.exe \
   init/init.c init/chain.c init/compat.c init/view.c init/platform.c \
   init/store.c init/console.c init/data.c init/login_start.c \
-  drivers/pci.c drivers/virtio_pci.c store/reader.c lib/path.c \
-  lib/program.c lib/log.c native/native.S kernel/random/sha256.c
+  init/specimen_start.c drivers/pci.c drivers/virtio_pci.c \
+  store/reader.c lib/path.c lib/program.c lib/log.c native/native.S \
+  kernel/random/sha256.c
 ./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I native -I lib -I drivers -Wl,-subsystem=native \
   -Wl,-e=virtio_blk_main -Wl,-section-alignment=1000 \
@@ -103,7 +104,7 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   -Wl,-subsystem=native -Wl,-e=console_main -Wl,-section-alignment=1000 \
   -Wl,-file-alignment=200 -o console.exe console/console.c console/text.c \
   console/keys.c console/panel.c gfx/gfx.c gfx/raster.c gfx/font.c \
-  gfx/limb.c lib/log.c native/native.S
+  gfx/limb.c lib/mapping.c lib/log.c native/native.S
 ./i386-win32-tcc -shared -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -Wl,-subsystem=native -Wl,-e=ntdll_entry \
   -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
@@ -182,9 +183,19 @@ fonts=$(./mknar fonts inter-4.1 dir share dir share/fonts \
   file share/fonts/InterDisplay-Light.nvf inter/InterDisplay-Light.nvf \
   file share/fonts/InterDisplay-Regular.nvf inter/InterDisplay-Regular.nvf \
   file share/fonts/InterDisplay-SemiBold.nvf inter/InterDisplay-SemiBold.nvf)
+./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
+  -I include -I native -I lib -I gfx -I test -Wl,-subsystem=native \
+  -Wl,-e=specimen_main -Wl,-section-alignment=1000 \
+  -Wl,-file-alignment=200 -D "FONTS_PATH=\"/store/$fonts/share/fonts\"" \
+  -o specimen.exe test/specimen.c test/specimen_draw.c lib/outline.c \
+  lib/typeface.c lib/typeset.c lib/mapping.c lib/path.c lib/log.c \
+  gfx/gfx.c gfx/raster.c gfx/limb.c native/native.S
+./mknar specimen specimen -r $fonts dir bin \
+  exec bin/specimen.exe specimen.exe
 ./mkstore store.img $services greeting.narinfo greeting.nar \
   services.narinfo services.nar hello.narinfo hello.nar \
-  session.narinfo session.nar fonts.narinfo fonts.nar
+  session.narinfo session.nar fonts.narinfo fonts.nar \
+  specimen.narinfo specimen.nar
 ```
 
 `-shared` makes TinyCC write base relocations, which the firmware needs to
@@ -194,7 +205,8 @@ linked without it: the kernel places the first process at the image's own
 base address, and the first process places each program it starts, the
 drivers `virtblk.exe` and `virtinp.exe`, the console `console.exe`,
 the file system service `fs.exe` and its check `fstest.exe`, and the
-programs from `/store`, at its own; login places the programs it starts
+programs from `/store`, the type specimen `specimen.exe` among them, at
+its own; login places the programs it starts
 from `/store` at theirs too. `ntdll.dll` is
 linked with `-shared` for its export table, which TinyCC writes only for a
 DLL, and is placed at its own base address too. For the native subsystem
@@ -208,10 +220,10 @@ build gives the same bytes:
 |---|---|---|
 | `BOOTX64.EFI` | 29,696 | `ed744ea9428e8fd8a0cd1f8173cdfead7fc0d9ad98f1fa48b1f94f417337c70f` |
 | `kernel.exe` | 205,312 | `919fca80e36d04f6d0bf295e0904a3131eb61f731ab01f2df0fb2c95f2e74a17` |
-| `init.exe` | 92,672 | `4fdc5b87c0fcc0d9975632e56dd38e6dfae3030a769b976c8418276c0b1221e7` |
+| `init.exe` | 95,232 | `d9b0d268623381e46878a2b00a5ba593861612d4c1c02d0f84a433624a1da08b` |
 | `virtblk.exe` | 19,456 | `14c68c048f14db914dc5a3164a7e9806625b2c4089f72a7b3cce835eaa24fc02` |
 | `virtinp.exe` | 15,872 | `f4322918ebc64193d49a56c2e638c2c4081afeb13251826c9e56f2371f448704` |
-| `console.exe` | 36,352 | `b3d3caa685145e77e152e6599e6aa8b6660a89ea70931ca57208b0b043f89ded` |
+| `console.exe` | 36,352 | `0044d91df7e9774f01480cb6018d5c1ab9858500269f650e26e42009297679ab` |
 | `ntdll.dll` | 10,240 | `9a43b4e3b773c1b5a3b6eb541fd0de9c3f3675d2867d1193b707118648853d10` |
 | `store.exe` | 28,672 | `08b1663767426a0daf34b2f9b0c56bb2bc5e805d692b39bd83deef89355cee1a` |
 | `namespace.exe` | 11,264 | `ea99c11b7bbc69cf1b10e383391216c7c7bc25fd8b7ba48c9ee47de8c7c4182b` |
@@ -221,6 +233,7 @@ build gives the same bytes:
 | `accounts.exe` | 39,936 | `726a0c515d3919ece07865ccf57f9944899077162550b97a2f86107c20a00a8d` |
 | `login.exe` | 32,256 | `a8bb35d7f9fcf30c944e5acffda7ed04c76b5d508370eea04a4bea9b28366bfd` |
 | `shell.exe` | 30,208 | `9f61351ca31257f0ddd118257f1cd128fe94dae626f2348fa258fc19d6699df4` |
+| `specimen.exe` | 44,544 | `7b8ad9ebd1e29f3349a1ec67917311645b577e457d074b62cce3550bbeae33f6` |
 
 The block also writes the store image, `store.img`
 ([docs/spec/store-image.md](docs/spec/store-image.md)), from these
@@ -229,21 +242,23 @@ namespace server, which the image's header names as the programs the
 first process starts; `greeting`, a file; `hello`, holding the test
 program, which records the greeting's path and so refers to it, and
 links to the greeting; `nova-session`, holding the accounts service,
-login and the shell; and `inter-4.1`, holding in `share/fonts` the
-interface's typeface and its licence. `tools/mknar.c` writes each path
-as nova-nix exports one, a NAR and a narinfo, and prints its base name;
+login and the shell; `inter-4.1`, holding in `share/fonts` the
+interface's typeface and its licence; and `specimen`, holding the type
+specimen, which records the fonts' path and so refers to it.
+`tools/mknar.c` writes each path as nova-nix
+exports one, a NAR and a narinfo, and prints its base name;
 `tools/mkstore.c` checks each NAR against its narinfo and writes the
 image. nova-nix does not run in this build, so mknar stands in for its
 export: every path is content-addressed, named from its NAR hash and its
 references as upstream Nix names a recursive SHA-256 path
 (`makeFixedOutputPath`, hashing `/nix/store` as every host does), which
 for a path without references is the name nova-nix gives the same tree.
-No path is a derivation's output; the test program is compiled by the
-block above. Each build gives the same bytes:
+No path is a derivation's output; the test program and the specimen are
+compiled by the block above. Each build gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `store.img` | 1,540,096 | `079065fac794800a284ebfe1103ec6be369de4181baf4f85caddeb59057ba530` |
+| `store.img` | 1,585,152 | `8a51d50a2ff6f7295f1238161c10c654d7cde5fed497ae7aeecb90f1a9ac1b91` |
 
 The typeface is Inter 4.1, fetched from its release. `tools/mkfont.c`
 converts the six static faces the interface's designs set type in into
@@ -272,8 +287,11 @@ Partition, formatted FAT32, holding `\EFI\BOOT\BOOTX64.EFI` and in
 ([docs/spec/disk-layout.md](docs/spec/disk-layout.md)). The tool is C99
 with only the standard library, so the host compiler or TinyCC builds it.
 
-The block below writes two boot disks and a data disk. The system's,
+The block below writes three boot disks and a data disk. The system's,
 `disk.img` and `disk.vhdx`, holds the files its `mkimage` line names.
+The specimen's, `specimen.img` and `specimen.vhdx`, holds the same files
+and `SPECIMEN`, an empty file, which makes the first process give the
+display to the type specimen from `/store` in place of the console.
 The test disk, `chain.img` and `chain.vhdx`, holds the same files and
 the inputs of stage0-pe32's chain up to M1, which the bootstrap check
 reads: its seed and the files of stage0-pe32 and of the M2libc,
@@ -323,6 +341,10 @@ EOF
 cc -o mkimage tools/mkimage.c
 ./mkimage disk.img disk.vhdx BOOTX64.EFI kernel.exe init.exe ntdll.dll \
   virtblk.exe virtinp.exe console.exe store.img fs.exe fstest.exe
+: > SPECIMEN
+./mkimage specimen.img specimen.vhdx BOOTX64.EFI kernel.exe init.exe \
+  ntdll.dll virtblk.exe virtinp.exe console.exe store.img fs.exe \
+  fstest.exe SPECIMEN
 ./mkimage chain.img chain.vhdx BOOTX64.EFI kernel.exe init.exe ntdll.dll \
   virtblk.exe virtinp.exe console.exe store.img fs.exe fstest.exe \
   chain/*
@@ -366,10 +388,12 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `fb56f98f93a99ed6f8bd0278e84456f237d3abf7b3fe53e225a8bcbf13b51688` |
-| `disk.vhdx` | 71,303,168 | `3e468eec6d30f1539d70fc0dea1892cbd057acad49909e3157a1f5052030f66e` |
-| `chain.img` | 67,108,864 | `c928ec58f2e6ece84e50c8321fcc71c836f29bfe7109863d357d50f34b4869ff` |
-| `chain.vhdx` | 71,303,168 | `04e3e4aeb740d8203b417e70dc160ccf98d8c3ab1f42d5d04ee54430214235ad` |
+| `disk.img` | 67,108,864 | `be68849efe0ee73be1e4a54de4d38e5fdc3bdd49883907b21823440e3c33d111` |
+| `disk.vhdx` | 71,303,168 | `8759172d2905940c45647c16e26b4f1d4b95e7aa28f192a878cd9f5a504e65d5` |
+| `chain.img` | 67,108,864 | `108dc27b58922e114a335c11013cfef4b4d0e31ca91e573c959cb52cf303378d` |
+| `chain.vhdx` | 71,303,168 | `1a049e24759d13da168b44d7fbeb0a49d663b08cd01c53321cf5ff3187159429` |
+| `specimen.img` | 67,108,864 | `5bec5ae39688aec2ab24937fb0a4383eca61e6332d693dff6121433d9509650a` |
+| `specimen.vhdx` | 71,303,168 | `386593f1f85353355630599c9311c312290da4df041f536fd07cff7b1d6aa120` |
 | `data.img` | 67,108,864 | `fc0e119b885b341b5385e351b1f334c4da7cb921ef2dfbd994e9e20917e27804` |
 
 ## Run
@@ -409,6 +433,11 @@ link against the one nova-nix pins
 without hardware acceleration, the chain takes about 11 minutes on an
 Apple M2. With `format=vhdx`, the same drive boots `disk.vhdx` or
 `chain.vhdx`.
+
+Booted in place of `disk.img`, `specimen.img` shows the type specimen:
+the login design's account list and a paragraph in Inter over Limb,
+drawn by `specimen.exe` from `/store`, which says
+`nova-specimen: drawn` once it has. The console runs but draws nothing.
 
 A system disk whose `\NOVA\` also holds a file named `FSLOOP` has
 `fstest.exe` commit generations of its crash state until the machine
