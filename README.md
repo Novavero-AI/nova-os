@@ -196,7 +196,7 @@ build gives the same bytes:
 | `fstest.exe` | 32,256 | `6791c0df869ed8f5704ec3fba1076bfd54f9e78a2d5caec2632bb7057c439205` |
 | `accounts.exe` | 39,936 | `726a0c515d3919ece07865ccf57f9944899077162550b97a2f86107c20a00a8d` |
 | `login.exe` | 32,256 | `a8bb35d7f9fcf30c944e5acffda7ed04c76b5d508370eea04a4bea9b28366bfd` |
-| `shell.exe` | 26,112 | `d81501863c34bf7809c1a43503ddf658d4ce753c8f9d8fe919f2decfe1fd45f7` |
+| `shell.exe` | 30,208 | `9f61351ca31257f0ddd118257f1cd128fe94dae626f2348fa258fc19d6699df4` |
 
 The block also writes the store image, `store.img`
 ([docs/spec/store-image.md](docs/spec/store-image.md)), from these
@@ -218,7 +218,7 @@ block above. Each build gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `store.img` | 176,128 | `e8f1cf0de750148e47b3baf7cc9c449892e676cc5e3b7ca05e5c7d3965579517` |
+| `store.img` | 180,224 | `406588b65df4919068c238e7fd25c9424623a0fb0f6505e072969b21c354b28d` |
 
 ## Disk image
 
@@ -324,10 +324,10 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `3cdb33a9d727c6606a342fb028012611edfef567d10938a11e887b61149da695` |
-| `disk.vhdx` | 71,303,168 | `c16b243bc91895eb1bc779d5ac81ab2df3435eaac1288e353638f187aa46ea78` |
-| `chain.img` | 67,108,864 | `17f80abef4d9ab99505b9a2192caca0d46a0a8b5017dbd008274b802aa53eca2` |
-| `chain.vhdx` | 71,303,168 | `768569d3c174c11c03bbef5ca246ffbcbade0de9a423f48e38f8cd8c5d84b7ee` |
+| `disk.img` | 67,108,864 | `4e2f89373588e180252d1d95ccb382412db8764d7d9d78d1bcbd42666623e995` |
+| `disk.vhdx` | 71,303,168 | `6a515baba70f1cf1c7ffd7d7942f6a229c47c3fa4063da49de26fbfb22915816` |
+| `chain.img` | 67,108,864 | `f19085392846809b5b831ca10363d9126c015b555513b58b93a69c7512afd8cc` |
+| `chain.vhdx` | 71,303,168 | `b5ef32c7fca8736355debe27e156e9bde909473cdcd67d511e8d81a4724204e3` |
 | `data.img` | 67,108,864 | `fc0e119b885b341b5385e351b1f334c4da7cb921ef2dfbd994e9e20917e27804` |
 
 ## Run
