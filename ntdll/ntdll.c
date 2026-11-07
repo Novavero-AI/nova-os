@@ -1,6 +1,6 @@
-/* ntdll for 32-bit processes (docs/spec/compat.md): the six routines
-   stage0-pe32's seed resolves by name, with the behaviour Microsoft
-   Learn documents for them, over nova-os's native calls through the
+/* ntdll for 32-bit processes (docs/spec/compat.md): the routines
+   stage0-pe32's chain resolves by name and calls, with the behaviour
+   Microsoft Learn documents for them, over nova-os's native calls through the
    32-bit lane (docs/spec/syscalls.md S11). Files are reached through
    the process's view of storage, the directory channel its launcher
    passes as its bootstrap handle, with the stand-in file protocol of
@@ -8,7 +8,7 @@
 
    Each exported routine is __stdcall, the convention of the Win32 API,
    whose callee removes its arguments from the stack ("__stdcall"); the
-   seed calls them so (observed in the seed). TinyCC decorates a
+   chain calls them so (observed in the seed). TinyCC decorates a
    __stdcall name as _name@N unless the function says nodecorate, and
    the seed looks the names up undecorated.
 
@@ -508,17 +508,22 @@ EXPORT NTSTATUS NTAPI NtCreateFile(UINT32 *FileHandle, UINT32 DesiredAccess,
     return STATUS_SUCCESS;
 }
 
+static UINT64 large_integer(const LARGE_INTEGER32 *value)
+{
+    return (UINT64)value->HighPart << 32 | value->LowPart;
+}
+
 /* The position a read or write starts at: ByteOffset's, or the file's
    current position when ByteOffset is null ("NtReadFile function
-   (ntifs.h)"). */
+   (ntifs.h)"). A negative ByteOffset is refused. */
 static int start_offset(const LARGE_INTEGER32 *ByteOffset, UINT64 *offset)
 {
     if (!ByteOffset) {
         *offset = FILE_OFFSET_CURRENT;
         return 1;
     }
-    *offset = (UINT64)ByteOffset->HighPart << 32 | ByteOffset->LowPart;
-    return !(ByteOffset->HighPart & 0x80000000u);
+    *offset = large_integer(ByteOffset);
+    return *offset < FILE_OFFSET_LIMIT;
 }
 
 /* An event or APC is how an asynchronous request completes; every
@@ -617,6 +622,112 @@ EXPORT NTSTATUS NTAPI NtWriteFile(UINT32 FileHandle, UINT32 Event,
     IoStatusBlock->Status = status;
     IoStatusBlock->Information = done;
     return status;
+}
+
+/* A request on an open file that carries no data and is answered with
+   none: its outcome, and on success the reply's information in
+   *information. */
+static NTSTATUS file_call(UINT32 file, UINT32 operation, UINT64 offset,
+                          UINT64 *information)
+{
+    const FILE_REPLY *reply;
+    UINT32 data;
+    NTSTATUS status;
+
+    new_request(operation, offset, 0, 0);
+    status = send(file, sizeof(FILE_REQUEST), no_handles, 0);
+    if (status != STATUS_SUCCESS)
+        return status;
+    reply = receive(file, &data, &status);
+    if (status == STATUS_SUCCESS)
+        *information = reply->information;
+    return status;
+}
+
+/* FilePositionInformation is the one class provided: the position a
+   read or write with a null ByteOffset starts at. A buffer smaller than
+   its structure fails with STATUS_INFO_LENGTH_MISMATCH and a negative
+   offset with STATUS_INVALID_PARAMETER (MS-FSCC 2.4.40); the file must
+   be open for reading or writing ("FILE_POSITION_INFORMATION structure
+   (wdm.h)"). Information receives "the number of bytes set on the
+   file" ("NtSetInformationFile function (ntifs.h)"), the structure's
+   size. */
+EXPORT NTSTATUS NTAPI NtSetInformationFile(UINT32 FileHandle,
+                                           IO_STATUS_BLOCK32 *IoStatusBlock,
+                                           const void *FileInformation,
+                                           UINT32 Length,
+                                           UINT32 FileInformationClass)
+{
+    const FILE_POSITION_INFORMATION32 *position = FileInformation;
+    UINT64 offset;
+    NTSTATUS status;
+
+    if (FileInformationClass != FILE_POSITION_INFORMATION_CLASS)
+        return STATUS_NOT_IMPLEMENTED;
+    if (Length < sizeof *position)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    offset = large_integer(&position->CurrentByteOffset);
+    if (offset >= FILE_OFFSET_LIMIT)
+        return STATUS_INVALID_PARAMETER;
+    status = file_call(FileHandle, FILE_OPERATION_POSITION, offset, &offset);
+    IoStatusBlock->Status = status;
+    IoStatusBlock->Information =
+        status == STATUS_SUCCESS ? sizeof *position : 0;
+    return status;
+}
+
+/* FilePositionInformation, as NtSetInformationFile sets it, and
+   FileStandardInformation are the classes provided. A buffer smaller
+   than the class's structure fails with STATUS_INFO_LENGTH_MISMATCH
+   (MS-FSCC 2.4.40, 2.4.47). A view's file has one name and is never a
+   directory or pending deletion, and the server allocates its storage
+   byte by byte, so AllocationSize is EndOfFile. Information receives the
+   bytes written to FileInformation ("NtQueryInformationFile function
+   (ntifs.h)"). */
+EXPORT NTSTATUS NTAPI NtQueryInformationFile(UINT32 FileHandle,
+                                             IO_STATUS_BLOCK32 *IoStatusBlock,
+                                             void *FileInformation,
+                                             UINT32 Length,
+                                             UINT32 FileInformationClass)
+{
+    FILE_POSITION_INFORMATION32 *position = FileInformation;
+    FILE_STANDARD_INFORMATION32 *standard = FileInformation;
+    UINT32 size, operation, i;
+    UINT64 value = 0;
+    NTSTATUS status;
+
+    if (FileInformationClass == FILE_POSITION_INFORMATION_CLASS) {
+        size = sizeof *position;
+        operation = FILE_OPERATION_POSITION;
+    } else if (FileInformationClass == FILE_STANDARD_INFORMATION_CLASS) {
+        size = sizeof *standard;
+        operation = FILE_OPERATION_SIZE;
+    } else {
+        return STATUS_NOT_IMPLEMENTED;
+    }
+    if (Length < size)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    status = file_call(FileHandle, operation, FILE_OFFSET_CURRENT, &value);
+    IoStatusBlock->Status = status;
+    IoStatusBlock->Information = 0;
+    if (status != STATUS_SUCCESS)
+        return status;
+    if (operation == FILE_OPERATION_POSITION) {
+        position->CurrentByteOffset.LowPart = (UINT32)value;
+        position->CurrentByteOffset.HighPart = (UINT32)(value >> 32);
+    } else {
+        standard->AllocationSize.LowPart = (UINT32)value;
+        standard->AllocationSize.HighPart = (UINT32)(value >> 32);
+        standard->EndOfFile.LowPart = (UINT32)value;
+        standard->EndOfFile.HighPart = (UINT32)(value >> 32);
+        standard->NumberOfLinks = 1;
+        standard->DeletePending = FALSE;
+        standard->Directory = FALSE;
+        for (i = 0; i < FILE_STANDARD_INFORMATION32_RESERVED; i++)
+            standard->Reserved[i] = 0;
+    }
+    IoStatusBlock->Information = size;
+    return STATUS_SUCCESS;
 }
 
 EXPORT NTSTATUS NTAPI NtClose(UINT32 Handle)

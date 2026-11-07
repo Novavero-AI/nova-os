@@ -80,9 +80,9 @@ The partition holds a FAT32 file system (UEFI 13.3; FAT):
 \NOVA\KERNEL.EXE         the kernel
 \NOVA\INIT.EXE           the first user process
 \NOVA\NTDLL.DLL          ntdll for 32-bit processes
-\NOVA\HEX0SEED.EXE       stage0-pe32's seed, hex0-seed.exe
-\NOVA\HEX0_X86.HEX       the source the seed assembles, hex0_x86.hex0
 \NOVA\VIRTBLK.EXE        the virtio block driver
+\NOVA\HEX0SEED.EXE       stage0-pe32's seed, hex0-seed.exe
+\NOVA\...                the other inputs of the seed's chain
 ```
 
 `\EFI\BOOT\BOOTX64.EFI` is the file the firmware starts when a boot option
@@ -96,12 +96,16 @@ under it holds the images used to recover booting (UEFI 13.3.1.3).
 the others in `\NOVA` are the boot files it reads beside it
 ([boot-protocol.md](boot-protocol.md#boot-files)). None is a UEFI image,
 and UEFI sets no location for files an application reads (UEFI
-13.3.1.3). The seed and its source are stage0-pe32's files, unmodified,
-under the 8.3 names below; the first process gives them to the seed
-under stage0-pe32's own names ([compat.md](compat.md)).
+13.3.1.3). The seed and the other inputs of its chain are the files of
+stage0-pe32 and of the trees it builds from, unmodified, under 8.3 names
+the README's disk-image block gives them; the first process gives them
+to the chain's programs under their own names
+([compat.md](compat.md#c4-files)).
 
 Every name fits 8.3 and is stored as a short directory entry only, in
-uppercase (UEFI 13.3.1.2), with no long-name entries:
+uppercase (UEFI 13.3.1.2), with no long-name entries. `\NOVA\`'s entries
+follow its dot entries in the bytewise order of their `DIR_Name`s, and
+a directory takes as many clusters as its entries fill:
 
 | Path | `DIR_Name` |
 |---|---|
@@ -112,9 +116,9 @@ uppercase (UEFI 13.3.1.2), with no long-name entries:
 | `\NOVA\KERNEL.EXE` | `KERNEL  EXE` |
 | `\NOVA\INIT.EXE` | `INIT    EXE` |
 | `\NOVA\NTDLL.DLL` | `NTDLL   DLL` |
-| `\NOVA\HEX0SEED.EXE` | `HEX0SEEDEXE` |
-| `\NOVA\HEX0_X86.HEX` | `HEX0_X86HEX` |
 | `\NOVA\VIRTBLK.EXE` | `VIRTBLK EXE` |
+| `\NOVA\HEX0SEED.EXE` | `HEX0SEEDEXE` |
+| `\NOVA\` *name*`.`*ext* | *name* padded to 8 bytes with spaces, then *ext* padded to 3 |
 
 FAT matches names without regard to case ("Name Matching In Short & Long
 Names"), so `\nova\kernel.exe`, `\nova\init.exe` and `BOOTx64.EFI`

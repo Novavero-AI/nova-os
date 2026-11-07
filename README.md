@@ -11,8 +11,9 @@ files in `\nova\`, the first process's `init.exe` among them, exits the
 firmware's boot services and jumps to the kernel, which runs the first
 process in user mode, reports itself and the process's exit code on the
 first serial port and, once started, fades the boot screen into the
-desktop background. The first process runs stage0-pe32's hex0 seed as a
-32-bit Windows program and checks that it assembles itself
+desktop background. The first process runs stage0-pe32's chain, from its
+hex0 seed to M1, as 32-bit Windows programs and checks each link against
+the one nova-nix builds on Windows
 ([docs/spec/compat.md](docs/spec/compat.md)). It then enumerates PCI and
 starts the virtio block driver, `virtblk.exe`, as a user-mode process of
 its own, which reads the boot disk's partition table and the EFI System
@@ -66,8 +67,9 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
 ./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I native -I lib -I drivers -I kernel/random \
   -Wl,-subsystem=native -Wl,-e=init_main -Wl,-section-alignment=1000 \
-  -Wl,-file-alignment=200 -o init.exe init/init.c init/seed.c \
-  init/platform.c init/loader.c drivers/pci.c drivers/virtio_pci.c \
+  -Wl,-file-alignment=200 -o init.exe init/init.c init/chain.c \
+  init/compat.c init/view.c init/platform.c init/loader.c drivers/pci.c \
+  drivers/virtio_pci.c \
   lib/log.c native/native.S kernel/random/sha256.c
 ./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I native -I lib -I drivers -Wl,-subsystem=native \
@@ -96,11 +98,11 @@ same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `BOOTX64.EFI` | 28,160 | `c065d95e36210db04b3817e7a0dc5dd145790a151d842e962548cbefb7c9b12f` |
-| `kernel.exe` | 130,048 | `15a2fcc2f33915fd8c9b32886621a4e66aedc1c80fd6ca33ec0a7f430cf90f66` |
-| `init.exe` | 34,304 | `1c6fa81bef07142aaccfa0eca8bbf452865c27421434b905602139f703762649` |
+| `BOOTX64.EFI` | 28,160 | `04b0989e077d4ca8838dac1b3007b744025370165c1846903b010f4c3853ba44` |
+| `kernel.exe` | 130,048 | `fe76f143bb150b19ee9553940df5bfccd8c80c38efef9d5a24c9041c993a4461` |
+| `init.exe` | 43,008 | `ca67278eab1262a26874a7b89faaa93e66efad7df752cff2c7184d5c77aa1408` |
 | `virtblk.exe` | 14,848 | `c1bce54d00c905a867e88ed7a9cfaaf860264be5ddac929609d96a704df124dd` |
-| `ntdll.dll` | 9,216 | `dcbe0870b27aefe05ef8c4bdf756b94c4f9c73b46667367282a0ade4aafe97b8` |
+| `ntdll.dll` | 10,240 | `9a43b4e3b773c1b5a3b6eb541fd0de9c3f3675d2867d1193b707118648853d10` |
 
 ## Disk image
 
@@ -108,35 +110,91 @@ same bytes:
 disk, and `disk.vhdx`, the same disk in a fixed VHDX file, the format a
 Hyper-V Generation 2 virtual machine boots. The disk has a GPT with one EFI
 System Partition, formatted FAT32, holding `\EFI\BOOT\BOOTX64.EFI` and in
-`\NOVA\` the kernel, `INIT.EXE`, `NTDLL.DLL`, `VIRTBLK.EXE`, and
-stage0-pe32's seed and the source it assembles, fetched from commit
-ff1c2ad86a91d3d7d086722ffed49dfe18dd50d0 under 8.3 names
-([docs/spec/disk-layout.md](docs/spec/disk-layout.md)). The tool is C99
-with only the standard library, so the host compiler or TinyCC builds it.
+`\NOVA\` the kernel, `INIT.EXE`, `NTDLL.DLL`, `VIRTBLK.EXE`, and the
+inputs of stage0-pe32's chain up to M1 under 8.3 names
+([docs/spec/disk-layout.md](docs/spec/disk-layout.md)): its seed and the
+files of stage0-pe32 and of the M2libc, M2-Planet and mescc-tools trees
+it builds from, at the commits nova-nix's stage0-pe32 package pins. The
+tool is C99 with only the standard library, so the host compiler or
+TinyCC builds it.
 
 ```sh
-seed=ff1c2ad86a91d3d7d086722ffed49dfe18dd50d0
-raw=https://raw.githubusercontent.com/Novavero-AI/stage0-pe32/$seed
-curl -L -o hex0seed.exe $raw/bootstrap-seeds/PE32/i386/hex0-seed.exe
-curl -L -o hex0_x86.hex $raw/x86/hex0_x86.hex0
+raw=https://raw.githubusercontent.com/Novavero-AI
+stage0=$raw/stage0-pe32/ff1c2ad86a91d3d7d086722ffed49dfe18dd50d0
+m2libc=$raw/M2libc/13e57eb52bd30a6b0296f1cef1c54fc40065f07b
+m2planet=$raw/M2-Planet/ee0bf91eb02390c2d40bd85379113e524f0c752b
+mescc=$raw/mescc-tools/578ac99623d291e2b9eacf03cacc390cfe512661
+mkdir -p chain
+while read -r name url; do curl -L -o chain/$name $url; done <<EOF
+hex0seed.exe $stage0/bootstrap-seeds/PE32/i386/hex0-seed.exe
+hex0_x86.hex $stage0/x86/hex0_x86.hex0
+hex1_x86.hex $stage0/x86/hex1_x86.hex0
+hex2_x86.hex $stage0/x86/hex2_x86.hex1
+catm_x86.hex $stage0/x86/catm_x86.hex2
+pe32i386.hex $stage0/x86/PE32-i386.hex2
+ntdll386.hex $stage0/x86/ntdll-i386.hex2
+m0_x86.hex $stage0/x86/M0_x86.hex2
+cc_x86.m1 $stage0/x86/cc_x86.M1
+libccore.m1 $stage0/x86/libc-core.M1
+libcboot.m1 $stage0/x86/libc-bootstrap.M1
+pe-end.m1 $stage0/x86/pe-end-shim.M1
+x86_defs.m1 $m2libc/x86/x86_defs.M1
+bootstrp.c $m2libc/x86/windows/bootstrap.c
+bootable.c $m2libc/bootstrappable.c
+cc.h $m2planet/cc.h
+cc_globl.c $m2planet/cc_globals.c
+cc_readr.c $m2planet/cc_reader.c
+cc_strng.c $m2planet/cc_strings.c
+cc_types.c $m2planet/cc_types.c
+cc_emit.c $m2planet/cc_emit.c
+cc_core.c $m2planet/cc_core.c
+cc_macro.c $m2planet/cc_macro.c
+cc.c $m2planet/cc.c
+stringfy.c $mescc/stringify.c
+m1-macro.c $mescc/M1-macro.c
+EOF
 cc -o mkimage tools/mkimage.c
 ./mkimage disk.img disk.vhdx BOOTX64.EFI kernel.exe init.exe ntdll.dll \
-  hex0seed.exe hex0_x86.hex virtblk.exe
+  virtblk.exe chain/*
 ```
 
-The seed and its source are stage0-pe32's, unmodified:
+The chain's inputs are those trees' files, unmodified:
 
 | File | Size | sha256 |
 |---|---|---|
-| `hex0seed.exe` | 1,623 | `b9db7be0fed7770be9fca46b7aa551b611fc60eaf1112a053531aae14aa46742` |
-| `hex0_x86.hex` | 28,673 | `982c377dbc539d95c5c13fcb9e6707f5f9420a94b36ac94e3a6390e179780ec9` |
+| `chain/hex0seed.exe` | 1,623 | `b9db7be0fed7770be9fca46b7aa551b611fc60eaf1112a053531aae14aa46742` |
+| `chain/hex0_x86.hex` | 28,673 | `982c377dbc539d95c5c13fcb9e6707f5f9420a94b36ac94e3a6390e179780ec9` |
+| `chain/hex1_x86.hex` | 35,593 | `35cbd2e9be676323dd4a0c92c763a19e5d9253e6b44b77ffc3c31aa3249ff2d2` |
+| `chain/hex2_x86.hex` | 37,490 | `3e7348a01bc55dfa82b3ba32487feceaee91cf810a3727b71449d52f344f282b` |
+| `chain/catm_x86.hex` | 35,650 | `15d8657cafb604081fc5b95dbdf9af932dcd5630255cbcbe1d4315732264ad42` |
+| `chain/pe32i386.hex` | 19,108 | `f7bc6c53d1561a18cdff6d0d464c1c84c6360a2696d94b3e4ecf4c5057b6dcd9` |
+| `chain/ntdll386.hex` | 36,426 | `c715048ceca269c32745572fde4241bf8f7ee8c1ed6edf3ce861fe484223a081` |
+| `chain/m0_x86.hex` | 33,306 | `f8e6154bfc85022d8db79ff7e7d02e5830fc0b6501cbe5f696753523b20ed386` |
+| `chain/cc_x86.m1` | 203,841 | `1002acfe72c3dd2424e24af7d38a611f8b689754d68e9f9d98ac462730a0feeb` |
+| `chain/libccore.m1` | 30,096 | `d22dbad850aae74f6901c9ddc97205c5356b61c76afdb064fde488f555a85eff` |
+| `chain/libcboot.m1` | 758 | `bfe10a57c0d83f938f89d48e58b43d70e4bea7a17cb784db9369dca8a130c6fd` |
+| `chain/pe-end.m1` | 457 | `0139f8f0097c06924b0776c54a797e4c3241a1acaed35d25965f99a26e520337` |
+| `chain/x86_defs.m1` | 6,294 | `7f2a56c9bcac578389d12949c98692fd77180c7323c2dc9f2d4dd79a0b5f3cd6` |
+| `chain/bootstrp.c` | 4,148 | `c838905fa2f33c6dcebf74e3e729599912602985f69f3212f314c44c00431461` |
+| `chain/bootable.c` | 3,825 | `4c77cee2334816719d0db30ded2388fc0d8d676ba2b39b46b21e3b956814b5c2` |
+| `chain/cc.h` | 3,585 | `4ea75a3ae7e9559bc8f80c07892d14f31525dba99e075587548a38685319a7c4` |
+| `chain/cc_globl.c` | 2,027 | `9ca4b663b780802979bb59acaacc35e9f0238526737dde2a3c8ca94ef753ebf5` |
+| `chain/cc_readr.c` | 9,177 | `c54db85d4bbf5f66afe2f1c6f8ba2b969a9d4584356c9d2970227ba1f6e33d27` |
+| `chain/cc_strng.c` | 5,511 | `723809f52ab919ac540e574cdd196c02aba2ce662753417e4b47958416656a4c` |
+| `chain/cc_types.c` | 23,142 | `710a5b53ad66c3f25cccdd00ac645aa44136b11b72dcef7aabfc51be0dc8520c` |
+| `chain/cc_emit.c` | 30,356 | `fee9eef38574837b7e57a0aeef635a3b0dbb49cef4c693292cf27d90bcd1176a` |
+| `chain/cc_core.c` | 104,016 | `c9270db70928ba370f866eae9c8fc796ae7ad19558568616930903e2c36c78a6` |
+| `chain/cc_macro.c` | 25,722 | `8f1b2360f82cca6cb2fe85f2af62b9e40316c6bd79eec5d0d97483cc921e819c` |
+| `chain/cc.c` | 11,307 | `e52139205480424c2aad1b955a969edda15fdca540c5c73b3c7e827002134e21` |
+| `chain/stringfy.c` | 2,517 | `2cc09fd299c2bdff1a5e32d1baf84bd92a01f4447c475a671a80fa6549bf1302` |
+| `chain/m1-macro.c` | 19,911 | `cc83d1625a5d3daf2059fdfd0f362bfd1e1d19b8880913439f30f38a7c7b4fed` |
 
 From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `f1f5a56b41191be055e87dc0301ad883ec4b31997beede69e72443d13fe500c4` |
-| `disk.vhdx` | 71,303,168 | `9aab88afb35cd6cf4c937e4c5c6ebcfc0bc10b32f419873626078f154cd400d1` |
+| `disk.img` | 67,108,864 | `627901806820f996991d9be8c3ae98156c8e3e5d9d0359687f6f8a8e0b2474a7` |
+| `disk.vhdx` | 71,303,168 | `d24f18e53eb0475720a4cb134d60a63675c7f9736b71bbc1948fa4baf110d009` |
 
 To boot either file in QEMU, replace the `fat:esp` drive in the command
 below with `-drive if=virtio,format=raw,file=disk.img` or
@@ -152,8 +210,7 @@ on a Mac with Homebrew):
 fw=$(brew --prefix)/share/qemu
 mkdir -p esp/EFI/BOOT esp/nova
 cp BOOTX64.EFI esp/EFI/BOOT/
-cp kernel.exe init.exe ntdll.dll hex0seed.exe hex0_x86.hex virtblk.exe \
-  esp/nova/
+cp kernel.exe init.exe ntdll.dll virtblk.exe chain/* esp/nova/
 cp $fw/edk2-i386-vars.fd vars.fd && chmod u+w vars.fd
 qemu-system-x86_64 -machine q35 -m 256M \
   -drive if=pflash,format=raw,readonly=on,file=$fw/edk2-x86_64-code.fd \
@@ -164,8 +221,9 @@ qemu-system-x86_64 -machine q35 -m 256M \
 ```
 
 The kernel prints its lines to the terminal through the serial port,
-among them the first process's, which end with the sha256 of what the
-seed wrote, `b9db7be0...` as above, and `nova-init: checks passed`. The
+among them the first process's, which give the size and sha256 of what
+each step of the chain wrote, each link's the one nova-nix pins, and end
+with `nova-init: checks passed`. The
 firmware's variable store needs a writable copy, and the folder is attached
 as a read-only virtio disk, since QEMU's default IDE disk cannot be
 read-only. The virtio-rng device gives the firmware a random number

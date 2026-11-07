@@ -2,10 +2,11 @@
    with one bootstrap handle (docs/spec/ipc.md I6). It reads the bootstrap
    message, writes to the kernel's debug log with the root system
    resource the message carries, checks the answers of the calls it has
-   to the cases their contracts name, runs stage0-pe32's seed as a 32-bit
-   process when the boot volume holds it (seed.c), starts the virtio
-   block driver as the platform driver (platform.c), and exits with
-   EXIT_CHECKS_PASSED, which the kernel reads with process_info and logs.
+   to the cases their contracts name, runs stage0-pe32's chain from its
+   seed as 32-bit processes when the boot volume holds it (chain.c),
+   starts the virtio block driver as the platform driver (platform.c),
+   and exits with EXIT_CHECKS_PASSED, which the kernel reads with
+   process_info and logs.
    A failed check is logged, if the log is reachable, and ends the
    process with EXIT_CHECK_FAILED. */
 
@@ -29,10 +30,6 @@
    maps (the first page of user memory, below the image). */
 #define KERNEL_ADDRESS 0xffff800000000000ULL
 #define UNMAPPED_USER_ADDRESS 0x10000ULL
-
-/* Where init maps sections into itself: above its image and below its
-   stack, each mapping at the next free address. */
-#define SCRATCH_BASE 0x0000000200000000ULL
 
 /* The bootstrap message's bytes: the platform record, then the files'
    names (native_abi.h). */
@@ -73,15 +70,23 @@ const BOOT_FILE_VIEW *boot_file(const char *name)
     return 0;
 }
 
-UINT8 *map_into_init(UINT32 section, UINT64 size, UINT32 protection)
+UINT8 *map_into_init_at(UINT32 section, UINT64 address, UINT64 size,
+                        UINT32 protection)
 {
-    UINT64 address = scratch;
-
-    size = (size + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE;
     if (process_map(self, section, 0, address, size, protection) != OK)
         return 0;
-    scratch += size;
     return (UINT8 *)address;
+}
+
+UINT8 *map_into_init(UINT32 section, UINT64 size, UINT32 protection)
+{
+    UINT8 *address;
+
+    size = (size + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE;
+    address = map_into_init_at(section, scratch, size, protection);
+    if (address)
+        scratch += size;
+    return address;
 }
 
 static void check(int passed, const char *what)
@@ -216,7 +221,7 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     say("nova-init: running in user mode, bootstrap message read\r\n");
     check_errors(bootstrap);
     check_clock();
-    check(seed_run(job), "the seed did not reproduce itself");
+    check(chain_run(job), "the seed chain did not build nova-nix's links");
     check(platform_run(&platform), "the virtio block driver failed");
     say("nova-init: checks passed\r\n");
     process_exit(EXIT_CHECKS_PASSED);

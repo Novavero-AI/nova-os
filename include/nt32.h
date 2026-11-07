@@ -4,10 +4,12 @@
    the structures out alike. Layouts are from the Microsoft Learn pages
    docs/spec/compat.md pins, cited here by their titles; a field winternl.h
    marks Reserved is never read or written. Values are from those pages,
-   from MS-ERREF 2.3.1 for NTSTATUS, and from MS-SMB2 2.2.13, 2.2.13.1.1
-   and 2.2.14, which carry the same values over the wire. What was
-   learned only from stage0-pe32's hex0 seed, as a test of the layouts,
-   is marked "observed in the seed". */
+   from MS-ERREF 2.3.1 for NTSTATUS, from MS-SMB2 2.2.13, 2.2.13.1.1
+   and 2.2.14, which carry the same values over the wire, and from
+   MS-FSCC 2.4.40 and 2.4.47. What was learned only from stage0-pe32's
+   programs, as a test of the layouts, is marked "observed in the seed"
+   for its hex0 seed and "observed in the chain" for the programs the
+   seed's chain builds. */
 
 #ifndef NOVA_NT32_H
 #define NOVA_NT32_H
@@ -86,7 +88,11 @@ typedef struct {
 /* "RTL_USER_PROCESS_PARAMETERS (winternl.h)": Reserved1[16],
    Reserved2[10] of PVOID, ImagePathName, CommandLine. The seed reads
    CommandLine.Buffer at 0x44 and writes NULs into the command line
-   (observed in the seed). */
+   (observed in the seed). The page documents nothing after CommandLine;
+   the chain's C programs read the address of the environment block at
+   0x48, and the standard input, output and error handles from
+   Reserved2[2], [3] and [4], at 0x18, 0x1C and 0x20 (observed in the
+   chain). */
 #define PROCESS_PARAMETERS32_RESERVED1 16
 #define PROCESS_PARAMETERS32_RESERVED2 10
 typedef struct {
@@ -94,6 +100,7 @@ typedef struct {
     UINT32 Reserved2[PROCESS_PARAMETERS32_RESERVED2];
     UNICODE_STRING32 ImagePathName;
     UNICODE_STRING32 CommandLine;
+    UINT32 Environment;
 } RTL_USER_PROCESS_PARAMETERS32;
 
 /* "_OBJECT_ATTRIBUTES (ntdef.h)": Length, RootDirectory,
@@ -123,6 +130,35 @@ typedef struct {
     UINT32 HighPart;
 } LARGE_INTEGER32;
 
+/* The FileInformationClass values ntdll serves, as "NtQueryInformationFile
+   function (ntifs.h)" and "NtSetInformationFile function (ntifs.h)" number
+   them. The chain queries both and sets the position (observed in the
+   chain). */
+#define FILE_STANDARD_INFORMATION_CLASS 5u
+#define FILE_POSITION_INFORMATION_CLASS 14u
+
+/* "FILE_POSITION_INFORMATION structure (wdm.h)": the byte offset of the
+   current file pointer. MS-FSCC 2.4.40: only an offset of zero or more
+   may be set. */
+typedef struct {
+    LARGE_INTEGER32 CurrentByteOffset;
+} FILE_POSITION_INFORMATION32;
+
+/* "FILE_STANDARD_INFORMATION structure (wdm.h)": AllocationSize,
+   EndOfFile, NumberOfLinks, DeletePending, Directory. MS-FSCC 2.4.47 lays
+   it out on the wire with two Reserved bytes after Directory, which the
+   structure's own alignment gives it in memory. The chain reads EndOfFile
+   at 8 of a 24-byte buffer (observed in the chain). */
+#define FILE_STANDARD_INFORMATION32_RESERVED 2
+typedef struct {
+    LARGE_INTEGER32 AllocationSize;
+    LARGE_INTEGER32 EndOfFile;
+    UINT32 NumberOfLinks;
+    UINT8 DeletePending;
+    UINT8 Directory;
+    UINT8 Reserved[FILE_STANDARD_INFORMATION32_RESERVED];
+} FILE_STANDARD_INFORMATION32;
+
 _Static_assert(sizeof(UNICODE_STRING32) == 8, "UNICODE_STRING");
 _Static_assert(sizeof(TEB32) == 0x34, "TEB.ProcessEnvironmentBlock at 0x30");
 _Static_assert(sizeof(PEB32) == 0x14, "PEB.Ldr at 0x0C");
@@ -130,14 +166,19 @@ _Static_assert(sizeof(PEB_LDR_DATA32) == 0x1C,
                "InMemoryOrderModuleList at 0x14");
 _Static_assert(sizeof(LDR_DATA_TABLE_ENTRY32) == 0x2C,
                "DllBase at 0x18, FullDllName at 0x24");
-_Static_assert(sizeof(RTL_USER_PROCESS_PARAMETERS32) == 0x48,
-               "CommandLine at 0x40");
+_Static_assert(sizeof(RTL_USER_PROCESS_PARAMETERS32) == 0x4C,
+               "CommandLine at 0x40, Environment at 0x48");
 _Static_assert(sizeof(OBJECT_ATTRIBUTES32) == 24, "OBJECT_ATTRIBUTES");
+_Static_assert(sizeof(FILE_POSITION_INFORMATION32) == 8,
+               "FILE_POSITION_INFORMATION");
+_Static_assert(sizeof(FILE_STANDARD_INFORMATION32) == 24,
+               "FILE_STANDARD_INFORMATION, EndOfFile at 8");
 
 /* NTSTATUS values, MS-ERREF 2.3.1. */
 #define STATUS_SUCCESS 0x00000000u
 #define STATUS_UNSUCCESSFUL 0xC0000001u
 #define STATUS_NOT_IMPLEMENTED 0xC0000002u
+#define STATUS_INFO_LENGTH_MISMATCH 0xC0000004u
 #define STATUS_INVALID_HANDLE 0xC0000008u
 #define STATUS_INVALID_PARAMETER 0xC000000Du
 #define STATUS_END_OF_FILE 0xC0000011u

@@ -297,7 +297,7 @@ Microsoft Learn pages and open specifications, each pinned as fetched on
 November 7, 2026 with the date it shows as its last update. Used by:
 [compat.md](compat.md), `include/nt32.h`, ntdll (`ntdll/ntdll.c`) and the
 32-bit lane ([syscalls.md S11](syscalls.md#s11-the-32-bit-lane)). Access:
-free web pages; MS-ERREF and MS-SMB2 under Microsoft's Open
+free web pages; MS-ERREF, MS-SMB2 and MS-FSCC under Microsoft's Open
 Specifications terms.
 
 | Page | Updated | sha256 |
@@ -314,15 +314,22 @@ Specifications terms.
 | [NtReadFile function (ntifs.h)][ms-read] | 2023-07-06 | `1cee672a2a9cba820c9568d401a483121f8cf92011aa156a66b81af6d43a02c6` |
 | [NtWriteFile function (ntifs.h)][ms-write] | 2023-07-06 | `406dffc655626287d381e946956756217593ee79d1db8092145f54990a855c41` |
 | [NtClose function (ntifs.h)][ms-close] | 2024-02-22 | `0735bb7902046fe6aa405c8552af3b924e34946678fd8b3f3b5d42be45604b4b` |
+| [NtSetInformationFile function (ntifs.h)][ms-setinfo] | 2023-07-06 | `25929a5d6fda0017fc5f3aa8d0c645816cb9ab9eb3ae5c811bafeaa4bccdd6b8` |
+| [NtQueryInformationFile function (ntifs.h)][ms-queryinfo] | 2023-07-06 | `3f88b37c07618a71cfdff6d77d49345441ca96f1aacae689b5dac5249d2ae490` |
+| [FILE_POSITION_INFORMATION structure (wdm.h)][ms-position] | 2024-02-22 | `4a84f3a2f7b929efa192dc4c6753e80de048599e678146314d65511d64187a6c` |
+| [FILE_STANDARD_INFORMATION structure (wdm.h)][ms-standard] | 2024-02-22 | `0dd6048f159af807a5f1172bdaf41905f471d15eaafec728a60e1c241714e160` |
 | [ZwTerminateProcess function (ntddk.h)][ms-terminate] | 2023-02-28 | `b03ea4d9c659497864209dffb643a9ecbcc9289b833601502b4a3f9ae88cd694` |
 | [ZwCurrentProcess Macro][ms-current] | 2023-03-01 | `3713699fdcb313d8125425e35a87ff871e4c0f79eee90e5d2693458c0858c6a2` |
 | [Naming Files, Paths, and Namespaces][ms-naming] | 2024-08-28 | `f1f1b4f6b41241f58742eb6050ba4dd9409720f62a4d1b1ff131417193b00691` |
+| [Environment Variables][ms-environment] | 2025-07-14 | `d95ef68e21a81ffd7720ae5d7441766101ae45ac93a2427d477c1f92030ea6d8` |
 | [__stdcall][ms-stdcall] | 2025-02-10 | `95d0de9ae535b11699e4244020017a8cfa919eb9607454c4d20eb666b55211e9` |
 | [Argument Passing and Naming Conventions][ms-arguments] | 2025-10-03 | `da72f0dd7febe8a67a2d6265af9d8107a9efe36c642751f2c9d22434232722e1` |
 | [MS-ERREF 2.3.1 NTSTATUS Values][ms-erref-values] | 2021-11-16 | `eb8b93ae6e40f6851e3b9172b8db2c18f6e0fc7150a636dbc1d22fb1a4152a57` |
 | [MS-SMB2 2.2.13 SMB2 CREATE Request][ms-smb2-create] | 2023-02-28 | `85535072834d14fed56ba4d86d67d2a7c2f6e8241ae9f398dfc00b0f83579f19` |
 | [MS-SMB2 2.2.13.1.1 File_Pipe_Printer_Access_Mask][ms-smb2-access] | 2023-02-28 | `dbf068fe3ac25cda41f31a761dbc4b9e85bf55be0d5e53a8e879c48dbacea4e0` |
 | [MS-SMB2 2.2.14 SMB2 CREATE Response][ms-smb2-response] | 2025-04-07 | `dae9e65c1bf41681c5390670a97c468659a16ad1967466867782d5997f13b05d` |
+| [MS-FSCC 2.4.40 FilePositionInformation][ms-fscc-position] | 2025-04-07 | `7cee0eeeac9a93917d1f43cb11e65ec1ed957c74c2273a8d32dc2966cb9021d2` |
+| [MS-FSCC 2.4.47 FileStandardInformation][ms-fscc-standard] | 2021-05-28 | `cfca0d77cda89200d560b1cca83c6bcbd8e261a8f369e737a0c129cf2352e889` |
 
 [ms-teb]: https://learn.microsoft.com/en-us/windows/win32/api/winternl/ns-winternl-teb
 [ms-peb]: https://learn.microsoft.com/en-us/windows/win32/api/winternl/ns-winternl-peb
@@ -336,22 +343,34 @@ Specifications terms.
 [ms-read]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntreadfile
 [ms-write]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntwritefile
 [ms-close]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntclose
+[ms-setinfo]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntsetinformationfile
+[ms-queryinfo]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntqueryinformationfile
+[ms-position]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_file_position_information
+[ms-standard]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_file_standard_information
 [ms-terminate]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/nf-ntddk-zwterminateprocess
 [ms-current]: https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/zwcurrentprocess
 [ms-naming]: https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file
+[ms-environment]: https://learn.microsoft.com/en-us/windows/win32/procthread/environment-variables
 [ms-stdcall]: https://learn.microsoft.com/en-us/cpp/cpp/stdcall
 [ms-arguments]: https://learn.microsoft.com/en-us/cpp/cpp/argument-passing-and-naming-conventions
 [ms-erref-values]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55
 [ms-smb2-create]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/e8fb45c1-a03d-44ca-b7ae-47385cfd7997
 [ms-smb2-access]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/77b36d0f-6016-458a-a7a0-0f4a72ae1534
 [ms-smb2-response]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/d166aa9e-0b53-410e-b35e-3933d8131927
+[ms-fscc-position]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/e3ce4a39-327e-495c-99b6-6b61606b6f16
+[ms-fscc-standard]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/5afa7f66-619c-48f3-955f-68c4ece704ae
 
 **stage0-pe32**, commit `ff1c2ad86a91d3d7d086722ffed49dfe18dd50d0`, the
-revision nova-nix builds its chain from (GPL-3.0). Its seed,
-`bootstrap-seeds/PE32/i386/hex0-seed.exe`, and `x86/hex0_x86.hex0` are
-test inputs, fetched by hash ([README](../../README.md#disk-image)); the
-source was read only to learn which fields and values the seed uses, and
-nothing of it is copied ([compat.md](compat.md)).
+revision nova-nix builds its chain from, and the trees it builds from at
+the commits it records for them: **M2libc**
+`13e57eb52bd30a6b0296f1cef1c54fc40065f07b`, **M2-Planet**
+`ee0bf91eb02390c2d40bd85379113e524f0c752b` and **mescc-tools**
+`578ac99623d291e2b9eacf03cacc390cfe512661` (all GPL-3.0). The seed,
+`bootstrap-seeds/PE32/i386/hex0-seed.exe`, and the files its chain reads
+up to M1 are test inputs, fetched by hash
+([README](../../README.md#disk-image)); the sources were read only to
+learn which routines, fields and values the chain's programs use, and
+nothing of them is copied ([compat.md](compat.md)).
 
 ## Storage and file systems
 

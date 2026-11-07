@@ -9,18 +9,20 @@
 
 #include "types.h"
 
-/* The launcher's layout of a 32-bit process: the stack and the heap, and
-   the environment block, which holds the TEB in its first page, then
-   the PEB, the loader data, the process parameters, their strings and
-   the COMPAT_START block. Images lie at their own ImageBase: a seed
-   chain program at 0x400000, ntdll at TinyCC's default for a DLL,
-   0x10000000. Every range lies above USER_BASE and below 4 GiB. */
-#define COMPAT_STACK_BASE 0x00200000u
-#define COMPAT_STACK_SIZE 0x00010000u
+/* The launcher's layout of a 32-bit process: the heap and the
+   environment block, which holds the TEB in its first page, then the
+   PEB, the loader data, the process parameters, their strings, the
+   environment and the COMPAT_START block, both below 0x400000, where a
+   seed chain program's image starts and runs on for as much as 128 MiB
+   (observed in the chain); and the stack, the program's
+   SizeOfStackReserve ending at COMPAT_STACK_TOP, where ntdll starts, at
+   TinyCC's default for a DLL. Every range lies above USER_BASE and below
+   4 GiB. */
+#define COMPAT_HEAP_BASE 0x00100000u
+#define COMPAT_HEAP_SIZE 0x00010000u
 #define COMPAT_ENVIRONMENT_BASE 0x00300000u
 #define COMPAT_ENVIRONMENT_SIZE 0x00002000u
-#define COMPAT_HEAP_BASE 0x01000000u
-#define COMPAT_HEAP_SIZE 0x00010000u
+#define COMPAT_STACK_TOP 0x10000000u
 
 /* The process's view of storage is drive C:, whose root is its
    bootstrap directory (docs/spec/compat.md, Paths). */

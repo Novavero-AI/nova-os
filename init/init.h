@@ -8,6 +8,12 @@
 #include "log.h"
 #include "native.h"
 
+/* init's address space above its image: the seed chain's outputs from
+   OUTPUT_BASE up to SCRATCH_BASE (view.c), and from SCRATCH_BASE up the
+   sections map_into_init maps, each at the next free address. */
+#define OUTPUT_BASE 0x0000000100000000ULL
+#define SCRATCH_BASE 0x0000000200000000ULL
+
 /* A boot file, mapped read-only into init. */
 typedef struct {
     char name[BOOT_FILE_NAME_SIZE];
@@ -28,9 +34,16 @@ const BOOT_FILE_VIEW *boot_file(const char *name);
    the call fails. */
 UINT8 *map_into_init(UINT32 section, UINT64 size, UINT32 protection);
 
-/* Run stage0-pe32's seed, hex0-seed.exe, on hex0_x86.hex0 as a 32-bit
-   process created in job, and check that it writes its own bytes.
-   Returns 1 if it did or if the boot volume lacks the files, 0 if not. */
-int seed_run(UINT32 job);
+/* Map size bytes of section, from its start, at address in init's own
+   space with MAP_ protection, and return the address; 0 if the call
+   fails. */
+UINT8 *map_into_init_at(UINT32 section, UINT64 address, UINT64 size,
+                        UINT32 protection);
+
+/* Run stage0-pe32's chain from its hex0 seed to M1, each step as a
+   32-bit process created in job, and check each link it builds against
+   nova-nix's (chain.c). Returns 1 if every link matched or the boot
+   volume lacks the seed, 0 if not. */
+int chain_run(UINT32 job);
 
 #endif

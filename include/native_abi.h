@@ -207,13 +207,14 @@
    resources, then one read-only section for each file nova-boot read
    from \nova\. Its bytes are a BOOTSTRAP_PLATFORM, then a BOOTSTRAP_FILE
    for each file, in the order of the sections. A name is ASCII,
-   NUL-terminated, as the firmware reported it. */
+   NUL-terminated, as the firmware reported it. The boot files are as
+   many as the message has room for, one handle each. */
 #define BOOTSTRAP_ROOT_MMIO 3
 #define BOOTSTRAP_ROOT_IRQ 4
 #define BOOTSTRAP_ROOT_DMA 5
 #define BOOTSTRAP_FIRST_FILE 6
 #define BOOTSTRAP_ECAM_RANGES_MAX 8
-#define BOOT_FILES_MAX 8
+#define BOOT_FILES_MAX (CHANNEL_MAX_HANDLES - BOOTSTRAP_FIRST_FILE)
 #define BOOT_FILE_NAME_SIZE 32
 
 /* The most bytes one debug_write writes. The kernel copies them all

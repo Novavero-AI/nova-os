@@ -2,21 +2,21 @@
    VHDX file. The disk carries a protective MBR and a GPT with one EFI
    System Partition, formatted FAT32, which holds \EFI\BOOT\BOOTX64.EFI
    (the file firmware boots when no boot option names one), and in
-   \NOVA\ the kernel, the first process, the 32-bit ntdll, stage0-pe32's
-   seed and the source it assembles, and the virtio block driver, which
-   nova-boot reads with every other file there. Every GUID, serial
-   number, timestamp and sequence number is a constant, and the disk is
-   assembled in a zeroed buffer in a fixed order, so the same inputs
-   give the same bytes.
+   \NOVA\ every other file given, each under its own name, which must be
+   an 8.3 name: the kernel, which nova-boot loads, and the files it reads
+   beside it. Every GUID, serial number, timestamp and sequence number is
+   a constant, the files of \NOVA\ go in the order of their names
+   whatever the order they are given in, and the disk is assembled in a
+   zeroed buffer in a fixed order, so the same inputs give the same bytes.
 
-   usage: mkimage DISK.IMG DISK.VHDX BOOTX64.EFI KERNEL.EXE INIT.EXE
-          NTDLL.DLL HEX0SEED.EXE HEX0_X86.HEX VIRTBLK.EXE
+   usage: mkimage DISK.IMG DISK.VHDX BOOTX64.EFI FILE...
 
    Formats: UEFI 2.10 chapter 5 (MBR and GPT), section 13.3 (the EFI
    System Partition's file system) and appendix A (GUIDs); Microsoft's
    FAT32 File System Specification 1.03 ("fatgen103"); [MS-VHDX]
    v20240423; [MS-DTYP] v20241119 section 2.3.4.2 (GUIDs in VHDX). */
 
+#include <ctype.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -35,20 +35,10 @@
 #define DISK_SECTORS (DISK_SIZE / SECTOR_SIZE)
 #define SECTORS(n) ((size_t)(n) * SECTOR_SIZE)
 
-/* The files on the disk, in the order of the command line. */
-enum {
-    INPUT_LOADER,
-    INPUT_KERNEL,
-    INPUT_INIT,
-    INPUT_NTDLL,
-    INPUT_SEED,
-    INPUT_SOURCE,
-    INPUT_DRIVER,
-    INPUT_COUNT
-};
-
-/* The arguments before the inputs: the program and the two outputs. */
-#define FIRST_INPUT_ARGUMENT 3
+/* The arguments: the program, the two outputs, the loader, then the
+   files of \NOVA\. */
+#define LOADER_ARGUMENT 3
+#define FIRST_FILE_ARGUMENT 4
 
 struct input {
     const char *path;
@@ -302,43 +292,121 @@ static void build_gpt(uint8_t *disk)
 #define FILE_TIME 0u
 
 /* The tree, in the order clusters are allocated and directory entries
-   written. A parent comes before its children, and each directory is one
-   cluster, room for 16 entries. */
-enum {
-    NODE_ROOT,
-    NODE_EFI,
-    NODE_BOOT,
-    NODE_LOADER,
-    NODE_NOVA,
-    NODE_KERNEL,
-    NODE_INIT,
-    NODE_NTDLL,
-    NODE_SEED,
-    NODE_SOURCE,
-    NODE_DRIVER,
-    NODE_COUNT
-};
+   written: the directories and the loader, then the files of \NOVA\. A
+   parent comes before its children, and a directory takes the clusters
+   its entries fill, at least one. */
+enum { NODE_ROOT, NODE_EFI, NODE_BOOT, NODE_LOADER, NODE_NOVA, NODE_FILES };
 
-#define DIRECTORY (-1)
 #define NO_PARENT (-1)
 
-static const struct node {
+/* A short name: a base of 1 to 8 characters and an extension of up to 3,
+   each stored space-padded (fatgen103, "FAT Directory Structure"). */
+#define SHORT_BASE_SIZE 8u
+#define SHORT_EXTENSION_SIZE 3u
+
+/* The bytes fatgen103 does not allow in DIR_Name besides those below
+   0x20. A space is allowed but kept out of names here, and '.' only
+   separates the extension. */
+#define SHORT_NAME_ILLEGAL "\"*+,./:;<=>?[\\]|"
+#define FIRST_PRINTABLE 0x21
+#define LAST_PRINTABLE 0x7E
+
+struct node {
     char name[FAT_NAME_SIZE + 1];
     int parent;
-    int input; /* an INPUT_ index, or DIRECTORY */
-} tree[NODE_COUNT] = {
-    [NODE_ROOT] = {"", NO_PARENT, DIRECTORY},
-    [NODE_EFI] = {"EFI        ", NODE_ROOT, DIRECTORY},
-    [NODE_BOOT] = {"BOOT       ", NODE_EFI, DIRECTORY},
-    [NODE_LOADER] = {"BOOTX64 EFI", NODE_BOOT, INPUT_LOADER},
-    [NODE_NOVA] = {"NOVA       ", NODE_ROOT, DIRECTORY},
-    [NODE_KERNEL] = {"KERNEL  EXE", NODE_NOVA, INPUT_KERNEL},
-    [NODE_INIT] = {"INIT    EXE", NODE_NOVA, INPUT_INIT},
-    [NODE_NTDLL] = {"NTDLL   DLL", NODE_NOVA, INPUT_NTDLL},
-    [NODE_SEED] = {"HEX0SEEDEXE", NODE_NOVA, INPUT_SEED},
-    [NODE_SOURCE] = {"HEX0_X86HEX", NODE_NOVA, INPUT_SOURCE},
-    [NODE_DRIVER] = {"VIRTBLK EXE", NODE_NOVA, INPUT_DRIVER},
+    const struct input *input; /* NULL for a directory */
+    uint32_t entries;          /* a directory's, its dot entries included */
 };
+
+static const struct node directories[NODE_FILES] = {
+    [NODE_ROOT] = {"", NO_PARENT, NULL, 2},
+    [NODE_EFI] = {"EFI        ", NODE_ROOT, NULL, 3},
+    [NODE_BOOT] = {"BOOT       ", NODE_EFI, NULL, 3},
+    [NODE_LOADER] = {"BOOTX64 EFI", NODE_BOOT, NULL, 0},
+    [NODE_NOVA] = {"NOVA       ", NODE_ROOT, NULL, 2},
+};
+
+/* The DIR_Name of the last component of path in out, upper-cased, with
+   its terminator. Returns 0 if it is not a short name. A path may
+   separate components with '/' or, as on Windows, '\\'. */
+static int short_name(const char *path, char *out)
+{
+    const char *name = path, *p;
+    size_t base = 0, extension = 0;
+    int dot = 0;
+
+    for (p = path; *p != '\0'; p++)
+        if (*p == '/' || *p == '\\')
+            name = p + 1;
+    memset(out, ' ', FAT_NAME_SIZE);
+    out[FAT_NAME_SIZE] = '\0';
+    for (p = name; *p != '\0'; p++) {
+        unsigned char c = (unsigned char)*p;
+
+        if (c == '.') {
+            if (dot || base == 0)
+                return 0;
+            dot = 1;
+        } else if (c < FIRST_PRINTABLE || c > LAST_PRINTABLE ||
+                   strchr(SHORT_NAME_ILLEGAL, c) != NULL) {
+            return 0;
+        } else if (!dot && base < SHORT_BASE_SIZE) {
+            out[base++] = (char)toupper(c);
+        } else if (dot && extension < SHORT_EXTENSION_SIZE) {
+            out[SHORT_BASE_SIZE + extension++] = (char)toupper(c);
+        } else {
+            return 0;
+        }
+    }
+    return base > 0 && (!dot || extension > 0);
+}
+
+static int by_name(const void *a, const void *b)
+{
+    return memcmp(((const struct node *)a)->name,
+                  ((const struct node *)b)->name, FAT_NAME_SIZE);
+}
+
+/* The tree for the loader and count files: the directories, then each
+   file under its short name in \NOVA\, in the order of the names.
+   Returns NULL, having said why, if a name is not a short name or two
+   files share one. */
+static struct node *plan_tree(const struct input *loader,
+                              const struct input *files, size_t count)
+{
+    struct node *tree = calloc(NODE_FILES + count, sizeof *tree);
+    size_t i;
+
+    if (tree == NULL) {
+        fail("allocating the tree");
+        return NULL;
+    }
+    memcpy(tree, directories, sizeof directories);
+    tree[NODE_LOADER].input = loader;
+    tree[NODE_NOVA].entries += (uint32_t)count;
+    for (i = 0; i < count; i++) {
+        struct node *n = &tree[NODE_FILES + i];
+
+        if (!short_name(files[i].path, n->name)) {
+            fprintf(stderr, "mkimage: %s is not an 8.3 name\n",
+                    files[i].path);
+            free(tree);
+            return NULL;
+        }
+        n->parent = NODE_NOVA;
+        n->input = &files[i];
+    }
+    qsort(tree + NODE_FILES, count, sizeof *tree, by_name);
+    for (i = 1; i < count; i++)
+        if (by_name(&tree[NODE_FILES + i - 1], &tree[NODE_FILES + i]) == 0) {
+            fprintf(stderr, "mkimage: %s and %s have one 8.3 name\n",
+                    tree[NODE_FILES + i - 1].input->path,
+                    tree[NODE_FILES + i].input->path);
+            free(tree);
+            return NULL;
+        }
+    return tree;
+}
 
 struct fat_layout {
     uint32_t reserved;    /* BPB_RsvdSecCnt */
@@ -444,41 +512,50 @@ static void dot_entries(uint8_t *at, uint32_t self, uint32_t parent)
     dir_entry(at + DIR_ENTRY_SIZE, "..         ", ATTR_DIRECTORY, parent, 0);
 }
 
-static int build_fat(uint8_t *disk, const struct input *inputs)
+/* A directory's clusters hold its entries one after another, since each
+   node's clusters are allocated in one run. */
+static int build_fat(uint8_t *disk, const struct node *tree, size_t nodes)
 {
     const struct fat_layout l = plan_fat();
     uint8_t *volume = disk + SECTORS(ESP_FIRST_LBA);
     uint8_t *fat = volume + SECTORS(l.reserved);
     uint8_t *data = fat + SECTORS(FAT_COUNT * l.fat_sectors);
-    uint32_t first[NODE_COUNT], entries[NODE_COUNT];
+    uint32_t *first = calloc(nodes, sizeof *first);
+    uint32_t *entries = calloc(nodes, sizeof *entries);
     uint32_t next = FAT_FIRST_CLUSTER, end = FAT_FIRST_CLUSTER + l.clusters;
-    int i;
+    size_t i;
+    int status = -1;
 
+    if (first == NULL || entries == NULL) {
+        fail("allocating the volume's plan");
+        goto done;
+    }
     if (l.clusters < FAT32_MIN_CLUSTERS + FAT_TYPE_MARGIN) {
         fprintf(stderr, "mkimage: %u clusters are too few for FAT32\n",
                 (unsigned)l.clusters);
-        return -1;
+        goto done;
     }
     put32(fat, FAT_ENTRY_0);
     put32(fat + FAT_ENTRY_SIZE, FAT_END_OF_CHAIN);
-    for (i = 0; i < NODE_COUNT; i++) {
+    for (i = 0; i < nodes; i++) {
         const struct node *n = &tree[i];
-        const struct input *in =
-            n->input == DIRECTORY ? NULL : &inputs[n->input];
-        size_t size = in == NULL ? CLUSTER_SIZE : in->size;
+        const struct input *in = n->input;
+        size_t size = in == NULL ? (size_t)n->entries * DIR_ENTRY_SIZE
+                                 : in->size;
         uint8_t *at = cluster_at(data, next);
         uint32_t count;
 
+        if (in == NULL && size < CLUSTER_SIZE)
+            size = CLUSTER_SIZE;
         if (size > (size_t)(end - next) * CLUSTER_SIZE) {
             fprintf(stderr, "mkimage: no room on the volume for %s\n",
                     in == NULL ? "the directories" : in->path);
-            return -1;
+            goto done;
         }
         count = (uint32_t)((size + CLUSTER_SIZE - 1) / CLUSTER_SIZE);
         first[i] = count > 0 ? next : 0;
         chain(fat, next, count);
         next += count;
-        entries[i] = 0;
         if (in != NULL)
             memcpy(at, in->data, in->size);
         else if (i != NODE_ROOT) {
@@ -488,7 +565,7 @@ static int build_fat(uint8_t *disk, const struct input *inputs)
         }
         if (i != NODE_ROOT)
             dir_entry(cluster_at(data, first[n->parent]) +
-                          entries[n->parent]++ * DIR_ENTRY_SIZE,
+                          (size_t)entries[n->parent]++ * DIR_ENTRY_SIZE,
                       n->name, in == NULL ? ATTR_DIRECTORY : ATTR_ARCHIVE,
                       first[i], in == NULL ? 0 : (uint32_t)in->size);
     }
@@ -498,7 +575,11 @@ static int build_fat(uint8_t *disk, const struct input *inputs)
            next < end ? next : FSI_NO_HINT);
     memcpy(volume + SECTORS(FAT_BACKUP_BOOT_SECTOR), volume,
            SECTORS(FAT_BOOT_RECORD_SECTORS));
-    return 0;
+    status = 0;
+done:
+    free(first);
+    free(entries);
+    return status;
 }
 
 /* ------------------------------------------------------------------------
@@ -775,24 +856,31 @@ static int write_output(const char *path, const uint8_t *data, size_t size)
 
 int main(int argc, char **argv)
 {
-    struct input inputs[INPUT_COUNT];
+    struct input *inputs;
+    struct node *tree = NULL;
     uint8_t *file = NULL, *disk;
-    int status = EXIT_FAILURE, i;
+    size_t count, i;
+    int status = EXIT_FAILURE;
 
-    if (argc != FIRST_INPUT_ARGUMENT + INPUT_COUNT) {
+    if (argc <= FIRST_FILE_ARGUMENT) {
         fprintf(stderr, "usage: mkimage DISK.IMG DISK.VHDX BOOTX64.EFI "
-                        "KERNEL.EXE INIT.EXE NTDLL.DLL HEX0SEED.EXE "
-                        "HEX0_X86.HEX VIRTBLK.EXE\n");
+                        "FILE...\n");
         return EXIT_FAILURE;
     }
-    for (i = 0; i < INPUT_COUNT; i++) {
-        inputs[i].path = argv[FIRST_INPUT_ARGUMENT + i];
-        inputs[i].data = NULL;
-        inputs[i].size = 0;
+    count = (size_t)(argc - LOADER_ARGUMENT);
+    inputs = calloc(count, sizeof *inputs);
+    if (inputs == NULL) {
+        fail("allocating the inputs");
+        return EXIT_FAILURE;
     }
-    for (i = 0; i < INPUT_COUNT; i++)
+    for (i = 0; i < count; i++)
+        inputs[i].path = argv[LOADER_ARGUMENT + i];
+    for (i = 0; i < count; i++)
         if (read_input(&inputs[i]) != 0)
             goto done;
+    tree = plan_tree(&inputs[0], &inputs[1], count - 1);
+    if (tree == NULL)
+        goto done;
     file = calloc(1, VHDX_FILE_SIZE);
     if (file == NULL) {
         fail("allocating the image");
@@ -802,7 +890,7 @@ int main(int argc, char **argv)
        is that slice of the VHDX file. */
     disk = file + VHDX_PAYLOAD_OFFSET;
     build_gpt(disk);
-    if (build_fat(disk, inputs) != 0)
+    if (build_fat(disk, tree, NODE_FILES + count - 1) != 0)
         goto done;
     build_vhdx(file);
     if (write_output(argv[1], disk, DISK_SIZE) == 0 &&
@@ -810,7 +898,9 @@ int main(int argc, char **argv)
         status = EXIT_SUCCESS;
 done:
     free(file);
-    for (i = 0; i < INPUT_COUNT; i++)
+    free(tree);
+    for (i = 0; i < count; i++)
         free(inputs[i].data);
+    free(inputs);
     return status;
 }
