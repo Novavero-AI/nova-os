@@ -408,7 +408,7 @@ the commits it records for them: **M2libc**
 `578ac99623d291e2b9eacf03cacc390cfe512661` (all GPL-3.0). The seed,
 `bootstrap-seeds/PE32/i386/hex0-seed.exe`, and the files its chain reads
 up to M1 are test inputs, fetched by hash for the test disk
-([README](../../README.md#disk-image)); the sources were read only to
+([build.sh](../../build.sh)); the sources were read only to
 learn which routines, fields and values the chain's programs use, and
 nothing of them is copied ([compat.md](compat.md)).
 
@@ -713,9 +713,9 @@ Authors).
   `Inter-Regular.ttf`, is 411,640 bytes with sha256
   `40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82`;
   their hinting (`Makefile`). Its tables, coverage and kerning were
-  measured with fontTools 4.68.0. README.md's Build section fetches the
-  zip, checks its sha256 and converts six of its static fonts
-  ([font-format.md](font-format.md)).
+  measured with fontTools 4.68.0. [build.sh](../../build.sh) fetches
+  the zip, whose sha256 `SHA256SUMS` gives, and converts six of its
+  static fonts ([font-format.md](font-format.md)).
 
 **SIL Open Font License**, version 1.1, February 26, 2007 ("OFL"), and
 **OFL-FAQ**, version 1.1-update7, November 2023 ("OFL FAQ").

@@ -1,4 +1,4 @@
-# The build reads the tree's bytes as committed, and README.md gives the
-# hashes of what it builds from them, so git converts no line ending on
-# any host.
+# The build reads the tree's bytes as committed, and SHA256SUMS gives
+# the hashes of what it builds from them, so git converts no line ending
+# on any host.
 * -text

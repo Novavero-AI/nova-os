@@ -108,17 +108,21 @@ from a spare drive through the firmware's boot menu.
 
 CI checks every pull request and every push to main:
 
-- **Reproduce** runs README.md's build and disk image blocks verbatim on
-  Linux and on macOS (Apple silicon), each host's compiler building
-  TinyCC, and checks every size and sha256 the README gives, so both
-  hosts must give the README's bytes. It also builds with TinyCC's
-  `-Wall -Werror`, runs `design/text/check-text.sh` on the fonts the
-  build converted, and on Linux `design/text/compare-freetype.sh`.
+- **Reproduce** runs `build.sh` on Linux and on macOS (Apple silicon),
+  each host's compiler building TinyCC, and checks every file
+  `SHA256SUMS` lists, so both hosts must give its bytes. It also builds
+  with `--werror`, TinyCC's `-Wall -Werror`, runs
+  `design/text/check-text.sh` on the fonts the build converted, and on
+  Linux `design/text/compare-freetype.sh`.
+- **Seed** runs `build.sh` on Windows, under busybox-w32's sh, with a
+  TinyCC and a busybox that nova-nix builds from stage0-pe32's seed,
+  and checks the same files. It runs on every push to main, weekly, and
+  on a pull request that changes the job or a script it runs.
 - **Lint** checks that tracked text is ASCII and that clang's `-Wall
   -Wextra -pedantic -Wshadow` find nothing in any C source, built with
   its `compile_flags.txt`; it runs `tools/check-masks.c`,
   `tools/check-fade.c`, `tools/check-pointer.c` and
-  `design/backgrounds/check-limb.sh`, and actionlint over the workflow.
+  `design/backgrounds/check-limb.sh`, and actionlint over the workflows.
 - **Boot** boots the reproduced `disk.img` under QEMU with Ubuntu 24.04's
   OVMF, with a copy of `data.img` as its data disk: on QEMU's default
   processor, on Skylake-Client, which needs page-table isolation, on
@@ -135,7 +139,10 @@ CI checks every pull request and every push to main:
 - **Chain** boots `chain.img` and checks that each step of the bootstrap
   chain runs and each pinned link matches.
 
-The jobs' scripts are in `ci/`, each with its usage in its header.
+The jobs' scripts are in `ci/`, each with its usage in its header. CI
+only checks `SHA256SUMS`; `ci/update-hashes.sh`, which refuses to run
+in CI, rewrites it from a build after a change meant to change the
+bytes.
 
 ## Trust
 

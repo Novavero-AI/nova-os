@@ -1,18 +1,5 @@
-# What the README's build and run commands create.
-tinycc.tar.gz
-tinycc-*/
-cfg/
-x86_64-win32-tcc
-*.EFI
-*.exe
-esp/
-vars.fd
-mkimage
-disk.img
-disk.vhdx
-mkdata
-data.img
-data-run.img
+# What README.md's build and run commands write.
+/out/
 
 # What doxygen writes from the Doxyfile.
 /reference/

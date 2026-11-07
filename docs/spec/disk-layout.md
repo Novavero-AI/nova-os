@@ -114,7 +114,7 @@ among them as the store image
 and UEFI sets no location for files an application reads (UEFI
 13.3.1.3). The seed and the other inputs of its chain are the files of
 stage0-pe32 and of the trees it builds from, unmodified, under 8.3 names
-the README's disk-image block gives them; the first process gives them
+[build.sh](../../build.sh) gives them; the first process gives them
 to the chain's programs under their own names
 ([compat.md](compat.md#c4-files)). The first process runs the chain
 when `\NOVA\` holds all of them, and refuses a disk that holds some

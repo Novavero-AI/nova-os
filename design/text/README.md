@@ -79,8 +79,8 @@ mixed in turn.
 ## Rendering
 
 The prototypes need Python 3 and its standard library, and nova-os
-fonts, which README.md's Build section writes in `inter/` of its
-directory:
+fonts, which [build.sh](../../build.sh) writes in `inter/` of its
+output directory:
 
 ```sh
 python3 -I design/text/sheet.py design/text/sheet.txt FONTS sheet.ppm
