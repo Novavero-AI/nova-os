@@ -1,0 +1,129 @@
+name: Seed
+
+# README.md's Build and Disk image blocks, run on Windows by
+# ci/reproduce.sh under busybox-w32's sh with tinycc-native as cc, each
+# built by nova-nix from stage0-pe32's 1,623-byte hex0 seed, and every
+# file checked against the README's tables. The blocks' cc lines build
+# the two cross compilers from TinyCC's source with that TinyCC, so no
+# byte the tables give comes from the runner's toolchains: curl fetches
+# the sources the README names, git archives the tree, and Python
+# compares the hashes.
+#
+# The ladder from the seed takes about 18 minutes on windows-latest, more
+# than the rest of CI together, so a pull request runs this only when it
+# changes the job or a script the job runs. Every push to main runs it,
+# and a weekly run catches a change in the runner's image or in a source
+# the ladder fetches.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/seed.yml
+      - ci/reproduce.sh
+      - ci/check-hashes.py
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  seed:
+    name: Reproduce (Windows, from the seed)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      # nova-nix's release, and the commit whose recipes it builds: the
+      # release ships recipes from before tinycc-native, and nova-nix.exe
+      # is built from the same sources at both.
+      NOVA_NIX_VERSION: 0.10.0.0
+      NOVA_NIX_REV: 8e1244a89a7cd43806da42229b0286f2690fa257
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out nova-nix's recipes
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Novavero-AI/nova-nix
+          ref: ${{ env.NOVA_NIX_REV }}
+          path: nova-nix
+          persist-credentials: false
+
+      - uses: Novavero-AI/install-nova-nix@d05b57912f9aaae3aae0cc98a74ab23e46a1bea8 # v1.0.2
+        with:
+          version: ${{ env.NOVA_NIX_VERSION }}
+
+      - name: Provision the store root
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path C:\nix\store | Out-Null
+
+      # build prints the out path as its last stdout line. tinycc-native
+      # reads its headers from C_INCLUDE_PATH and its runtime and import
+      # libraries from the -B directory, as each derivation that runs it
+      # names them, so cc is a script that does the same. env holds the
+      # headers' path as a string; writeText writes it to a file, and
+      # builds the source it names.
+      - name: Build tinycc-native from the seed, as cc
+        run: |
+          set -euo pipefail
+          pkgs=nova-nix/pkgs/windows/default.nix
+          compiler=$(nova-nix build "$pkgs" -A tinycc-native.compiler | tail -n 1)
+          libs=$(nova-nix build "$pkgs" -A tinycc-native.libs | tail -n 1)
+          includes=$(nova-nix build --expr '
+            let pkgs = import ./nova-nix/pkgs/windows;
+            in pkgs.stage0-pe32.writeText "tinycc-native-include-path"
+              pkgs.tinycc-native.env.C_INCLUDE_PATH
+          ' | tail -n 1)
+          bin="$RUNNER_TEMP/seed-bin"
+          mkdir "$bin"
+          cat > "$bin/cc" <<EOF
+          #!/bin/sh
+          export C_INCLUDE_PATH='$(cat "$(cygpath -u "$includes")")'
+          exec '$compiler/bin/tcc.exe' -B '$libs/lib' "\$@"
+          EOF
+          cat "$bin/cc"
+          echo "$bin" >> "$GITHUB_PATH"
+
+      - name: Build busybox-w32 with it
+        run: |
+          set -euo pipefail
+          busybox=$(nova-nix build nova-nix/pkgs/windows/default.nix -A busybox-w32 | tail -n 1)
+          echo "$busybox/bin" >> "$GITHUB_PATH"
+
+      # The job's shell is the seed-built busybox's, which runs the
+      # README's blocks with its own applets for the commands they name,
+      # and cc and the programs they build from the directories above.
+      - name: The README's blocks build the bytes its tables give
+        shell: busybox sh -e {0}
+        run: |
+          for tool in cc curl git python3; do command -v "$tool"; done
+          cc -v
+          ci/reproduce.sh "$RUNNER_TEMP/reproduce"
+
+      - name: Upload what was built
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reproduce-windows-seed
+          path: |
+            ${{ runner.temp }}/reproduce/*.EFI
+            ${{ runner.temp }}/reproduce/*.exe
+            ${{ runner.temp }}/reproduce/*.dll
+            ${{ runner.temp }}/reproduce/*.img
+            ${{ runner.temp }}/reproduce/*.vhdx
+            ${{ runner.temp }}/reproduce/*.narinfo
+          if-no-files-found: ignore
+          retention-days: 7
