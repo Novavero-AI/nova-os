@@ -34,11 +34,18 @@ command's status, and then the data disk, read on the host as
 docs/spec/pool-format.md lays it out, must hold the account's home
 alone in /users and the command's change in the home, and nothing else
 there; no word of a name or line typed for the commands may appear in
-the log. In persist mode the same copy of the
-data disk is booted twice: the first boot is system mode's, and the
-second must report the account the first made and, typed again, log
-in with it, run whoami and show the file, which the disk must still
-hold. In chain mode, the boot of
+the log. In system mode the session then writes a file of
+one-character lines, which fill the console's panel past a screen, and
+once the screen shows the shell's prompt after them the wheel turns
+back and forward through QMP. Before the turns and after each, QMP's
+screendump must come to equal, within SCREEN_TIMEOUT, the screen
+ci/screens.c draws from the same lines, prompt and turns, with the
+caret in either phase of its blink, built with the host's C compiler,
+CC if set. In persist mode the same copy of the data disk
+is booted twice: the first boot is system mode's but for the wheel,
+and the second must report the account the first made and, typed
+again, log in with it, run whoami and show the file, which the disk
+must still hold. In chain mode, the boot of
 chain.img must report each of the bootstrap chain's steps, each pinned
 link and init's checks passing. In specimen mode, the boot of
 specimen.img must report init's checks passing, the display sent to
@@ -73,8 +80,10 @@ import json
 import os
 import queue
 import re
+import shlex
 import shutil
 import socket
+import string
 import subprocess
 import sys
 import tempfile
@@ -185,6 +194,27 @@ SPECIMEN_PROTOTYPE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                   "..", "design", "text", "specimen.py")
 SCREEN_COPY = "screen.ppm"
 PROTOTYPE_COPY = "prototype.ppm"
+EXPECTED_COPY = "expected.ppm"
+
+# ci/screens.c, which draws the screens a boot must show on the host with
+# the guest's own drawing code, built as its header gives with the
+# host's C compiler, CC if set; and how long a step's screen may take to
+# show (docs/spec/display.md D19).
+ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+SCREENS_SOURCES = ["ci/screens.c", "console/text.c", "console/view.c",
+                   "console/panel.c", "gfx/gfx.c", "gfx/font.c",
+                   "gfx/raster.c", "gfx/limb.c"]
+SCREENS_INCLUDES = ["include", "gfx", "console"]
+SCREENS_FLAGS = ["-std=c11", "-O2", "-Wall", "-Wextra", "-pedantic",
+                 "-Werror"]
+SCREENS_PROGRAM = "screens"
+CONSOLE_SCREEN = "console"
+TYPED_LINE = "line"
+WRITTEN = "write"
+WHEEL_TURNED = "wheel"
+CARET = "caret"
+CARET_PHASES = ["on", "off"]
+SCREEN_TIMEOUT = 60
 PPM_MAGIC = b"P6"
 PPM_MAXVAL = b"255"
 PPM_FIELDS = 4
@@ -292,6 +322,11 @@ ACCOUNT_NAME = "ci"
 ACCOUNT_PASSWORD = "civerifies"
 QCODES = {" ": "spc", ".": "dot", "/": "slash"}
 
+# The account's home on the data disk's volume, which must be the only
+# entry of /users.
+USERS = ("users",)
+HOME = USERS + (ACCOUNT_NAME,)
+
 # What login and the accounts service report before login reads its
 # first line, and then on the first boot and on a later one.
 FIRST_BOOT_READY = ["nova-accounts: 0 accounts", "nova-login: on the console"]
@@ -350,6 +385,40 @@ FILE_COMMANDS = [
 ]
 LATER_FILE_COMMANDS = [(["cat notes/final"], "cat", OK, MOVED)]
 
+# The wheel's check (docs/spec/display.md D19, phase 1). In a system
+# boot the session then writes a file of SCROLL_LINES, each echoed on a
+# line of the console's panel of its own, as many as the panel's 30
+# lines and the 6 the turns below scroll back, so that the view turned
+# back shows lines typed alone, which ci/screens.c draws. Each is
+# one character because QEMU queues at most 1,024 key events, syncs and
+# delays, six a key, and drops a key past them (ui/input.c, queue_limit,
+# qmp_send_key; ui/input-legacy.c in 8.2.2), so the command and its
+# lines, typed before the status it logs is awaited, stay under 170
+# keys; the home must then hold the file whole, so no key was dropped.
+SCROLL_LINES = list(string.ascii_lowercase + string.digits)
+SCROLL_FILE = "notes/alphabet"
+SCROLL_COMMAND = (["write " + SCROLL_FILE] + SCROLL_LINES + [END_OF_LINES],
+                  "write", OK, {**MOVED, SCROLL_FILE: file_of(SCROLL_LINES)})
+
+# The shell's prompt after the write, which ci/screens.c draws on the
+# line after the dot: the account's name, "@nova ", the working
+# directory, its home, and "> " (shell/shell.c, prompt). The screen with
+# it drawn and its read waiting is matched before the wheel turns, since
+# the shell logs the write's status before it writes the prompt, and a
+# write brings the view back to the end.
+PROMPT = "%s@nova /%s> " % (ACCOUNT_NAME, "/".join(HOME))
+
+# The wheel's turns, each detent a press and release of QMP's wheel-up or
+# wheel-down in one input-send-event, which QEMU sends as REL_WHEEL 1 or
+# -1 and a release no driver takes, ended by one SYN_REPORT
+# (hw/input/virtio-input-hid.c, ui/input.c), with the screen matched
+# after each turn: two detents back, one forward, two more forward,
+# which the end stops after one, and two back, which show again what the
+# first two did. Each screen differs from every one the turns before it
+# leave on the screen, so it matches only once the console has taken
+# them.
+WHEEL_TURNS = [2, -1, -2, 2]
+
 # The pointer's events, each one QMP input-send-event command, which
 # QEMU ends with one SYN_REPORT (ui/input.c, qmp_input_send_event): the
 # tablet moved to POINTER_AT, whose numbers no other line of the log
@@ -386,7 +455,8 @@ POINTER_LINES = (["nova-console: pointer moved, absolute x and y"]
 
 # What no line of the log may hold: the password, each word of the names
 # and lines typed for the file commands, words no other line of the log
-# holds, so that a log of any of them is found, and, in a line of the
+# holds, so that a log of any of them is found, but for the wheel's
+# lines, single characters, which other lines hold, and, in a line of the
 # console or an input driver, the only processes that see it, the
 # pointer's position as sent, which the driver passes on as it is, as a
 # whole number. Other lines hold numbers that change from run to run,
@@ -405,15 +475,11 @@ def whole_number(value):
 
 UNLOGGED = ([(literal(ACCOUNT_PASSWORD), "the account's password")]
             + [(literal(word), "%r, typed for a file command" % word)
-               for word in ["notes", "draft", "final", "stale", "nobody"]
+               for word in ["notes", "draft", "final", "stale", "nobody",
+                            "alphabet"]
                + " ".join([FIRST_DRAFT] + FINAL_LINES).split()]
             + [(whole_number(value), "the pointer's %s" % axis)
                for axis, value in POINTER_AT.items()])
-
-# The account's home on the data disk's volume, which must be the only
-# entry of /users.
-USERS = ("users",)
-HOME = USERS + (ACCOUNT_NAME,)
 
 # The accounts service hashes each password with Argon2id over 64 MiB in
 # 3 passes, which takes about 12 seconds under TCG on an Apple M2 and
@@ -585,9 +651,10 @@ def log_in(serial, qmp, data, first):
                  FILE_COMMANDS if first else LATER_FILE_COMMANDS, data)
 
 
-def drive(serial, qmp_path, data, accounts, first):
+def drive(serial, qmp_path, data, accounts, first, screens, scratch):
     """Over QMP: send the pointer's events, then, with accounts, create
-    the account or log in with it as log_in does."""
+    the account or log in with it as log_in does, and with screens, the
+    program ci/screens.c builds to, check the wheel as scroll does."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(QMP_TIMEOUT)
         connection.connect(qmp_path)
@@ -596,6 +663,8 @@ def drive(serial, qmp_path, data, accounts, first):
             point(serial, qmp)
             if accounts:
                 log_in(serial, qmp, data, first)
+            if screens:
+                scroll(serial, qmp, data, screens, scratch)
 
 
 def read_ppm(path):
@@ -639,14 +708,89 @@ def check_specimen(qmp_path, scratch, fonts, screen):
     subprocess.run([sys.executable, "-I", SPECIMEN_PROTOTYPE, fonts,
                     str(width), str(height), wanted_path], check=True)
     _, _, wanted = read_ppm(wanted_path)
-    differ = sum(1 for i in range(0, len(pixels), 3)
-                 if pixels[i:i + 3] != wanted[i:i + 3])
+    differ = differing(pixels, wanted)
     if differ:
         raise BootFailed("the %dx%d screen differs from the specimen's "
                          "prototype in %d pixels" % (width, height, differ))
     print("          the %dx%d screen equals the specimen's prototype, "
           "sha256 %s" % (width, height, hashlib.sha256(pixels).hexdigest()),
           flush=True)
+
+
+def differing(pixels, wanted):
+    """How many pixels of two images of one size differ."""
+    return sum(1 for i in range(0, len(pixels), 3)
+               if pixels[i:i + 3] != wanted[i:i + 3])
+
+
+def build_screens(scratch):
+    """Build ci/screens.c in scratch; the program's path."""
+    program = os.path.join(scratch, SCREENS_PROGRAM)
+    command = (shlex.split(os.environ.get("CC") or "cc") + SCREENS_FLAGS
+               + [flag for include in SCREENS_INCLUDES
+                  for flag in ("-I", os.path.join(ROOT, include))]
+               + ["-o", program]
+               + [os.path.join(ROOT, source) for source in SCREENS_SOURCES])
+    print(" ".join(command), flush=True)
+    if subprocess.run(command).returncode != 0:
+        raise BootFailed("ci/screens.c did not build")
+    return program
+
+
+def draw_screen(screens, scratch, width, height, inputs):
+    """The pixels of the console's screen screens draws at width x height
+    from inputs."""
+    path = os.path.join(scratch, EXPECTED_COPY)
+    command = [screens, CONSOLE_SCREEN, str(width), str(height)] + inputs
+    with open(path, "wb") as out:
+        if subprocess.run(command, stdout=out).returncode != 0:
+            raise BootFailed("ci/screens.c drew no screen")
+    return read_ppm(path)[2]
+
+
+def match_screen(qmp, scratch, screens, inputs):
+    """Take QMP's screendump until its pixels' SHA-256 is that of the
+    console's screen screens draws at its size from inputs, with the
+    caret in either phase of its blink, which a screen with no caret in
+    view draws alike, or SCREEN_TIMEOUT passes."""
+    shot = os.path.abspath(os.path.join(scratch, SCREEN_COPY))
+    deadline = time.monotonic() + SCREEN_TIMEOUT
+    qmp.execute("screendump", filename=shot)
+    width, height, pixels = read_ppm(shot)
+    wanted = [draw_screen(screens, scratch, width, height,
+                          inputs + [CARET, phase])
+              for phase in CARET_PHASES]
+    digests = [hashlib.sha256(image).digest() for image in wanted]
+    while hashlib.sha256(pixels).digest() not in digests:
+        if time.monotonic() >= deadline:
+            raise BootFailed("after %d s the %dx%d screen differs from "
+                             "ci/screens.c's in %d pixels"
+                             % (SCREEN_TIMEOUT, width, height,
+                                min(differing(pixels, image)
+                                    for image in wanted)))
+        qmp.execute("screendump", filename=shot)
+        _, _, pixels = read_ppm(shot)
+    print("          the %dx%d screen equals ci/screens.c's, sha256 %s"
+          % (width, height, hashlib.sha256(pixels).hexdigest()), flush=True)
+
+
+def scroll(serial, qmp, data, screens, scratch):
+    """Write the file of SCROLL_COMMAND, its lines filling the console's
+    panel, wait for the shell's prompt after it, then turn the wheel as
+    WHEEL_TURNS gives, and match each screen with the one screens draws
+    from the lines, the prompt and the turns."""
+    run_commands(serial, qmp, [SCROLL_COMMAND], data)
+    inputs = [word for line in SCROLL_LINES + [END_OF_LINES]
+              for word in (TYPED_LINE, line)] + [WRITTEN, PROMPT]
+    match_screen(qmp, scratch, screens, inputs)
+    for detents in WHEEL_TURNS:
+        name = "wheel-up" if detents > 0 else "wheel-down"
+        for _ in range(abs(detents)):
+            print("          input-send-event btn %s" % name, flush=True)
+            qmp.execute("input-send-event",
+                        events=button(name, True) + button(name, False))
+            inputs += [WHEEL_TURNED, "1" if detents > 0 else "-1"]
+        match_screen(qmp, scratch, screens, inputs)
 
 
 def stop(qemu):
@@ -919,6 +1063,9 @@ def boot(args, scratch, log, data_drive, data_lines, first):
     qmp_path = os.path.join(scratch, "qmp.sock")
     accounts = (args.mode not in ("chain", "specimen") and data_drive
                 and not args.corrupt_gpt)
+    screens = None
+    if accounts and args.mode == "system":
+        screens = build_screens(scratch)
     ready = []
     if accounts:
         ready = FIRST_BOOT_READY if first else LATER_BOOT_READY
@@ -946,7 +1093,7 @@ def boot(args, scratch, log, data_drive, data_lines, first):
             check_specimen(qmp_path, scratch, args.fonts, args.screen)
         if args.mode in ("system", "persist"):
             drive(serial, qmp_path, os.path.join(scratch, DATA_COPY),
-                  accounts, first)
+                  accounts, first, screens, scratch)
     finally:
         stop(qemu)
         if serial:

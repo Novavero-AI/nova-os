@@ -1,5 +1,7 @@
 /* Access to a 32-bit linear framebuffer: a pixel's value in either of
-   the two layouts drawn, clearing, and making stores visible. */
+   the two layouts drawn, and clearing. Portable C, so that a host
+   program builds it to draw what an image draws; the store fence that
+   makes the stores visible is flush.c's. */
 
 #include "gfx.h"
 
@@ -16,9 +18,4 @@ void gfx_clear(const SCREEN *screen)
     for (y = 0; y < screen->height; y++)
         for (x = 0; x < screen->width; x++)
             screen->pixels[y * screen->stride + x] = 0;
-}
-
-void gfx_flush(void)
-{
-    __asm__ volatile("sfence" : : : "memory");
 }

@@ -6,7 +6,6 @@
 #include "panel.h"
 #include "font.h"
 #include "limb.h"
-#include "text.h"
 
 /* A cell is a hundredth of the screen's height wide, so the panel's 30
    lines take three fifths of the height: 8 x 16 pixels at 1280 x 800,
@@ -38,6 +37,7 @@ static const UINT8 ink[PANEL_INKS][PANEL_CHANNELS] = {
 
 #define CHANNEL_BITS 8
 #define CHANNEL_MASK 0xFFu
+#define BLANK ' '
 
 static INT64 smaller(INT64 a, INT64 b) { return a < b ? a : b; }
 
@@ -195,19 +195,23 @@ static UINT32 screen_pixel(const SCREEN *screen, UINT32 rgb)
 }
 
 void panel_show(const SCREEN *screen, const LAYOUT *layout,
-                const UINT32 *backdrop)
+                const UINT32 *backdrop, PANEL_SHOWN *shown)
 {
     INT64 w = box_width(layout), h = box_height(layout), x, y;
+    UINT32 row, column;
 
     for (y = 0; y < h; y++) {
-        UINT32 *row = screen->pixels +
-                      (layout->box.top + y) * screen->stride +
-                      layout->box.left;
+        UINT32 *pixels = screen->pixels +
+                         (layout->box.top + y) * screen->stride +
+                         layout->box.left;
 
         for (x = 0; x < w; x++)
-            row[x] = screen_pixel(screen, backdrop[y * w + x]);
+            pixels[x] = screen_pixel(screen, backdrop[y * w + x]);
     }
-    gfx_flush();
+    for (row = 0; row < layout->rows; row++)
+        for (column = 0; column < layout->columns; column++)
+            shown->cells[row][column] = BLANK;
+    shown->caret.lit = 0;
 }
 
 /* rgb with ink mixed in at coverage. */
@@ -226,18 +230,25 @@ static UINT32 under(const INKS *inks, int which, UINT32 rgb, UINT8 coverage)
     return out;
 }
 
-void panel_cell(const SCREEN *screen, const LAYOUT *layout,
-                const UINT32 *backdrop, const INKS *inks,
-                const UINT8 *glyph, const UINT8 *caret, UINT32 row,
-                UINT32 column)
+/* Draw the cell at row and column, the column up to the layout's
+   columns, the last in the padding, with character's glyph, and the
+   caret over it if caret is nonzero. */
+static void cell(const PANEL *panel, UINT64 row, UINT32 column,
+                 UINT8 character, int caret)
 {
+    const LAYOUT *layout = panel->layout;
+    const SCREEN *screen = panel->screen;
     INT64 w = box_width(layout), cw = layout->cell_width;
     INT64 left = layout->text_left + column * cw;
-    INT64 top = layout->text_top + row * layout->cell_height;
+    INT64 top = layout->text_top + (INT64)row * layout->cell_height;
+    const UINT8 *glyph = font_mask(panel->masks, cw, character);
+    const UINT8 *caret_glyph =
+        caret ? font_mask(panel->masks, cw, FONT_CARET) : 0;
     INT64 x, y;
 
     for (y = 0; y < layout->cell_height; y++) {
-        const UINT32 *from = backdrop + (top + y - layout->box.top) * w +
+        const UINT32 *from = panel->backdrop +
+                             (top + y - layout->box.top) * w +
                              (left - layout->box.left);
         UINT32 *to = screen->pixels + (top + y) * screen->stride + left;
 
@@ -246,10 +257,46 @@ void panel_cell(const SCREEN *screen, const LAYOUT *layout,
             UINT8 a = glyph[y * cw + x];
 
             if (a)
-                rgb = under(inks, PANEL_TEXT, rgb, a);
-            if (caret && caret[y * cw + x])
-                rgb = under(inks, PANEL_CARET, rgb, caret[y * cw + x]);
+                rgb = under(panel->inks, PANEL_TEXT, rgb, a);
+            if (caret_glyph && caret_glyph[y * cw + x])
+                rgb = under(panel->inks, PANEL_CARET, rgb,
+                            caret_glyph[y * cw + x]);
             to[x] = screen_pixel(screen, rgb);
         }
     }
+}
+
+static int at(const VIEW_CARET *caret, UINT64 row, UINT32 column)
+{
+    return caret->lit && caret->row == row && caret->column == column;
+}
+
+void panel_text(const PANEL *panel, PANEL_SHOWN *shown, const TEXT *text,
+                UINT64 top, const VIEW_CARET *caret)
+{
+    const LAYOUT *layout = panel->layout;
+    VIEW_CARET was = shown->caret;
+    int moved = caret->lit != was.lit || caret->row != was.row ||
+                caret->column != was.column;
+    UINT64 row;
+    UINT32 column;
+
+    for (row = 0; row < layout->rows; row++) {
+        UINT64 line = top + row;
+        const UINT8 *cells = line < text->lines ? text_line(text, line) : 0;
+
+        for (column = 0; column < layout->columns; column++) {
+            UINT8 character = cells ? cells[column] : (UINT8)BLANK;
+
+            if (character != shown->cells[row][column] ||
+                (moved && (at(caret, row, column) || at(&was, row, column))))
+                cell(panel, row, column, character, at(caret, row, column));
+            shown->cells[row][column] = character;
+        }
+    }
+    if (moved && at(&was, was.row, layout->columns))
+        cell(panel, was.row, layout->columns, BLANK, 0);
+    if (moved && at(caret, caret->row, layout->columns))
+        cell(panel, caret->row, layout->columns, BLANK, 1);
+    shown->caret = *caret;
 }

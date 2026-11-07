@@ -1,12 +1,15 @@
-/* Checks the console's text model and key map (console/text.c,
-   console/keys.c, docs/spec/console.md C3 and C4) on the host: writing
-   and wrapping, the line editor, the lines kept for scrolling back once
-   an edit has wrapped and been taken back, and the US layout with Shift
-   and Caps Lock. Prints each failure and a count, and exits nonzero if
-   any check fails.
+/* Checks the console's text model, key map and view (console/text.c,
+   console/keys.c, console/view.c, docs/spec/console.md C3 to C5) on the
+   host: writing and wrapping, the line editor, the lines kept for
+   scrolling back once an edit has wrapped and been taken back, the US
+   layout with Shift and Caps Lock, and how far the view scrolls, by
+   the wheel's detents and to either end, and where it shows the caret.
+   Prints each failure and a count, and exits nonzero if any check
+   fails.
 
    cc -std=c11 -Wall -Wextra -pedantic -I include -I console -o check-text \
-     tools/check-text.c console/text.c console/keys.c && ./check-text */
+     tools/check-text.c console/text.c console/keys.c console/view.c &&
+     ./check-text */
 
 #include <stdio.h>
 #include <string.h>
@@ -14,8 +17,16 @@
 #include "input_protocol.h"
 #include "keys.h"
 #include "text.h"
+#include "view.h"
 
 #define COLUMNS 10
+
+/* The view's lines, fewer than the panel's so that a short text fills
+   it, and the lines written for it to scroll through. */
+#define ROWS 4
+#define WRITTEN 20
+
+#define INT64_LARGEST 0x7fffffffffffffffLL
 #define KEY_A 30
 #define KEY_1 2
 #define KEY_LEFT_SHIFT 42
@@ -157,12 +168,85 @@ static void check_keys(void)
           "Shift with Caps Lock unshifts a letter");
 }
 
+/* WRITTEN lines, each ended, and the empty line after them: WRITTEN + 1
+   lines in all. */
+static void write_lines(void)
+{
+    UINT64 i;
+
+    text_init(&text, COLUMNS);
+    for (i = 0; i < WRITTEN; i++)
+        write_text("line\n");
+}
+
+static void check_view(void)
+{
+    UINT64 end = WRITTEN + 1 - ROWS, i;
+
+    text_init(&text, COLUMNS);
+    write_text("a\nb\n");
+    check(view_back_limit(&text, ROWS) == 0 &&
+              view_scroll(&text, ROWS, 0, VIEW_WHEEL_LINES) == 0,
+          "a text no longer than the view does not scroll");
+    write_lines();
+    check(view_back_limit(&text, ROWS) == end &&
+              view_top(&text, ROWS, 0) == end,
+          "at the end the view shows the last lines, and can go back to "
+          "the first");
+    check(view_scroll(&text, ROWS, 0, VIEW_WHEEL_LINES) == 3 &&
+              view_top(&text, ROWS, 3) == end - 3,
+          "a detent up scrolls three lines back");
+    check(view_scroll(&text, ROWS, 6, -VIEW_WHEEL_LINES) == 3,
+          "a detent down scrolls three lines forward");
+    check(view_scroll(&text, ROWS, 1, -VIEW_WHEEL_LINES) == 0,
+          "scrolling forward stops at the end");
+    check(view_scroll(&text, ROWS, end - 1, VIEW_WHEEL_LINES) == end &&
+              view_top(&text, ROWS, end) == 0,
+          "scrolling back stops at the first line");
+    check(view_scroll(&text, ROWS, end, 5 * VIEW_WHEEL_LINES) == end &&
+              view_scroll(&text, ROWS, end, -VIEW_WHEEL_LINES) == end - 3,
+          "turned past the first line, a detent down moves the view at "
+          "once");
+    check(view_top(&text, ROWS, end + 7) == 0 &&
+              view_scroll(&text, ROWS, end + 7, -VIEW_WHEEL_LINES) ==
+                  end - 3,
+          "a view past the first line stands at it");
+    check(view_scroll(&text, ROWS, 3, INT64_LARGEST) == end &&
+              view_scroll(&text, ROWS, 3, -INT64_LARGEST - 1) == 0,
+          "the farthest scrolls in either direction stop at the ends");
+    text_init(&text, COLUMNS);
+    for (i = 0; i < TEXT_LINES + 5; i++)
+        write_text("old\n");
+    check(view_top(&text, ROWS,
+                   view_scroll(&text, ROWS, 0, (INT64)TEXT_LINES)) ==
+              text_first(&text),
+          "scrolling back stops at the oldest line kept");
+}
+
+static void check_view_caret(void)
+{
+    VIEW_CARET caret;
+
+    write_lines();
+    editor_start(&editor, &text, CONSOLE_LINE_MAX, 1);
+    type_text("ab");
+    caret = view_caret(&editor, &text, ROWS, view_top(&text, ROWS, 0));
+    check(caret.lit && caret.row == ROWS - 1 && caret.column == 2,
+          "at the end the caret stands on the view's last line");
+    caret = view_caret(&editor, &text, ROWS, view_top(&text, ROWS, 1));
+    check(!caret.lit, "scrolled back a line, the view hides the caret");
+    caret = view_caret(0, &text, ROWS, view_top(&text, ROWS, 0));
+    check(!caret.lit, "no caret while no read waits or the blink hides it");
+}
+
 int main(void)
 {
     check_writing();
     check_editor();
     check_kept_lines();
     check_keys();
+    check_view();
+    check_view_caret();
     printf("%u failures\n", failures);
     return failures != 0;
 }

@@ -21,6 +21,7 @@
 #include "native.h"
 #include "panel.h"
 #include "text.h"
+#include "view.h"
 #include "wipe.h"
 
 /* It ends with EXIT_SUPERVISOR_GONE once the platform driver has closed
@@ -83,13 +84,6 @@ typedef struct {
     UINT8 character;
 } TYPED;
 
-/* Where the caret was last drawn, and whether it was. */
-typedef struct {
-    UINT64 row;
-    UINT32 column;
-    UINT32 lit;
-} CARET;
-
 /* channel_write needs a valid array even for no handles. */
 static const HANDLE_TRANSFER no_handles[1];
 
@@ -112,8 +106,8 @@ static LAYOUT layout;
 static UINT32 *backdrop;
 static UINT8 *masks;
 static INKS inks;
-static UINT8 shown[PANEL_ROWS][TEXT_COLUMNS_MAX];
-static CARET shown_caret;
+static PANEL panel = {&screen, &layout, 0, 0, &inks};
+static PANEL_SHOWN shown;
 static UINT32 caret_lit;
 static UINT64 blink_at;
 static MAPPING mapping = {HANDLE_INVALID, MAPPINGS_BASE};
@@ -252,23 +246,17 @@ static void pump(void)
     }
 }
 
-/* The lines the view can scroll back: to the oldest kept, at most. */
-static UINT64 back_limit(void)
+/* The lines the view shows: the panel's, or before the display comes
+   the most it can. */
+static UINT32 view_rows(void)
 {
-    UINT64 rows = drawing ? layout.rows : PANEL_ROWS;
-    UINT64 end = text.lines > rows ? text.lines - rows : 0;
-
-    return end > text_first(&text) ? end - text_first(&text) : 0;
+    return drawing ? layout.rows : PANEL_ROWS;
 }
 
-static void scroll(UINT32 edit)
+/* Scroll the view lines back, or forward for a negative lines. */
+static void scroll(INT64 lines)
 {
-    UINT64 step = (drawing ? layout.rows : PANEL_ROWS) / 2;
-
-    if (edit == EDIT_PAGE_UP)
-        back = back + step < back_limit() ? back + step : back_limit();
-    else
-        back = back > step ? back - step : 0;
+    back = view_scroll(&text, view_rows(), back, lines);
 }
 
 static void key(const INPUT_EVENT *event)
@@ -280,7 +268,8 @@ static void key(const INPUT_EVENT *event)
     if (edit == EDIT_NONE)
         return;
     if (edit == EDIT_PAGE_UP || edit == EDIT_PAGE_DOWN) {
-        scroll(edit);
+        scroll(edit == EDIT_PAGE_UP ? view_rows() / 2
+                                    : -(INT64)(view_rows() / 2));
         return;
     }
     back = 0;
@@ -439,7 +428,10 @@ static void pointer_line(UINT32 note)
 }
 
 /* Log what a pointer report does, and nothing of where the pointer is
-   or how far it moved. */
+   or how far it moved. A turn of the wheel also scrolls the view
+   VIEW_WHEEL_LINES a detent (C3): a turn up, a positive wheel (C6), back
+   through what the panel has shown, as Page Up does, and a turn down
+   forward. */
 static void pointer(const INPUT_POINTER *report)
 {
     UINT32 i;
@@ -454,9 +446,11 @@ static void pointer(const INPUT_POINTER *report)
                           ? NOTE_PRESSED
                           : NOTE_RELEASED) |
                      report->button[i].code);
-    if (report->wheel)
+    if (report->wheel) {
         pointer_line(NOTE_WHEEL |
                      (report->wheel > 0 ? WHEEL_UP : WHEEL_DOWN));
+        scroll((INT64)VIEW_WHEEL_LINES * report->wheel);
+    }
 }
 
 /* Whether a message of a pointer report's size is one from a pointer
@@ -618,17 +612,6 @@ static void say_ms(UINT64 nanoseconds)
     say(" ms");
 }
 
-/* The panel as panel_show leaves it: every cell blank, and no caret. */
-static void blank_shown(void)
-{
-    UINT32 row, column;
-
-    for (row = 0; row < layout.rows; row++)
-        for (column = 0; column < layout.columns; column++)
-            shown[row][column] = ' ';
-    shown_caret.lit = 0;
-}
-
 /* Fit the text to the panel's width: its lines wrap at the narrower of
    the two from now on. */
 static void fit_text(void)
@@ -680,8 +663,9 @@ static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
     }
     font_render(layout.cell_width, masks);
     panel_inks(&inks);
-    panel_show(&screen, &layout, backdrop);
-    blank_shown();
+    panel.backdrop = backdrop;
+    panel.masks = masks;
+    panel_show(&screen, &layout, backdrop, &shown);
     fit_text();
     drawing = 1;
     say("nova-console: drawing on the ");
@@ -704,78 +688,16 @@ static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
 /* ------------------------------------------------------------------------
    Drawing. */
 
-/* The first line the view shows. */
-static UINT64 view_top(void)
-{
-    UINT64 end = text.lines > layout.rows ? text.lines - layout.rows : 0;
-
-    return end - (back < back_limit() ? back : back_limit());
-}
-
-/* Where the caret is to be drawn, if it is: while a read waits and the
-   blink shows it, at its place in the view. */
-static CARET caret_wanted(UINT64 top)
-{
-    CARET c;
-    UINT64 line;
-
-    c.row = 0;
-    c.column = 0;
-    c.lit = 0;
-    if (reader < 0 || !caret_lit)
-        return c;
-    editor_caret(&editor, &text, &line, &c.column);
-    if (line < top || line - top >= layout.rows)
-        return c;
-    c.row = line - top;
-    c.lit = 1;
-    return c;
-}
-
-static int at(const CARET *c, UINT64 row, UINT32 column)
-{
-    return c->lit && c->row == row && c->column == column;
-}
-
-/* The cell at row and column, the column up to layout.columns, which
-   lies in the padding and holds no text. */
-static void draw(UINT64 row, UINT32 column, UINT8 character, int caret)
-{
-    panel_cell(&screen, &layout, backdrop, &inks,
-               font_mask(masks, layout.cell_width, character),
-               caret ? font_mask(masks, layout.cell_width, FONT_CARET) : 0,
-               (UINT32)row, column);
-}
-
-/* Draw every cell whose text differs from what the screen shows, and
-   the cells the caret leaves and enters. */
+/* Draw the view where it differs from what the screen shows, and make
+   the frame's stores visible: the panel_show of a display that came
+   this round, too. */
 static void render(void)
 {
-    UINT64 top = view_top(), row;
-    CARET want = caret_wanted(top);
-    int moved = want.lit != shown_caret.lit || want.row != shown_caret.row ||
-                want.column != shown_caret.column;
-    UINT32 column;
+    UINT64 top = view_top(&text, layout.rows, back);
+    VIEW_CARET caret = view_caret(reader >= 0 && caret_lit ? &editor : 0,
+                                  &text, layout.rows, top);
 
-    for (row = 0; row < layout.rows; row++) {
-        UINT64 line = top + row;
-        const UINT8 *cells = line < text.lines ? text_line(&text, line) : 0;
-
-        for (column = 0; column < layout.columns; column++) {
-            UINT8 character = cells ? cells[column] : (UINT8)' ';
-
-            if (character != shown[row][column] ||
-                (moved && (at(&want, row, column) ||
-                           at(&shown_caret, row, column))))
-                draw(row, column, character, at(&want, row, column));
-            shown[row][column] = character;
-        }
-    }
-    if (moved && at(&shown_caret, shown_caret.row, layout.columns))
-        draw(shown_caret.row, layout.columns, ' ', 0);
-    if (moved && at(&want, want.row, layout.columns))
-        draw(want.row, layout.columns, ' ', 1);
-    shown_caret = want;
+    panel_text(&panel, &shown, &text, top, &caret);
     gfx_flush();
 }
 
