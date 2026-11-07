@@ -520,7 +520,9 @@ logical processor per core
 ([speculation.md M16](speculation.md#m16-sibling-threads)), and gives
 each, before it runs user code, its own entry area (GDT, TSS, per-CPU
 block and stacks), the MSR settings `speculation_init` makes on the
-bootstrap processor, and its own record of the last process it ran.
+bootstrap processor, and its own record of the last process it ran; a
+removed mapping must then drop the user PCID's translations on every
+processor that may cache them.
 
 ### Firmware services
 

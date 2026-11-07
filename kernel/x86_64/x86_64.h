@@ -72,15 +72,21 @@
 #define FRAME_RCX 96
 #define FRAME_RAX 112
 #define FRAME_VECTOR 120
+#define FRAME_ERROR_CODE 128
 #define FRAME_RIP 136
 #define FRAME_CS 144
 #define FRAME_RFLAGS 152
 #define FRAME_RSP 160
+#define FRAME_SS 168
 #define FRAME_SIZE 176
 
 /* PER_CPU's fields by byte offset. */
 #define PER_CPU_KERNEL_STACK 0
 #define PER_CPU_USER_RSP 8
+#define PER_CPU_KERNEL_CR3 16
+#define PER_CPU_USER_CR3 24
+#define PER_CPU_CR3_NO_FLUSH 32
+#define PER_CPU_ENTRY_STACK 40
 
 /* IA32_SPEC_CTRL and IA32_PRED_CMD (Intel CPUID, "IA32_SPEC_CTRL MSR" and
    "IA32_PRED_CMD MSR"; APM 3.2.9): SPEC_CTRL's IBRS bit restricts
@@ -99,6 +105,7 @@
 #define MEASURE_RSB 0x04       /* M7: the 32-CALL overwrite on entry */
 #define MEASURE_BHB 0x08       /* M8: the BHB-clearing sequence on entry */
 #define MEASURE_VERW 0x10      /* M13: VERW before the return to user mode */
+#define MEASURE_ISOLATION 0x20 /* M11: page-table isolation */
 
 /* The 32-CALL overwrite's CALLs: the size of the return stack buffer,
    or return address predictor, that the vendors give (Intel HFB
@@ -179,7 +186,20 @@
     call bhb_clear;                                          \
     MEASURE_END
 
+/* The exit's CR3 load under page-table isolation (M11), with scratch a
+   register free to clobber: the user table, then cr3_no_flush added to
+   the value, so that with PCIDs a later exit keeps the user table's
+   translations; the per-CPU block lies in the entry area, which the
+   user table maps. */
+#define LOAD_USER_CR3(scratch)                               \
+    movq %gs:PER_CPU_USER_CR3, scratch;                      \
+    movq scratch, %cr3;                                      \
+    movq %gs:PER_CPU_CR3_NO_FLUSH, scratch;                  \
+    orq scratch, %gs:PER_CPU_USER_CR3
+
 #else
+
+#include <stddef.h>
 
 #include "types.h"
 
@@ -216,11 +236,36 @@ _Static_assert(sizeof(INTERRUPT_FRAME) % 16 == 0, "frame breaks alignment");
 _Static_assert(sizeof(INTERRUPT_FRAME) == FRAME_SIZE, "FRAME_SIZE");
 
 /* The processor's own record, which GS addresses while the kernel runs
-   and IA32_KERNEL_GS_BASE holds while user code runs (S3). */
+   and IA32_KERNEL_GS_BASE holds while user code runs (S3). It lies in
+   the CPU's entry area (gdt.c), which page-table isolation maps in every
+   user table (docs/spec/speculation.md M11): the CR3 values are what the
+   entry and the exit load there, and the entry stack is where the
+   processor delivers an interrupt from user mode under isolation. */
 typedef struct {
     UINT64 kernel_stack; /* the running thread's kernel stack top */
-    UINT64 user_rsp;     /* the user's RSP across the system-call entry */
+    UINT64 user_rsp;     /* the user's RSP across the system call */
+    UINT64 kernel_cr3;   /* the running process's kernel table, as loaded */
+    UINT64 user_cr3;     /* its user table, as the next exit loads it */
+    UINT64 cr3_no_flush; /* what the exit adds to user_cr3 after loading */
+    UINT64 entry_stack;  /* the entry stack's top */
 } PER_CPU;
+
+_Static_assert(offsetof(PER_CPU, user_rsp) == PER_CPU_USER_RSP &&
+                   offsetof(PER_CPU, kernel_cr3) ==
+                       PER_CPU_KERNEL_CR3 &&
+                   offsetof(PER_CPU, user_cr3) == PER_CPU_USER_CR3 &&
+                   offsetof(PER_CPU, cr3_no_flush) ==
+                       PER_CPU_CR3_NO_FLUSH &&
+                   offsetof(PER_CPU, entry_stack) ==
+                       PER_CPU_ENTRY_STACK,
+               "PER_CPU_ offsets");
+
+/* A range of kernel addresses, page aligned, that page-table isolation
+   maps in every user table. */
+typedef struct {
+    UINT64 start;
+    UINT64 end;
+} ENTRY_RANGE;
 
 static inline int has_error_code(UINT64 vector)
 {
@@ -242,7 +287,12 @@ extern const UINT8 msi_stubs[];
 void syscall_entry(void);
 void syscall_compat_entry(void);
 
-/* VERW's memory operand, the kernel's data selector (entry.S). */
+/* The code the processor runs under a user's page tables, page aligned
+   at both ends: entry.S's and syscall.S's entry and exit code
+   (docs/spec/speculation.md M11). The VERW operand lies in entry.S's,
+   since the exit's VERW comes after its CR3 load (M13). */
+extern const UINT8 entry_text[], entry_text_end[];
+extern const UINT8 syscall_text[], syscall_text_end[];
 extern const UINT16 verw_selector;
 
 /* A measure site of entry.S or syscall.S (MEASURE): the address of the
@@ -270,8 +320,18 @@ void msr_read_access(void);
 void msr_write_access(void);
 void msr_access_failed(void);
 
+/* gdt.c: load the GDT and TSS, which live with the per-CPU block, the
+   entry stack and the IST stacks in the CPU's entry area. */
 void gdt_load(void);
+PER_CPU *per_cpu_block(void);
+ENTRY_RANGE gdt_entry_range(void);
+
+/* Clear what one process left in the entry area, which page-table
+   isolation maps in every user table, before another runs. */
+void entry_area_wipe(void);
+
 void idt_load(void);
+ENTRY_RANGE idt_entry_range(void);
 void apic_timer_start(UINT64 tsc_per_ms);
 void apic_timer_interrupt(void);
 
@@ -288,9 +348,9 @@ void interrupt_dispatch(INTERRUPT_FRAME *frame);
    stack; each stops the kernel. */
 _Noreturn void exception_halt(const INTERRUPT_FRAME *frame);
 
-/* Load the running thread's kernel stack top into the TSS's RSP0, where
-   the processor finds it on an interrupt from user mode (SDM Vol. 3A
-   7.14.4). */
+/* Load top into the TSS's RSP0, where the processor finds the stack for
+   an interrupt from user mode (SDM Vol. 3A 7.14.4): the running thread's
+   kernel stack top, or under page-table isolation the entry stack's. */
 void tss_set_kernel_stack(UINT64 top);
 
 /* user.c: set up the processor for user mode and the system-call entry;
@@ -302,7 +362,6 @@ void compat_syscall_dispatch(INTERRUPT_FRAME *frame);
 _Noreturn void syscall_compat(void);
 _Noreturn void user_exception(const INTERRUPT_FRAME *frame);
 _Noreturn void user_bad_return(const INTERRUPT_FRAME *frame);
-void per_cpu_set_kernel_stack(UINT64 top);
 
 /* Where a page fault inside user_copy (syscall.S) continues, if rip is
    the instruction there that reaches user memory and address, the

@@ -169,7 +169,9 @@ static void load_data_segments(const UINT16 *selectors)
 
    A switch to a user thread of another process than the last user
    thread this processor ran takes the speculation barrier before the new
-   CR3 (docs/spec/speculation.md M3). Loading CR3 invalidates
+   CR3 (docs/spec/speculation.md M3). Under page-table isolation RSP0
+   stays at the entry stack, from which the entry moves the frame to the
+   kernel stack in the per-CPU block (entry.S). Loading CR3 invalidates
    the lower half's translations (SDM Vol. 3A 5.10.4.1); no kernel entry
    is global, so the upper half's go too, and are refilled from the same
    tables. */
@@ -180,8 +182,9 @@ void arch_switch(ARCH_CONTEXT *from, ARCH_CONTEXT *to)
         save_data_segments(from->data_selectors);
         from->fs_base = rdmsr(IA32_FS_BASE);
     }
-    tss_set_kernel_stack(to->kernel_stack_top);
-    per_cpu_set_kernel_stack(to->kernel_stack_top);
+    if (!paging_isolated())
+        tss_set_kernel_stack(to->kernel_stack_top);
+    per_cpu_block()->kernel_stack = to->kernel_stack_top;
     if (to->fpu && paging_enter_user_space(to->address_space))
         speculation_process_switch();
     if ((read_cr3() & PTE_ADDRESS) != to->address_space)

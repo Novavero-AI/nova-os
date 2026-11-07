@@ -11,13 +11,24 @@
    instead (page_entry), so the copy each space takes when it is created
    never goes stale. Every kernel mapping made after boot lies in the
    direct map, whose top-level entries nova-boot made for the memory the
-   map describes. */
+   map describes.
+
+   Under page-table isolation (docs/spec/speculation.md M11) a space is
+   two top tables in consecutive pages: the kernel's, as above, and the
+   user's, at the next page, which shares the lower half's tables and in
+   the upper half maps only the entry region, the code and data the
+   processor and the entry code reach under it, through tables of its own
+   that every user table shares. With PCIDs the kernel's table runs under
+   KERNEL_PCID and the user's under USER_PCID, so that the entry's and
+   exit's CR3 loads keep each other's translations (SDM Vol. 3A 5.10.1,
+   5.10.4.1). */
 
 #include "paging.h"
 #include "cpu.h"
 #include "memory_layout.h"
 #include "page_table.h"
 #include "serial.h"
+#include "x86_64.h"
 #include "../mm/page.h"
 
 /* IA32_PAT's layout is in page_table.h: eight one-byte entries, each a
@@ -39,6 +50,35 @@ static UINT64 kernel_space; /* the kernel's top table, physical */
 static UINT64 *top_table;
 static int levels;
 static UINT64 no_execute; /* PTE_NO_EXECUTE while IA32_EFER.NXE is set */
+
+/* CR4.PCIDE enables PCIDs, CR3's bits 11:0 then name the PCID, and a CR3
+   load with bit 63 set keeps the new PCID's translations (SDM Vol. 3A
+   2.5, 5.10.4.1). */
+#define CR4_PCIDE (1ULL << 17)
+#define CR3_NO_FLUSH (1ULL << 63)
+#define KERNEL_PCID 0
+#define USER_PCID 1
+
+/* A user table is the page after its space's kernel table. */
+#define SPACE_TABLES 2
+
+/* The entry region's tables, below the one top-level entry every user
+   table has for the kernel half: one for each level below the top with
+   5-level paging, so one page table, enough while the region lies within
+   one page table's 2 MiB, as the image does; with 4-level paging one is
+   spare. map_entry_page stops the kernel if they run out. In .data, where
+   TinyCC honours the page alignment (gdt.c). */
+#define ENTRY_TABLES (FIVE_LEVELS - 1)
+
+static UINT64 entry_tables[ENTRY_TABLES][PAGE_TABLE_ENTRIES]
+    __attribute__((aligned(PAGE_SIZE), section(".data")));
+static UINT32 entry_tables_used;
+static UINT64 entry_top_entry; /* what each user table holds at entry_top */
+static UINT64 entry_top;       /* its index in the top table */
+
+static int isolation;
+static UINT64 cr3_no_flush; /* CR3_NO_FLUSH with PCIDs, otherwise 0 */
+static UINT64 user_pcid;    /* USER_PCID with PCIDs, otherwise 0 */
 
 /* The space of the last user thread this processor ran, or 0 if none or
    if that space was destroyed, so that a new space at the same address is
@@ -331,12 +371,128 @@ int paging_unmap_direct_range(UINT64 physical, UINT64 size)
     return complete;
 }
 
+/* ------------------------------------------------------------------------
+   Page-table isolation. */
+
+/* Map the page at linear in the entry tables with the kernel tables'
+   physical address and rights: present, writable as the kernel's
+   mapping is, executable as it is, and supervisor-only, so user code
+   reaches none of it (M11). The tables on the way grant write and leave
+   restrictions to the page's entry, as nova-boot's do. */
+static void map_entry_page(UINT64 linear)
+{
+    UINT64 *table = entry_tables[0];
+    UINT64 leaf;
+    int level, leaf_level;
+
+    if (table_index(linear, levels) != entry_top)
+        stop("entry region outside its top-level entry", linear);
+    for (level = levels - 1; level > PAGE_TABLE_LEVEL; level--) {
+        UINT64 *entry = &table[table_index(linear, level)];
+
+        if (!(*entry & PTE_PRESENT)) {
+            if (entry_tables_used == ENTRY_TABLES)
+                stop("entry region needs more tables", linear);
+            *entry = kernel_physical((UINT64)entry_tables[entry_tables_used]) |
+                     PTE_PRESENT | PTE_WRITABLE;
+            entry_tables_used++;
+        }
+        table = table_at(*entry);
+    }
+    leaf = kernel_leaf(linear, &leaf_level);
+    if (!leaf)
+        stop("entry region not mapped", linear);
+    table[table_index(linear, PAGE_TABLE_LEVEL)] =
+        (kernel_physical(linear) & PTE_ADDRESS) | PTE_PRESENT |
+        (leaf & (PTE_WRITABLE | PTE_NO_EXECUTE));
+}
+
+/* A range that is not whole pages would share a page with data the user
+   tables must not map. */
+static void map_entry_range(ENTRY_RANGE range)
+{
+    UINT64 linear;
+
+    if (range.start % PAGE_SIZE != 0 || range.end % PAGE_SIZE != 0)
+        stop("entry region not page aligned", range.start);
+    for (linear = range.start; linear < range.end; linear += PAGE_SIZE)
+        map_entry_page(linear);
+}
+
+/* The entry region: the entry and exit code, with VERW's operand, the
+   IDT, and the CPU's entry area of GDT, TSS, per-CPU block, entry stack
+   and IST stacks (M11). Each range is page aligned at both ends, so no
+   other kernel data shares a page with it. */
+void paging_isolate(int pcid)
+{
+    PER_CPU *block = per_cpu_block();
+    ENTRY_RANGE range;
+
+    entry_top = table_index((UINT64)entry_text, levels);
+    entry_tables_used = 1;
+    range.start = (UINT64)entry_text;
+    range.end = (UINT64)entry_text_end;
+    map_entry_range(range);
+    range.start = (UINT64)syscall_text;
+    range.end = (UINT64)syscall_text_end;
+    map_entry_range(range);
+    map_entry_range(idt_entry_range());
+    map_entry_range(gdt_entry_range());
+    entry_top_entry =
+        kernel_physical((UINT64)entry_tables[0]) | PTE_PRESENT | PTE_WRITABLE;
+    if (pcid) {
+        write_cr4(read_cr4() | CR4_PCIDE);
+        cr3_no_flush = CR3_NO_FLUSH;
+        user_pcid = USER_PCID;
+    }
+    block->cr3_no_flush = cr3_no_flush;
+    block->kernel_cr3 = kernel_space | KERNEL_PCID | cr3_no_flush;
+    tss_set_kernel_stack(block->entry_stack);
+    isolation = 1;
+}
+
+int paging_isolated(void)
+{
+    return isolation;
+}
+
+static UINT64 *user_table(UINT64 space)
+{
+    return direct_map(space + PAGE_SIZE);
+}
+
+/* Under isolation the CR3 values the entry and exit load become the
+   space's, the user table's without CR3_NO_FLUSH, so the next exit drops
+   what USER_PCID cached for another space, and the entry area forgets
+   what the last process left in it. */
 int paging_enter_user_space(UINT64 space)
 {
+    PER_CPU *block;
+
     if (space == last_user_space)
         return 0;
     last_user_space = space;
+    if (isolation) {
+        block = per_cpu_block();
+        block->kernel_cr3 = space | KERNEL_PCID | cr3_no_flush;
+        block->user_cr3 = (space + PAGE_SIZE) | user_pcid;
+        entry_area_wipe();
+    }
     return 1;
+}
+
+/* A mapping of space was removed. Where space is loaded its translations
+   are dropped by loading CR3 again, which without CR3_NO_FLUSH drops the
+   current PCID's (SDM Vol. 3A 5.10.4.1); and where it is the last user
+   space, the user table's, cached under USER_PCID, at the next exit. No
+   user translation is global, and a space not loaded and not the last
+   has none cached. */
+static void space_changed(UINT64 space)
+{
+    if ((read_cr3() & PTE_ADDRESS) == space)
+        write_cr3(space | KERNEL_PCID);
+    if (space == last_user_space)
+        per_cpu_block()->user_cr3 &= ~CR3_NO_FLUSH;
 }
 
 /* ------------------------------------------------------------------------
@@ -414,10 +570,10 @@ _Static_assert(((NOVA_PAT >> (PAT_ENTRY_BITS * PAT_WRITE_COMBINING_ENTRY)) &
                 PAT_TYPE_MASK) == PAT_WRITE_COMBINING,
                "PAT and PCD select WC");
 
-/* page_alloc's page reads as zero, so the lower half maps nothing. */
+/* page_alloc's pages read as zero, so the lower half maps nothing. */
 UINT64 paging_space_create(void)
 {
-    UINT64 page = page_alloc();
+    UINT64 page = isolation ? page_alloc_run(SPACE_TABLES) : page_alloc();
     UINT64 *table;
     UINT64 i;
 
@@ -426,13 +582,16 @@ UINT64 paging_space_create(void)
     table = direct_map(page);
     for (i = LOWER_HALF_ENTRIES; i < PAGE_TABLE_ENTRIES; i++)
         table[i] = top_table[i];
+    if (isolation)
+        user_table(page)[entry_top] = entry_top_entry;
     return page;
 }
 
 /* The PTE that maps user address linear in space, adding the tables on
    the way down when add is set; 0 if a table is missing and add is
    clear, or if one is needed and no page is free. With interrupts
-   disabled. */
+   disabled. Under isolation a new top-level entry goes in the user
+   table too, which shares every table below it. */
 static UINT64 *user_entry(UINT64 space, UINT64 linear, int add)
 {
     UINT64 *table = direct_map(space);
@@ -441,8 +600,12 @@ static UINT64 *user_entry(UINT64 space, UINT64 linear, int add)
     for (level = levels; level > PAGE_TABLE_LEVEL; level--) {
         UINT64 *entry = &table[table_index(linear, level)];
 
-        if (!(*entry & PTE_PRESENT) && (!add || !add_table(entry, PTE_USER)))
-            return 0;
+        if (!(*entry & PTE_PRESENT)) {
+            if (!add || !add_table(entry, PTE_USER))
+                return 0;
+            if (isolation && level == levels)
+                user_table(space)[table_index(linear, level)] = *entry;
+        }
         table = table_at(*entry);
     }
     return &table[table_index(linear, PAGE_TABLE_LEVEL)];
@@ -485,9 +648,8 @@ int paging_user_mapped(UINT64 space, UINT64 linear)
 }
 
 /* The processor may cache a translation for a speculative access the
-   code never makes (SDM Vol. 3A 5.10.2.2), so a space in use is
-   reloaded; no user translation is global, and a space not in use has
-   none cached, since loading CR3 invalidated them (5.10.4.1). */
+   code never makes (SDM Vol. 3A 5.10.2.2), so the space's cached
+   translations are dropped (space_changed). */
 void paging_unmap_user_borrowed(UINT64 space, UINT64 linear)
 {
     UINT64 flags = save_and_disable_interrupts();
@@ -495,8 +657,7 @@ void paging_unmap_user_borrowed(UINT64 space, UINT64 linear)
 
     if (entry)
         *entry = 0;
-    if ((read_cr3() & PTE_ADDRESS) == space)
-        write_cr3(space);
+    space_changed(space);
     restore_interrupts(flags);
 }
 
@@ -529,8 +690,8 @@ static void free_below(UINT64 *table, int level)
     }
 }
 
-/* A space in use keeps translations of what was freed until CR3 is
-   loaded again (SDM Vol. 3A 5.10.4.1). */
+/* A space keeps translations of what was freed until they are dropped
+   (space_changed). */
 void paging_space_clear(UINT64 space)
 {
     UINT64 flags = save_and_disable_interrupts();
@@ -543,20 +704,29 @@ void paging_space_clear(UINT64 space)
         free_below(table_at(top[i]), levels - 1);
         page_free(top[i] & PTE_ADDRESS);
         top[i] = 0;
+        if (isolation)
+            user_table(space)[i] = 0;
     }
-    if ((read_cr3() & PTE_ADDRESS) == space)
-        write_cr3(space);
+    space_changed(space);
     restore_interrupts(flags);
 }
 
+/* The per-CPU block's tables become the kernel's if they were space's,
+   which an NMI or machine check would otherwise load once freed. */
 void paging_space_destroy(UINT64 space)
 {
     UINT64 flags;
 
     paging_space_clear(space);
     flags = save_and_disable_interrupts();
-    if (space == last_user_space)
+    if (space == last_user_space) {
         last_user_space = 0;
+        if (isolation)
+            per_cpu_block()->kernel_cr3 =
+                kernel_space | KERNEL_PCID | cr3_no_flush;
+    }
     restore_interrupts(flags);
     page_free(space);
+    if (isolation)
+        page_free(space + PAGE_SIZE);
 }

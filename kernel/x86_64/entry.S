@@ -4,16 +4,19 @@
    with the same INTERRUPT_FRAME (x86_64.h). From kernel mode the frame
    goes on the interrupted code's stack, which is safe because the
    Microsoft x64 convention keeps no data below RSP; from user mode the
-   processor has switched to the thread's kernel stack from the TSS's
-   RSP0 first (SDM Vol. 3A 7.14.4). NMI, double fault and machine check
-   switch to
+   processor has switched to the stack the TSS's RSP0 names first (SDM
+   Vol. 3A 7.14.4), the thread's kernel stack, or under page-table
+   isolation the entry stack, from which the entry moves the frame to the
+   thread's kernel stack. NMI, double fault and machine check switch to
    stacks of their own (gdt.c) and join ist_common instead.
 
    An entry from user mode carries the speculative-execution measures of
    docs/spec/speculation.md M3 in the order M3 gives, and the return to
    user mode those of its exit. Each is a measure site (x86_64.h,
-   MEASURE), skipped where the processor does not need it. RET and JMP
-   are followed by INT3 (M17).
+   MEASURE), skipped where the processor does not need it. Everything
+   here lies in the entry text, which page-table isolation maps in every
+   user table (M11), since the processor runs it before the entry's CR3
+   load and after the exit's. RET and JMP are followed by INT3 (M17).
 
    TinyCC runs the C preprocessor over this file and assembles it as AT&T
    syntax, where ';' separates statements; that lets one macro write a
@@ -30,6 +33,13 @@
 /* Where the interrupted CS lies on entry to interrupt_common, above the
    vector, the error code and RIP. */
 #define ENTRY_CS 24
+
+/* What lies on the entry stack once the isolated entry has pushed RDI
+   below the vector, and on the thread's stack once the isolated exit has
+   pushed it below the CPU's frame: the offsets of the words it moves. */
+#define SAVED_RDI 8
+#define ENTRY_STACK_FRAME(field) (SAVED_RDI + (field) - FRAME_VECTOR)
+#define EXIT_STACK_FRAME(field) (SAVED_RDI + (field) - FRAME_RIP)
 
 /* SWAPGS (SDM Vol. 2B, SWAPGS: 0F 01 F8) and CLAC (Vol. 2A, CLAC: 0F 01
    CA), which TinyCC's assembler lacks. */
@@ -75,9 +85,13 @@
     MEASURE_TABLE(entry_measures)
 
     .text
+    .balign PAGE_SIZE, 0xcc
+    .globl entry_text
+entry_text:
 
 /* VERW's memory operand: the kernel's data selector, a writable data
-   segment, as M13 decides. */
+   segment, as M13 decides; it lies in the entry text, which the user
+   tables map, since the exit's VERW comes after its CR3 load. */
     .globl verw_selector
 verw_selector:
     .word KERNEL_DATA_SELECTOR
@@ -150,7 +164,14 @@ msi_stubs:
    that decides can be mispredicted either way, so each path fences
    before it can reach a GS-relative load (M5; Intel SWAPGS,
    "Mitigation"): the kernel path at once, the user path after the
-   SWAPGS.
+   SWAPGS. Under isolation the CR3 load is serializing (SDM Vol. 3A
+   10.3), but it needs the kernel's table, which a GS-relative load
+   fetches first, so the LFENCE stays there too.
+
+   Under isolation the processor has pushed its frame on the entry stack
+   with the user's tables loaded. RDI is saved there, the kernel's tables
+   are loaded, and the frame moves to the thread's kernel stack, where it
+   lies as the processor would have pushed it without isolation.
 
    Delivery clears TF, NT, RF and IF but not AC (SDM Vol. 3A 7.12.1.3),
    which user code sets with POPF and user_copy sets on purpose. With
@@ -168,6 +189,21 @@ interrupt_common:
 interrupt_from_user:
     SWAPGS
     lfence
+    MEASURE(MEASURE_ISOLATION)
+    pushq %rdi
+    movq %gs:PER_CPU_KERNEL_CR3, %rdi
+    movq %rdi, %cr3
+    movq %rsp, %rdi
+    movq %gs:PER_CPU_KERNEL_STACK, %rsp
+    pushq ENTRY_STACK_FRAME(FRAME_SS)(%rdi)
+    pushq ENTRY_STACK_FRAME(FRAME_RSP)(%rdi)
+    pushq ENTRY_STACK_FRAME(FRAME_RFLAGS)(%rdi)
+    pushq ENTRY_STACK_FRAME(FRAME_CS)(%rdi)
+    pushq ENTRY_STACK_FRAME(FRAME_RIP)(%rdi)
+    pushq ENTRY_STACK_FRAME(FRAME_ERROR_CODE)(%rdi)
+    pushq ENTRY_STACK_FRAME(FRAME_VECTOR)(%rdi)
+    movq (%rdi), %rdi
+    MEASURE_END
     PUSH_REGISTERS
     USER_ENTRY_MEASURES
 interrupt_dispatch_common:
@@ -194,8 +230,8 @@ interrupt_dispatch_common:
    with the user's GS base already swapped in (docs/spec/syscalls.md S5),
    so a return address above USER_TOP, which only a kernel bug can
    produce, ends the thread's process instead (user_bad_return). Then
-   come M3's exit measures: IBRS cleared (M6) and VERW (M13), the last
-   instruction before IRETQ. */
+   come M3's exit measures: IBRS cleared (M6), the user's tables (M11)
+   and VERW (M13), the last instruction before IRETQ. */
     .globl return_to_user
 return_to_user:
     movq FRAME_RIP(%rsp), %rax
@@ -203,6 +239,10 @@ return_to_user:
     ja 3f
     MEASURE(MEASURE_IBRS)
     WRITE_SPEC_CTRL(spec_ctrl_user)
+    MEASURE_END
+    MEASURE(MEASURE_ISOLATION)
+    jmp return_to_user_isolated
+    int3
     MEASURE_END
     POP_REGISTERS
     addq $VECTOR_AND_ERROR_CODE, %rsp
@@ -217,15 +257,49 @@ return_to_user:
     call user_bad_return
     int3
 
+/* The same under page-table isolation. IRETQ pops its frame from the
+   stack, which must be mapped once the user's tables are loaded, so the
+   frame moves to the entry stack after the registers are restored, with
+   the user's RDI, which is restored last, after the CR3 load that needs
+   a register. A fault after that load, which only a kernel bug can
+   raise, reaches kernel code the user's tables do not map, faults again
+   until the entry stack runs out, and ends as a double fault. */
+return_to_user_isolated:
+    POP_REGISTERS
+    addq $VECTOR_AND_ERROR_CODE, %rsp
+    pushq %rdi
+    movq %rsp, %rdi
+    movq %gs:PER_CPU_ENTRY_STACK, %rsp
+    pushq EXIT_STACK_FRAME(FRAME_SS)(%rdi)
+    pushq EXIT_STACK_FRAME(FRAME_RSP)(%rdi)
+    pushq EXIT_STACK_FRAME(FRAME_RFLAGS)(%rdi)
+    pushq EXIT_STACK_FRAME(FRAME_CS)(%rdi)
+    pushq EXIT_STACK_FRAME(FRAME_RIP)(%rdi)
+    pushq (%rdi)
+    LOAD_USER_CR3(%rdi)
+    popq %rdi
+    SWAPGS
+    MEASURE(MEASURE_VERW)
+    verw verw_selector(%rip)
+    MEASURE_END
+    iretq
+
 /* NMI, double fault and machine check: each can arrive inside the
    system-call entry or exit, at CPL 0 with the user's GS base, so these
    never execute SWAPGS and never use GS (S3). Each can arrive with
-   either IBRS value, so where M6's rule 4 applies the handler writes the
-   kernel's IA32_SPEC_CTRL (M3). Each stops the kernel, so it is not
-   restored. */
+   either table loaded and either IBRS value, so where isolation or
+   M6's rule 4 applies the handler loads the kernel's table, from the
+   per-CPU block whose address the IST stack keeps above the frame
+   (gdt.c), and the kernel's IA32_SPEC_CTRL (M3). Each stops the kernel,
+   so neither is restored. */
 ist_common:
     PUSH_REGISTERS
     cld
+    MEASURE(MEASURE_ISOLATION)
+    movq FRAME_SIZE(%rsp), %rax
+    movq PER_CPU_KERNEL_CR3(%rax), %rax
+    movq %rax, %cr3
+    MEASURE_END
     MEASURE(MEASURE_IBRS)
     WRITE_SPEC_CTRL(spec_ctrl_kernel)
     MEASURE_END
@@ -269,6 +343,10 @@ bhb_clear:
     lfence
     ret
     int3
+
+    .balign PAGE_SIZE, 0xcc
+    .globl entry_text_end
+entry_text_end:
 
     MEASURE_TABLE_END(entry_measures_end)
 

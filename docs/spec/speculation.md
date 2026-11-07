@@ -262,9 +262,10 @@ does not consult Intel's list.
 **Decided.** The interrupt and exception entries execute `SWAPGS` only
 when the saved CS has RPL 3 (S3). On that path an LFENCE follows the
 `SWAPGS`; on the other an LFENCE comes before the first GS-relative
-access. Where the kernel's page tables are loaded right after `SWAPGS`
-(M11), that CR3 write is serializing and takes the LFENCE's place (Intel
-SWAPGS, "Mitigation"; Intel HFB 6.0). The `SYSCALL` entry executes
+access (Intel SWAPGS, "Mitigation"). Under page-table isolation (M11)
+the entry's CR3 write is serializing (Intel HFB 6.0), but it needs the
+kernel's table, which a GS-relative load fetches first, so the LFENCE
+stays there too. The `SYSCALL` entry executes
 `SWAPGS` unconditionally, and NMI, double fault and machine check never
 use GS (S3), so neither needs a fence.
 
@@ -550,6 +551,18 @@ This follows Intel's remedy: "the operating system software may ensure
 that privileged pages are not mapped when executing user code", with two
 CR3 values per process and PCID to reduce the cost (Intel RDCL,
 "Mitigation").
+
+The thread's kernel stack is not in the entry region, so under isolation
+`RSP0` names the CPU's entry stack instead (S2): the processor delivers
+an interrupt from user mode there, the entry moves the frame to the
+thread's kernel stack after the CR3 write, and the exit moves the
+`IRETQ` frame back before its CR3 write. A process switch clears what
+the last process left on the entry stack and in the per-CPU block, which
+every user table maps. With PCID the kernel's tables use one PCID and
+every user table another; the entry's and exit's CR3 writes keep the
+loaded PCID's translations, and the first exit after a switch to another
+process, or after a mapping of the last process the CPU ran is removed,
+drops the user PCID's.
 
 - **Why:** the kernel maps all of physical memory in its direct map
   ([boot-protocol.md](boot-protocol.md#paging)), so on an affected

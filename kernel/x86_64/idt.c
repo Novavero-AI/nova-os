@@ -5,6 +5,7 @@
 
 #include "x86_64.h"
 #include "cpu.h"
+#include "native_abi.h"
 #include "serial.h"
 #include "../object/interrupt.h"
 #include "../object/process.h"
@@ -40,8 +41,14 @@ _Static_assert(sizeof(IDT_GATE) == 16, "an IDT gate is 16 bytes");
 
 /* Vectors without a handler keep an all-zero gate. Its type is not an
    interrupt or trap gate, so delivering one raises #GP with an error code
-   naming the vector (SDM Vol. 2A, INT n, IA-32e mode; Vol. 3A 7.13). */
-static IDT_GATE idt[VECTOR_COUNT];
+   naming the vector (SDM Vol. 2A, INT n, IA-32e mode; Vol. 3A 7.13). The
+   processor reads the table under a user's page tables, so it fills a
+   page of its own, which page-table isolation maps there
+   (docs/spec/speculation.md M11); in .data, as gdt.c explains. */
+static IDT_GATE idt[VECTOR_COUNT]
+    __attribute__((aligned(PAGE_SIZE), section(".data")));
+
+_Static_assert(sizeof(idt) == PAGE_SIZE, "the IDT fills its page");
 
 _Static_assert(MSI_VECTOR_FIRST > TIMER_VECTOR &&
                    MSI_VECTOR_FIRST + MSI_VECTOR_COUNT <= COMPAT_GATE_VECTOR,
@@ -83,6 +90,15 @@ void idt_load(void)
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (UINT64)idt;
     __asm__ volatile("lidt %0" : : "m"(idtr) : "memory");
+}
+
+ENTRY_RANGE idt_entry_range(void)
+{
+    ENTRY_RANGE range;
+
+    range.start = (UINT64)idt;
+    range.end = range.start + sizeof(idt);
+    return range;
 }
 
 static void log_breakpoint(const INTERRUPT_FRAME *frame)

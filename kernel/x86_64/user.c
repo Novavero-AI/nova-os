@@ -93,8 +93,6 @@ _Static_assert(KERNEL_CODE_SELECTOR + 8 == KERNEL_DATA_SELECTOR,
 UINT64 user_top;
 UINT8 smap_enabled;
 
-static PER_CPU boot_per_cpu;
-
 /* syscall.S. */
 STATUS user_copy(void *to, const void *from, UINT64 size);
 void user_copy_access(void);
@@ -166,7 +164,7 @@ void user_mode_init(void)
     protect_kernel();
     fpu_init(PAGE_SIZE);
     user_top = (1ULL << lower_bits) - PAGE_SIZE;
-    wrmsr(IA32_GS_BASE, (UINT64)&boot_per_cpu);
+    wrmsr(IA32_GS_BASE, (UINT64)per_cpu_block());
     wrmsr(IA32_KERNEL_GS_BASE, 0);
     wrmsr(IA32_STAR, STAR);
     wrmsr(IA32_LSTAR, (UINT64)syscall_entry);
@@ -178,11 +176,6 @@ void user_mode_init(void)
     serial_write(" to ");
     serial_hex(user_top);
     serial_write("\r\n");
-}
-
-void per_cpu_set_kernel_stack(UINT64 top)
-{
-    boot_per_cpu.kernel_stack = top;
 }
 
 /* ------------------------------------------------------------------------

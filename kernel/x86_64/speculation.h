@@ -8,9 +8,10 @@
 #include "types.h"
 
 /* Read the enumeration (M2), decide the measures (M3), set those that are
-   set once at boot, enable the entry and exit's measure sites, and log
-   one line naming each class, what it gets and why. After paging_init,
-   with interrupts disabled, and before any entry from user mode. */
+   set once at boot, enable the entry and exit's measure sites, start
+   page-table isolation where it applies (M11), and log one line naming
+   each class, what it gets and why. After paging_init and gdt_load, with
+   interrupts disabled, and before any entry from user mode. */
 void speculation_init(void);
 
 /* The process switch's barrier (M3): IBPB (M6), then on AMD processors

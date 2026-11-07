@@ -1,5 +1,7 @@
 /* Processes and their user threads. A process's memory is three pages:
-   the PROCESS, its handle table and its top page table; each user thread
+   the PROCESS, its handle table and its top page table, or four under
+   page-table isolation, which gives it a user table too (paging.c); each
+   user thread
    adds a page for its USER_THREAD and one for its vector state (fpu.h),
    besides its kernel stack. Its address space owns the pages the kernel
    maps for it, its first image and stack, and borrows the pages of the

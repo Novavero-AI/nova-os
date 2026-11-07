@@ -13,7 +13,10 @@
 
    Both carry the speculative-execution measures of
    docs/spec/speculation.md M3 in the order M3 gives, each a measure site
-   (x86_64.h, MEASURE) skipped where the processor does not need it. RET
+   (x86_64.h, MEASURE) skipped where the processor does not need it. The
+   entry and exit lie in the syscall text, which page-table isolation
+   maps in every user table (M11), since the processor runs it before the
+   entry's CR3 load and after the exit's; user_copy lies outside it. RET
    and JMP are followed by INT3 (M17). */
 
 #include "x86_64.h"
@@ -36,20 +39,30 @@
    are popped. */
 #define POPPED_RIP (FRAME_RIP - FRAME_VECTOR)
 #define POPPED_RFLAGS (FRAME_RFLAGS - FRAME_VECTOR)
-#define POPPED_RSP (FRAME_RSP - FRAME_VECTOR)
 
 /* Steps 2 and 3 of S3's entry, which run at CPL 0 on the user's stack
    with the user's GS base until the SWAPGS, and with interrupts disabled
-   throughout, as IA32_FMASK leaves them. The SWAPGS is unconditional, so
+   throughout, as IA32_FMASK leaves them. Under page-table isolation the
+   kernel's table is loaded between them (M3, step 1), with RSP, saved
+   in the per-CPU block, the one register free; the block lies in the
+   entry area, which the user table maps. The SWAPGS is unconditional, so
    no fence follows it (M5). */
 #define SWITCH_TO_KERNEL_STACK                               \
     SWAPGS;                                                  \
     movq %rsp, %gs:PER_CPU_USER_RSP;                         \
+    MEASURE(MEASURE_ISOLATION);                              \
+    movq %gs:PER_CPU_KERNEL_CR3, %rsp;                       \
+    movq %rsp, %cr3;                                         \
+    MEASURE_END;                                             \
     movq %gs:PER_CPU_KERNEL_STACK, %rsp
 
     MEASURE_TABLE(syscall_measures)
 
     .text
+    .balign PAGE_SIZE, 0xcc
+    .globl syscall_text
+syscall_text:
+
     .globl syscall_entry
 syscall_entry:
     SWITCH_TO_KERNEL_STACK
@@ -91,6 +104,10 @@ syscall_entry:
     MEASURE(MEASURE_IBRS)
     WRITE_SPEC_CTRL(spec_ctrl_user)
     MEASURE_END
+    /* The user's RSP waits in the per-CPU block, which the user table
+       maps, for the step that loads it after the CR3 load. */
+    movq FRAME_RSP(%rsp), %rcx
+    movq %rcx, %gs:PER_CPU_USER_RSP
     popq %r15
     popq %r14
     popq %r13
@@ -111,7 +128,12 @@ syscall_entry:
     movq POPPED_RFLAGS(%rsp), %r11
     andq $USER_FLAGS_KEPT, %r11
     orq $USER_FLAGS_SET, %r11
-    movq POPPED_RSP(%rsp), %rsp
+    /* The last access to the kernel stack is behind; RSP is the one
+       register free for the CR3 load (M3, exit step 2). */
+    MEASURE(MEASURE_ISOLATION)
+    LOAD_USER_CR3(%rsp)
+    MEASURE_END
+    movq %gs:PER_CPU_USER_RSP, %rsp
     SWAPGS
     /* M13: VERW last, once every general register holds the user's value
        or zero. SYSRETQ loads RFLAGS from R11, so the ZF VERW writes never
@@ -139,6 +161,10 @@ syscall_compat_entry:
     subq $SHADOW_SPACE, %rsp
     call syscall_compat
     int3
+
+    .balign PAGE_SIZE, 0xcc
+    .globl syscall_text_end
+syscall_text_end:
 
     MEASURE_TABLE_END(syscall_measures_end)
 

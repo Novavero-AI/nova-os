@@ -80,11 +80,13 @@ privilege levels the APM asks for: RPL 3 in bits 49:48 and RPL 0 in bits
 33:32 (APM 6.1.1).
 
 Each CPU's TSS holds `RSP0`, the running thread's kernel stack top, which
-the processor loads on an interrupt from user mode; three IST stacks: IST1
-for NMI, IST2 for double fault, IST3 for machine check (SDM 7.14.5); and
-room for the I/O permission bitmap ([ipc.md I6](ipc.md#i6-device-memory-and-io-ports)).
-The kernel stores a pointer to the CPU's per-CPU block at the top of each
-IST stack (S3).
+the processor loads on an interrupt from user mode, or under page-table
+isolation the top of the CPU's entry stack
+([speculation.md M11](speculation.md#m11-rogue-data-cache-load-and-page-table-isolation));
+three IST stacks: IST1 for NMI, IST2 for double fault, IST3 for machine
+check (SDM 7.14.5); and room for the I/O permission bitmap
+([ipc.md I6](ipc.md#i6-device-memory-and-io-ports)). The kernel stores a
+pointer to the CPU's per-CPU block at the top of each IST stack (S3).
 
 - **Why `CSTAR` ends the process:** `CSTAR` is the entry for `SYSCALL`
   from compatibility mode (APM 6.1.1), which Intel processors do not
@@ -689,9 +691,7 @@ The gate enters through the same path as every interrupt from user mode
 saved CS, the return address checked against `USER_TOP` (S5), and the
 per-entry and per-exit measures of
 [speculation.md M3](speculation.md#m3-the-measures-by-path) that the
-processor needs, but page-table isolation (M11), which the kernel does
-not have yet on any path; the call number is masked as a 64-bit
-caller's is (M4).
+processor needs; the call number is masked as a 64-bit caller's is (M4).
 
 ## References
 

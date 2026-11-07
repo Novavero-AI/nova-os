@@ -31,7 +31,7 @@
 
 /* CPUID.01H: the signature in EAX, whose family and model AMD defines
    as the base fields plus, where the base family is 0Fh, the extended
-   ones (APM Vol. 3 E.3.2); the hypervisor bit in ECX. */
+   ones (APM Vol. 3 E.3.2); PCID and the hypervisor bit in ECX. */
 #define CPUID_FEATURES 1
 #define SIGNATURE_STEPPING(eax) ((eax) & 0xf)
 #define SIGNATURE_MODEL(eax) ((eax) >> 4 & 0xf)
@@ -39,6 +39,7 @@
 #define SIGNATURE_EXTENDED_MODEL(eax) ((eax) >> 16 & 0xf)
 #define SIGNATURE_EXTENDED_FAMILY(eax) ((eax) >> 20 & 0xff)
 #define FAMILY_EXTENDED 0xf
+#define FEATURES_ECX_PCID (1u << 17)
 #define FEATURES_ECX_HYPERVISOR (1u << 31)
 
 /* CPUID.(EAX=07H,ECX=0): its EAX gives the highest subleaf. */
@@ -451,15 +452,20 @@ static void decide_branch_history(void)
     }
 }
 
-/* M11 and M12. The kernel has no page-table isolation. */
+/* M11 and M12. */
 static void decide_isolation(void)
 {
-    if (!intel_rules() || arch(ARCH_RDCL_NO)) {
+    int affected = intel_rules() && !arch(ARCH_RDCL_NO);
+    int pcid = (cpu.features_ecx & FEATURES_ECX_PCID) != 0;
+
+    if (!affected) {
         report("rdcl", "not affected", amd() ? "AMD" : "RDCL_NO");
         report("l1tf", "zero non-present entries", "not affected");
         return;
     }
-    report("rdcl", "UNMITIGATED", "no page-table isolation");
+    measures |= MEASURE_ISOLATION;
+    paging_isolate(pcid);
+    report("rdcl", "page-table isolation", pcid ? "with PCIDs" : "no PCID");
     report("l1tf", "zero non-present entries", "affected");
 }
 

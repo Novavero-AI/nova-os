@@ -5,9 +5,19 @@
    has its own layout (EDK2's CpuDxe puts 64-bit code at selector 0x38);
    with its own, the kernel names the selectors its interrupt gates and
    SYSCALL and SYSRET use. The TSS holds RSP0, the running thread's
-   kernel stack top, and the interrupt stack table. */
+   kernel stack top, and the interrupt stack table.
+
+   The GDT and TSS live in the CPU's entry area with the per-CPU block,
+   the entry stack and the IST stacks: what the processor and the entry
+   code reach before the entry's CR3 load and after the exit's, which
+   page-table isolation maps in every user table and so must hold nothing
+   else (docs/spec/speculation.md M11). Of the kernel's own state it
+   holds descriptors, the running thread's kernel stack top and the
+   running process's table addresses, which name kernel memory but give
+   none of its contents. */
 
 #include "x86_64.h"
+#include "native_abi.h"
 
 #define DESCRIPTOR_SIZE 8
 
@@ -71,17 +81,6 @@ _Static_assert(USER_CODE32 == 0x00cffa000000ffffULL, "32-bit user code");
 #define SELECTOR_INDEX(selector) ((selector) / DESCRIPTOR_SIZE)
 #define GDT_ENTRIES (SELECTOR_INDEX(TSS_SELECTOR) + 2)
 
-/* The null descriptor at 0 stays zero. Not const: loading a selector
-   sets its descriptor's accessed bit (SDM Vol. 3A 3.4.5.1), and LTR
-   marks the TSS busy. */
-static UINT64 gdt[GDT_ENTRIES] = {
-    [SELECTOR_INDEX(KERNEL_CODE_SELECTOR)] = KERNEL_CODE,
-    [SELECTOR_INDEX(KERNEL_DATA_SELECTOR)] = KERNEL_DATA,
-    [SELECTOR_INDEX(USER_CODE32_SELECTOR)] = USER_CODE32,
-    [SELECTOR_INDEX(USER_DATA_SELECTOR)] = USER_DATA,
-    [SELECTOR_INDEX(USER_CODE_SELECTOR)] = USER_CODE,
-};
-
 /* The 64-bit TSS (SDM Vol. 3A 10.7, Figure 10-11): RSP0 and the IST
    pointers are used. There is no I/O permission bit map yet. */
 typedef struct {
@@ -96,16 +95,47 @@ typedef struct {
 
 _Static_assert(sizeof(TSS) == 104, "a 64-bit TSS is 104 bytes");
 
-static TSS tss;
-
 /* The handlers log and halt, so a fault taken inside one restarts its
    stack from the top and never returns onto the frame it overwrote. */
 #define FAULT_STACK_SIZE 4096
 #define STACK_ALIGNMENT 16
 
-static UINT8 nmi_stack[FAULT_STACK_SIZE];
-static UINT8 double_fault_stack[FAULT_STACK_SIZE];
-static UINT8 machine_check_stack[FAULT_STACK_SIZE];
+/* Under page-table isolation the processor delivers an interrupt from
+   user mode on the entry stack, and the exit's IRETQ pops its frame from
+   there (entry.S); either holds at most eight words, the CPU's six, the
+   vector and a saved register, which leaves room for several more. */
+#define ENTRY_STACK_SIZE 512
+
+/* The first page of the entry area: the entry stack, the per-CPU block,
+   the TSS and the GDT. The null descriptor at 0 stays zero. The GDT is
+   not const: loading a selector sets its descriptor's accessed bit (SDM
+   Vol. 3A 3.4.5.1), and LTR marks the TSS busy. */
+typedef struct {
+    UINT8 entry_stack[ENTRY_STACK_SIZE];
+    PER_CPU per_cpu;
+    TSS tss;
+    UINT64 gdt[GDT_ENTRIES];
+} __attribute__((aligned(PAGE_SIZE))) ENTRY_PAGE;
+
+/* The IST stacks follow, each on pages of its own, and each keeps a
+   pointer to the per-CPU block in the word its IST pointer names, above
+   the frame the processor pushes there, where a handler that cannot
+   trust GS finds it (docs/spec/syscalls.md S2, S3). */
+typedef struct {
+    ENTRY_PAGE page;
+    UINT8 nmi_stack[FAULT_STACK_SIZE];
+    UINT8 double_fault_stack[FAULT_STACK_SIZE];
+    UINT8 machine_check_stack[FAULT_STACK_SIZE];
+} ENTRY_AREA;
+
+_Static_assert(sizeof(ENTRY_PAGE) == PAGE_SIZE, "the first page is one page");
+_Static_assert(FAULT_STACK_SIZE % PAGE_SIZE == 0,
+               "each IST stack is whole pages");
+
+/* In .data, where TinyCC honours the page alignment: it puts .bss after
+   .data at a 16-byte boundary (tccpe.c, pe_assign_addresses), so an
+   uninitialized object would be page aligned only within .bss. */
+static ENTRY_AREA entry_area __attribute__((section(".data")));
 
 /* 64-bit mode loads CS only through a far transfer. This one is a far
    return to the label after it, past the INT3 that follows every RET
@@ -140,25 +170,34 @@ static void reload_segments(void)
 
 /* The CPU aligns RSP to 16 bytes as it delivers an interrupt in IA-32e
    mode, and the OS is expected to give IST pointers that alignment
-   already (SDM Vol. 3A 7.14.2). */
-static UINT64 stack_top(const UINT8 *stack)
+   already (SDM Vol. 3A 7.14.2). The pointer sits one aligned unit below
+   the stack's end, and the per-CPU block's address in the word it
+   names. */
+static UINT64 ist_stack(UINT8 *stack)
 {
-    return ((UINT64)stack + FAULT_STACK_SIZE) & ~(UINT64)(STACK_ALIGNMENT - 1);
+    UINT64 top = ((UINT64)stack + FAULT_STACK_SIZE - STACK_ALIGNMENT) &
+                 ~(UINT64)(STACK_ALIGNMENT - 1);
+
+    *(PER_CPU **)top = &entry_area.page.per_cpu;
+    return top;
 }
 
 static void tss_load(void)
 {
-    UINT64 base = (UINT64)&tss;
-    UINT64 limit = sizeof(tss) - 1;
+    TSS *tss = &entry_area.page.tss;
+    UINT64 *gdt = entry_area.page.gdt;
+    UINT64 base = (UINT64)tss;
+    UINT64 limit = sizeof(*tss) - 1;
     UINT32 index = SELECTOR_INDEX(TSS_SELECTOR);
 
-    tss.ist[NMI_IST - 1] = stack_top(nmi_stack);
-    tss.ist[DOUBLE_FAULT_IST - 1] = stack_top(double_fault_stack);
-    tss.ist[MACHINE_CHECK_IST - 1] = stack_top(machine_check_stack);
+    tss->ist[NMI_IST - 1] = ist_stack(entry_area.nmi_stack);
+    tss->ist[DOUBLE_FAULT_IST - 1] = ist_stack(entry_area.double_fault_stack);
+    tss->ist[MACHINE_CHECK_IST - 1] =
+        ist_stack(entry_area.machine_check_stack);
     /* The I/O permission bit map would start at this offset, where the
        TSS ends, so it has none, and every port access at CPL 3 raises #GP
        (SDM Vol. 1 20.5.2). */
-    tss.io_map_base = sizeof(tss);
+    tss->io_map_base = sizeof(*tss);
     gdt[index] = (limit & DESC_LIMIT_LOW) |
                  (limit & DESC_LIMIT_HIGH) << DESC_LIMIT_HIGH_SHIFT |
                  (base & DESC_BASE_LOW) << DESC_BASE_LOW_SHIFT |
@@ -172,9 +211,17 @@ static void tss_load(void)
    (APM 4.6.3), whatever firmware left there. */
 void gdt_load(void)
 {
+    UINT64 *gdt = entry_area.page.gdt;
     DESCRIPTOR_REGISTER gdtr;
 
-    gdtr.limit = sizeof(gdt) - 1;
+    gdt[SELECTOR_INDEX(KERNEL_CODE_SELECTOR)] = KERNEL_CODE;
+    gdt[SELECTOR_INDEX(KERNEL_DATA_SELECTOR)] = KERNEL_DATA;
+    gdt[SELECTOR_INDEX(USER_CODE32_SELECTOR)] = USER_CODE32;
+    gdt[SELECTOR_INDEX(USER_DATA_SELECTOR)] = USER_DATA;
+    gdt[SELECTOR_INDEX(USER_CODE_SELECTOR)] = USER_CODE;
+    entry_area.page.per_cpu.entry_stack =
+        (UINT64)entry_area.page.entry_stack + ENTRY_STACK_SIZE;
+    gdtr.limit = sizeof(entry_area.page.gdt) - 1;
     gdtr.base = (UINT64)gdt;
     __asm__ volatile("lgdt %0" : : "m"(gdtr) : "memory");
     reload_segments();
@@ -184,5 +231,30 @@ void gdt_load(void)
 
 void tss_set_kernel_stack(UINT64 top)
 {
-    tss.rsp[0] = top;
+    entry_area.page.tss.rsp[0] = top;
+}
+
+PER_CPU *per_cpu_block(void)
+{
+    return &entry_area.page.per_cpu;
+}
+
+/* What the last process's entries and exits left in the area: frames on
+   the entry stack and its RSP in the per-CPU block. */
+void entry_area_wipe(void)
+{
+    UINT32 i;
+
+    for (i = 0; i < ENTRY_STACK_SIZE; i++)
+        entry_area.page.entry_stack[i] = 0;
+    entry_area.page.per_cpu.user_rsp = 0;
+}
+
+ENTRY_RANGE gdt_entry_range(void)
+{
+    ENTRY_RANGE range;
+
+    range.start = (UINT64)&entry_area;
+    range.end = range.start + sizeof(entry_area);
+    return range;
 }

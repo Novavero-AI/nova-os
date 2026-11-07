@@ -20,6 +20,15 @@ UINT64 paging_kernel_space(void);
    mapping keeps read-only, through the direct map. */
 void paging_write_text(UINT64 linear, const UINT8 *bytes, UINT64 count);
 
+/* Start page-table isolation (docs/spec/speculation.md M11): build the
+   entry region's tables, which every user table maps from now on, set
+   CR4.PCIDE where pcid says the processor has PCIDs, and point RSP0 at
+   the entry stack. Before any space is created. */
+void paging_isolate(int pcid);
+
+/* Whether page-table isolation is in force. */
+int paging_isolated(void);
+
 /* Record that the processor is switching to a user thread on space, with
    interrupts disabled. Returns 1 if the last user thread it ran was on
    another space, and so of another process. */
@@ -73,8 +82,9 @@ typedef enum {
 int paging_direct_type_differs(UINT64 physical, USER_MEMORY_TYPE type);
 
 /* A new address space: a top table whose upper half is the kernel's and
-   whose lower half maps nothing. Returns its physical address, for CR3,
-   or 0 if no page is free. */
+   whose lower half maps nothing, and under isolation the user table in
+   the next page. Returns the top table's physical address, for CR3, or 0
+   if no page is free. */
 UINT64 paging_space_create(void);
 
 /* Map the 4 KiB page at physical at user address linear, a page boundary
@@ -108,7 +118,7 @@ UINT32 paging_physical_bits(void);
    address space. */
 void paging_space_clear(UINT64 space);
 
-/* Clear space and free its top table. No processor may be using it. */
+/* Clear space and free its top tables. No processor may be using it. */
 void paging_space_destroy(UINT64 space);
 
 #endif
