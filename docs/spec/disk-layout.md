@@ -86,7 +86,6 @@ Both disks hold:
 \NOVA\VIRTBLK.EXE        the virtio block driver
 \NOVA\VIRTINP.EXE        the virtio input driver
 \NOVA\CONSOLE.EXE        the console, the input driver's client
-\NOVA\CONECHO.EXE        the console's demo client
 \NOVA\STORE.IMG          the store image
 \NOVA\FS.EXE             the file system service, for a data disk
 \NOVA\FSTEST.EXE         the data disk's check
@@ -138,7 +137,6 @@ a directory takes as many clusters as its entries fill:
 | `\NOVA\VIRTBLK.EXE` | `VIRTBLK EXE` |
 | `\NOVA\VIRTINP.EXE` | `VIRTINP EXE` |
 | `\NOVA\CONSOLE.EXE` | `CONSOLE EXE` |
-| `\NOVA\CONECHO.EXE` | `CONECHO EXE` |
 | `\NOVA\STORE.IMG` | `STORE   IMG` |
 | `\NOVA\FS.EXE` | `FS      EXE` |
 | `\NOVA\FSTEST.EXE` | `FSTEST  EXE` |

@@ -1,7 +1,6 @@
 /* init's part in the console (docs/spec/console.md C1, C2): the
    console's bootstrap message and control channel, the display's
-   handoff once the kernel releases it, sessions, and the program that
-   runs on the console. */
+   handoff once the kernel releases it, and sessions. */
 
 #ifndef NOVA_INIT_CONSOLE_H
 #define NOVA_INIT_CONSOLE_H
@@ -18,14 +17,13 @@ UINT32 console_bootstrap(const PLATFORM *platform, UINT32 process,
                          UINT32 channel);
 
 /* The console console_bootstrap wrote for has started: once the display
-   is released, send it on the control channel and start the demo client
-   on a new session. */
+   is released, send it on the control channel and give login, if it
+   runs, a session on it. */
 void console_started(const PLATFORM *platform);
 
 /* After the startup report on bootstrap, init's bootstrap endpoint, wait
    for the kernel to release the display by closing its end, close
-   init's, then send the display to the console and start the demo
-   client, if a console runs. */
+   init's, then send the display to the console, if one runs. */
 void console_start(const PLATFORM *platform, UINT32 bootstrap);
 
 /* A new session on the console: send the console its end and return the

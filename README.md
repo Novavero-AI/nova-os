@@ -30,14 +30,18 @@ and restarts a driver or the console if one ends
 ([docs/spec/ipc.md](docs/spec/ipc.md), I10). Once the fade has drawn its
 last frame the kernel releases the display, and the first process hands
 it to the console, which draws a translucent panel over the background
-and serves programs text output and lines typed at the keyboard; the
-first process starts a demo client, `conecho.exe`, which echoes them
+and serves programs text output and lines typed at the keyboard
 ([docs/spec/console.md](docs/spec/console.md)). With a data disk attached
 as a second virtio drive, the first process starts first the block
 driver serving that disk and the file system service, `fs.exe`, over it,
 publishes the disk's `/data` and `/users` beside `/store`, and runs
 `fstest.exe`, which checks them
-([docs/spec/storage.md](docs/spec/storage.md), F18).
+([docs/spec/storage.md](docs/spec/storage.md), F18). It then starts the
+accounts service and login from `/store` and supervises them: on a
+first boot login creates the administrator's account, and afterwards
+asks for a name and a password, and starts a shell that holds the
+user's home, `/store` to read, and nothing else
+([docs/spec/accounts.md](docs/spec/accounts.md)).
 [DESIGN.md](DESIGN.md) holds the principles, the decisions made so far and
 the stages; [design/backgrounds](design/backgrounds/README.md) holds the
 background's prototypes and the check that `gfx/limb.c` draws Limb's
@@ -46,7 +50,7 @@ prototype and the check that `gfx/font.c` draws its glyphs.
 
 ## Build
 
-The sixteen images are compiled by TinyCC at commit
+The fifteen images are compiled by TinyCC at commit
 cb41cbfe717e4c00d7bb70035cda5ee5f0ff9341, built twice: as a cross
 compiler that writes x86-64 PE, and as one that writes i386 PE for ntdll.
 The archive's sha256 is
@@ -92,9 +96,9 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   -I test -Wl,-subsystem=native -Wl,-e=init_main \
   -Wl,-section-alignment=1000 -Wl,-file-alignment=200 -o init.exe \
   init/init.c init/chain.c init/compat.c init/view.c init/platform.c \
-  init/store.c init/console.c init/data.c drivers/pci.c \
-  drivers/virtio_pci.c store/reader.c lib/path.c lib/program.c lib/log.c \
-  native/native.S kernel/random/sha256.c
+  init/store.c init/console.c init/data.c init/login_start.c \
+  drivers/pci.c drivers/virtio_pci.c store/reader.c lib/path.c \
+  lib/program.c lib/log.c native/native.S kernel/random/sha256.c
 ./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I native -I lib -I drivers -Wl,-subsystem=native \
   -Wl,-e=virtio_blk_main -Wl,-section-alignment=1000 \
@@ -113,11 +117,6 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   -Wl,-file-alignment=200 -o console.exe console/console.c console/text.c \
   console/keys.c console/panel.c gfx/gfx.c gfx/raster.c gfx/font.c \
   gfx/limb.c lib/log.c native/native.S
-./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
-  -I include -I native -I lib -Wl,-subsystem=native \
-  -Wl,-e=console_echo_main -Wl,-section-alignment=1000 \
-  -Wl,-file-alignment=200 -o conecho.exe clients/console_echo.c lib/log.c \
-  native/native.S
 ./i386-win32-tcc -shared -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -Wl,-subsystem=native -Wl,-e=ntdll_entry \
   -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
@@ -186,9 +185,10 @@ load nova-boot, and nova-boot to load the kernel, at addresses of their
 choosing; TinyCC writes them only for a DLL-style image. `init.exe` is
 linked without it: the kernel places the first process at the image's own
 base address, and the first process places each program it starts, the
-drivers `virtblk.exe` and `virtinp.exe`, the console `console.exe`, its
-demo client `conecho.exe`, the file system service `fs.exe` and its
-check `fstest.exe`, and the programs from `/store`, at its own. `ntdll.dll` is
+drivers `virtblk.exe` and `virtinp.exe`, the console `console.exe`,
+the file system service `fs.exe` and its check `fstest.exe`, and the
+programs from `/store`, at its own; login places the programs it starts
+from `/store` at theirs too. `ntdll.dll` is
 linked with `-shared` for its export table, which TinyCC writes only for a
 DLL, and is placed at its own base address too. For the native subsystem
 TinyCC aligns sections to 32 bytes but still writes the 4096 and 512 byte
@@ -201,11 +201,10 @@ build gives the same bytes:
 |---|---|---|
 | `BOOTX64.EFI` | 29,696 | `ed744ea9428e8fd8a0cd1f8173cdfead7fc0d9ad98f1fa48b1f94f417337c70f` |
 | `kernel.exe` | 204,288 | `a9f73a46f26daba1bc2454cac2dfd80eeb369cae1a266e638fb76d215e018b0d` |
-| `init.exe` | 87,040 | `7545643a72786fe09aa2547161261c20ef015d2eb26cb2a19d36e7c165b998c8` |
+| `init.exe` | 92,672 | `4fdc5b87c0fcc0d9975632e56dd38e6dfae3030a769b976c8418276c0b1221e7` |
 | `virtblk.exe` | 19,456 | `14c68c048f14db914dc5a3164a7e9806625b2c4089f72a7b3cce835eaa24fc02` |
 | `virtinp.exe` | 15,872 | `f4322918ebc64193d49a56c2e638c2c4081afeb13251826c9e56f2371f448704` |
 | `console.exe` | 36,352 | `b3d3caa685145e77e152e6599e6aa8b6660a89ea70931ca57208b0b043f89ded` |
-| `conecho.exe` | 6,144 | `372dd9cc445e7ed18fb7dfcc6f20cce16907c3a845273f0c7efefaa9c398271d` |
 | `ntdll.dll` | 10,240 | `9a43b4e3b773c1b5a3b6eb541fd0de9c3f3675d2867d1193b707118648853d10` |
 | `store.exe` | 28,672 | `08b1663767426a0daf34b2f9b0c56bb2bc5e805d692b39bd83deef89355cee1a` |
 | `namespace.exe` | 11,264 | `ea99c11b7bbc69cf1b10e383391216c7c7bc25fd8b7ba48c9ee47de8c7c4182b` |
@@ -250,8 +249,8 @@ with only the standard library, so the host compiler or TinyCC builds it.
 
 The block below writes two boot disks and a data disk. The system's,
 `disk.img` and `disk.vhdx`, holds in `\NOVA\` the kernel, `INIT.EXE`,
-`NTDLL.DLL`, `VIRTBLK.EXE`, `VIRTINP.EXE`, `CONSOLE.EXE`, `CONECHO.EXE`,
-`STORE.IMG`, `FS.EXE` and `FSTEST.EXE`. The test disk, `chain.img` and
+`NTDLL.DLL`, `VIRTBLK.EXE`, `VIRTINP.EXE`, `CONSOLE.EXE`, `STORE.IMG`,
+`FS.EXE` and `FSTEST.EXE`. The test disk, `chain.img` and
 `chain.vhdx`, holds the same files and the inputs of stage0-pe32's chain
 up to M1, which the bootstrap check reads: its seed and the files of
 stage0-pe32 and of the M2libc, M2-Planet and mescc-tools trees it builds
@@ -299,11 +298,10 @@ m1-macro.c $mescc/M1-macro.c
 EOF
 cc -o mkimage tools/mkimage.c
 ./mkimage disk.img disk.vhdx BOOTX64.EFI kernel.exe init.exe ntdll.dll \
-  virtblk.exe virtinp.exe console.exe conecho.exe store.img fs.exe \
-  fstest.exe
+  virtblk.exe virtinp.exe console.exe store.img fs.exe fstest.exe
 ./mkimage chain.img chain.vhdx BOOTX64.EFI kernel.exe init.exe ntdll.dll \
-  virtblk.exe virtinp.exe console.exe conecho.exe store.img fs.exe \
-  fstest.exe chain/*
+  virtblk.exe virtinp.exe console.exe store.img fs.exe fstest.exe \
+  chain/*
 cc -o mkdata -I include -I kernel/random -I fs tools/mkdata.c fs/pool.c \
   kernel/random/sha256.c
 ./mkdata data.img 64
@@ -344,10 +342,10 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `ff631b56ecffaca39110ba89305aa7697f0188d2e260f5cd38fbd1a5184eb801` |
-| `disk.vhdx` | 71,303,168 | `dfaa059786d49c0a8f7d7a07bb8f7450bc31e9c19008866b5cd7c9e588235ef9` |
-| `chain.img` | 67,108,864 | `5648c99d33421e5e9ed6208db132f5d3538721ad1f4e0d326bf95a1ab5a6b8f4` |
-| `chain.vhdx` | 71,303,168 | `c83dbf7514d6621aae212b2e30aa8e370a07a3a2c710f827aaf5f7fa9f7afae1` |
+| `disk.img` | 67,108,864 | `3cdb33a9d727c6606a342fb028012611edfef567d10938a11e887b61149da695` |
+| `disk.vhdx` | 71,303,168 | `c16b243bc91895eb1bc779d5ac81ab2df3435eaac1288e353638f187aa46ea78` |
+| `chain.img` | 67,108,864 | `17f80abef4d9ab99505b9a2192caca0d46a0a8b5017dbd008274b802aa53eca2` |
+| `chain.vhdx` | 71,303,168 | `768569d3c174c11c03bbef5ca246ffbcbade0de9a423f48e38f8cd8c5d84b7ee` |
 | `data.img` | 67,108,864 | `fc0e119b885b341b5385e351b1f334c4da7cb921ef2dfbd994e9e20917e27804` |
 
 ## Run
@@ -378,8 +376,19 @@ data disk`, `nova-fstest: checks passed`, `nova-hello: checks passed`,
 `nova-init: checks passed`, after which the kernel says
 `nova: first process reports startup done`, fades into the desktop and
 says `nova: display released to the first process`. The console then
-logs how it lays out its panel, in which the demo client writes its
-greeting.
+logs how it lays out its panel, in which login runs.
+
+On a fresh data disk login says that nova-os has no accounts yet and
+asks for a name and a password, twice, for the administrator's account;
+each password is typed without echo. A name is 1 to 32 lowercase
+letters, digits and `-`, starting with a letter, and a password has 8
+to 128 characters. Login then shows `Creating the account...` while the
+accounts service hashes the password, which takes 9 to 13 seconds
+under QEMU's emulation on an Apple M2, and starts the shell, whose
+`help` lists its commands; `logout` returns to login. Booted again, the
+same `data-run.img` keeps the account, and login asks for a name and a
+password, showing `Checking...` while it checks them. The administrator
+adds users with `user create`.
 
 For the bootstrap check, boot `chain.img` in place of `disk.img`. The
 first process then gives the size and sha256 of what each of the
@@ -405,14 +414,16 @@ through virtio, so that the virtio block driver has the boot disk to
 read, and read-only, so that a boot leaves the image as built. The data
 disk is attached writable, as a copy, since each boot writes it, and
 after the system's, since the first process takes the second virtio
-block function for it. The
+block function for it; without it there are no accounts, and neither
+the accounts service nor login starts. The
 virtio-rng device gives the firmware a random number generator, which
 nova-boot asks for the seed of the kernel's generator: QEMU's default
 processor has neither RDRAND nor RDSEED, so without the device the
-kernel's generator has no seed and says so. The virtio keyboard gives
-the input driver its device, so the keys typed in QEMU's window reach the
-console, which edits the line the demo client reads and shows it in the
-panel. The USB tablet gives the window an
+kernel's generator has no seed and says so, and no account can be
+created, since its salt comes from that generator. The virtio keyboard
+gives the input driver its device, so the keys typed in QEMU's window
+reach the console, which edits the line login or the shell reads and
+shows it in the panel. The USB tablet gives the window an
 absolute pointer, so QEMU does not capture the mouse; on a Mac,
 `-display cocoa,zoom-to-fit=on -full-screen` gives it a full-screen
 Space.
