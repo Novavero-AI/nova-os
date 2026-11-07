@@ -4,8 +4,9 @@
    driver, \nova\virtblk.exe started with VIRTIO_BLK_SERVE, runs in a job
    of its own with the bootstrap message the platform driver gives a
    driver, resources covering only its function, and reports with the
-   block protocol's client endpoint (virtio_blk.h); the file system service, \nova\fs.exe, takes
-   that endpoint and the server end of its volume's root (services.h).
+   block protocol's client endpoint (virtio_blk.h); the file system
+   service, \nova\fs.exe, takes that endpoint and the server end of its
+   volume's root (services.h).
    init keeps the root, through which it creates /data and /users at
    first boot (F11, item 1) and publishes them in the namespace (F4).
 

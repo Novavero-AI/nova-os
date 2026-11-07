@@ -17,8 +17,8 @@ void data_start(const PLATFORM *platform, UINT32 job);
    volume if they are missing, publish both through the namespace
    server's root, and run \nova\fstest.exe in job with a view of /data,
    reached through the namespace, read-write and read-only, and of the
-   namespace's root without WRITE, each step logged. A data disk that fails any of them is logged and init goes
-   on, as without one. */
+   namespace's root without WRITE, each step logged. A data disk that
+   fails any of them is logged and init goes on, as without one. */
 void data_mount(UINT32 job, UINT32 debug_log, UINT32 namespace_root);
 
 #endif
