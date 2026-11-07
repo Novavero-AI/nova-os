@@ -414,9 +414,9 @@ screen's order, `PIXEL_RGB` or `PIXEL_BGR`, as it writes.
 - **Why the client's own sections:** the pixels are the client's memory,
   written by the client alone, and the compositor's read-only mapping
   cannot change them, so a recorded client maps no memory another
-  process can write; replay.md's rule on shared memory says so once it
-  is amended as [Changes elsewhere](#changes-elsewhere) gives, since as
-  written it forbids sharing a section one side writes. Bulk data moves
+  process can write, as
+  [replay.md's rule on shared memory](replay.md#shared-memory) asks.
+  Bulk data moves
   through sections both sides map ([ipc.md I5](ipc.md#i5-bulk-data));
   the client allocates, so its job pays for its windows' memory. EWS
   takes from each client "a read-only shared memory region containing a
@@ -698,14 +698,14 @@ change.
 3. **Reports.** A pointing device's update is several events closed by
    `EV_SYN` `SYN_REPORT`, which a device should buffer or drop whole
    (VIRTIO 1.4 5.8.6.2; evdev, `SYN_REPORT`). The driver of a device
-   that has `EV_ABS` or `EV_REL` collects events up to each
-   `SYN_REPORT` and sends them as one pointer report: the axes that
-   changed, the buttons that changed, the wheel's movement, and the
-   time. A keyboard's events stay one message each
-   ([input.md K2](input.md#k2-key-events)). The first message on every
-   client endpoint describes the device: keyboard or pointer, and for a
-   pointer each absolute axis's range, which the driver reads with
-   `VIRTIO_INPUT_CFG_ABS_INFO` (VIRTIO 1.4 5.8.4).
+   that has `EV_ABS` or `EV_REL` collects events up to each `SYN_REPORT`
+   and sends them as one pointer report: the axes that changed, the
+   buttons that changed, the wheel's movement, and the time. A
+   keyboard's events stay one message each ([input.md
+   K2](input.md#k2-key-events-and-pointer-reports)). The first message
+   on every client endpoint describes the device: keyboard or pointer,
+   and for a pointer each absolute axis's range, which the driver reads
+   with `VIRTIO_INPUT_CFG_ABS_INFO` (VIRTIO 1.4 5.8.4).
 4. **Position.** The compositor maps an absolute axis from its range
    onto the screen: x is `(value - min) * width / (max - min + 1)`, in
    pixels and 256ths of a pixel, clamped to the screen. With QEMU's
@@ -765,10 +765,11 @@ channel, and to no other:
    while open. Any other new window opens without the focus, stacked
    below the window that has it, and the strip says it wants attention.
 2. **A key event** carries the evdev code, the value (pressed, released
-   or repeated, as [input.md K2](input.md#k2-key-events) gives), the
-   modifiers held, and the UTF-8 text the key gives under the keymap,
-   from the console's table ([console.md C3](console.md#c3-keys)) moved
-   into a library both use. A game reads codes; a text field reads text.
+   or repeated, as [input.md
+   K2](input.md#k2-key-events-and-pointer-reports) gives), the modifiers
+   held, and the UTF-8 text the key gives under the keymap, from the
+   console's table ([console.md C3](console.md#c3-keys)) moved into a
+   library both use. A game reads codes; a text field reads text.
 3. **The pointer** goes to the topmost window under it, in coordinates
    relative to that window. A button pressed in a window holds the
    pointer to it until every button is released, so a drag that leaves
@@ -1058,8 +1059,8 @@ labels, never the content.
   ([shell.md L24](shell.md#l24-settings-and-service-commands)); a recorded
   program cannot take a capture, since its buffers are written by the
   compositor, outside the recording
-  ([replay.md](replay.md#shared-memory), as amended in [Changes
-  elsewhere](#changes-elsewhere)); a clipboard holds at most 1 MiB, and
+  ([replay.md](replay.md#shared-memory)); a clipboard holds at most
+  1 MiB, and
   dragging between windows is not specified.
 - **Not taken:** frames as channel messages. Its cost is a frame of
   2880 x 1800 in 317 messages of 64 KiB.
@@ -1163,8 +1164,8 @@ the reason's text or a file's contents.
 2. **A window's pixels are outputs,** not inputs: the client writes its
    sections alone, and the compositor maps them read only, so a client
    maps no memory another process can write, and recording needs no
-   copy of a pixel, under replay.md's rule on shared memory amended as
-   [Changes elsewhere](#changes-elsewhere) gives.
+   copy of a pixel, under
+   [replay.md's rule on shared memory](replay.md#shared-memory).
 3. **The compositor is not recordable alone:** it maps sections its
    clients write, inputs no kernel record holds, and writes device
    memory ([replay.md](replay.md#devices)). It is recorded at its message
@@ -1339,7 +1340,7 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
   ([D4](#d4-the-console-in-a-window-and-as-the-fallback)); C3, the
   secure attention key, never given to a read, and the wheel.
 - **[accounts.md](accounts.md):** A5 and A6, `ACCOUNTS_LIST` on a
-  console login channel, and the stand-in's purpose restated; A7, login
+  console login channel, and the stand-in's purpose; A7, login
   starting each program in a job of its own, with a connection and a
   display grant channel when its recipe declares the display, the HUD
   with a shell in values mode, and a terminal on `LAUNCHER_TERMINAL`,
@@ -1347,7 +1348,7 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
   waiting on one port without blocking where A7 has it wait with the
   shell; A10, login's new connection after a restart taking over the
   attention state.
-- **[replay.md](replay.md):** Shared memory restated: a recorded process
+- **[replay.md](replay.md):** Shared memory: a recorded process
   cannot map a section that a process outside the recording can write,
   through a handle with `WRITE`, a writable mapping or a pin; a section
   it writes and others only read is its output. Then the compositor at

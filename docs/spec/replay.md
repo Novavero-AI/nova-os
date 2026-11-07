@@ -61,11 +61,26 @@ target processors is unverified.
 
 ## Shared memory
 
-**Decided.** A section mapped writable into a recorded process and into a
-process outside the recording delivers the other process's writes as
-inputs the kernel never sees. A recorded process therefore cannot map a
-writable section shared with a process outside the recording; read-only
-sharing, such as store paths, is unaffected.
+**Decided.** A section that a process outside the recording can write
+delivers that process's writes as inputs the kernel never sees. So no
+section a recorded process maps may be writable by a process outside the
+recording: through a handle that carries `WRITE`, a writable mapping, or
+a pin that lets a device write it ([ipc.md I8](ipc.md#i8-dma)). A section
+the recorded process writes and every other process only reads, such as
+a window's buffer, which the compositor maps read only
+([display.md D6](display.md#d6-windows-and-buffers)), is its output, not
+an input; read-only sharing, such as store paths, is unaffected.
+
+- **Why:** what makes shared memory an input is a writer outside the
+  recording. Replay reproduces the recorded process's own writes, so a
+  section only it writes holds nothing a replay cannot rebuild, whoever
+  else reads it.
+- **Cost:** the kernel must tell, when a recorded process maps a section
+  or sends a handle to one, whether any handle, mapping or pin outside
+  the recording can write it, the query
+  [storage.md F15](storage.md#f15-store-reads-and-replay) asks for; a
+  recorded process cannot map a section another process writes for it,
+  such as a capture's buffer or a ring a service fills.
 
 ## Recordings
 
@@ -82,3 +97,23 @@ I/O are not mediated access by access, so they are not recorded. A driver
 is recorded at its message boundary: the requests it receives and the
 completions and interrupts it delivers. Replay of a driver alone needs a
 device model, which this document does not specify.
+
+The compositor and the network service are recorded the same way, at
+their message boundaries. The compositor maps sections its clients write
+and writes device memory, so it is replayed with its clients or not at
+all; a window's buffer is its client's output, and a capture, whose
+buffers the compositor writes, cannot be held by a recorded process
+([display.md D17](display.md#d17-replay-and-audit)). A program's network
+input arrives in messages on its sockets, so the socket protocol is the
+network's boundary; the network service, whose frames a device writes by
+DMA, is recorded only at its messages, and alone only once its driver
+copies each received frame into a message
+([network.md N16](network.md#n16-replay)).
+
+- **Why:** each takes input no recording holds, a client's pixels or a
+  device's frames, so what a recording can hold of it is the messages it
+  exchanges with the processes recorded.
+- **Cost:** the composed screen and the network's traffic are not
+  replayed from a recording; a recorded program cannot take a capture;
+  recording the network service alone waits on a driver that copies
+  frames.

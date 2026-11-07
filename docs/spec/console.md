@@ -29,12 +29,19 @@ line and its pixel format, as nova-boot reported them in `BOOT_INFO`.
 After the release the first process creates, with `resource_create` on
 its root MMIO resource, a resource covering exactly the pages the
 framebuffer's `stride` x `height` pixels lie on, and sends it with the
-record to the console (C2). The console makes write-combining sections
-over it, each at most `SECTION_MAX_SIZE`, and maps them
-([ipc.md I6](ipc.md#i6-device-memory-and-io-ports)). It is the only
-process given a resource over the framebuffer, so after the release
-only the console and the first process, which holds every device's
-authority, can draw.
+record to the console (C2), or, while a compositor runs, to the
+compositor ([display.md D2](display.md#d2-who-holds-the-display)). The
+console makes write-combining sections over it, each at most
+`SECTION_MAX_SIZE`, and maps them
+([ipc.md I6](ipc.md#i6-device-memory-and-io-ports)). One process at a
+time holds a resource over the framebuffer: the compositor while it
+runs, and the console before a compositor exists and once the first
+process has given the compositor up
+([display.md D3](display.md#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)).
+So after the release only that process and the first process, which
+holds every device's authority, can draw. A console that takes the
+display from a compositor draws Limb over the whole screen and then its
+panel, so nothing of the compositor's last frame stays.
 
 - **Why the kernel's close:** the bootstrap channel already joins the
   kernel and the first process and nothing else, and its close is a
@@ -46,8 +53,12 @@ authority, can draw.
   so the console makes several; a resource covering the framebuffer is
   the authority to make them and nothing else, as a driver's resources
   cover only its function.
+- **Why the console as the fallback:** it draws a whole screen from its
+  own memory with no client, so a machine whose compositor fails still
+  shows its owner a console to log in at, read the log and fix it.
 - **Cost:** the first process could draw over the console; it already
-  holds the authority over every device (ipc.md I6, Cost).
+  holds the authority over every device (ipc.md I6, Cost). Programs a
+  session showed when the compositor was given up run on unseen.
 - **Not taken:** a section over the framebuffer that the kernel creates
   and passes in the bootstrap message, as I6 planned for a compositor.
   Its cost is a size limit no framebuffer of a modern display fits, and
@@ -57,7 +68,8 @@ authority, can draw.
 
 **Decided.**
 
-The console, `\nova\console.exe`, is the keyboard driver's client
+The console, `\nova\console.exe`, is the input drivers' client while
+no compositor runs
 ([input.md K3](input.md#k3-the-report-and-the-client)): the platform
 driver starts it in the root job when the driver first reports,
 supervises it, and hands it each endpoint the driver reports on the
@@ -92,7 +104,26 @@ login ([accounts.md](accounts.md) A6, A7), which the first process
 starts after the release, with a session, and supervises. A console
 that ends closes every session; when the platform driver restarts it,
 the first process gives login a session on the new console, and login
-takes it in place of the one that closed.
+takes it in place of the one that closed. While a compositor runs, the
+first process starts no console, and login is the compositor's first
+client instead
+([display.md D13](display.md#d13-the-graphical-login)); when the first
+process gives the compositor up it starts the console in direct mode,
+gives it the display, and gives login a session on it, as after a
+console's restart.
+
+**Window mode.** A console that login starts as a terminal
+([display.md D4](display.md#d4-the-console-in-a-window-and-as-the-fallback))
+is given a display connection in place of the framebuffer's resource,
+in a `CONSOLE_SETUP` of its own kind (`include/console_protocol.h`), and
+makes on it one window holding its panel; it takes keys from its
+window's channel rather than from an input driver's endpoint. Its
+sessions, keys, panel and font are those of direct mode, the mode in
+which it holds the framebuffer. In a window the panel's translucency is
+the window's material
+([display.md D8](display.md#d8-composition)): the console writes each
+pixel of a glyph or the caret in the ink's colour with the glyph's
+coverage as its cover, and the rest of the panel with a cover of 0.
 
 - **Why the keyboard's client:** the console is where keys are typed,
   and the platform driver already supervises the client and hands it a
@@ -102,8 +133,12 @@ takes it in place of the one that closed.
   from the part of the first process that starts programs on the
   console, which keeps the other end without reaching into the platform
   driver.
+- **Why one program in two modes:** the console is the one program that
+  shows text with no compositor, and the shell's whole interface is its
+  session protocol, so one program keeps one font, one line editor and
+  one set of keys, and the fallback is code that runs every day.
 - **Cost:** without a keyboard the platform driver starts no client, so
-  there is no console.
+  there is no console; two drawing paths in the console.
 - **Not taken:** the console publishing itself in the namespace for
   programs to open. Its cost is a namespace that serves for the life of
   the system, which the first milestone's does not; a session handed by
@@ -139,11 +174,23 @@ Keys typed while no read waits are kept, up to `CONSOLE_LINE_MAX`, and
 edit the next read's line as though typed then. Any key but Page Up and
 Page Down scrolls the panel back to its end, and so does a write.
 
+**The secure attention key**, Ctrl+Alt+Delete with either Ctrl, either
+Alt, and Delete or the keypad's
+([display.md D12](display.md#d12-the-secure-attention-key-and-global-keys)),
+is never given to a read: the console gives the keyboard to login's
+session, which the first process marks as login's when it gives it, so
+the keys that follow reach login. A pointing device's wheel scrolls the
+panel three lines a detent, back or forward through what it has shown
+([input.md K2](input.md#k2-key-events-and-pointer-reports)).
+
 - **Why a US layout:** QEMU's keyboard reports positions, which evdev
   names by their US labels; another layout is a table more, and choosing
   one is a setting nothing offers yet.
+- **Why the secure attention key goes to login:** a program can draw a
+  picture of login's prompt, but no program receives the key, so a
+  person who presses it first knows that what follows is login's.
 - **Cost:** the console knows no other layout, no dead keys and nothing
-  past ASCII.
+  past ASCII; no program on the console can use Ctrl+Alt+Delete.
 
 ## C4. Sessions
 

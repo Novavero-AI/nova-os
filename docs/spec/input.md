@@ -1,8 +1,9 @@
 # Input
 
-How a key press reaches a process: the virtio input driver
-(`drivers/virtio_input.c`), the messages it sends its client, the
-console (`include/input_protocol.h`), its report to the platform driver
+How a key press or a pointer's motion reaches a process: the virtio
+input driver (`drivers/virtio_input.c`), the messages it sends its
+client, the compositor or the console (`include/input_protocol.h`), its
+report to the platform driver
 (`drivers/virtio_input.h`), and how the platform driver, the first
 process, starts and supervises it and its client (`init/platform.c`).
 
@@ -15,8 +16,8 @@ to for the meaning of an event.
 
 **Decided.**
 
-The platform driver starts `\nova\virtinp.exe` for the first virtio
-input function it finds, PCI 1AF4:1052 (VIRTIO 1.4 4.1.2, 5.8.1), in a
+The platform driver starts `\nova\virtinp.exe` for every virtio input
+function it finds, PCI 1AF4:1052 (VIRTIO 1.4 4.1.2, 5.8.1), each in a
 job of its own, with the bootstrap message every PCI device driver gets
 (`drivers/pci.h`). The driver:
 
@@ -29,10 +30,11 @@ job of its own, with the bootstrap message every PCI device driver gets
    one configuration generation (2.5.1). It reads the name
    (`VIRTIO_INPUT_CFG_ID_NAME`), which event types below 32 the device
    has (`VIRTIO_INPUT_CFG_EV_BITS` with a nonzero `size`), and the
-   `EV_KEY` bitmap, whose bit n % 8 of byte n / 8 is key code n. It
-   reads at most the 128 bytes of the union, whatever `size` claims. It
-   logs the name, the types and how many key codes the device has, and
-   refuses a device with none.
+   `EV_KEY` bitmap, whose bit n % 8 of byte n / 8 is key code n, and for
+   a device that has `EV_ABS`, the range of `ABS_X` and of `ABS_Y`
+   (`VIRTIO_INPUT_CFG_ABS_INFO`). It reads at most the 128 bytes of the
+   union, whatever `size` claims. It logs the name, the types and how
+   many key codes the device has, and refuses a device with none.
 3. Sets up the event queue, 64 device-writable buffers of 8 bytes, one
    per descriptor, on MSI-X table entry 0, and leaves the status queue
    unused (5.8.2). It gives every buffer to the device, sets DRIVER_OK
@@ -46,26 +48,35 @@ job of its own, with the bootstrap message every PCI device driver gets
    order (2.7.14). More buffers returned than the queue holds, one the
    device does not hold, or the same one twice, ends the driver as a
    broken device. A buffer with fewer than 8 bytes written holds no
-   event (2.7.8.3). The event is copied out of the buffer once, and sent
-   (K2) if its type is `EV_KEY`, its code is in the bitmap and its value
-   is 0, 1 or 2; anything else, `EV_SYN` included, is ignored (5.8.6.1).
-   The buffers go back to the device once the pass has sent their
-   events.
+   event (2.7.8.3). The event is copied out of the buffer once. On a
+   keyboard it is sent (K2) if its type is `EV_KEY`, its code is in the
+   bitmap and its value is 0, 1 or 2; anything else, `EV_SYN` included,
+   is ignored (5.8.6.1). On a pointer, a device that has `EV_ABS` or
+   `EV_REL`, its `EV_KEY` events within the bitmap, its `EV_ABS` events
+   of `ABS_X` and `ABS_Y` and its `EV_REL` events of `REL_WHEEL` are
+   collected up to each `SYN_REPORT` and sent as one pointer report
+   (K2); anything else is ignored. The buffers go back to the device
+   once the pass has sent their events.
 
 The bitmap's bit order is not in VIRTIO 1.4; QEMU's devices were
 observed to use this one. VIRTIO 1.4 5.8.4 says a string has no NUL
 terminator, but QEMU 11.1's devices were observed to count one in the
 name's `size`, so the name ends at its first NUL.
 
-- **Why only `EV_KEY`:** a key press is what the first set needs; the
-  device's `EV_LED` and `EV_REP` (QEMU's keyboard has both) are for the
-  status queue and for software autorepeat, which nothing does yet.
+- **Why a driver for every function:** a keyboard and a tablet are
+  separate virtio input functions, each with its own queues and
+  configuration, so each gets a driver that can fail and restart alone.
+- **Why only these events:** a key press, and a tablet's position,
+  buttons and wheel, are what the first set needs
+  ([display.md D10](display.md#d10-the-pointer)); the device's `EV_LED`
+  and `EV_REP` (QEMU's keyboard has both) are for the status queue and
+  for software autorepeat, which nothing does yet.
 - **Why check the codes against the bitmap:** the device states what it
   sends, so a code outside that set is one the driver does not
   recognize, and the client never receives a code the device did not
   declare.
 
-## K2. Key events
+## K2. Key events and pointer reports
 
 **Decided.**
 
@@ -90,6 +101,18 @@ no key pressed, or from a send that fails with `ERR_PEER_CLOSED`,
 whichever comes first; it then resets the device, releases its pin
 (3.3.1) and exits.
 
+**Pointer reports.** A pointing device's update is several events closed
+by `EV_SYN` `SYN_REPORT`, which a device should buffer or drop whole
+(VIRTIO 1.4 5.8.6.2; evdev, `SYN_REPORT`). The driver sends each update
+as one message, transaction 0, on the client's endpoint, in the same
+queue as key events: the axes that changed, with their values; the
+buttons that changed, pressed or released; the wheel's movement, as
+`REL_WHEEL` gives it; and the time it took the `SYN_REPORT` from the
+used ring (`include/input_protocol.h`). An `EV_SYN` `SYN_DROPPED` drops
+the events collected since the last report and every event up to and
+including the next `SYN_REPORT`, as evdev asks of a client (evdev,
+`SYN_DROPPED`).
+
 - **Why evdev's fields as they come:** VIRTIO 1.4 fills `type`, `code`
   and `value` according to evdev (5.8.6), so the client reads the same
   vocabulary the device writes, with no table between them.
@@ -100,12 +123,19 @@ whichever comes first; it then resets the device, releases its pin
 - **Why a watch:** the driver waits on its port for interrupts, and a
   watch puts the client's close on the same port, so the device is
   reset as soon as nobody reads it rather than at the next key.
+- **Why a pointer's update as one report:** an absolute position is two
+  axes, and a pointer moved in two messages would be seen for a moment
+  at a place it never was
+  ([display.md D10](display.md#d10-the-pointer)).
 - **Cost:** a message for every press and every release, each holding
   two pages of kernel memory while it is queued, one for the message and
-  one for its bytes (`kernel/object/channel.c`).
-- **Not taken:** a message per evdev report, the events up to an
-  `EV_SYN`. Its cost is a variable-length format for a keyboard that
-  reports one key at a time.
+  one for its bytes (`kernel/object/channel.c`); two message formats on
+  one kind of endpoint.
+- **Not taken:** a message per evdev report for a keyboard, the events
+  up to an `EV_SYN`. Its cost is a variable-length format for a
+  keyboard that reports one key at a time. A pointer's events one
+  message each, as keys are; its cost is the half-moved pointer above,
+  and twice the messages for every motion.
 
 ## K3. The report and the client
 
@@ -117,7 +147,10 @@ of 0, and one handle, the client's endpoint, with `READ`, `WAIT` and
 `TRANSFER`. It then closes the bootstrap channel. The platform driver
 takes the report only if it is exactly that; otherwise it logs it and
 closes the channel, which destroys the endpoint, and the driver's watch
-finds the client gone and stops it (K2).
+finds the client gone and stops it (K2). The driver's first message on
+the client's endpoint describes the device: a keyboard or a pointer,
+and for a pointer the range of each absolute axis (K1); key events or
+pointer reports follow it.
 
 The platform driver starts the client, the console,
 `\nova\console.exe`, in the root job when the driver first reports, and
@@ -134,6 +167,13 @@ The console takes each key event on its endpoint as a key typed at it
 endpoint it takes the next from the channel when one comes, and it
 exits once the platform driver has closed the channel.
 
+While a compositor runs, it is every input driver's client in the
+console's place ([display.md D2](display.md#d2-who-holds-the-display)):
+the platform driver starts no console, and hands the compositor each
+endpoint a driver reports, on the channel it keeps to the compositor,
+as it hands them to the console; an endpoint reported before the
+compositor starts waits in the platform driver until it does.
+
 - **Why the driver creates the endpoint:** it is the driver's service,
   passed to clients through its supervisor, as
   [ipc.md I10](ipc.md#i10-driver-failure-and-restart) has a supervisor
@@ -144,6 +184,9 @@ exits once the platform driver has closed the channel.
   one, the way the driver's report reaches the supervisor, until the
   namespace publishes the device by name
   ([ipc.md I10](ipc.md#i10-driver-failure-and-restart), step 4).
+- **Why a description first:** a client tells a keyboard's endpoint
+  from a pointer's, and maps an absolute axis onto the screen, only
+  from what the device declares, which the driver alone reads.
 - **Not taken:** the platform driver creating the channel and passing an
   end in the driver's bootstrap message. Its cost is a bootstrap message
   that differs for one driver, and an endpoint that exists before
@@ -156,8 +199,8 @@ exits once the platform driver has closed the channel.
 The platform driver supervises the driver and its client for the life
 of the system, as [ipc.md I10](ipc.md#i10-driver-failure-and-restart)
 describes. It waits on one port, with a watch of each one's process for
-`TERMINATED` and of the driver's bootstrap channel for its report.
-Startup waits for the report, or for the driver to be given up; the
+`TERMINATED` and of each driver's bootstrap channel for its report.
+Startup waits for each driver's report, or for it to be given up; the
 first process then reports that its startup is done
 ([boot-protocol.md](boot-protocol.md#startup-done)), and the fade into
 the desktop does not wait for a key.
@@ -174,14 +217,25 @@ own, so that a client's failure soon after the driver's own restart
 does not give the driver up. A driver whose client has been given up
 is not restarted, since nothing would read its endpoint.
 
+When the first process gives the compositor up, the platform driver
+makes the console the client instead
+([display.md D3](display.md#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)):
+it starts the console in direct mode and starts every input driver
+again for it, without counting a restart, so the console takes a fresh
+endpoint from each (K3). Here the client is replaced, not lost.
+
 - **Why:** a driver can fail at any time, not only while it starts;
   unsupervised, one that died after startup would leave its device
   live, bus mastering on and its MSI-X entry naming a vector the kernel
   frees ([ipc.md I7](ipc.md#i7-interrupts)), and the keyboard dead
   until the next boot.
+- **Why the console after the compositor:** a machine whose compositor
+  fails keeps its keyboard and pointer at a console, where its owner can
+  log in, read the log and fix it.
 - **Cost:** a restart loses the events queued for the old endpoint and
   any the device took while no driver ran; a client that ends takes its
-  driver down with it.
+  driver down with it; a compositor given up loses the events queued for
+  it.
 - **Not taken:** keeping the driver running across its client's end and
   having it serve a new endpoint. Its cost is a second protocol between
   driver and supervisor for endpoints after the report, where the

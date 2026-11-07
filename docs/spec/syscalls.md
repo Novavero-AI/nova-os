@@ -395,14 +395,17 @@ cancelled by a closing handle the signals it observed,
 | 13 | `ERR_BUFFER_TOO_SMALL` | A receive buffer cannot hold the message |
 | 14 | `ERR_BAD_STATE` | The object's state forbids the call: a thread already started, an interrupt already bound, a process already terminated, a device page another mapping gives another memory type |
 | 15 | `ERR_NO_RESOURCES` | A resource other than memory is exhausted: the job's quota of interrupt vectors, or the vectors the kernel has for message-signalled interrupts |
-| 16 | `ERR_NOT_FOUND` | A name a directory does not hold ([storage.md F1](storage.md#f1-the-directory-protocol)) |
-| 17 | `ERR_ALREADY_EXISTS` | A name a directory holds already, as a publication's ([storage.md F4](storage.md#f4-publishing-file-systems)) |
+| 16 | `ERR_NOT_FOUND` | A name a directory does not hold ([storage.md F1](storage.md#f1-the-directory-protocol)), or a host name with no address ([network.md N13](network.md#n13-the-socket-protocol)) |
+| 17 | `ERR_ALREADY_EXISTS` | A name a directory holds already, as a publication's ([storage.md F4](storage.md#f4-publishing-file-systems)), or a port already listened on ([network.md N12](network.md#n12-grants)) |
 | 18 | `ERR_DATA_INTEGRITY` | Data that fails the check of its digest ([storage.md F9](storage.md#f9-reading-and-verifying-the-store)) |
 | 19 | `ERR_IO` | A request the device failed, as a virtio block device's `VIRTIO_BLK_S_IOERR` status reports one (VIRTIO 1.4 5.2.6) |
+| 20 | `ERR_CONNECTION_REFUSED` | The peer refused a connection ([network.md N13](network.md#n13-the-socket-protocol)) |
+| 21 | `ERR_CONNECTION_RESET` | The peer reset a connection ([network.md N13](network.md#n13-the-socket-protocol)) |
+| 22 | `ERR_UNREACHABLE` | The peer cannot be reached ([network.md N13](network.md#n13-the-socket-protocol)) |
 
 The same codes report the outcome of an I/O request in its completion
 message ([ipc.md I9](ipc.md#i9-asynchronous-io-requests)), and codes
-16 to 19 only those: no call of the kernel's returns them. A Win32-style
+16 to 22 only those: no call of the kernel's returns them. A Win32-style
 subsystem translates them to its own codes in user mode.
 
 - **Why:** a caller tests one value against zero. The codes name the
@@ -410,8 +413,14 @@ subsystem translates them to its own codes in user mode.
   errors are negative today, and its documentation states they "will
   transition to using 0 for success and positive values for errors"
   ([Errors][zx-errors]), the form used here.
+- **Why the network's codes:** a program that connects must tell a
+  refusal, a reset and an unreachable peer apart, and a connection
+  reset from one closed normally, as
+  [network.md N13](network.md#n13-the-socket-protocol) requires after
+  RFC 1122 4.2.2.13.
 - **Cost:** a call cannot report partial success with a warning; it
-  succeeds, or fails having changed nothing.
+  succeeds, or fails having changed nothing. Codes 20 to 22 are the
+  network service's alone, and widen no call's results.
 - **Not taken:** NTSTATUS's layout: a 2-bit severity (success,
   informational, warning, error), a customer bit, a reserved bit, a 12-bit
   facility and a 16-bit code ([MS-ERREF 2.3][ms-erref]), tested with

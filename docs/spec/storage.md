@@ -755,7 +755,9 @@ happens behind the store service.
      its staging directory;
    - a scratch directory;
    - only for a fixed-output derivation, whose result is checked against
-     the hash it declares, a network handle.
+     the hash it declares, a network grant, which the store service
+     derives for that build from its own
+     ([network.md N15](network.md#n15-declared-authority)).
 
    Nothing else reaches the builder: no `/users`, `/data` or `/system`.
    The client receives the build log and the result, never a staging
@@ -774,7 +776,9 @@ happens behind the store service.
    registered, and the restarted service discards the staging
    directories.
 
-**Substitution.** A substituter process, which holds a network handle and
+**Substitution.** A substituter process, which holds a network grant to
+its substituters' hosts and ports, given by the first process from the
+system recipe ([network.md N15](network.md#n15-declared-authority)), and
 a store-service handle with `IMPORT`, fetches a narinfo and its NAR and
 streams the NAR into the service with the narinfo's NAR hash, references
 and signatures. The service writes it as in step 3 and registers it only
@@ -791,12 +795,17 @@ verifies under a key the system recipe trusts.
   2006, 6.1, p. 138). A builder's view is its inputs and its outputs, so
   the confinement is the view, not a sandbox added around the builder:
   principle 7's "declaration that confines the build is the one that
-  bounds the running program".
+  bounds the running program". A network handle is a grant, rules the
+  network service enforces ([network.md N12](network.md#n12-grants)), so
+  a substituter reaches only the hosts the recipe names for it, and a
+  fixed-output build only what the store service's own grant allows.
 - **Cost:** nova-nix runs in two roles, as each client's evaluator and as
   the runner the service trusts with every build's names and staging;
   nova-nix needs a store backend that speaks the service's protocol in
   place of writing its store directory and database itself; every output
-  is read back once after its build to be hashed.
+  is read back once after its build to be hashed; a fixed-output build
+  that fetches from a host the system recipe does not give the store
+  service fails.
 - **Not taken:**
   - Clients that run their builders and write staging themselves, as
     nova-nix writes its single-user store. Its cost is that any client
@@ -950,7 +959,7 @@ their registrations.
 
 replay.md records "the results of every system call" and "every message
 and handle a process reads from a channel" (Inputs through the kernel). It
-forbids a recorded process to "map a writable section shared with a
+holds that "no section a recorded process maps may be writable by a
 process outside the recording", leaving "read-only sharing, such as store
 paths" unaffected (Shared memory). Under I9 a file's bytes reach a process
 in a message or in a section, and the claim that reads of `/store` need

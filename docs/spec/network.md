@@ -999,8 +999,8 @@ from the one above it, so each level can only narrow the one above.
    `connect icmp *`. The channel has `NET_SESSION_CLIENTS` (4) clients,
    and login keeps it. Through it it gives the shell a grant, which
    joins the session's handles as `SESSION_NETWORK`
-   ([accounts.md A7](accounts.md#a7-the-session) today gives a session
-   none). When the session ends, login closes the session's control
+   ([accounts.md A7](accounts.md#a7-the-session)). When the session
+   ends, login closes the session's control
    channel, and its clients return as the programs that hold them end.
 5. **Programs.** A program's derivation declares its rules in a
    `network` attribute, a list of rule strings as [N12](#n12-grants)
@@ -1104,10 +1104,10 @@ recording and behaves as it pleases.
    from the derivation. Replay itself cannot ask the service a grant's
    rules, since no service runs under it.
 5. **No socket data reaches a program through shared memory.** That
-   is why data is inline: replay.md forbids a recorded process "a
-   writable section shared with a process outside the recording"
-   ([Shared memory](replay.md#shared-memory)), and the service would be
-   one.
+   is why data is inline: under replay.md, "no section a recorded
+   process maps may be writable by a process outside the recording"
+   ([Shared memory](replay.md#shared-memory)), and the service writes
+   what a program receives.
 6. **The service can be recorded once frames are messages.** Its inputs
    are messages, `clock_monotonic` and `random_read`, all recorded
    ([N9](#n9-one-thread-one-port-time-and-randomness)), but for frames,

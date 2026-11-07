@@ -20,7 +20,7 @@ not taken with that alternative's cost. RFC 9106 (Argon2) and RFC 7693
 | Part | What it is | What it holds |
 |---|---|---|
 | The accounts service, `accounts.exe` | A user-mode service that keeps the accounts, checks passwords and creates accounts and homes | `/data/accounts` and `/users`, each to read, write and list; a control channel from the first process; its own process with `MAP`, for the memory Argon2id fills; the debug log |
-| Login, `login.exe` | The program on the console that asks for a name and a password, opens a session, and starts the shell in it | A console session and a login channel to the accounts service, each handed over by the first process ([A10](#a10-supervision)); `/store` to read, list and map executable; a store control channel of its own; a job to create the sessions' processes in; its own process with `MAP`; the debug log |
+| Login, `login.exe` | The program, on the console or on the compositor's system layer, that asks who is there, opens a session, and starts the shell and every program in it | A console session, or while a compositor runs the display connection that carries `SYSTEM`, `ATTENTION` and `CAPTURE` ([display.md D5](display.md#d5-connections-labels-and-layers)); a login channel to the accounts service; a network control channel ([network.md N15](network.md#n15-declared-authority)); each handed over by the first process ([A10](#a10-supervision)); `/store` to read, list and map executable; a store control channel of its own; the sessions' job, with `CREATE_JOB`, to create a job for each program in; its own process with `MAP`; the debug log |
 | The shell, `shell.exe` | The session's command line | The session's handles ([A7](#a7-the-session)) |
 
 The first process starts the service and login, each in a job of its
@@ -37,7 +37,9 @@ and `include/session.h`. With no data disk, and so no `/data` and
   and a session holds what its user may use (DESIGN.md, principle 7).
 - **Cost:** three programs and two protocols where one program could
   check a password and start a shell; the service is trusted with every
-  user's files.
+  user's files; login holds every open session's network control
+  channel and display connection, so a flaw in it reaches them all
+  ([network.md N17](network.md#n17-the-threat-model)).
 - **Not taken:** login holding `/users` and the records, as Unix's
   login reads `/etc/shadow` as root. Its cost is that the program that
   parses what a stranger types holds every user's files.
@@ -202,7 +204,10 @@ memory-wiping option of RFC 9106 4, step 9.
    on one.
 2. A name with no record, or that A2 refuses, is checked against a
    stand-in account with the service's own parameters, so a failed
-   login does the same hash whether or not the name exists.
+   login does the same hash whether or not the name exists. The
+   console's login channel lists every name (A6), so there the stand-in
+   hides nothing; it stays for every login channel that cannot list,
+   such as a network login a later design adds.
 3. A failed login is answered `FAILURE_DELAY_SECONDS` (3 seconds) after
    it is checked. The answer waits on its channel; the service serves
    its other channels meanwhile, so one user's failures delay no one
@@ -240,7 +245,7 @@ memory-wiping option of RFC 9106 4, step 9.
 
 | Channel | From | Requests |
 |---|---|---|
-| Login | The first process, on the service's control channel, one for each start of login or of the service, whose other end it hands login ([A10](#a10-supervision)) | `ACCOUNTS_COUNT`, `ACCOUNTS_CREATE_FIRST`, `ACCOUNTS_LOGIN` |
+| Login | The first process, on the service's control channel, one for each start of login or of the service, whose other end it hands login ([A10](#a10-supervision)) | `ACCOUNTS_COUNT`, `ACCOUNTS_CREATE_FIRST`, `ACCOUNTS_LOGIN`, and on the console's, `ACCOUNTS_LIST` |
 | Administrator | The service, in an administrator's login reply | `ACCOUNTS_CREATE` |
 
 A login that succeeds is answered with the session's handles: the
@@ -250,15 +255,26 @@ channel is refused with `ERR_ACCESS_DENIED`. The service serves at most
 8 channels: the control channel, login's, and one for each
 administrator's session open.
 
+`ACCOUNTS_LIST` answers with every account's name, in bytewise order,
+and nothing else, on a login channel the first process marks as the
+console's when it makes it; on any other login channel it is refused
+with `ERR_ACCESS_DENIED`. Login shows the list on its screen
+([display.md D13](display.md#d13-the-graphical-login)).
+
 - **Why:** a login's result is then the authority itself, handles, not
   a ticket some other check must trust, as the store service answers a
   closure request with the closure's directory
   ([storage.md F5](storage.md#f5-per-process-views)). An administrator
   channel lives as long as the session that holds it: when the shell
   ends, its handles close, and the service drops the channel.
+- **Why a list on the console's channel alone:** a person at the
+  machine picks their name rather than typing it, as display.md D13
+  decides; the mark keeps the list from a login elsewhere, such as a
+  network's, which must not list names.
 - **Cost:** a session that crashes loses its handles, so a new login is
   the only way back in; login sees the home's channel and could keep
-  it, and is trusted not to.
+  it, and is trusted not to; anyone at the console sees the machine's
+  account names.
 - **Not taken:** a token naming the user, which servers check on each
   request, as NT's access tokens. objects.md O2 rules tokens out.
 
@@ -272,7 +288,8 @@ handles (`include/session.h`), and its view is the two directories:
 | The user's home | `/users/<name>` | Read, write, list |
 | The store's root | `/store` | Read, list |
 | A console session, which login relays | | The console's session protocol |
-| A launcher channel, to login | | `LAUNCHER_RUN` |
+| A launcher channel, to login | | `LAUNCHER_RUN`, and while a compositor runs `LAUNCHER_TERMINAL` |
+| A network grant, `SESSION_NETWORK` | | The rules the system recipe gives the account ([network.md N15](network.md#n15-declared-authority)) |
 | The administrator channel, for an administrator | | `ACCOUNTS_CREATE` |
 | The debug log | | Writing lines to the kernel's log |
 
@@ -281,15 +298,41 @@ job and no process, its own included. A path outside its two prefixes
 names nothing in its view, so another user's home is not found; a
 session without the administrator channel cannot create accounts.
 
+For each session, login makes a network control channel of the
+session's from its own, with the rules the system recipe gives the
+account, and keeps it; through it it gives the shell the session's
+grant ([network.md N15](network.md#n15-declared-authority)).
+
 `run` asks login, the session's launcher, to start a program from
-`/store`. Login starts it, as it starts the shell, in the sessions'
-job, which the first process makes apart from login's own, with a view
-of its closure under `/store` and nothing else, its own process with `MAP`
-and the debug log, as the first process starts its test program
-([storage.md F16](storage.md#f16-the-first-milestone)), and answers
-with the program's process, with `INSPECT` and `WAIT`, by which the
-shell waits for its end and reads its exit code. A program run so gets
-none of the session's handles.
+`/store`. Login creates a job for it in the sessions' job, which the
+first process makes apart from login's own, and starts it there, as it
+starts the shell, with a view of its closure under `/store`, its own
+process with `MAP` and the debug log, as the first process starts its
+test program ([storage.md F16](storage.md#f16-the-first-milestone)),
+and with what its derivation declares that the session can give: a
+network grant with exactly its declared rules, on the session's
+control channel ([network.md N15](network.md#n15-declared-authority));
+and, where it declares the display, a connection minted from the
+session's and a display grant channel to login
+([display.md D5](display.md#d5-connections-labels-and-layers)), with
+its renderer in the same job where it declares an interface
+([ui.md U6](ui.md#u6-the-renderer)). Login answers with the program's
+process, with `INSPECT` and `WAIT`, by which the shell waits for its
+end and reads its exit code. A program run so gets none of the
+session's handles.
+
+While a compositor runs, login also mints the session's display
+connection at each login, starts the session's HUD, with a shell of its
+own in values mode ([ui.md U11](ui.md#u11-the-hud)), and its powerbox,
+each in a job of its own
+([display.md D13](display.md#d13-the-graphical-login)); and it starts a
+terminal, a console in window mode, on `LAUNCHER_TERMINAL`
+([display.md D4](display.md#d4-the-console-in-a-window-and-as-the-fallback)).
+At logout it closes the session's connection, its network control
+channel and every display grant channel, so every window, connection
+and capture of the session goes at once. Login waits on one port for
+every channel it serves and blocks on none of them, so it answers the
+secure attention key while a password is checked.
 
 The shell's console session is a channel login serves: login shows
 each write on its own session, reads each line there and answers the
@@ -305,20 +348,26 @@ console would end one for ([console.md C4](console.md#c4-sessions)).
   control channel, the authority to create processes and to open the
   closure of any path, which it would hold only to do what login does
   for it; login already holds both to start the shell.
-- **Why a program run gets its closure alone:** a program's authority
-  is what its derivation declares (DESIGN.md, principle 7), and no
-  launcher reads declarations yet; until one does, a program gets what
-  every program needs and nothing of its user's.
+- **Why login gives what a program declares:** a program's authority
+  is what its derivation declares (DESIGN.md, principle 7); login reads
+  the declaration from the deriver and has each service issue the
+  program's handle on the session's own channel, so a program gets
+  exactly its declaration and never more than its session holds
+  ([shell.md L20](shell.md#l20-the-recipe-and-the-command-line), rule
+  2).
+- **Why a job for each program:** the program's quota pays for its
+  windows and its interface, and its renderer goes with it.
 - **Why login relays the console:** the first process gives console
   sessions and serves no requests after startup (console.md C2), so
   login keeps the one it has; a relay lets it outlive the shell's, and
   keeps whatever the shell sends from ending login's.
 - **Cost:** a program run from the shell cannot write to the console or
-  reach the user's files yet; every console request of the shell's
-  costs a second message and a switch to login; login stays in every
-  session, and while the shell waits for a line, login waits with it.
-  Programs a shell started run on after it ends, since the kernel has
-  no call yet to end a job's processes.
+  reach the user's files yet; every console request of the shell's costs
+  a second message and a switch to login; login stays in every session,
+  serving every one of its channels on one port; login needs
+  `CREATE_JOB` on the sessions' job. Programs a shell started run on
+  after it ends, since the kernel has no call yet to end a job's
+  processes.
 - **Not taken:** a child that inherits its parent's handles, as NT
   handle inheritance and Unix file descriptors do. Its cost is a
   program holding handles nobody chose for it (objects.md O6).
@@ -376,10 +425,11 @@ removed.
   crash.
 - **Cost:** no quoting, pipes or scripts; `write` replaces a whole file,
   with no editing, and cannot write a line holding only `.`; `mv`
-  replaces nothing. The console has no
-  key that only login answers, so a file the shell shows can draw what
-  looks like login's prompt, and a person who
-  takes it for one types a password into the shell; the shell logs the
+  replaces nothing. Only the secure attention key, which the console
+  gives login alone ([console.md C3](console.md#c3-keys)), tells login's
+  prompt from a picture of it: a file the shell shows can draw what
+  looks like login's prompt, and a person who takes it for one without
+  pressing the key types a password into the shell; the shell logs the
   name of a command it knows, the status a refusal or a command that
   reads or changes a file ends with, and the store path of a program it
   started, never other text typed, a path or a line `write` reads among
@@ -425,20 +475,32 @@ of login's bootstrap channel. After each start of either it makes a new
 login channel and hands one end to each, as setups
 (`accounts_protocol.h`, `session.h`); after each start of login, and of
 the console after the display's release, it gives login a new console
-session. Login uses the newest of each, and when one's peer closes
-takes the next, so:
+session; after each start of login or of the network service, a new
+network control channel
+([network.md N15](network.md#n15-declared-authority)); and while a
+compositor runs, after each start of login or of the compositor, a new
+connection that carries `SYSTEM`, `ATTENTION` and `CAPTURE`, which
+takes over the compositor's attention state
+([display.md D12](display.md#d12-the-secure-attention-key-and-global-keys)).
+Login uses the newest of each, and when one's peer closes takes the
+next, so:
 
 | What ends | What follows |
 |---|---|
 | Login | A new login with a new session and login channel; the service drops the old channel. A shell login ran loses its relayed console and launcher and ends at its next request |
 | The service | A new service with a new login channel, which login takes when its old one fails: login says the service restarted and asks again. An administrator's session loses its administrator channel |
 | The console | The console's restart, and a new session for login, which carries on, a session in progress included |
+| The compositor | A new compositor, in the attention state, and a new connection for login, which shows its screen again before it answers the session's grant channels, through which the session's programs reconnect ([display.md D3](display.md#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)); a session that was locked stays locked |
+| The network service | A new network control channel for login; an open session is without the network until its user logs in again ([network.md N5](network.md#n5-supervision)) |
 
 - **Why:** a crashed login or service must come back, or the console
   sits with no one to log in. Handing channels over, as the first
   process hands the console a keyboard's endpoint after each start of
   its driver (input.md K4), lets each restart without the other, so a
-  restart costs only the requests in flight.
+  restart costs only the requests in flight. The network control
+  channel and the display connection are handed over the same way, so
+  login, the network service and the compositor each restart without
+  the others.
 - **Cost:** the first process holds a channel to each and carries a
   hand-over for each pairing; a program that fails twice within a
   minute is given up as a driver is, which leaves the console without a

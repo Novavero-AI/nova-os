@@ -265,9 +265,10 @@ a resource's range never changes.
 
 The message's bytes also describe the framebuffer nova-boot reports in
 `BOOT_INFO`, which the root MMIO resource covers; once the kernel has
-released the display, the first process gives the console a resource
-covering only the framebuffer
-([console.md C1](console.md#c1-the-display-handoff)).
+released the display, the first process gives a resource covering only
+the framebuffer to the compositor while one runs, and to the console
+otherwise ([console.md C1](console.md#c1-the-display-handoff),
+[display.md D2](display.md#d2-who-holds-the-display)).
 
 The kernel reads the ACPI tables that name registers it keeps (the MADT
 for the I/O APICs, the DMAR and IVRS for IOMMUs) and the MCFG, and passes
