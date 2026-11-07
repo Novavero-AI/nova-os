@@ -38,8 +38,11 @@ mkdata's `DiskGUID` and `UniquePartitionGUID` are constants, as mkimage's
 are, under the rule disk-layout.md leaves open ("Identifiers"). A disk
 whose primary GPT header fails its signature, its CRC or its own LBA, or
 whose partition entry array fails its CRC, is refused (UEFI 5.3.2), as is
-one whose pool entry lies outside the header's usable LBAs or overlaps
-another used entry (5.3.1); the backup table is not read.
+one whose header puts its array before itself, its backup header
+anywhere but the disk's last LBA, or its usable LBAs over the primary
+array or the backup table's room at the disk's end, and one whose pool
+entry lies outside the usable LBAs or overlaps another used entry
+(5.3.1); the backup table is not read.
 
 The pool is the partition's blocks. Its first 4 and last 4 blocks are the
 two superblock rings; the rest is the data area, which holds every other

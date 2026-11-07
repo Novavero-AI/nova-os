@@ -25,8 +25,9 @@ the boot must also report the file system service opening its pool,
 --corrupt-gpt, the copy's two GPT tables are changed first: header or
 entries change a byte of each header's CRC or of each entry array;
 extent moves the pool's entry to start at LBA 0, below the first usable
-LBA; overlap adds a second entry over the pool's blocks; the last two
-with every CRC made to match. The boot must then report the service
+LBA; usable moves the entry and the first usable LBA both to LBA 1, the
+header's; overlap adds a second entry over the pool's blocks; the last
+three with every CRC made to match. The boot must then report the service
 refusing the disk and /data and /users not published.
 
 The check fails at once on a line from nova-os that reports a failure,
@@ -101,16 +102,21 @@ DATA_LINES = [
 # header's HeaderCRC32, or of the first entry's PartitionName in each
 # entry array, which only a CRC check refuses; or, with each array's
 # CRC and each header's made to match, the first entry, the pool's as
-# mkdata writes it, moved to start at LBA 0, or a second entry, a Linux
-# filesystem's, over the same blocks, which only the checks of 5.3.1
-# refuse. Both tables are changed because firmware restores a primary
-# table that fails from a backup that passes, as 5.3.2 asks and EDK2
-# does on a writable disk.
+# mkdata writes it, moved to start at LBA 0; or moved to start at LBA 1,
+# the header's, with each header's FirstUsableLBA moved there too, so
+# that only the header's own placing of its usable LBAs is wrong; or a
+# second entry, a Linux filesystem's, over the same blocks: which only
+# the checks of 5.3.1 refuse. The usable range and the entry both moved
+# to LBA 0 instead kept EDK2 from booting the system disk at all. Both
+# tables are changed because firmware restores a primary table that
+# fails from a backup that passes, as 5.3.2 asks and EDK2 does on a
+# writable disk.
 SECTOR = 512
 PRIMARY_LBA = 1
 HEADER_SIZE = 12
 HEADER_CRC = 16
 ALTERNATE_LBA = 32
+FIRST_USABLE = 40
 ENTRIES_LBA = 72
 ENTRY_COUNT = 80
 ENTRY_SIZE = 84
@@ -126,6 +132,8 @@ GPT_REFUSED = {
     "header": "nova-fs: the disk's GPT header fails its check",
     "entries": "nova-fs: the disk's GPT entry array fails its check",
     "extent": EXTENT_REFUSED,
+    "usable": ("nova-fs: the disk's GPT header places its tables or its "
+               "usable LBAs where they overlap"),
     "overlap": EXTENT_REFUSED,
 }
 DATA_REFUSED = "nova-init: /data and /users are not published"
@@ -266,8 +274,11 @@ def flip(disk, offset):
     disk.write(bytes([byte ^ 0xff]))
 
 
-def move_to_zero(array, size):
-    array[ENTRY_FIRST:ENTRY_FIRST + 8] = bytes(8)
+def move_to(lba):
+    """A change that moves the first entry to start at lba."""
+    def change(array, size):
+        array[ENTRY_FIRST:ENTRY_FIRST + 8] = lba.to_bytes(8, "little")
+    return change
 
 
 def add_overlap(array, size):
@@ -277,9 +288,10 @@ def add_overlap(array, size):
     array[size:2 * size] = second
 
 
-def rewrite_entries(disk, header, change):
-    """Change the entry array the header at LBA header names, and make
-    the array's CRC and the header's match."""
+def rewrite_entries(disk, header, change, first_usable=None):
+    """Change the entry array the header at LBA header names, and the
+    header's FirstUsableLBA if first_usable is given, and make the
+    array's CRC and the header's match."""
     base = header * SECTOR
     entries = read_u64(disk, base + ENTRIES_LBA) * SECTOR
     size = read_u32(disk, base + ENTRY_SIZE)
@@ -290,6 +302,9 @@ def rewrite_entries(disk, header, change):
     disk.seek(entries)
     disk.write(array)
     write_u32(disk, base + ENTRIES_CRC, zlib.crc32(array))
+    if first_usable is not None:
+        disk.seek(base + FIRST_USABLE)
+        disk.write(first_usable.to_bytes(8, "little"))
     header_size = read_u32(disk, base + HEADER_SIZE)
     disk.seek(base)
     fields = bytearray(disk.read(header_size))
@@ -306,9 +321,12 @@ def corrupt_gpt(disk, what):
         elif what == "entries":
             entries = read_u64(disk, header * SECTOR + ENTRIES_LBA)
             flip(disk, entries * SECTOR + ENTRY_NAME)
+        elif what == "overlap":
+            rewrite_entries(disk, header, add_overlap)
+        elif what == "extent":
+            rewrite_entries(disk, header, move_to(0))
         else:
-            rewrite_entries(disk, header,
-                            move_to_zero if what == "extent" else add_overlap)
+            rewrite_entries(disk, header, move_to(PRIMARY_LBA), PRIMARY_LBA)
 
 
 def data_disk(args, scratch):
