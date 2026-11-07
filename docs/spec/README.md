@@ -60,7 +60,8 @@ BSD-2-Clause-Patent).
 - Document: <https://cdrdv2.intel.com/v1/dl/getContent/671447>
 - Access: free download.
 - sha256: `77919be320f35da2782771ef2cb65a868cf68e62c8f8279f2ca61199cb70d1f8`
-- Used by: the kernel (paging, GDT, IDT, Local APIC, TSC).
+- Used by: nova-boot (paging) and the kernel (paging, GDT, TSS, IDT,
+  Local APIC, TSC).
 
 **AMD64 Architecture Programmer's Manual, Volume 2: System Programming**,
 publication 24593, revision 3.46, October 2026.
@@ -68,8 +69,9 @@ publication 24593, revision 3.46, October 2026.
 - Document: <https://docs.amd.com/api/khub/documents/LNBl5evreogi0r25VIFF2g/content>
 - Access: free download.
 - sha256: `e4130d5aa26227b6a116d75af9e0f6e5adb4c034ff0d49a3c0fe73c3f49794cf`
-- Used by: the kernel on AMD processors, for the same areas as the Intel
-  manual.
+- Used by: nova-boot and the kernel on AMD processors, for the same areas
+  as the Intel manual; IA32_EFER's address (3.1.7), which the Intel
+  volume pinned here does not give; memory encryption (7.10).
 
 ## Executable format and calling convention
 

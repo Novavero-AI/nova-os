@@ -1,10 +1,16 @@
 /* nova-boot: the UEFI loader. It draws the boot screen, loads the kernel
-   from \nova\kernel.exe on the volume it was booted from, measures the
-   timestamp counter against Stall, takes the final memory map, exits boot
-   services and jumps to the kernel's entry with a BOOT_INFO record. */
+   from \nova\kernel.exe on the volume it was booted from, builds the
+   kernel's page tables, measures the timestamp counter against Stall,
+   takes the final memory map, exits boot services, loads the kernel's
+   tables and jumps to the kernel's entry on the kernel's stack with a
+   BOOT_INFO record. */
 
 #include "efi.h"
 #include "boot_info.h"
+#include "cpu.h"
+#include "memory_layout.h"
+#include "page_table.h"
+#include "tables.h"
 
 static EFI_GUID graphics_output_guid = {
     0x9042a9de, 0x23dc, 0x4a38,
@@ -38,23 +44,22 @@ static CHAR16 kernel_path[] = L"\\nova\\kernel.exe";
    the buffer can itself grow the map (UEFI 7.2.3). */
 #define MAP_SLACK 4
 
-typedef VOID (*KERNEL_ENTRY)(BOOT_INFO *info);
-
+/* The kernel as placed: its pages, its entry's address once its tables
+   are loaded, and its section table within the placed headers. */
 typedef struct {
     EFI_PHYSICAL_ADDRESS base;
     UINTN pages;
-    KERNEL_ENTRY entry;
+    UINT64 entry;
+    const UINT8 *sections;
+    UINT32 section_count;
 } KERNEL_IMAGE;
 
+/* switch.S: loads cr3, moves to stack_top and calls entry with info. */
+_Noreturn void boot_switch(UINT64 cr3, UINT64 stack_top, UINT64 entry,
+                           BOOT_INFO *info);
+extern const UINT8 boot_switch_end[];
+
 static BOOT_INFO boot_info;
-
-static UINT64 rdtsc(void)
-{
-    UINT32 lo, hi;
-
-    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    return (UINT64)hi << 32 | lo;
-}
 
 _Noreturn static void halt(void)
 {
@@ -103,9 +108,9 @@ static void largest_mode(EFI_BOOT_SERVICES *boot,
 
 /* ------------------------------------------------------------------------
    Loading the kernel: a PE32+ image (PE Format), copied section by section
-   into fresh pages and relocated to where those pages are. Every offset
-   and size the file gives is checked against the file or the image before
-   it is used. */
+   into fresh pages and relocated for KERNEL_IMAGE_BASE, where the kernel's
+   tables map it. Every offset and size the file gives is checked against
+   the file or the image before it is used. */
 
 #define PE_SIGNATURE 0x00004550 /* "PE\0\0" */
 #define PE_MACHINE_AMD64 0x8664
@@ -137,6 +142,9 @@ static void largest_mode(EFI_BOOT_SERVICES *boot,
 #define SECTION_ADDRESS 12
 #define SECTION_RAW_SIZE 16
 #define SECTION_RAW_OFFSET 20
+#define SECTION_CHARACTERISTICS 36
+#define SECTION_EXECUTE 0x20000000 /* IMAGE_SCN_MEM_EXECUTE */
+#define SECTION_WRITE 0x80000000   /* IMAGE_SCN_MEM_WRITE */
 #define RELOC_BLOCK_HEADER 8
 #define RELOC_ENTRY_SIZE 2
 #define RELOC_TYPE_SHIFT 12
@@ -256,7 +264,7 @@ static EFI_STATUS relocate(UINT8 *image, UINT32 image_size, UINT32 rva,
 }
 
 /* Check the headers, lay the image out at its section addresses in fresh
-   pages and apply its base relocations. */
+   pages and apply its base relocations for KERNEL_IMAGE_BASE. */
 static EFI_STATUS place_kernel(EFI_BOOT_SERVICES *boot, const UINT8 *file,
                                UINTN size, KERNEL_IMAGE *kernel)
 {
@@ -264,6 +272,7 @@ static EFI_STATUS place_kernel(EFI_BOOT_SERVICES *boot, const UINT8 *file,
     UINT32 nt_offset, optional_size, sections_count, image_size,
         headers_size, entry, i, offset;
     UINT32 reloc_rva = 0, reloc_size = 0;
+    UINT64 sections_end;
     UINT8 *image;
     EFI_STATUS status;
 
@@ -298,11 +307,17 @@ static EFI_STATUS place_kernel(EFI_BOOT_SERVICES *boot, const UINT8 *file,
         reloc_rva = read32(opt + slot);
         reloc_size = read32(opt + slot + 4);
     }
+    /* SizeOfHeaders covers the section table (PE Format, Optional
+       Header), so the placed headers hold it for mapping the sections. */
     image_size = read32(opt + OPT_IMAGE_SIZE);
     headers_size = read32(opt + OPT_HEADERS_SIZE);
+    sections_end = (UINT64)(sections - file) +
+                   (UINT64)sections_count * SECTION_HEADER_SIZE;
     entry = read32(opt + OPT_ENTRY);
-    if (headers_size > image_size || headers_size > size || entry == 0 ||
-        entry >= image_size || !within(reloc_rva, reloc_size, image_size))
+    if (headers_size > image_size || headers_size > size ||
+        sections_end > headers_size || image_size > KERNEL_IMAGE_SPACE ||
+        entry == 0 || entry >= image_size ||
+        !within(reloc_rva, reloc_size, image_size))
         return EFI_LOAD_ERROR;
     for (i = 0; i < sections_count; i++) {
         const UINT8 *section = sections + i * SECTION_HEADER_SIZE;
@@ -339,17 +354,19 @@ static EFI_STATUS place_kernel(EFI_BOOT_SERVICES *boot, const UINT8 *file,
     }
 
     status = relocate(image, image_size, reloc_rva, reloc_size,
-                      kernel->base - read64(opt + OPT_IMAGE_BASE));
+                      KERNEL_IMAGE_BASE - read64(opt + OPT_IMAGE_BASE));
     if (status != EFI_SUCCESS) {
         boot->FreePages(kernel->base, kernel->pages);
         return status;
     }
-    kernel->entry = (KERNEL_ENTRY)(image + entry);
+    kernel->entry = KERNEL_IMAGE_BASE + entry;
+    kernel->sections = image + (sections - file);
+    kernel->section_count = sections_count;
     return EFI_SUCCESS;
 }
 
 /* ------------------------------------------------------------------------
-   Leaving the firmware */
+   The memory map */
 
 typedef struct {
     UINT8 *buffer;
@@ -369,7 +386,9 @@ static EFI_STATUS take_map(EFI_BOOT_SERVICES *boot, MEMORY_MAP *map)
         status = boot->GetMemoryMap(&map->size, map->buffer, &map->key,
                                     &map->descriptor_size, &version);
         if (status == EFI_SUCCESS)
-            return version == EFI_MEMORY_DESCRIPTOR_VERSION
+            return version == EFI_MEMORY_DESCRIPTOR_VERSION &&
+                           map->descriptor_size >=
+                               sizeof(EFI_MEMORY_DESCRIPTOR)
                        ? EFI_SUCCESS
                        : EFI_INCOMPATIBLE_VERSION;
         if (status != EFI_BUFFER_TOO_SMALL)
@@ -387,6 +406,239 @@ static EFI_STATUS take_map(EFI_BOOT_SERVICES *boot, MEMORY_MAP *map)
     }
     return EFI_BUFFER_TOO_SMALL;
 }
+
+/* ------------------------------------------------------------------------
+   The kernel's address space (memory_layout.h): the direct map, the
+   kernel image, the kernel's stack and boot_switch's own pages. */
+
+typedef struct {
+    PAGE_TABLES tables;
+    EFI_PHYSICAL_ADDRESS stack;
+} ADDRESS_SPACE;
+
+typedef struct {
+    UINT64 start, end;
+} RANGE;
+
+/* Append the pages covering size bytes at start, or fail if they reach
+   past the direct map. */
+static EFI_STATUS add_range(RANGE *ranges, UINTN *count, UINT64 start,
+                            UINT64 size)
+{
+    UINT64 end;
+
+    if (start >= DIRECT_MAP_SIZE || size > DIRECT_MAP_SIZE - start)
+        return EFI_UNSUPPORTED;
+    end = start + size + PAGE_SIZE - 1;
+    ranges[*count].start = start - start % PAGE_SIZE;
+    ranges[*count].end = end - end % PAGE_SIZE;
+    (*count)++;
+    return EFI_SUCCESS;
+}
+
+/* Sort by start, then merge ranges that overlap or meet, so that memory
+   the map splits into many descriptors still gets large pages. Returns
+   the number left. */
+static UINTN merge_ranges(RANGE *ranges, UINTN count)
+{
+    UINTN i, j, merged = 0;
+
+    for (i = 1; i < count; i++) {
+        UINT64 start = ranges[i].start, end = ranges[i].end;
+
+        for (j = i; j > 0 && ranges[j - 1].start > start; j--) {
+            ranges[j].start = ranges[j - 1].start;
+            ranges[j].end = ranges[j - 1].end;
+        }
+        ranges[j].start = start;
+        ranges[j].end = end;
+    }
+    for (i = 0; i < count; i++) {
+        if (merged > 0 && ranges[i].start <= ranges[merged - 1].end) {
+            if (ranges[i].end > ranges[merged - 1].end)
+                ranges[merged - 1].end = ranges[i].end;
+        } else {
+            ranges[merged].start = ranges[i].start;
+            ranges[merged].end = ranges[i].end;
+            merged++;
+        }
+    }
+    return merged;
+}
+
+/* The fixed-range MTRRs give the first MiB memory types 4 KiB at a time,
+   and a large page over memory the MTRRs give several types is undefined;
+   SDM Vol. 3A 14.11.9 advises large pages only from 4 MiB up. */
+#define LARGE_PAGES_START 0x400000ULL
+
+/* One merged range of the direct map, in 4 KiB pages below
+   LARGE_PAGES_START and the largest pages that fit above it. */
+static EFI_STATUS map_direct_range(PAGE_TABLES *tables, UINT64 start,
+                                   UINT64 end)
+{
+    UINT64 split = start > LARGE_PAGES_START  ? start
+                   : end < LARGE_PAGES_START ? end
+                                             : LARGE_PAGES_START;
+    EFI_STATUS status;
+
+    status = tables_map(tables, DIRECT_MAP_BASE + start, start, split - start,
+                        PTE_WRITABLE | PTE_NO_EXECUTE, PAGE_TABLE_LEVEL);
+    if (status == EFI_SUCCESS)
+        status = tables_map(tables, DIRECT_MAP_BASE + split, split,
+                            end - split, PTE_WRITABLE | PTE_NO_EXECUTE,
+                            PDPT_LEVEL);
+    return status;
+}
+
+/* Map every range the memory map describes, and the framebuffer, which
+   it need not describe, at DIRECT_MAP_BASE plus its physical address.
+
+   The map is taken here, before the final one. UEFI has it describe all
+   memory present, however it is used (7.2.3), so the allocations after it
+   change descriptor types, not the memory described. EDK II lists memory
+   it has not tested as EfiReservedMemoryType and makes it conventional
+   memory only when an allocation needs it
+   (MdeModulePkg/Core/Dxe/Mem/Page.c, CoreGetMemoryMap and
+   PromoteMemoryResource), so there too the ranges stay the same. A
+   descriptor UEFI does not allow, unaligned or empty, is skipped, as the
+   kernel's allocator skips it.
+
+   The entries leave PAT, PCD and PWT clear, as EDK II's identity map does
+   (MdeModulePkg/Core/DxeIplPeim/X64/VirtualMemory.c), so a page gets the
+   memory type PAT entry 0 and the MTRRs select together (SDM Vol. 3A
+   5.9.2, Table 14-7). Above LARGE_PAGES_START that holds only where the
+   variable MTRRs give each large page one type, which nova-boot does not
+   check; EDK II's identity map, of 2 MiB and 1 GiB pages, assumes the
+   same. */
+static EFI_STATUS map_direct(EFI_BOOT_SERVICES *boot, PAGE_TABLES *tables,
+                             const EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *screen)
+{
+    MEMORY_MAP map;
+    RANGE *ranges = 0;
+    UINTN offset, count = 0, i;
+    EFI_STATUS status;
+
+    map.buffer = 0;
+    map.capacity = 0;
+    map.descriptor_size = sizeof(EFI_MEMORY_DESCRIPTOR);
+    status = take_map(boot, &map);
+    if (status == EFI_SUCCESS)
+        status = boot->AllocatePool(
+            EFI_LOADER_DATA,
+            (map.size / map.descriptor_size + 1) * sizeof(RANGE),
+            (VOID **)&ranges);
+    for (offset = 0; status == EFI_SUCCESS &&
+                     offset + map.descriptor_size <= map.size;
+         offset += map.descriptor_size) {
+        const EFI_MEMORY_DESCRIPTOR *d =
+            (const EFI_MEMORY_DESCRIPTOR *)(map.buffer + offset);
+
+        if (d->PhysicalStart % PAGE_SIZE != 0 || d->NumberOfPages == 0)
+            continue;
+        status = d->NumberOfPages > DIRECT_MAP_SIZE / PAGE_SIZE
+                     ? EFI_UNSUPPORTED
+                     : add_range(ranges, &count, d->PhysicalStart,
+                                 d->NumberOfPages * PAGE_SIZE);
+    }
+    if (status == EFI_SUCCESS)
+        status = add_range(ranges, &count, screen->FrameBufferBase,
+                           screen->FrameBufferSize);
+    if (status == EFI_SUCCESS)
+        count = merge_ranges(ranges, count);
+    for (i = 0; status == EFI_SUCCESS && i < count; i++)
+        status = map_direct_range(tables, ranges[i].start, ranges[i].end);
+    if (ranges)
+        boot->FreePool(ranges);
+    if (map.buffer)
+        boot->FreePool(map.buffer);
+    return status;
+}
+
+/* Map the image page by page at KERNEL_IMAGE_BASE with the rights of the
+   sections on the page: executable if one is IMAGE_SCN_MEM_EXECUTE,
+   writable if one is IMAGE_SCN_MEM_WRITE (PE Format, Section Flags), and
+   otherwise read-only and not executable, as the headers are. A page
+   that would be both writable and executable fails the load. */
+static EFI_STATUS map_kernel(PAGE_TABLES *tables, const KERNEL_IMAGE *kernel)
+{
+    UINT64 page;
+
+    for (page = 0; page < kernel->pages; page++) {
+        UINT64 start = page * PAGE_SIZE;
+        UINT32 rights = 0, i;
+        EFI_STATUS status;
+
+        for (i = 0; i < kernel->section_count; i++) {
+            const UINT8 *section =
+                kernel->sections + (UINT64)i * SECTION_HEADER_SIZE;
+            UINT64 address = read32(section + SECTION_ADDRESS);
+            UINT64 size = read32(section + SECTION_VIRTUAL_SIZE);
+
+            if (address < start + PAGE_SIZE && start < address + size)
+                rights |= read32(section + SECTION_CHARACTERISTICS);
+        }
+        if ((rights & SECTION_WRITE) && (rights & SECTION_EXECUTE))
+            return EFI_LOAD_ERROR;
+        status = tables_map(tables, KERNEL_IMAGE_BASE + start,
+                            kernel->base + start, PAGE_SIZE,
+                            ((rights & SECTION_WRITE) ? PTE_WRITABLE : 0) |
+                                ((rights & SECTION_EXECUTE) ? 0
+                                                            : PTE_NO_EXECUTE),
+                            PAGE_TABLE_LEVEL);
+        if (status != EFI_SUCCESS)
+            return status;
+    }
+    return EFI_SUCCESS;
+}
+
+/* boot_switch's pages at their own address, read-only and executable:
+   the only lower-half mapping, which the kernel removes. */
+static EFI_STATUS map_switch(PAGE_TABLES *tables)
+{
+    UINT64 first = (UINT64)boot_switch - (UINT64)boot_switch % PAGE_SIZE;
+    UINT64 end = (UINT64)boot_switch_end + PAGE_SIZE - 1;
+
+    return tables_map(tables, first, first, end - end % PAGE_SIZE - first, 0,
+                      PAGE_TABLE_LEVEL);
+}
+
+static void free_address_space(EFI_BOOT_SERVICES *boot, ADDRESS_SPACE *space)
+{
+    tables_free(&space->tables);
+    boot->FreePages(space->stack, KERNEL_STACK_SIZE / EFI_PAGE_SIZE);
+}
+
+/* Allocate the kernel's stack and build its tables, before
+   ExitBootServices so that the allocations can still fail cleanly. */
+static EFI_STATUS build_address_space(
+    EFI_BOOT_SERVICES *boot, const KERNEL_IMAGE *kernel,
+    const EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *screen, ADDRESS_SPACE *space)
+{
+    EFI_STATUS status;
+
+    status = boot->AllocatePages(ALLOCATE_ANY_PAGES, EFI_LOADER_DATA,
+                                 KERNEL_STACK_SIZE / EFI_PAGE_SIZE,
+                                 &space->stack);
+    if (status != EFI_SUCCESS)
+        return status;
+    status = tables_create(boot, &space->tables);
+    if (status == EFI_SUCCESS)
+        status = map_direct(boot, &space->tables, screen);
+    if (status == EFI_SUCCESS)
+        status = map_kernel(&space->tables, kernel);
+    if (status == EFI_SUCCESS)
+        status = tables_map(&space->tables, KERNEL_STACK_BASE, space->stack,
+                            KERNEL_STACK_SIZE, PTE_WRITABLE | PTE_NO_EXECUTE,
+                            PAGE_TABLE_LEVEL);
+    if (status == EFI_SUCCESS)
+        status = map_switch(&space->tables);
+    if (status != EFI_SUCCESS)
+        free_address_space(boot, space);
+    return status;
+}
+
+/* ------------------------------------------------------------------------
+   Leaving the firmware */
 
 /* Take the final memory map into boot_info and exit boot services. If the
    map changed after it was taken, ExitBootServices refuses its key and it
@@ -412,7 +664,7 @@ static EFI_STATUS exit_boot_services(EFI_HANDLE image,
     }
     for (attempt = 0; attempt < EXIT_ATTEMPTS; attempt++) {
         if (boot->ExitBootServices(image, map.key) == EFI_SUCCESS) {
-            boot_info.memory_map = map.buffer;
+            boot_info.memory_map = direct_map((UINT64)map.buffer);
             boot_info.memory_map_size = map.size;
             boot_info.descriptor_size = map.descriptor_size;
             return EFI_SUCCESS;
@@ -423,6 +675,27 @@ static EFI_STATUS exit_boot_services(EFI_HANDLE image,
     halt();
 }
 
+/* Fill in what BOOT_INFO still lacks, turn on the protections the
+   kernel's tables rely on and switch to them. UEFI leaves the interrupt
+   flag after ExitBootServices unstated (7.4.6), and the firmware's IDT and
+   handlers are in memory the kernel owns, which its tables do not map at
+   those addresses. XD is reserved until IA32_EFER.NXE is set (SDM Vol. 3A
+   5.5.4), and read-only pages bind supervisor writes only with CR0.WP
+   (SDM Vol. 3A 5.1.3). */
+_Noreturn static void enter_kernel(const KERNEL_IMAGE *kernel,
+                                   const PAGE_TABLES *tables)
+{
+    disable_interrupts();
+    boot_info.magic = BOOT_INFO_MAGIC;
+    boot_info.version = BOOT_INFO_VERSION;
+    boot_info.screen.pixels = direct_map((UINT64)boot_info.screen.pixels);
+    if (tables->no_execute)
+        wrmsr(IA32_EFER, rdmsr(IA32_EFER) | EFER_NO_EXECUTE);
+    write_cr0(read_cr0() | CR0_WRITE_PROTECT);
+    boot_switch(tables->top, KERNEL_STACK_TOP, kernel->entry,
+                direct_map((UINT64)&boot_info));
+}
+
 /* ------------------------------------------------------------------------ */
 
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
@@ -431,6 +704,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
     EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *mode;
     KERNEL_IMAGE kernel;
+    ADDRESS_SPACE space;
     UINT8 *file;
     UINTN file_size;
     UINT64 t0;
@@ -463,6 +737,11 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     boot->FreePool(file);
     if (status != EFI_SUCCESS)
         return status;
+    status = build_address_space(boot, &kernel, gop->Mode, &space);
+    if (status != EFI_SUCCESS) {
+        boot->FreePages(kernel.base, kernel.pages);
+        return status;
+    }
     gfx_spinner_step(&boot_info.screen, &boot_info.spinner);
 
     t0 = rdtsc();
@@ -471,14 +750,9 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 
     status = exit_boot_services(ImageHandle, boot);
     if (status != EFI_SUCCESS) {
+        free_address_space(boot, &space);
         boot->FreePages(kernel.base, kernel.pages);
         return status;
     }
-
-    /* UEFI leaves the interrupt flag after ExitBootServices unstated
-       (7.4.6), and the firmware's handlers sit in memory the kernel now
-       owns. */
-    __asm__ volatile("cli");
-    kernel.entry(&boot_info);
-    halt();
+    enter_kernel(&kernel, &space.tables);
 }

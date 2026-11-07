@@ -1,7 +1,7 @@
 /* The physical page allocator: a bitmap with one bit per page from
    address 0 to the end of the highest general memory, set while the page
-   is allocated or reserved. The bitmap lives in conventional memory and
-   is marked allocated in itself.
+   is allocated or reserved. The bitmap lives in conventional memory,
+   reached through the direct map, and is marked allocated in itself.
 
    A bitmap rather than a free list threaded through the free pages: at
    one bit per page (32 KiB per GiB of address space) it sits in one
@@ -15,13 +15,11 @@
    (UEFI 2.11, 7.2, Table 7.10 and the note after it). EfiLoaderCode and
    EfiLoaderData are the OS's too, but hold the kernel image, nova-boot's
    image with BOOT_INFO, and the memory map, so they stay reserved with
-   every other type. Within general memory, page 0 stays reserved, since
-   page_alloc returns 0 for no page, and so does every page that the
-   firmware's page tables, which the kernel runs on, occupy or do not let
-   it write (boot_tables.h). */
+   every other type; so do the kernel's stack and page tables, which
+   nova-boot allocates as EfiLoaderData. Within general memory, page 0
+   stays reserved, since page_alloc returns 0 for no page. */
 
 #include "page.h"
-#include "boot_tables.h"
 #include "efi.h"
 
 _Static_assert(PAGE_SIZE == EFI_PAGE_SIZE, "a page is a memory map page");
@@ -98,44 +96,25 @@ static UINT64 general_end(const BOOT_INFO *info)
 }
 
 /* ------------------------------------------------------------------------
-   Runs of conventional memory for the kernel's own use, found before the
-   bitmap exists. Conventional memory is unallocated (UEFI 2.11, Table
-   7.9), so it holds nothing the firmware still uses, its page tables
-   included. */
+   A home for the bitmap, found before the bitmap exists: the first page of
+   the first run of `pages` pages inside one conventional descriptor, in
+   map order, leaving out page 0; or 0 if there is none. Conventional
+   memory is unallocated (UEFI 2.11, Table 7.9), so it holds nothing the
+   firmware or nova-boot still uses. */
 
-static int takeable(UINT64 page, UINT64 avoid, UINT64 avoid_end)
-{
-    return page != 0 && (page < avoid || page >= avoid_end) &&
-           boot_tables_writable(page * PAGE_SIZE);
-}
-
-/* The first page of the first run of `pages` takeable pages inside one
-   conventional descriptor, in map order, outside [avoid, avoid_end); or
-   0, which is never takeable. */
-static UINT64 find_run(const BOOT_INFO *info, UINT64 pages, UINT64 avoid,
-                       UINT64 avoid_end)
+static UINT64 find_run(const BOOT_INFO *info, UINT64 pages)
 {
     UINT64 i;
 
     for (i = 0; i < descriptor_count(info); i++) {
         const EFI_MEMORY_DESCRIPTOR *d = descriptor_at(info, i);
-        UINT64 page, run;
+        UINT64 run = first_page(d) == 0 ? 1 : first_page(d);
 
-        if (d->Type != EFI_CONVENTIONAL_MEMORY || !well_formed(d))
-            continue;
-        for (page = run = first_page(d); page < end_page(d); page++) {
-            if (!takeable(page, avoid, avoid_end))
-                run = page + 1;
-            else if (page + 1 - run == pages)
-                return run;
-        }
+        if (d->Type == EFI_CONVENTIONAL_MEMORY && well_formed(d) &&
+            pages <= end_page(d) - run)
+            return run;
     }
     return 0;
-}
-
-UINT64 page_find_early(const BOOT_INFO *info, UINT64 pages)
-{
-    return find_run(info, pages, 0, 0) * PAGE_SIZE;
 }
 
 /* ------------------------------------------------------------------------
@@ -166,8 +145,6 @@ static void hold(UINT64 page)
     }
 }
 
-static void hold_address(UINT64 address) { hold(address / PAGE_SIZE); }
-
 static void hold_run(UINT64 first, UINT64 pages)
 {
     UINT64 page;
@@ -187,31 +164,28 @@ static void release_general(const BOOT_INFO *info)
             continue;
         total_pages += d->NumberOfPages;
         for (page = first_page(d); page < end_page(d); page++)
-            if (page != 0 && boot_tables_writable(page * PAGE_SIZE))
+            if (page != 0)
                 release(page);
     }
 }
 
-int page_init(const BOOT_INFO *info, UINT64 held, UINT64 held_pages)
+int page_init(const BOOT_INFO *info)
 {
-    UINT64 held_page = held / PAGE_SIZE;
     UINT64 end = general_end(info);
     UINT64 words = (end + BITS_PER_WORD - 1) / BITS_PER_WORD;
     UINT64 pages = (words * sizeof(UINT64) + PAGE_SIZE - 1) / PAGE_SIZE;
-    UINT64 home = find_run(info, pages, held_page, held_page + held_pages);
+    UINT64 home = find_run(info, pages);
     UINT64 i;
 
     if (!home)
         return 0;
-    bitmap = (UINT64 *)(home * PAGE_SIZE);
+    bitmap = direct_map(home * PAGE_SIZE);
     bitmap_words = words;
     limit_page = end;
     for (i = 0; i < words; i++)
         bitmap[i] = ALL_SET;
     release_general(info);
     hold_run(home, pages);
-    hold_run(held_page, held_pages);
-    boot_tables_each_page(hold_address);
     return 1;
 }
 

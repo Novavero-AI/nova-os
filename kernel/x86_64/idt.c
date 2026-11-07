@@ -31,12 +31,15 @@ _Static_assert(sizeof(IDT_GATE) == 16, "an IDT gate is 16 bytes");
    naming the vector (SDM Vol. 2A, INT n, IA-32e mode; Vol. 3A 7.13). */
 static IDT_GATE idt[VECTOR_COUNT];
 
-static void set_gate(UINT32 vector, UINT64 handler)
+/* ist 0 keeps the interrupted stack; 1 to 7 switch to that IST slot's
+   stack (SDM Vol. 3A 7.14.5). */
+static void set_gate(UINT32 vector, UINT64 handler, UINT8 ist)
 {
     IDT_GATE *gate = &idt[vector];
 
     gate->offset_low = (UINT16)handler;
     gate->selector = KERNEL_CODE_SELECTOR;
+    gate->ist = ist;
     gate->type = GATE_PRESENT | GATE_INTERRUPT;
     gate->offset_middle = (UINT16)(handler >> 16);
     gate->offset_high = (UINT32)(handler >> 32);
@@ -48,9 +51,13 @@ void idt_load(void)
     UINT32 vector;
 
     for (vector = 0; vector < EXCEPTION_COUNT; vector++)
-        set_gate(vector, exception_stubs[vector]);
-    set_gate(TIMER_VECTOR, (UINT64)timer_stub);
-    set_gate(SPURIOUS_VECTOR, (UINT64)spurious_stub);
+        set_gate(vector, exception_stubs[vector], 0);
+    set_gate(DOUBLE_FAULT_VECTOR, exception_stubs[DOUBLE_FAULT_VECTOR],
+             DOUBLE_FAULT_IST);
+    set_gate(PAGE_FAULT_VECTOR, exception_stubs[PAGE_FAULT_VECTOR],
+             PAGE_FAULT_IST);
+    set_gate(TIMER_VECTOR, (UINT64)timer_stub, 0);
+    set_gate(SPURIOUS_VECTOR, (UINT64)spurious_stub, 0);
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (UINT64)idt;
     __asm__ volatile("lidt %0" : : "m"(idtr) : "memory");
@@ -83,6 +90,8 @@ static void exception_halt(const INTERRUPT_FRAME *frame)
         serial_write(", cr2 ");
         serial_hex(read_cr2());
     }
+    serial_write(", rsp ");
+    serial_hex(frame->rsp);
     serial_write(", halted\r\n");
     halt_forever();
 }

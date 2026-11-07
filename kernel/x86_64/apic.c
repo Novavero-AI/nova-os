@@ -7,6 +7,7 @@
 #include "arch.h"
 #include "x86_64.h"
 #include "cpu.h"
+#include "paging.h"
 #include "serial.h"
 
 /* The 8259 pair's interrupt mask registers (EDK2's 8259.h); a write to
@@ -49,9 +50,9 @@
 #define CALIBRATION_MS 10
 #define MS_PER_SECOND 1000
 
-/* The firmware's page tables map physical addresses one to one (EDK2's
-   DxeIplPeim/X64/VirtualMemory.c), so the register block's physical
-   address is also where the kernel reaches it. */
+/* Where the kernel reaches the register block: its direct-map address,
+   mapped strong uncacheable, which correct APIC operation requires (SDM
+   Vol. 3A 13.4.1). */
 static UINT64 apic_base;
 
 /* Written by the timer interrupt, read by the code it interrupts. */
@@ -89,15 +90,21 @@ static void apic_enable(void)
         serial_write(", halted\r\n");
         halt_forever();
     }
-    apic_base = msr & APIC_BASE_ADDRESS;
+    apic_base = paging_map_uncached(msr & APIC_BASE_ADDRESS);
+    if (!apic_base) {
+        serial_write("nova: cannot map the local apic uncached, halted\r\n");
+        halt_forever();
+    }
     /* Task priority 0 holds back no vector the APIC can deliver (SDM
        Vol. 3A 13.8.3.1). */
     apic_write(APIC_TPR, 0);
     apic_write(APIC_SVR, (apic_read(APIC_SVR) & ~SVR_VECTOR) |
                              SVR_SOFTWARE_ENABLE | SPURIOUS_VECTOR);
     serial_write("nova: local apic at ");
+    serial_hex(msr & APIC_BASE_ADDRESS);
+    serial_write(" mapped uncached at ");
     serial_hex(apic_base);
-    serial_write(" enabled\r\n");
+    serial_write(", enabled\r\n");
 }
 
 /* The timer's rate at TIMER_DIVIDE_BY_1, from a masked one-shot count

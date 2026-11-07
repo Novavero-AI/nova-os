@@ -8,6 +8,7 @@
 /* Vectors 0-31 are the CPU's exceptions (SDM Vol. 3A, Table 7-1). */
 #define EXCEPTION_COUNT 32
 #define BREAKPOINT_VECTOR 3
+#define DOUBLE_FAULT_VECTOR 8
 #define PAGE_FAULT_VECTOR 14
 
 /* One bit per exception for which the CPU pushes an error code: 8, 10-14,
@@ -31,6 +32,16 @@
    GDT or LDT) and RPL (bits 0-1) clear (SDM Vol. 3A 3.4.2). */
 #define KERNEL_CODE_SELECTOR 0x08
 #define KERNEL_DATA_SELECTOR 0x10
+#define TSS_SELECTOR 0x18
+
+/* The TSS's interrupt-stack-table slots, numbered from 1 as a gate names
+   them (SDM Vol. 3A 7.14.5). A stack overflow faults on its guard page
+   with the stack exhausted, and delivering a page fault on that same
+   stack would fault again, into a double fault and then a triple fault
+   (SDM Vol. 3A 7.15, Event 8), so both of those exceptions switch to a
+   stack of their own. */
+#define DOUBLE_FAULT_IST 1
+#define PAGE_FAULT_IST 2
 
 /* The operand of LGDT and LIDT: the table's size minus one, then its
    address (SDM Vol. 3A 3.5.1). */

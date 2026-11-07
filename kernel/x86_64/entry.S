@@ -3,9 +3,10 @@
    joins interrupt_common, so every interrupt reaches interrupt_dispatch
    with the same INTERRUPT_FRAME (x86_64.h). The frame goes on the
    interrupted code's stack, which is safe because the Microsoft x64
-   convention keeps no data below RSP. TinyCC runs the C preprocessor over
-   this file and assembles it as AT&T syntax, where ';' separates
-   statements; that lets one macro write a whole stub. */
+   convention keeps no data below RSP; a double fault or page fault
+   switches to a stack of its own first (gdt.c). TinyCC runs the C
+   preprocessor over this file and assembles it as AT&T syntax, where ';'
+   separates statements; that lets one macro write a whole stub. */
 
 #include "x86_64.h"
 

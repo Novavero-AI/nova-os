@@ -29,14 +29,14 @@ cc -o x86_64-win32-tcc -I cfg -I tinycc-$rev \
   -D 'TCC_VERSION="0.9.28"' tinycc-$rev/tcc.c
 ./x86_64-win32-tcc -shared -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I gfx -I boot -Wl,-subsystem=efiapp -Wl,-e=efi_main \
-  -o BOOTX64.EFI boot/nova-boot.c gfx/gfx.c
+  -o BOOTX64.EFI boot/nova-boot.c boot/tables.c boot/switch.S gfx/gfx.c
 ./x86_64-win32-tcc -shared -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I gfx -I boot -Wl,-subsystem=native -Wl,-e=kernel_main \
   -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
   -o kernel.exe kernel/main.c kernel/x86_64/arch.c kernel/x86_64/gdt.c \
-  kernel/x86_64/idt.c kernel/x86_64/apic.c kernel/x86_64/serial.c \
-  kernel/x86_64/entry.S kernel/mm/page.c kernel/mm/page_test.c \
-  kernel/mm/boot_tables.c gfx/gfx.c
+  kernel/x86_64/idt.c kernel/x86_64/apic.c kernel/x86_64/paging.c \
+  kernel/x86_64/serial.c kernel/x86_64/entry.S kernel/mm/page.c \
+  kernel/mm/page_test.c gfx/gfx.c
 ```
 
 `-shared` makes TinyCC write base relocations, which the firmware needs to
@@ -49,8 +49,8 @@ gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `BOOTX64.EFI` | 13,824 | `63bdcd57a23d526367924fd6ac8d7956a26fb5ee5802fc6de17a4e2a4fd8dfd1` |
-| `kernel.exe` | 20,480 | `48180bf81a346a7b0fa7601d1db1aa0c98f33e69b3c0c362cfb1bd1066ce618a` |
+| `BOOTX64.EFI` | 20,480 | `49780ef50dcbbfe6098f771b6ec7fc616972dc853151e44cd91092f228d8fa45` |
+| `kernel.exe` | 22,016 | `26b53a7ffe1752a6dc2f7e03fd85bc5f7f924f6197dca3021624ec075916ea6c` |
 
 ## Disk image
 
@@ -70,8 +70,8 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `bdbc31bfed3a94234e5e147fc3a2f53e8eebd55184e00a02f193f638402aec2b` |
-| `disk.vhdx` | 71,303,168 | `a6c1698b557544090ccdaf052eb96389884d79bc8bed323a3e4d2b36365eb685` |
+| `disk.img` | 67,108,864 | `8c2c8c2ba35a906154c48ed4b006f7b04ad20956cf4b503c4e21544bfcc610fb` |
+| `disk.vhdx` | 71,303,168 | `33b28808f38d3311cb3fd84f633b716f7f53abfcf2c7c6e8b772a39a378bede2` |
 
 To boot either file in QEMU, replace the `fat:esp` drive in the command
 below with `-drive if=virtio,format=raw,file=disk.img` or

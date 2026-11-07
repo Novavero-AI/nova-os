@@ -1,12 +1,11 @@
 /* The page allocator's boot-time self-test. Every page it is handed is
    checked, before anything is written to it, against the memory map read
-   here, independently of the allocator, and against the run page_init
-   holds. It takes TEST_PAGES pages, fills them with a pattern no two
-   words share, reads it back, frees them and checks a second free is
-   refused. Then it drains the allocator, writing to every free page, so
-   a page the firmware's page tables keep the kernel from writing faults
-   here rather than in later use, and frees them all again. Each step
-   checks the free count. */
+   here, independently of the allocator. It takes TEST_PAGES pages, fills
+   them with a pattern no two words share, reads it back, frees them and
+   checks a second free is refused. Then it drains the allocator, writing
+   to every free page through the direct map, so a page the direct map
+   lacks faults here rather than in later use, and frees them all again.
+   Each step checks the free count. */
 
 #include "page.h"
 #include "efi.h"
@@ -51,23 +50,20 @@ static int in_general_memory(const BOOT_INFO *info, UINT64 address)
     return 0;
 }
 
-static const char *misplaced(const BOOT_INFO *info, UINT64 held,
-                             UINT64 held_pages, UINT64 address)
+static const char *misplaced(const BOOT_INFO *info, UINT64 address)
 {
     if (address % PAGE_SIZE != 0)
         return "page_alloc returned an address that is not page-aligned";
     if (!in_general_memory(info, address))
         return "page_alloc returned a page outside general memory";
-    if (within(address, held, held_pages))
-        return "page_alloc returned a page of the held run";
     return 0;
 }
 
-/* Each word holds its own address, so a page that aliases another, or
-   keeps a stale word, reads back wrong. */
+/* Each word holds its own physical address, so a page that aliases
+   another, or keeps a stale word, reads back wrong. */
 static void fill(UINT64 address)
 {
-    UINT64 *words = (UINT64 *)address;
+    UINT64 *words = direct_map(address);
     UINT64 i;
 
     for (i = 0; i < WORDS_PER_PAGE; i++)
@@ -76,7 +72,7 @@ static void fill(UINT64 address)
 
 static int filled(UINT64 address)
 {
-    const UINT64 *words = (const UINT64 *)address;
+    const UINT64 *words = direct_map(address);
     UINT64 i;
 
     for (i = 0; i < WORDS_PER_PAGE; i++)
@@ -97,8 +93,7 @@ static int taken_before(UINT64 address)
 
 /* The page is recorded before it is checked, so give_back frees it
    whatever the checks find. */
-static const char *take(const BOOT_INFO *info, UINT64 held,
-                        UINT64 held_pages)
+static const char *take(const BOOT_INFO *info)
 {
     UINT64 address = page_alloc();
     const char *failure;
@@ -106,7 +101,7 @@ static const char *take(const BOOT_INFO *info, UINT64 held,
     if (!address)
         return "page_alloc found no free page";
     taken[taken_count++] = address;
-    failure = misplaced(info, held, held_pages, address);
+    failure = misplaced(info, address);
     if (failure)
         return failure;
     if (taken_before(address))
@@ -139,24 +134,23 @@ static const char *give_back(void)
 /* Allocate every free page, linking each to the one before through its
    first word, then follow the links to free them. A misplaced page is
    freed unwritten and ends the allocating. */
-static const char *drain(const BOOT_INFO *info, UINT64 held,
-                         UINT64 held_pages, UINT64 expected)
+static const char *drain(const BOOT_INFO *info, UINT64 expected)
 {
     UINT64 last = 0, address, allocated = 0, freed = 0;
     const char *failure = 0;
 
     while (!failure && (address = page_alloc()) != 0) {
-        failure = misplaced(info, held, held_pages, address);
+        failure = misplaced(info, address);
         if (failure) {
             page_free(address);
         } else {
-            *(UINT64 *)address = last;
+            *(UINT64 *)direct_map(address) = last;
             last = address;
             allocated++;
         }
     }
     while (last) {
-        UINT64 previous = *(UINT64 *)last;
+        UINT64 previous = *(const UINT64 *)direct_map(last);
 
         if (!page_free(last))
             return "page_free refused a drained page";
@@ -172,8 +166,7 @@ static const char *drain(const BOOT_INFO *info, UINT64 held,
     return 0;
 }
 
-const char *page_self_test(const BOOT_INFO *info, UINT64 held,
-                           UINT64 held_pages)
+const char *page_self_test(const BOOT_INFO *info)
 {
     UINT64 start = page_free_count();
     const char *failure = 0;
@@ -181,7 +174,7 @@ const char *page_self_test(const BOOT_INFO *info, UINT64 held,
 
     taken_count = 0;
     while (!failure && taken_count < TEST_PAGES)
-        failure = take(info, held, held_pages);
+        failure = take(info);
     if (!failure && page_free_count() != start - TEST_PAGES)
         failure = "the free count did not fall by the pages allocated";
     if (!failure)
@@ -194,7 +187,7 @@ const char *page_self_test(const BOOT_INFO *info, UINT64 held,
     if (!failure && page_free_count() != start)
         failure = "the free count did not return to its start";
     if (!failure)
-        failure = drain(info, held, held_pages, start);
+        failure = drain(info, start);
     if (!failure && page_free_count() != start)
         failure = "the free count did not return to its start after the drain";
     return failure;

@@ -3,17 +3,23 @@
 #include "arch.h"
 #include "x86_64.h"
 #include "cpu.h"
+#include "paging.h"
 #include "serial.h"
 
-void arch_init(UINT64 tsc_per_ms)
+void arch_init(void)
 {
     gdt_load();
-    serial_write("nova: gdt loaded\r\n");
+    serial_write("nova: gdt and tss loaded\r\n");
     idt_load();
     serial_write("nova: idt loaded\r\n");
     /* The handler logs this and returns, which shows the IDT works before
-       any device interrupt depends on it. */
+       anything depends on it. */
     breakpoint();
+    paging_init();
+}
+
+void arch_start_timer(UINT64 tsc_per_ms)
+{
     apic_timer_start(tsc_per_ms);
     enable_interrupts();
     timer_sleep_until(timer_ticks() + 1);
