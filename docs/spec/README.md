@@ -10,6 +10,9 @@ sha256 identifies the exact copy the pin was taken from.
 |---|---|
 | [boot-protocol.md](boot-protocol.md) | The kernel image, `BOOT_INFO` and the machine state nova-boot hands the kernel on x86-64 |
 | [disk-layout.md](disk-layout.md) | The boot disk: GPT, the EFI System Partition, its FAT32 file system and file names |
+| [objects.md](objects.md) | The kernel's object types, handles and access rights, the namespace, waiting and object lifetime |
+| [ipc.md](ipc.md) | Channels and ports, how user-mode drivers reach interrupts, device memory and DMA, and asynchronous I/O requests |
+| [syscalls.md](syscalls.md) | The x86-64 system-call entry, its register convention, error codes and the first calls |
 
 ## Firmware and platform
 
@@ -31,7 +34,8 @@ Release 6.6, May 13, 2025 (UEFI Forum).
 - Access: free download.
 - sha256: `8c7542dd4de974ae47bba71bb0336637fe1e3838daad7692370ab4cf218efd35`
 - Used by: the boot protocol (finding the RSDP, 5.2.5.2); the kernel's
-  hardware discovery (MADT, 5.2.12).
+  hardware discovery (MADT, 5.2.12); interrupt sources
+  ([ipc.md](ipc.md), global system interrupts, 5.2.13).
 
 **EDK II**, tag `edk2-stable202608`, commit
 `2970e5699ba6267f3384ffab20f96647578aebc8` (TianoCore,
@@ -61,7 +65,7 @@ BSD-2-Clause-Patent).
 - Access: free download.
 - sha256: `77919be320f35da2782771ef2cb65a868cf68e62c8f8279f2ca61199cb70d1f8`
 - Used by: nova-boot (paging) and the kernel (paging, GDT, TSS, IDT,
-  Local APIC, TSC).
+  Local APIC, TSC); the system-call entry ([syscalls.md](syscalls.md)).
 
 **AMD64 Architecture Programmer's Manual, Volume 2: System Programming**,
 publication 24593, revision 3.46, October 2026.
@@ -93,7 +97,8 @@ updated November 5, 2025.
 - sha256: `963a36365ace6d4148e5c2d63688b1c89663479c3fa9c951606e9a7861ad1317`
   and `d22c63e02a6b73c9ecb0c073489e0f2e964bda13ce50fe9a6d6f321a3d4cef37`
 - Used by: every nova-os image (TinyCC's x86_64-win32 target), firmware
-  calls (UEFI 2.3.4.2) and the kernel entry.
+  calls (UEFI 2.3.4.2), the kernel entry and the system-call convention
+  ([syscalls.md](syscalls.md)).
 
 ## Storage and file systems
 
@@ -174,6 +179,53 @@ memory-mapped configuration space (ECAM):
   Address Space" and the `PCIEXBAR` register.
   <https://cdrdv2.intel.com/v1/dl/getContent/655259>, sha256
   `8b13b3db5530561e3e252910a17b7f088b5ad04164d5fdca750124e93e868189`.
+
+## Design references
+
+Systems and papers the object, IPC and system-call specifications compare
+nova-os with. Their section numbers refer to the copies pinned here.
+
+**seL4 Reference Manual**, version 17.0.0, 30 October 2026 (seL4
+Foundation).
+
+- Document: <https://sel4.systems/Info/Docs/seL4-manual-latest.pdf>; the
+  URL serves the latest version, so the sha256 identifies 17.0.0.
+- Access: free download, licensed GPL-2.0-only. The specifications cite
+  and paraphrase it and copy none of its text.
+- sha256: `597ff73b57209dee574ecb3ad294ae9e53389399c51e6642deb96d5ad8eb8205`
+- Used by: [objects.md](objects.md), [ipc.md](ipc.md),
+  [syscalls.md](syscalls.md).
+
+**Improving IPC by Kernel Design**, Jochen Liedtke, 14th ACM Symposium on
+Operating Systems Principles (SOSP '93), December 1993, pages 175 to 188,
+DOI 10.1145/168619.168633.
+
+- Document: <https://os.inf.tu-dresden.de/papers_ps/jochen/Ipcsosp.ps>,
+  the author's PostScript, linked from TU Dresden's L4 page
+  <https://os.inf.tu-dresden.de/L4/doc.html>
+- Access: free download.
+- sha256: `9328d45b96f2d9ea1cc077628b5405ffdabccb8df7a97e474f9b650697716350`
+- Used by: [ipc.md](ipc.md), [syscalls.md](syscalls.md).
+
+**On Micro-Kernel Construction**, Jochen Liedtke, 15th ACM Symposium on
+Operating Systems Principles (SOSP '95), December 1995, pages 237 to 250,
+DOI 10.1145/224056.224075.
+
+- Document: <https://os.inf.tu-dresden.de/papers_ps/jochen/Mikern.ps>,
+  the author's PostScript, linked from the same page
+- Access: free download.
+- sha256: `6f6f600fe4fabe1315770a835c140535fd990fcd31da85dc6160289a4e0b4edf`
+- Used by: [objects.md](objects.md), [ipc.md](ipc.md).
+
+**L4 Microkernels: The Lessons from 20 Years of Research and
+Deployment**, Gernot Heiser and Kevin Elphinstone, ACM Transactions on
+Computer Systems 34(1), April 2016, DOI 10.1145/2893177.
+
+- Document: <https://trustworthy.systems/publications/nicta_full_text/8988.pdf>,
+  from the authors' research group
+- Access: free download.
+- sha256: `4375964e2eac58ba2f185c04412b8eeba749ebe700550f1ed519e7034819a635`
+- Used by: [ipc.md](ipc.md).
 
 ## Not pinned
 
