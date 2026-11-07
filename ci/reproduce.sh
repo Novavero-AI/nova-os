@@ -1,8 +1,8 @@
 #!/bin/sh
-# Rebuilds what README.md's Build and Disk image sections build, by
-# running their sh blocks verbatim in OUT, a new directory holding the
-# tree at HEAD, and checks every file the README gives a size and sha256
-# for against what the blocks wrote.
+# Builds the tree at HEAD with its build.sh in OUT, a new directory, and
+# checks every file its SHA256SUMS names against what the build wrote.
+# The tree is archived into OUT/src, so that the build reads its bytes
+# as committed; the images land in OUT itself.
 #
 # Usage: ci/reproduce.sh OUT
 set -eu
@@ -13,14 +13,8 @@ ci=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 root=$(git -C "$ci" rev-parse --show-toplevel)
 
 mkdir -- "$out"
-git -C "$root" archive HEAD | tar -x -C "$out"
-cd -- "$out"
+mkdir -- "$out/src"
+git -C "$root" archive HEAD | tar -x -C "$out/src"
+sh -x "$out/src/build.sh" "$out"
 
-# The README's first two sh blocks are Build's and Disk image's; the
-# third, Run's, boots the result.
-awk '/^```sh$/ { blocks++; if (blocks <= 2) { inside = 1; next } }
-     /^```$/ { inside = 0 }
-     inside' README.md > readme.sh
-sh -ex readme.sh
-
-python3 -I "$ci/check-hashes.py" README.md .
+python3 -I "$ci/check-hashes.py" "$out/src/SHA256SUMS" "$out"

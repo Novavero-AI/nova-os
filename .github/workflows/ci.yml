@@ -149,11 +149,11 @@ jobs:
       - name: Show the host compiler
         run: cc --version
 
-      - name: The README's blocks build the bytes its tables give
+      - name: Build with build.sh and check against SHA256SUMS
         run: ci/reproduce.sh "$RUNNER_TEMP/reproduce"
 
       - name: TinyCC gives no warning
-        run: ci/tinycc-warnings.sh "$RUNNER_TEMP/warnings"
+        run: ./build.sh --werror "$RUNNER_TEMP/warnings"
 
       - name: lib/ draws its text and outlines as their prototype does
         run: design/text/check-text.sh "$RUNNER_TEMP/reproduce/inter"
@@ -197,10 +197,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # Each boot runs the disk images the reproduce jobs checked against the
-  # README, on a named image, so that the QEMU and EDK2 releases it boots
-  # with (8.2 and 2024.02) change only with an edit here; Ubuntu's updates
-  # to their packages still arrive. The TCG boots emulate each
+  # Each boot runs the disk images the reproduce jobs checked against
+  # SHA256SUMS, on a named image, so that the QEMU and EDK2 releases it
+  # boots with (8.2 and 2024.02) change only with an edit here; Ubuntu's
+  # updates to their packages still arrive. The TCG boots emulate each
   # processor, so each CPU model gives the kernel the features it names:
   # Skylake-Client is an Intel model that needs page-table isolation, and
   # max offers every feature TCG has. The KVM boot runs on the runner's

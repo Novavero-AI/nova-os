@@ -109,7 +109,7 @@ base relocation directory has no relocations; one whose
 `SizeOfOptionalHeader` does not cover a slot `NumberOfRvaAndSizes` claims
 is rejected (PE Format, Optional Header).
 
-The README's build links the kernel with `-subsystem=native`
+[build.sh](../../build.sh) links the kernel with `-subsystem=native`
 (`IMAGE_SUBSYSTEM_NATIVE`, 1), `-e=kernel_main`, and section and file
 alignments of 4096 and 512 bytes. nova-boot does not read `Subsystem`.
 
@@ -205,8 +205,8 @@ maps each page for user mode: executable and read-only if an executable
 section reaches it, otherwise writable if a writable section does,
 otherwise read-only, as the headers are. The image starts at
 `ImageBase` plus `AddressOfEntryPoint` with the entry state of
-[syscalls.md S8](syscalls.md#s8-the-first-calls). The README's build
-links it with `-subsystem=native`, `-e=init_main`, and section and file
+[syscalls.md S8](syscalls.md#s8-the-first-calls). build.sh links it
+with `-subsystem=native`, `-e=init_main`, and section and file
 alignments of 4096 and 512 bytes, without `-shared`.
 
 ### Startup done

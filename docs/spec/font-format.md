@@ -6,7 +6,7 @@ in fixed records that a program reads in place. `tools/mkfont.c` writes
 it from a TrueType font when the system is built, `lib/typeface.c`
 reads it, and `include/font_format.h` gives its offsets and constants.
 The interface's typeface, Inter, reaches programs this way, from its
-store path under `/store` (README.md's Build section).
+store path under `/store` ([build.sh](../../build.sh)).
 
 Sources are pinned in [README.md](README.md) and cited by these names:
 "OpenType", the OpenType specification 1.9.1, by table or page;
@@ -166,8 +166,8 @@ contextual alternates or tabular figures.
 
 ## What nova-os ships
 
-README.md's Build section converts Inter 4.1, fetched from its release
-and checked by the SHA-256 the README gives, as follows.
+[build.sh](../../build.sh) converts Inter 4.1, fetched from its release
+and checked by the SHA-256 `SHA256SUMS` gives, as follows.
 
 **Faces.** The six static faces the approved login and desktop designs
 set type in, and no other: Inter Regular, Medium and SemiBold for text

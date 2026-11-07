@@ -1,13 +1,12 @@
 name: Seed
 
-# README.md's Build and Disk image blocks, run on Windows by
-# ci/reproduce.sh under busybox-w32's sh with tinycc-native as cc, each
-# built by nova-nix from stage0-pe32's 1,623-byte hex0 seed, and every
-# file checked against the README's tables. The blocks' cc lines build
-# the two cross compilers from TinyCC's source with that TinyCC, so no
-# byte the tables give comes from the runner's toolchains: curl fetches
-# the sources the README names, git archives the tree, and Python
-# compares the hashes.
+# build.sh, run on Windows by ci/reproduce.sh under busybox-w32's sh
+# with tinycc-native as cc, each built by nova-nix from stage0-pe32's
+# 1,623-byte hex0 seed, and every file checked against SHA256SUMS.
+# build.sh's cc lines build the two cross compilers from TinyCC's source
+# with that TinyCC, so no byte SHA256SUMS gives comes from the runner's
+# toolchains: curl fetches the sources build.sh names, git archives the
+# tree, and Python compares the hashes.
 #
 # The ladder from the seed takes about 18 minutes on windows-latest, more
 # than the rest of CI together, so a pull request runs this only when it
@@ -21,6 +20,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/seed.yml
+      - build.sh
       - ci/reproduce.sh
       - ci/check-hashes.py
   schedule:
@@ -103,10 +103,10 @@ jobs:
           busybox=$(nova-nix build nova-nix/pkgs/windows/default.nix -A busybox-w32 | tail -n 1)
           echo "$busybox/bin" >> "$GITHUB_PATH"
 
-      # The job's shell is the seed-built busybox's, which runs the
-      # README's blocks with its own applets for the commands they name,
-      # and cc and the programs they build from the directories above.
-      - name: The README's blocks build the bytes its tables give
+      # The job's shell is the seed-built busybox's, which runs build.sh
+      # with its own applets for the commands it names, and cc and the
+      # programs it builds from the directories above.
+      - name: Build with build.sh and check against SHA256SUMS
         shell: busybox sh -e {0}
         run: |
           for tool in cc curl git python3; do command -v "$tool"; done

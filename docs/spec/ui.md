@@ -689,7 +689,7 @@ action it offers is an nvo command the shell can run.
   ([shell.md L24](shell.md#l24-settings-and-service-commands)).
 - **`design/`:** `text/`, the prototypes of the outlines and the text
   and their checks.
-- **README.md:** the build fetches Inter's release by its SHA-256 and
+- **build.sh:** the build fetches Inter's release by its SHA-256 and
   converts it; the font's store path carries Inter's licence.
 - **accounts.md and the first process:** login with `CREATE_JOB` on the
   sessions' job, a job for each program and its renderer, and a shell
