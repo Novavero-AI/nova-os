@@ -126,9 +126,11 @@ CI checks every pull request and every push to main:
   `/users` published and their check passing, the test program, the
   virtio block driver reading the GPT, init's checks, startup done, the
   background and the console, and a line typed through QEMU's monitor
-  must come back from the console's demo client. Two more boots change a
-  byte of the data disk's GPT, its header's CRC or its entry array, and
-  the log must show the file system service refusing the disk.
+  must come back from the console's demo client. Four more boots change
+  the data disk's GPT, a byte of its header's CRC or of its entry array,
+  or, with the CRCs made to match, its pool entry moved below the usable
+  LBAs or a second entry over it, and the log must show the file system
+  service refusing the disk.
 - **Chain** boots `chain.img` and checks that each step of the bootstrap
   chain runs and each pinned link matches.
 
