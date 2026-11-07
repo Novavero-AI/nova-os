@@ -14,10 +14,8 @@ build it, with what CI checks at each step.
 them.
 
 DESIGN.md, principle 2, makes networking user-mode processes; that much
-is **Decided** there. Every item below is **Proposed** unless it says
-otherwise. An item marked **Open** waits on a choice listed under [Open
-decisions for Devon](#open-decisions-for-devon), which gives the
-options and a recommendation.
+is **Decided** there. Items the owner has ruled on are marked
+**Decided**; every other item is **Proposed**.
 
 Each item gives the design, why, what it costs, and the main
 alternative not taken with that alternative's cost. Specifications are
@@ -36,7 +34,7 @@ references](README.md#network-design-references) and cited by name.
 | Part | What it is | What it holds |
 |---|---|---|
 | The virtio network driver, `\nova\virtnet.exe` | A user-mode driver for the first virtio network function ([N2](#n2-the-virtio-network-driver)) | What every PCI device driver gets (`drivers/pci.h`): resources covering its function's configuration space, BARs and message-signalled interrupts, and an initiator with `PIN`; the debug log; the frame channel to the service, which it creates |
-| The network service, `net.exe` | The TCP/IP stack and the DHCP client; it serves grants and sockets ([N7](#n7-what-v1-implements)) | The frame channel's client end, handed over by the first process; the bootstrap channel it keeps to the first process; the channel to the resolver; its own process with `MAP`; the debug log. No directory, no store channel, no job |
+| The network service, `net.exe` | The TCP/IP stack and the DHCP client; it serves grants and sockets ([N7](#n7-what-v1-implements)) | The frame channel's client end, handed over by the first process; the bootstrap channel it keeps to the first process; the channel to the resolver; the system's settings, to read its own ([N12](#n12-grants)); its own process with `MAP`; the debug log. No directory, no store channel, no job |
 | The resolver, `resolver.exe` | The DNS stub resolver ([N11](#n11-names-and-the-resolver)) | The channel the service sends it names on; a grant, from the first process, to the configured name servers' port 53 and nothing else; its own process with `MAP`; the debug log |
 | The first process | Starts and supervises the three ([N5](#n5-supervision)) and holds the service's control channel, the root of network authority ([N12](#n12-grants)) | |
 
@@ -358,13 +356,15 @@ the console ([input.md K3](input.md#k3-the-report-and-the-client),
 
 ### N6. Our own stack, or a port
 
-**Open** ([decision 1](#open-decisions-for-devon)).
+**Decided** (by the owner): our own stack, in C, shaped as this item
+gives, with lwIP 2.2.1 (BSD-3-Clause) the named fallback.
 
 The stack is written for nova-os, in C, from the RFCs this document
 pins, on the design smoltcp shows: the caller passes the time in, no
-heap, every buffer the caller's. lwIP is the fallback if the decision
-goes the other way. The candidates, each at the version pinned under
-[Network design references](README.md#network-design-references):
+heap, every buffer the caller's. lwIP 2.2.1 is the fallback, taken up if
+step 2 of [N20](#n20-the-order-of-work) cannot pass its checks. The
+candidates, each at the version pinned under [Network design
+references](README.md#network-design-references):
 
 | Candidate | Licence | Language | Lines | Fit |
 |---|---|---|---|---|
@@ -497,7 +497,8 @@ rest to path MTU discovery, which v1 lacks.
 
 ### N8. IPv6
 
-**Open** ([decision 2](#open-decisions-for-devon)).
+**Decided** (by the owner): IPv4 first, and IPv6 next, with every
+address in the protocols a family and 16 bytes from the start.
 
 v1 is IPv4 only; IPv6 comes in the next version. Every address in the
 grant and socket protocols ([N12](#n12-grants),
@@ -578,7 +579,10 @@ and "a server multiplexes its own timeouts"
 
 ### N10. DHCP and the interface
 
-**Proposed.** The service configures its one interface by DHCP, as RFC
+**Decided** (by the owner): the DHCP client stays in the service.
+**Proposed:** the rest.
+
+The service configures its one interface by DHCP, as RFC
 2131's client (4.4):
 
 1. From INIT it broadcasts DHCPDISCOVER, takes the first DHCPOFFER, sends
@@ -622,7 +626,10 @@ The control channel's status request reports the same
 
 ### N11. Names and the resolver
 
-**Proposed.** Names are resolved for programs, never by them. A program
+**Decided** (by the owner): the resolver is a process of its own.
+**Proposed:** the rest.
+
+Names are resolved for programs, never by them. A program
 connects to a name ([N13](#n13-the-socket-protocol)); the service checks
 the name against the program's grant ([N12](#n12-grants)) and sends it
 to the resolver, a process of its own, which answers with addresses.
@@ -676,8 +683,9 @@ to the resolver, a process of its own, which answers with addresses.
 
 ### N12. Grants
 
-**Proposed,** but for what the service logs and what `*` covers, which
-are **Open** ([decisions 6 and 9](#open-decisions-for-devon)).
+**Decided** (by the owner): `*` covers every address but loopback, and
+local access is written explicitly; what the service logs is a setting
+of the network service. **Proposed:** the rest.
 
 No call opens a socket from nothing. The network is reached only
 through a grant: a channel to the network service that the service
@@ -695,8 +703,9 @@ connect tcp *.example.org 443
 connect tcp 10.0.2.0/24 1-65535
 connect udp * 123
 connect icmp *
+connect tcp localhost 8080
 listen tcp * 22
-listen tcp 127.0.0.1 8080
+listen tcp localhost 8080
 connect udp nameservers 53
 ```
 
@@ -704,8 +713,8 @@ connect udp nameservers 53
 |---|---|
 | Action | `connect`, for connections and datagrams the holder opens and for echo requests (`icmp`); `listen`, for connections others open to it, TCP only in v1 |
 | Protocol | `tcp`, `udp`, `icmp` |
-| Host, for `connect` | A name, which covers that name only; `*.` and a name, which covers every name below that name and not the name itself; an IPv4 address with a prefix length, `/32` if none is given; `nameservers`, the name servers the service's configuration names at the time; `*`, every name and every address but loopback |
-| Host, for `listen` | `*`, every local address, loopback's included; or one local address, such as `127.0.0.1` for loopback only |
+| Host, for `connect` | A name, which covers that name only; `*.` and a name, which covers every name below that name and not the name itself; an IPv4 address with a prefix length, `/32` if none is given; `localhost`, the address 127.0.0.1 the service gives that name ([N11](#n11-names-and-the-resolver)); `nameservers`, the name servers the service's configuration names at the time; `*`, every name and every address but loopback |
+| Host, for `listen` | `*`, every local address but loopback; or a local address with a prefix length, `/32` if none is given, such as `localhost`, 127.0.0.1, for loopback |
 | Ports | A port, a range `first-last`, or `*` for 1 to 65535 |
 
 A name is labels of ASCII letters, digits and hyphens, each starting
@@ -726,7 +735,13 @@ whose ports lie within its own and whose host lies within its own:
   name, `*.` rule, `nameservers` and prefix that holds no loopback
   address within `*`. A loopback prefix lies only within a prefix that
   holds it.
-- for `listen`, a local address lies within itself and within `*`.
+- for `listen`, a local address lies within any prefix that holds it,
+  and, unless it is a loopback address, within `*`.
+
+In a rule, `localhost` is the prefix 127.0.0.1/32. Since `*` never
+covers loopback, a program reaches a local program, and serves one,
+only through a rule that names loopback: `connect tcp localhost 8080`,
+`listen tcp localhost 8080`.
 
 The root's rules ([N15](#n15-declared-authority)) are `*` and
 `127.0.0.0/8` for each action and protocol, with every port, which
@@ -751,9 +766,17 @@ does, and a set of rules if it covers each.
    already listened on, by any client, fails with `ERR_ALREADY_EXISTS`.
    There are no privileged ports: the grant is the only authority a
    listen needs.
-4. A refused request sends nothing to the network. The service logs
-   it, with the client's label, the host and the port
-   ([decision 6](#open-decisions-for-devon)).
+4. A refused request sends nothing to the network.
+
+**The log** is a setting of the network service, `network.log`,
+declared in its interface description and exposed through the generic
+bridge like any service's setting
+([shell.md L24](shell.md#l24-settings-and-service-commands)). Its
+default, `refusals`, logs each refused request and each listener
+opened; `connections` logs, beside them, every connection opened and
+accepted. Each line names the client's label, the host and the port,
+never data. The setting is the system's, so only an administrator's
+settings handle changes it.
 
 - **Why:** principle 7 bounds a program by what its derivation declares,
   and a list of rules is that declaration for the network, checkable
@@ -764,22 +787,56 @@ does, and a set of rules if it covers each.
   server on a service listening only on loopback, whose authors meant it
   for local programs granted it by address; the root names loopback
   apart for the same reason, since `*` leaves it out.
+- **Why `*` leaves loopback out:** a service on loopback is written for
+  the machine's own programs, and a rule meant as "the network" must not
+  reach it. Modern sandboxes draw the same line. Chrome's Private
+  Network Access draft gives loopback, 127.0.0.0/8, an address space of
+  its own, which "contains the local host only", and restricts a
+  request to an address less public than its origin's (Private Network
+  Access, 2.1, 2.2). Local Network Access, which "builds on top of
+  Chrome's previously paused" Private Network Access work, keeps
+  loopback apart under that name and counts the null address 0.0.0.0
+  in it, "as some systems can still route them back to the local host
+  machine" (Local Network Access, 1, 2.1); check 2 here refuses that
+  address outright. So local access is written in the rule, where a
+  reader of the declaration sees it, for a client and a server alike.
+- **Why the log is a setting:** a refusal is a program asking for more
+  than it declared, which an audit wants, and a listener is the machine
+  open to others; a line per connection puts a user's every destination
+  in the system's log, which an administrator may need and should
+  choose.
 - **Cost:** a program that must connect to an address it learns at run
   time, such as a peer in a peer-to-peer protocol, needs a broad address
   rule; a name rule trusts DNS for where the name leads, which only TLS
   in the program checks ([N19](#n19-tls)); `*` includes the local
   network's addresses, its router's among them, with no rule meaning
-  "the Internet only".
+  "the Internet only"; a program that serves both the network and the
+  machine's own programs declares two listen rules and opens two
+  listeners; with `connections` set, the log holds every destination of
+  every user.
 - **Not taken:** rules by address only, as a packet filter writes them.
   Their cost is a declaration that is stale as soon as a host moves,
   and no way to say "this program talks to that service". An
   "open any socket" grant for every program, as Unix and Windows give:
-  ambient authority, which principle 7 rules out.
+  ambient authority, which principle 7 rules out. `*` as POSIX's
+  wildcard: `INADDR_ANY`, the "IPv4 wildcard address" a socket gives
+  `bind()` as its local address (POSIX, `<netinet/in.h>`), names no
+  address and so leaves none out. Its cost is a rule meant as the
+  network that takes loopback in too, so `listen tcp * 22` would serve
+  the machine's own programs and a connect rule of `*` reach what listens
+  only for them. `*` as public addresses only, with a host class for the
+  local network, as Private Network Access also sets the private
+  network apart. Its cost is pinning the private and link-local ranges,
+  which nothing in v1 needs. Logging nothing, since the grant states
+  what a program could reach and a recording what it did; its cost is a
+  refusal no one sees. Every connection always; its cost is every
+  user's every destination in every machine's log, whether or not its
+  administrator wants it.
 
 ### N13. The socket protocol
 
-**Proposed,** but for the data path, which is **Open**
-([decision 5](#open-decisions-for-devon)).
+**Decided** (by the owner): socket data travels inline in messages
+only, in v1. **Proposed:** the rest.
 
 `include/network_protocol.h`. Every kind of network object is a channel
 to the service. Every message starts with an `IO_REQUEST` and every
@@ -863,9 +920,12 @@ with three more that only completions carry, as codes 16 to 19 are:
   (`kernel/object/channel.c`).
 - **Not taken:**
   - A ring of buffers in a section each socket shares with the service,
-    which moves data with no copy through the kernel. Its cost is that
-    a recorded program could not use it ([decision
-    5](#open-decisions-for-devon)).
+    which moves data with no copy through the kernel, for all programs
+    or beside inline data for the unrecorded. Its cost is that a
+    recorded program could not use it, since it could not share a
+    section the service writes ([N16](#n16-replay)), and a second data
+    path before any program is measured to need more than inline
+    gives.
   - The service writing data to the client as it arrives, unasked,
     which saves the read request. Its cost is a stream that no longer
     reads like a file, and data held in the kernel's queue rather than
@@ -907,8 +967,9 @@ directory protocol's rights narrow at each open
 
 ### N15. Declared authority
 
-**Proposed,** but for the rules a session gets by default, which are
-**Open** ([decision 3](#open-decisions-for-devon)).
+**Decided** (by the owner): a session's network is set per account in
+the system recipe, and an account it names none for gets outbound only
+(item 4). **Proposed:** the rest.
 
 Every grant comes from a control channel, and every control channel
 from the one above it, so each level can only narrow the one above.
@@ -933,9 +994,11 @@ from the one above it, so each level can only narrow the one above.
    ([N5](#n5-supervision)). Login holds no grant of its own.
 4. **Sessions.** For each session it opens, login makes a control
    channel of the session's through `NET_CONTROL`, with the rules the
-   recipe gives that account and `NET_SESSION_CLIENTS` (4) clients, and
-   keeps it. Through it it gives the shell a grant, which joins the
-   session's handles as `SESSION_NETWORK`
+   recipe gives that account, or for an account it names none for,
+   outbound only: `connect tcp * *`, `connect udp * *` and
+   `connect icmp *`. The channel has `NET_SESSION_CLIENTS` (4) clients,
+   and login keeps it. Through it it gives the shell a grant, which
+   joins the session's handles as `SESSION_NETWORK`
    ([accounts.md A7](accounts.md#a7-the-session) today gives a session
    none). When the session ends, login closes the session's control
    channel, and its clients return as the programs that hold them end.
@@ -969,12 +1032,18 @@ has no network, as today.
   has to trust a handle passed to it. Each program is a client of its
   own, so it cannot take another's share
   ([N18](#n18-limits-on-clients)).
+- **Why outbound only by default:** the recipe states each account's
+  network as it states the rest of the system, and an account it says
+  nothing about can reach out but not be reached. Each program is still
+  bounded by its own declaration, so a session's rules are the ceiling,
+  not what its programs get.
 - **Cost:** login holds the network authority of every open session
   ([N17](#n17-the-threat-model)); at most three sessions hold the
   network at once, each with its shell and three programs; a program
   that declares no rules cannot use the network, even to reach a server
   its user names on its command line; the system recipe names each
-  account's rules.
+  account's rules, and an account it names none for neither listens nor
+  reaches a local program over loopback.
 - **Not taken:**
   - The shell deriving each program's grant from the session's and
     sending it with its run request, for login to make a client of.
@@ -989,6 +1058,11 @@ has no network, as today.
     paths. Its cost is a rule language on the command line for the
     common case of a program that always talks to one service, which
     its recipe can say once.
+  - No network for an account the recipe names none for. Its cost is a
+    new account that reaches nothing until an administrator changes the
+    recipe. Everything for every session, listening and loopback
+    included; its cost is any account's programs open to the network,
+    within what they declare, without the recipe saying so.
 
 ## Replay
 
@@ -1184,8 +1258,10 @@ socket hold at most 14 pages of kernel memory, 10 for a 32 KiB read and
 
 ### N19. TLS
 
-**Open** ([decision 8](#open-decisions-for-devon)). TLS is not the
-stack's. It lives in each program that
+**Decided** (by the owner): TLS is a library in each program that
+needs it, and which library is a later specification's to decide.
+
+TLS is not the stack's. It lives in each program that
 needs it, as a library from the program's closure, in the program's own
 process: its keys and its plaintext never leave that process. The trust
 anchors are a store path the program's derivation names; checking a
@@ -1234,8 +1310,8 @@ Done when:
 
 **2. TCP and grants.** UDP, TCP, the loopback interface, and the whole
 socket protocol ([N13](#n13-the-socket-protocol)). `nettest`'s grant
-gains `listen tcp * 7`, `connect tcp 10.0.2.100 7` and `connect tcp
-127.0.0.1 7`.
+gains `listen tcp * 7`, `listen tcp localhost 7`, `connect tcp
+10.0.2.100 7` and `connect tcp localhost 7`.
 
 Done when:
 
@@ -1243,7 +1319,7 @@ Done when:
   QEMU's forwarding, a megabyte of random bytes returned byte for byte;
 - `nettest` connects out to an echo service on the host and checks a
   megabyte returned;
-- `nettest` connects to its own listener over loopback and checks the
+- `nettest` connects to its own loopback listener and checks the
   same;
 - a connect outside its grant, to 10.0.2.2 port 80, fails with
   `ERR_ACCESS_DENIED`.
@@ -1256,9 +1332,7 @@ Done when:
 - `nettest` connects by name to `localhost`, which the service answers
   itself, and its loopback echo passes;
 - the resolver's parser passes the host check of
-  [N21](#n21-the-ci-test-plan) on generated and malformed answers;
-- a lookup crosses the network in a boot, in the way
-  [decision 7](#open-decisions-for-devon) settles.
+  [N21](#n21-the-ci-test-plan) on generated and malformed answers.
 
 **4. What SSH needs.** An SSH server, which its own specification will
 give, needs from the network a listen grant on port 22, declared in the
@@ -1288,8 +1362,9 @@ session does.
 
 ### N21. The CI test plan
 
-**Proposed,** but for a lookup across the network in a boot, which is
-**Open** ([decision 7](#open-decisions-for-devon)).
+**Decided** (by the owner): no boot looks a name up across the network
+in v1; the resolver is checked on the host, and `localhost` in the
+boot. **Proposed:** the rest.
 
 The Boot job's machine (`ci/boot.py`, `DEVICES`) gains a network device
 on QEMU's user network, in place of `-net none`:
@@ -1345,8 +1420,10 @@ A boot cannot look a name up across the network without leaving the
 runner: with `restrict=on`, libslirp's DHCP names no name server, and
 its `udp.c` drops a datagram to its own DNS address before it would
 relay it (`if (slirp->restricted) { goto bad; }`), and its `tcp_input.c`
-resets a connection to it. [Decision 7](#open-decisions-for-devon)
-settles how step 3 of [N20](#n20-the-order-of-work) is tested.
+resets a connection to it. So step 3 of [N20](#n20-the-order-of-work)
+is checked by the host check of the resolver's parser and by the boot's
+connect to `localhost`, and no boot looks a name up across the network
+in v1.
 
 - **Why:** nothing leaves the runner but the two forwardings, so a test
   never fails because a network outside it is down, and nova-os's TCP
@@ -1356,8 +1433,7 @@ settles how step 3 of [N20](#n20-the-order-of-work) is tested.
 - **Cost:** the boot's peer is always libslirp's TCP over a link that
   loses, delays and reorders nothing, so TCP's recovery paths are
   tested only by the host check; a lookup over the network is not
-  tested in a boot ([decision 7](#open-decisions-for-devon)); `cat`
-  must be on the runner's `PATH`.
+  tested in a boot; `cat` must be on the runner's `PATH`.
 - **Not taken:** `restrict=off`. The guest then reaches the Internet,
   and the runner's own loopback through 10.0.2.2, which libslirp's
   `src/socket.c` rewrites to the host's loopback address: a test of
@@ -1365,7 +1441,13 @@ settles how step 3 of [N20](#n20-the-order-of-work) is tested.
   character device on a server boot.py runs: QEMU opens the device "on
   bootup" (`qemu-options.hx`, the example's comment), so the server
   must be listening before QEMU starts, and every connection shares the
-  one device.
+  one device. A boot without `restrict=on` that looks a public name up
+  and compares the answer with the runner's own: the cost of
+  `restrict=off` above. Name servers the system recipe names, one
+  reached over TCP only through a `guestfwd` to a responder boot.py
+  runs; its cost is two features, name servers named in the recipe and
+  lookups over TCP alone, added for a test before either is needed for
+  its own sake.
 
 ## Changes elsewhere
 
@@ -1432,75 +1514,6 @@ What this design needs outside this document:
   strings ([N12](#n12-grants)), which the launcher reads from the
   deriver, as the shell language's declarations are read.
 
-## Open decisions for Devon
-
-1. **Our own stack, or a port** ([N6](#n6-our-own-stack-or-a-port)).
-   Options: write the stack for nova-os in C from the pinned RFCs; port
-   lwIP 2.2.1 (BSD-3-Clause); port FreeBSD's. picoTCP is GPL and so
-   excluded, and smoltcp needs a Rust compiler the seed does not build.
-   **Recommendation:** our own, in smoltcp's shape, as every other part
-   of nova-os is written from its documents; lwIP stays the fallback,
-   and the choice is worth taking again if step 2 of
-   [N20](#n20-the-order-of-work) cannot pass its checks.
-2. **IPv6 now or next** ([N8](#n8-ipv6)). Options: IPv4 in v1, with
-   every address in the protocols already 16 bytes and a family; both
-   families in v1. **Recommendation:** IPv4 first, and IPv6 the next
-   version, before nova-os runs on networks it does not choose.
-3. **A session's network** ([N15](#n15-declared-authority), item 4;
-   [accounts.md A7](accounts.md#a7-the-session)). Options: none unless
-   the system recipe names rules for the account; outbound to anything
-   for every session, with listening only where the recipe names it;
-   everything for every session. **Recommendation:** the recipe names
-   each account's rules, and an account it names none for gets
-   outbound only: `connect tcp * *`, `connect udp * *` and
-   `connect icmp *`. Each program is still bounded by what its own
-   derivation declares, so the session's grant is the ceiling, not what
-   programs get.
-4. **Which parsers get a process of their own**
-   ([N10](#n10-dhcp-and-the-interface), [N11](#n11-names-and-the-resolver)).
-   Options: the resolver and the DHCP client both in the service; the
-   resolver alone apart; both apart. **Recommendation:** the resolver
-   apart and DHCP in the service: the resolver parses answers from any
-   server on the Internet and needs almost nothing, while a DHCP client
-   needs the power to set the router, which is most of the service's
-   power over traffic already.
-5. **The socket data path** ([N13](#n13-the-socket-protocol)). Options:
-   data inline in messages only; also a ring in a section shared with
-   the service, for programs that are not recorded; the ring only.
-   **Recommendation:** inline only in v1, and a ring once a program is
-   measured to need more than inline gives, for unrecorded programs
-   alone, since a recorded one cannot share a writable section with the
-   service ([N16](#n16-replay)).
-6. **What the service logs** ([N12](#n12-grants)). Options: nothing,
-   since the grant states what a program could reach and a recording
-   what it did; refusals and listeners; every connection opened,
-   accepted and refused. **Recommendation:** refusals and listeners,
-   each with the client's label, host and port, never data: a refusal
-   is a program asking for more than it declared, which an audit wants,
-   while a line per connection would put a user's every destination in
-   the system's log.
-7. **Name lookups in CI** ([N21](#n21-the-ci-test-plan)). Options: a
-   boot without `restrict=on` that looks up a public name and compares
-   the answer with the runner's own; name servers that the system
-   recipe names, one reached over TCP only through a `guestfwd` to a
-   responder boot.py runs, which adds two features for the test; no
-   boot test of a lookup over the network in v1, with the host check of
-   the resolver and the boot's `localhost`. **Recommendation:** the
-   last in v1, and the second once name servers named in the recipe
-   come for their own sake, with static configuration for networks
-   without DHCP ([N10](#n10-dhcp-and-the-interface)).
-8. **Where TLS lives** ([N19](#n19-tls)). Options: a library in each
-   program's process; a TLS service that terminates connections for
-   programs. **Recommendation:** a library in each program, and which
-   library, or one of nova-os's own, decided in a TLS specification of
-   its own, with the wall-clock service it needs.
-9. **What `*` covers** ([N12](#n12-grants)). Options: every address but
-   loopback, the local network's included; public addresses only, with
-   a further host class for the local network. **Recommendation:** every
-   address but loopback in v1, and a class for the local network once a
-   program needs "the Internet but not my router"; defining it means
-   pinning the private and link-local ranges, which nothing in v1 needs.
-
 ## References
 
 Sources other than specifications, pinned under [Network design
@@ -1526,3 +1539,8 @@ named there:
   Contributing to Netstack3 (updated 2025-03-22).
 - **CERT/CC** VU#815128, AMNESIA:33 (revised 2025-06-06), and
   **Forescout**'s NAME:WRECK disclosure (April 12, 2021).
+- **Private Network Access** (WICG, Draft Community Group Report,
+  26 September 2024) and **Local Network Access** (WICG, Draft Community
+  Group Report, 7 August 2026), by section.
+- **POSIX**: `<netinet/in.h>`, The Open Group Base Specifications
+  Issue 8 (IEEE Std 1003.1-2024).

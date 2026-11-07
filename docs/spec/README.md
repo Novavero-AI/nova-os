@@ -1334,6 +1334,25 @@ update.
 - Access: free web pages. CERT/CC has no note for NAME:WRECK that was
   found, so Forescout's disclosure is the source.
 
+**Private Network Access** and **Local Network Access**, Draft Community
+Group Reports of the W3C's Web Platform Incubator Community Group,
+edited at Google. Local Network Access says it "builds on top of
+Chrome's previously paused" Private Network Access work.
+
+| Document | Date | sha256 |
+|---|---|---|
+| [Private Network Access](https://wicg.github.io/private-network-access/) | 26 September 2024 | `142676f4955365f250e3a78364595ccd85ef8ce8d928c3025325a41f1bece640` |
+| [Local Network Access](https://wicg.github.io/local-network-access/) | 7 August 2026 | `fa3e1152eade831a4d5e45d5f37d70cb1fad0e5a5ece2bddd0cc7d94e3a7f467` |
+
+- Access: free web pages.
+
+**POSIX `<netinet/in.h>`**, Base Definitions of The Open Group Base
+Specifications Issue 8, IEEE Std 1003.1-2024.
+
+- Document: <https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/netinet_in.h.html>
+- Access: free web page.
+- sha256: `ac46ac2417326c68fff196812a97e06b8ec2676fe6f703b4b20aace7cb7559da`
+
 ## Not pinned
 
 - **VESA Enhanced Extended Display Identification Data Standard**
