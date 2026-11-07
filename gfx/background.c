@@ -296,6 +296,8 @@ static void serial_ms(UINT64 cycles, UINT64 tsc_per_ms)
 
 static void report(const TIMES *times, UINT64 tsc_per_ms)
 {
+    UINT64 flags = serial_lock();
+
     serial_write("nova: background drawn in ");
     serial_ms(times->drawn, tsc_per_ms);
     serial_write(", faded in over ");
@@ -307,6 +309,7 @@ static void report(const TIMES *times, UINT64 tsc_per_ms)
     serial_write(" a frame on average, ");
     serial_ms(times->busiest, tsc_per_ms);
     serial_write(" at most)\r\n");
+    serial_unlock(flags);
 }
 
 /* Show step k of the fade k / FADE_FRAMES of FADE_MS after it begins,
@@ -341,10 +344,12 @@ void background_fade_in(const BOOT_INFO *info)
     RECT box;
     PIXEL_PAGE *image, *saved;
     TIMES times;
-    UINT64 start;
+    UINT64 start, flags;
 
     if (!limb_init(&limb, screen->width, screen->height)) {
+        flags = serial_lock();
         serial_write("nova: no background for a screen this size\r\n");
+        serial_unlock(flags);
         return;
     }
     gfx_boot_bounds(screen, &info->spinner, &box);
@@ -355,9 +360,11 @@ void background_fade_in(const BOOT_INFO *info)
         start = rdtsc();
         draw_onscreen(screen, &limb);
         gfx_flush();
+        flags = serial_lock();
         serial_write("nova: background drawn in ");
         serial_ms(rdtsc() - start, info->tsc_per_ms);
         serial_write(", with no memory to fade it in\r\n");
+        serial_unlock(flags);
         return;
     }
     start = rdtsc();

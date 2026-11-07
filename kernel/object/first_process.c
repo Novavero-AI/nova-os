@@ -262,7 +262,7 @@ void first_process_run(void *boot_info)
     USER_THREAD *thread;
     ENDPOINT *kernel_end, *process_end;
     IMAGE image;
-    UINT64 stack;
+    UINT64 stack, flags;
     UINT32 observed, state, exit_code;
 
     if (!job)
@@ -281,6 +281,7 @@ void first_process_run(void *boot_info)
                         &process_end->object, CHANNEL_RIGHTS, 0),
           "the process did not start");
     object_close(&thread->object);
+    flags = serial_lock();
     serial_write("nova: first process started: image ");
     serial_hex(image.base);
     serial_write(" to ");
@@ -290,14 +291,17 @@ void first_process_run(void *boot_info)
     serial_write(", stack ");
     serial_hex(stack);
     serial_write("\r\n");
+    serial_unlock(flags);
 
     wait_one(&process->waitable, PROCESS_TERMINATED, DEADLINE_INFINITE,
              &observed);
     process_info(process, &state, &exit_code);
+    flags = serial_lock();
     serial_write("nova: first process ended: process_info reports state ");
     serial_number(state);
     serial_write(", exit code ");
     serial_number(exit_code);
     serial_write("\r\n");
+    serial_unlock(flags);
     object_close(&process->object);
 }

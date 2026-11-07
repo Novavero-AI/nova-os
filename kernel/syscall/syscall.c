@@ -534,12 +534,15 @@ static STATUS section_create_physical_call(const UINT64 *arguments,
    (ipc.md I7), which this kernel does not drive. */
 static void log_unconfined(const INTERRUPT *interrupt)
 {
+    UINT64 flags = serial_lock();
+
     serial_write("nova: interrupt: vector ");
     serial_hex(interrupt->vector);
     serial_write(" for requester ");
     resource_log_requester(interrupt->source - INTERRUPT_SOURCE_MSI);
     serial_write(" unconfined: no interrupt remapping, the device can "
                  "raise any vector\r\n");
+    serial_unlock(flags);
 }
 
 /* interrupt_create(resource, source, options): a handle, the MSI address
@@ -717,11 +720,12 @@ static STATUS initiator_release_quarantine_call(const UINT64 *arguments,
 }
 
 /* debug_write(resource, bytes, byte count). The bytes are copied whole
-   before any is written, so a call that fails writes nothing (S7). */
+   before any is written, so a call that fails writes nothing (S7), and
+   written under the port's lock, so they reach it in one piece. */
 static STATUS debug_write_call(const UINT64 *arguments, UINT64 *results)
 {
     UINT8 bytes[DEBUG_WRITE_MAX_BYTES];
-    UINT64 count = arguments[2];
+    UINT64 count = arguments[2], flags;
     OBJECT *resource;
     STATUS status = handle_get(caller_handles(), (UINT32)arguments[0],
                                TYPE_RESOURCE, RESOURCE_RIGHT_USE, &resource);
@@ -737,8 +741,11 @@ static STATUS debug_write_call(const UINT64 *arguments, UINT64 *results)
     else
         status = copy_from_user(bytes, arguments[1], count);
     object_release(resource);
-    if (status == OK)
+    if (status == OK) {
+        flags = serial_lock();
         serial_write_bytes(bytes, count);
+        serial_unlock(flags);
+    }
     return status;
 }
 

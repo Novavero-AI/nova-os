@@ -14,6 +14,16 @@ static void put(UINT8 byte)
     outb(COM1, byte);
 }
 
+UINT64 serial_lock(void)
+{
+    return save_and_disable_interrupts();
+}
+
+void serial_unlock(UINT64 flags)
+{
+    restore_interrupts(flags);
+}
+
 void serial_write(const char *s)
 {
     for (; *s; s++)

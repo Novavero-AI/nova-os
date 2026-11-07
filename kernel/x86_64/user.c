@@ -226,7 +226,10 @@ void syscall_dispatch(INTERRUPT_FRAME *frame)
    keeps the outcome one on both. */
 _Noreturn void syscall_compat(void)
 {
+    UINT64 flags = serial_lock();
+
     serial_write("nova: syscall from compatibility mode, process ended\r\n");
+    serial_unlock(flags);
     process_fault(INVALID_OPCODE_VECTOR);
 }
 
@@ -278,6 +281,8 @@ void compat_syscall_dispatch(INTERRUPT_FRAME *frame)
    ends with the vector as its exit code (docs/spec/objects.md O10). */
 _Noreturn void user_exception(const INTERRUPT_FRAME *frame)
 {
+    UINT64 flags = serial_lock();
+
     serial_write("nova: user exception ");
     serial_number(frame->vector);
     serial_write(" at rip ");
@@ -291,6 +296,7 @@ _Noreturn void user_exception(const INTERRUPT_FRAME *frame)
         serial_hex(read_cr2());
     }
     serial_write("\r\n");
+    serial_unlock(flags);
     process_fault((UINT32)frame->vector);
 }
 

@@ -95,6 +95,7 @@ STATUS initiator_create(const RESOURCE *resource, UINT64 requester,
                         INITIATOR **out)
 {
     INITIATOR *initiator;
+    UINT64 flags;
 
     if (!resource_covers(resource, RESOURCE_DMA, requester, 1))
         return ERR_OUT_OF_RANGE;
@@ -103,9 +104,11 @@ STATUS initiator_create(const RESOURCE *resource, UINT64 requester,
         return ERR_NO_MEMORY;
     object_init(&initiator->object, &initiator_type);
     initiator->requester = requester;
+    flags = serial_lock();
     serial_write("nova: dma: initiator for requester ");
     resource_log_requester(requester);
     serial_write(" unconfined: no iommu, the device reaches all memory\r\n");
+    serial_unlock(flags);
     *out = initiator;
     return OK;
 }

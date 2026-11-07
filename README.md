@@ -149,7 +149,7 @@ build gives the same bytes:
 | Image | Size | sha256 |
 |---|---|---|
 | `BOOTX64.EFI` | 29,184 | `4a30a01cfd4237a0de0be3d693e5231fcdfc4ff050e65ca81bd262b89eed8228` |
-| `kernel.exe` | 202,752 | `b90305f540a5cf367821850178f45bfae5922863f7cd13cfe661f378ffa1440d` |
+| `kernel.exe` | 203,264 | `695afc2a1178db369edfa169b9434f0f63727571e669ac8171e1d580c96872da` |
 | `init.exe` | 72,704 | `edb9ffd9b9ddb8c4c589d108db3e39f51029e5fd1c57058208cb836998261a1b` |
 | `virtblk.exe` | 15,872 | `a8eeec9d33961612a7b6a8dd5def8b9f5484ed438b07dad934c34727868cd7d0` |
 | `virtinp.exe` | 15,872 | `6eeae2fd7f9aa438f70d64b15875303de4c8a742a833d0a0da8dfd2af6258993` |
@@ -275,10 +275,10 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `7de51019e0741da75b8446b2e67bad33ff29c83945b3e5c978339483c3673e05` |
-| `disk.vhdx` | 71,303,168 | `0e4ac9d10f233ce859a1615abecac0db4c206b3e49e9c03a5accf8eaa101aa79` |
-| `chain.img` | 67,108,864 | `8329d993050ccaa885fd9ac0bf3d181744270134fdc97185be5a3f6f2a7b14c5` |
-| `chain.vhdx` | 71,303,168 | `588f11c7f4ad658e5acd1d0b4d31407ccd773a484e8e1526cc8a5f30a86495e9` |
+| `disk.img` | 67,108,864 | `478e755060d4a4a93f40a69419584b042db6918acaae4b52c0b6aa3ad4156378` |
+| `disk.vhdx` | 71,303,168 | `454f4a34b66bcf964ecde74ef429794ef25f26264f49c4a28428e5b5e2783d81` |
+| `chain.img` | 67,108,864 | `c29e8717181e64c862c83c32ecdc22a0ebc98273dfcc4939c86c7756b64f6e6c` |
+| `chain.vhdx` | 71,303,168 | `c3fd64abba406126315a5f6f2da43f4ae2b806b1db90809f354975789d076a7f` |
 
 ## Run
 
