@@ -18,7 +18,10 @@ link checked against the one nova-nix builds on Windows
 ([docs/spec/compat.md](docs/spec/compat.md)). It then enumerates PCI and
 starts the virtio block driver, `virtblk.exe`, as a user-mode process of
 its own, which reads the boot disk's partition table and the EFI System
-Partition's boot sector through its virtqueue.
+Partition's boot sector through its virtqueue, and the virtio input
+driver, `virtinp.exe`, which sends each key pressed and released as a
+message to a client, `inputlog.exe`, that logs it
+([docs/spec/input.md](docs/spec/input.md)).
 [DESIGN.md](DESIGN.md) holds the principles, the decisions made so far and
 the stages; [design/backgrounds](design/backgrounds/README.md) holds the
 background's prototypes and the check that `gfx/limb.c` draws Limb's
@@ -26,7 +29,7 @@ pixels.
 
 ## Build
 
-The five images are compiled by TinyCC at commit
+The seven images are compiled by TinyCC at commit
 cb41cbfe717e4c00d7bb70035cda5ee5f0ff9341, built twice: as a cross
 compiler that writes x86-64 PE, and as one that writes i386 PE for ntdll.
 The archive's sha256 is
@@ -77,7 +80,19 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   -I include -I native -I lib -I drivers -Wl,-subsystem=native \
   -Wl,-e=virtio_blk_main -Wl,-section-alignment=1000 \
   -Wl,-file-alignment=200 -o virtblk.exe drivers/virtio_blk.c \
-  drivers/virtio_pci.c drivers/pci.c lib/log.c native/native.S
+  drivers/virtio_driver.c drivers/virtio_pci.c drivers/pci.c lib/log.c \
+  native/native.S
+./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
+  -I include -I native -I lib -I drivers -Wl,-subsystem=native \
+  -Wl,-e=virtio_input_main -Wl,-section-alignment=1000 \
+  -Wl,-file-alignment=200 -o virtinp.exe drivers/virtio_input.c \
+  drivers/virtio_driver.c drivers/virtio_pci.c drivers/pci.c lib/log.c \
+  native/native.S
+./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
+  -I include -I native -I lib -Wl,-subsystem=native \
+  -Wl,-e=input_log_main -Wl,-section-alignment=1000 \
+  -Wl,-file-alignment=200 -o inputlog.exe clients/input_log.c lib/log.c \
+  native/native.S
 ./i386-win32-tcc -shared -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -Wl,-subsystem=native -Wl,-e=ntdll_entry \
   -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
@@ -88,22 +103,25 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
 load nova-boot, and nova-boot to load the kernel, at addresses of their
 choosing; TinyCC writes them only for a DLL-style image. `init.exe` is
 linked without it: the kernel places the first process at the image's own
-base address, and the first process places the virtio block driver,
-`virtblk.exe`, at its own. `ntdll.dll` is linked with `-shared` for its
-export table, which TinyCC writes only for a DLL, and is placed at its own
-base address too. For the native subsystem TinyCC aligns sections to 32
-bytes but still writes the 4096 and 512 byte alignments into the header,
-so the links of the kernel, `init.exe`, `virtblk.exe` and `ntdll.dll` set
-those alignments (in hexadecimal) to make their layout match. TinyCC also
-writes `ntdll.def`, its exports, which nothing reads. Each build gives the
-same bytes:
+base address, and the first process places the drivers, `virtblk.exe` and
+`virtinp.exe`, and the input driver's client, `inputlog.exe`, at their
+own. `ntdll.dll` is linked with `-shared` for its export table, which
+TinyCC writes only for a DLL, and is placed at its own base address too.
+For the native subsystem TinyCC aligns sections to 32 bytes but still
+writes the 4096 and 512 byte alignments into the header, so the links of
+the kernel, `init.exe`, the drivers, the client and `ntdll.dll` set those
+alignments (in hexadecimal) to make their layout match. TinyCC also writes
+`ntdll.def`, its exports, which nothing reads. Each build gives the same
+bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
 | `BOOTX64.EFI` | 28,160 | `04b0989e077d4ca8838dac1b3007b744025370165c1846903b010f4c3853ba44` |
 | `kernel.exe` | 195,072 | `6c75fb23901321fe0336a17f5ec053fdcd77abcbbe5b256ea242458b18108d24` |
-| `init.exe` | 43,520 | `8d2ebdda1d7eb6d5fdce8d4d27c5039f96a3c34ca94aced4641815642f2696ce` |
-| `virtblk.exe` | 14,848 | `c1bce54d00c905a867e88ed7a9cfaaf860264be5ddac929609d96a704df124dd` |
+| `init.exe` | 46,592 | `27e81f9a114b562920cbbe6d07c6fbcb1149de7bd9cf06b9672688443a555a15` |
+| `virtblk.exe` | 15,872 | `360420a6dc21766f2f9f5c32490879ec72a8ee05cff47556701d4918fabaf469` |
+| `virtinp.exe` | 15,872 | `2536fbc06c0baf1da004c9e03ec05d0bf6deb82bd423ef8f4767102a8c8d8797` |
+| `inputlog.exe` | 5,120 | `b58d1bb4a4bfce1b1da66478479fe6e14ce46e7b2e64f0fc89e32c270fa3fed7` |
 | `ntdll.dll` | 10,240 | `9a43b4e3b773c1b5a3b6eb541fd0de9c3f3675d2867d1193b707118648853d10` |
 
 ## Disk image
@@ -117,12 +135,12 @@ Partition, formatted FAT32, holding `\EFI\BOOT\BOOTX64.EFI` and in
 with only the standard library, so the host compiler or TinyCC builds it.
 
 The block below writes two disks. The system's, `disk.img` and
-`disk.vhdx`, holds in `\NOVA\` the kernel, `INIT.EXE`, `NTDLL.DLL` and
-`VIRTBLK.EXE`. The test disk, `chain.img` and `chain.vhdx`, holds the
-same files and the inputs of stage0-pe32's chain up to M1, which the
-bootstrap check reads: its seed and the files of stage0-pe32 and of the
-M2libc, M2-Planet and mescc-tools trees it builds from, at the commits
-nova-nix's stage0-pe32 package pins.
+`disk.vhdx`, holds in `\NOVA\` the kernel, `INIT.EXE`, `NTDLL.DLL`,
+`VIRTBLK.EXE`, `VIRTINP.EXE` and `INPUTLOG.EXE`. The test disk,
+`chain.img` and `chain.vhdx`, holds the same files and the inputs of
+stage0-pe32's chain up to M1, which the bootstrap check reads: its seed
+and the files of stage0-pe32 and of the M2libc, M2-Planet and mescc-tools
+trees it builds from, at the commits nova-nix's stage0-pe32 package pins.
 
 ```sh
 raw=https://raw.githubusercontent.com/Novavero-AI
@@ -161,9 +179,9 @@ m1-macro.c $mescc/M1-macro.c
 EOF
 cc -o mkimage tools/mkimage.c
 ./mkimage disk.img disk.vhdx BOOTX64.EFI kernel.exe init.exe ntdll.dll \
-  virtblk.exe
+  virtblk.exe virtinp.exe inputlog.exe
 ./mkimage chain.img chain.vhdx BOOTX64.EFI kernel.exe init.exe ntdll.dll \
-  virtblk.exe chain/*
+  virtblk.exe virtinp.exe inputlog.exe chain/*
 ```
 
 The chain's inputs are those trees' files, unmodified:
@@ -201,10 +219,10 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `32ee7156eaec9b18312556f09e2a4617a9c8a9f3f28703706aa15e470ede36aa` |
-| `disk.vhdx` | 71,303,168 | `50263131e59ce9736dac5ae442ac2b2f73dab6cd08d94650b128d9ae92304b71` |
-| `chain.img` | 67,108,864 | `e986a23f844100878916659f4ea87bf143ab24f965f5827bcc817e6245cd1fa2` |
-| `chain.vhdx` | 71,303,168 | `12639336105a7c31716dfa10667a337c17cdb6325d0ba5db1b30bdec19ae65fb` |
+| `disk.img` | 67,108,864 | `600c36915b419e7a57820636e68532e6c865ad56ab96e7514fe8d7ac3a6fdcd9` |
+| `disk.vhdx` | 71,303,168 | `2aa52b17620a4217b8c7a14c1a900b80d5b61186f843e74c3c99906f7d9bb314` |
+| `chain.img` | 67,108,864 | `f9f173d4a90b9663a341a6d49f352c3b578933b0caaed397bd8c239e8be36d65` |
+| `chain.vhdx` | 71,303,168 | `e79eb55966ffed46d1260059e8b8bc4b689f3489f65afd48cce5af9be082e670` |
 
 ## Run
 
@@ -218,8 +236,8 @@ qemu-system-x86_64 -machine q35 -m 256M \
   -drive if=pflash,format=raw,readonly=on,file=$fw/edk2-x86_64-code.fd \
   -drive if=pflash,format=raw,file=vars.fd \
   -drive if=virtio,format=raw,readonly=on,file=disk.img \
-  -net none -device virtio-rng-pci -device qemu-xhci -device usb-tablet \
-  -serial stdio
+  -net none -device virtio-rng-pci -device virtio-keyboard-pci \
+  -device qemu-xhci -device usb-tablet -serial stdio
 ```
 
 The kernel prints its lines to the terminal through the serial port,
@@ -242,10 +260,12 @@ read, and read-only, so that a boot leaves the image as built. The
 virtio-rng device gives the firmware a random number generator, which
 nova-boot asks for the seed of the kernel's generator: QEMU's default
 processor has neither RDRAND nor RDSEED, so without the device the
-kernel's generator has no seed and says so. The USB tablet
-gives the window an absolute pointer, so QEMU does not capture the
-mouse; on a Mac, `-display cocoa,zoom-to-fit=on -full-screen` gives it a
-full-screen Space.
+kernel's generator has no seed and says so. The virtio keyboard gives
+the input driver its device, so each key typed in QEMU's window prints a
+`nova-input-log:` line with its code. The USB tablet gives the window an
+absolute pointer, so QEMU does not capture the mouse; on a Mac,
+`-display cocoa,zoom-to-fit=on -full-screen` gives it a full-screen
+Space.
 
 nova-boot draws in the display's native mode. For a demo pixel for
 pixel, give the VM a display the size of the host's screen by adding

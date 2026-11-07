@@ -1,43 +1,22 @@
 /* A user-mode virtio block driver (VIRTIO 1.4 5.2) over the PCI
-   transport's modern interface (4.1). It starts from the platform
-   driver's bootstrap message (pci.h); maps its function's configuration
-   space and the BARs the virtio structures lie in (4.1.4); sets the
-   device up in the order 3.1.1 gives, with one request virtqueue (2.7)
-   in a pinned page and its used-buffer notifications on MSI-X table
-   entry 0 (4.1.5.1.2), delivered as packets on a port; and reads
-   sectors: the GPT header at LBA 1, the partition entry array it names,
-   and the first sector of the first partition, the EFI System Partition
-   (docs/spec/disk-layout.md). On a disk without a GPT it reads the MBR's
-   first partition instead. It logs what it read, resets the device,
-   releases its pins and exits. */
+   transport's modern interface (4.1). It starts as every virtio driver
+   here does (virtio_driver.h), with one request virtqueue (2.7) in a
+   pinned page, and reads sectors: the GPT header at LBA 1, the
+   partition entry array it names, and the first sector of the first
+   partition, the EFI System Partition (docs/spec/disk-layout.md). On a
+   disk without a GPT it reads the MBR's first partition instead. It
+   logs what it read, resets the device, releases its pins and exits. */
 
 #include "virtio_blk.h"
 #include "log.h"
 #include "mmio.h"
-#include "native.h"
-#include "pci.h"
-#include "virtio_pci.h"
+#include "virtio_driver.h"
 
-/* Feature bits, as bit numbers in the 64 the driver negotiates: the block
-   device's RO (5.2.3) and the reserved VERSION_1, ACCESS_PLATFORM and
-   ORDER_PLATFORM (6). The driver accepts VERSION_1, which it requires;
-   ACCESS_PLATFORM, since the addresses it gives the device are those
-   section_pin returns; ORDER_PLATFORM, since its barriers are the
-   processor's fences, which suit hardware devices (6.1); and RO. It
-   accepts nothing else. */
+/* The block device's RO feature bit (5.2.3), which the driver accepts
+   beside the reserved ones (virtio_driver.h); it accepts nothing
+   else. */
 #define FEATURE_RO 5
-#define FEATURE_VERSION_1 32
-#define FEATURE_ACCESS_PLATFORM 33
-#define FEATURE_ORDER_PLATFORM 36
-#define FEATURE_WORD_BITS 32
-#define FEATURES_ACCEPTED                                                \
-    (1ULL << FEATURE_RO | 1ULL << FEATURE_VERSION_1 |                    \
-     1ULL << FEATURE_ACCESS_PLATFORM | 1ULL << FEATURE_ORDER_PLATFORM)
-
-/* The MSI-X table entry the queue uses, and the value that leaves an
-   event without a vector (4.1.5.1.2). */
-#define QUEUE_VECTOR 0
-#define NO_VECTOR 0xffff
+#define FEATURES_ACCEPTED (1ULL << FEATURE_RO | VIRTIO_FEATURES_RESERVED)
 
 /* The request queue, 0, at QUEUE_SIZE entries, a power of 2 no larger
    than the device's maximum (4.1.5.1.3). Its three parts share the first
@@ -46,20 +25,8 @@
    the used ring at 512 (4-aligned). */
 #define REQUEST_QUEUE 0
 #define QUEUE_SIZE 16
-#define DESCRIPTOR_SIZE 16
 #define AVAIL_OFFSET 256
 #define USED_OFFSET 512
-#define DESC_ADDRESS 0
-#define DESC_LENGTH 8
-#define DESC_FLAGS 12
-#define DESC_NEXT 14
-#define DESC_F_NEXT 1
-#define DESC_F_WRITE 2
-#define RING_FLAGS 0
-#define RING_INDEX 2
-#define RING_ENTRIES 4
-#define USED_ELEMENT_SIZE 8
-#define USED_F_NO_NOTIFY 1
 
 /* A read request (5.2.6) in the second DMA page: the device-readable
    header (type, reserved, sector) at 0, the device-writable data at
@@ -79,14 +46,12 @@
 
 /* struct virtio_blk_config: capacity in 512-byte sectors (5.2.4). */
 #define CONFIG_CAPACITY 0
+#define CONFIG_SIZE 8
+#define CAPACITY_HALF_BITS 32
 
 /* How long a request may take before the driver gives up. */
 #define REQUEST_TIMEOUT_NS 5000000000ULL
 
-/* Where the driver maps its sections: from MAP_BASE up, each mapping at
-   the next free address, far above its image and below its stack. */
-#define MAP_BASE 0x0000000200000000ULL
-#define PORT_CAPACITY 1
 #define QUEUE_KEY 1
 
 /* The GPT header (UEFI 5.3.2) and partition entry (5.3.3), the protective
@@ -117,50 +82,28 @@
 #define FAT_TYPE_PREFIX "FAT"
 #define FAT_TYPE_PREFIX_SIZE 3
 
-/* The notification address must leave room for the 16-bit value written
-   there (4.1.4.4.1). */
-#define NOTIFY_WIDTH 2
-
 typedef struct {
-    UINT32 debug_log, self, initiator, irq, config_resource;
-    UINT32 bar_resource[PCI_BARS];
-    PCI_DEVICE_BOOTSTRAP device;
-} BOOTSTRAP;
-
-typedef struct {
-    volatile UINT8 *config;           /* the function's configuration space */
-    volatile UINT8 *bars[PCI_BARS];   /* the BARs mapped, or 0 */
-    volatile UINT8 *common;
-    volatile UINT8 *device_config;
-    volatile UINT8 *notify;           /* the request queue's notify address */
-    volatile UINT8 *queue;            /* the first DMA page */
-    volatile UINT8 *request;          /* the second */
-    UINT64 queue_device;              /* their device addresses */
-    UINT64 request_device;
+    VIRTIO_DRIVER virtio;
+    volatile UINT8 *notify;  /* the request queue's notify address */
+    volatile UINT8 *queue;   /* the first DMA page */
+    volatile UINT8 *request; /* the second */
+    UINT64 request_device;   /* its device address */
     UINT64 capacity;
-    UINT32 port, interrupt, pin;
+    UINT32 pin;
     UINT16 avail_index, used_seen;
     UINT32 reads, interrupts;
 } DEVICE;
 
-static BOOTSTRAP boot;
 static DEVICE device;
-static UINT64 next_map = MAP_BASE;
 
 _Noreturn static void fail(const char *what, UINT32 status)
 {
-    say("nova-virtio-blk: ");
-    say(what);
-    say(", status ");
-    say_number(status);
-    say("\r\n");
-    process_exit(VIRTIO_BLK_EXIT_FAILED);
+    virtio_driver_fail(&device.virtio, what, status);
 }
 
 static void check(UINT32 status, const char *what)
 {
-    if (status != OK)
-        fail(what, status);
+    virtio_driver_check(&device.virtio, status, what);
 }
 
 static UINT32 read32_le(const volatile UINT8 *p)
@@ -186,288 +129,49 @@ static int same_text(const volatile UINT8 *bytes, const char *text,
 }
 
 /* ------------------------------------------------------------------------
-   Bootstrap and mappings. */
-
-static void read_bootstrap(UINT32 channel)
-{
-    RECEIVED_HANDLE handles[PCI_HANDLES_MAX];
-    UINT32 byte_count, handle_count, i, next = PCI_HANDLE_BARS;
-
-    if (channel_read(channel, &boot.device, sizeof boot.device, handles,
-                     PCI_HANDLES_MAX, &byte_count, &handle_count) != OK ||
-        byte_count != sizeof boot.device || handle_count < PCI_HANDLE_BARS)
-        process_exit(VIRTIO_BLK_EXIT_FAILED);
-    boot.debug_log = handles[PCI_HANDLE_DEBUG_LOG].handle;
-    say_open(boot.debug_log);
-    boot.self = handles[PCI_HANDLE_SELF].handle;
-    boot.initiator = handles[PCI_HANDLE_INITIATOR].handle;
-    boot.irq = handles[PCI_HANDLE_IRQ].handle;
-    boot.config_resource = handles[PCI_HANDLE_CONFIG].handle;
-    for (i = 0; i < PCI_BARS; i++) {
-        boot.bar_resource[i] = HANDLE_INVALID;
-        if (boot.device.bar_size[i] && next < handle_count)
-            boot.bar_resource[i] = handles[next++].handle;
-    }
-    handle_close(channel);
-}
-
-/* Map size bytes of section, from its start, read-write at the next free
-   address in the driver, and return where. */
-static volatile UINT8 *map(UINT32 section, UINT64 size, const char *what)
-{
-    UINT64 address = next_map;
-
-    check(process_map(boot.self, section, 0, address, size,
-                      MAP_READ | MAP_WRITE),
-          what);
-    next_map += size;
-    return (volatile UINT8 *)address;
-}
-
-/* Map size bytes of device memory at base, covered by resource, uncached
-   into the driver, and return where. */
-static volatile UINT8 *map_device(UINT32 resource, UINT64 base, UINT64 size,
-                                  const char *what)
-{
-    volatile UINT8 *address;
-    UINT32 section;
-
-    check(section_create_physical(resource, base, size, CACHE_UNCACHED,
-                                  &section),
-          what);
-    address = map(section, size, what);
-    handle_close(section);
-    return address;
-}
-
-static volatile UINT8 *bar(UINT32 index)
-{
-    if (index >= PCI_BARS || !boot.device.bar_size[index])
-        fail("a virtio structure names a BAR with no memory",
-             ERR_NOT_SUPPORTED);
-    if (!device.bars[index])
-        device.bars[index] =
-            map_device(boot.bar_resource[index], boot.device.bar_base[index],
-                       boot.device.bar_size[index], "cannot map a BAR");
-    return device.bars[index];
-}
-
-/* The first virtio structure capability of each type, and the MSI-X
-   capability, from the capability list (4.1.4.1). */
-static void find_capabilities(UINT32 *vendor, UINT32 *msix)
-{
-    if (!(mmio_read16(device.config + PCI_STATUS) & PCI_STATUS_CAPABILITIES))
-        fail("the function has no capability list", ERR_NOT_SUPPORTED);
-    virtio_pci_capabilities(device.config, vendor, msix);
-}
-
-/* Where in the driver the structure capability cap describes lies, from
-   at bytes into it on, checked to hold size bytes from there within the
-   structure and within its BAR. */
-static volatile UINT8 *structure(UINT32 cap, UINT64 at, UINT64 size)
-{
-    UINT32 index = mmio_read8(device.config + cap + VIRTIO_CAP_BAR);
-    UINT64 offset = mmio_read32(device.config + cap + VIRTIO_CAP_OFFSET);
-    UINT64 length = mmio_read32(device.config + cap + VIRTIO_CAP_LENGTH);
-
-    if (at > length || size > length - at || index >= PCI_BARS ||
-        offset + at > boot.device.bar_size[index] ||
-        size > boot.device.bar_size[index] - offset - at)
-        fail("a virtio structure lies outside its BAR", ERR_OUT_OF_RANGE);
-    return bar(index) + offset + at;
-}
-
-/* ------------------------------------------------------------------------
    The device. */
-
-static void set_status(UINT8 bits)
-{
-    volatile UINT8 *status = device.common + VIRTIO_COMMON_DEVICE_STATUS;
-
-    mmio_write8(status, (UINT8)(mmio_read8(status) | bits));
-}
-
-static void reset(void)
-{
-    if (!virtio_pci_reset(device.common))
-        fail("the device did not finish its reset", ERR_TIMED_OUT);
-}
-
-static UINT64 device_features(void)
-{
-    volatile UINT8 *common = device.common;
-    UINT64 features;
-
-    mmio_write32(common + VIRTIO_COMMON_DEVICE_FEATURE_SELECT, 0);
-    features = mmio_read32(common + VIRTIO_COMMON_DEVICE_FEATURE);
-    mmio_write32(common + VIRTIO_COMMON_DEVICE_FEATURE_SELECT, 1);
-    features |= (UINT64)mmio_read32(common + VIRTIO_COMMON_DEVICE_FEATURE)
-                << FEATURE_WORD_BITS;
-    return features;
-}
-
-static void accept_features(UINT64 features)
-{
-    volatile UINT8 *common = device.common;
-
-    mmio_write32(common + VIRTIO_COMMON_DRIVER_FEATURE_SELECT, 0);
-    mmio_write32(common + VIRTIO_COMMON_DRIVER_FEATURE, (UINT32)features);
-    mmio_write32(common + VIRTIO_COMMON_DRIVER_FEATURE_SELECT, 1);
-    mmio_write32(common + VIRTIO_COMMON_DRIVER_FEATURE,
-                 (UINT32)(features >> FEATURE_WORD_BITS));
-}
 
 /* The capacity, read as two 32-bit halves until the configuration
    generation stays the same across them (2.5.1, 4.1.3.1). */
 static UINT64 read_capacity(void)
 {
+    volatile UINT8 *config = device.virtio.device_config;
     UINT32 before, after, low, high;
 
     do {
-        before = mmio_read8(device.common + VIRTIO_COMMON_CONFIG_GENERATION);
-        low = mmio_read32(device.device_config + CONFIG_CAPACITY);
-        high = mmio_read32(device.device_config + CONFIG_CAPACITY + 4);
-        after = mmio_read8(device.common + VIRTIO_COMMON_CONFIG_GENERATION);
+        before = virtio_driver_generation(&device.virtio);
+        low = mmio_read32(config + CONFIG_CAPACITY);
+        high = mmio_read32(config + CONFIG_CAPACITY + 4);
+        after = virtio_driver_generation(&device.virtio);
     } while (before != after);
-    return (UINT64)high << FEATURE_WORD_BITS | low;
+    return (UINT64)high << CAPACITY_HALF_BITS | low;
 }
 
-/* MSI-X table entry 0 gets the message the kernel allocated for the
-   function, with the function masked while the entry changes; then the
-   function is unmasked. */
-static void enable_msix(UINT32 msix, UINT64 address, UINT32 data)
+/* 3.1.1: the reset and bus mastering come with virtio_driver_open; then
+   the interrupt, the features, the capacity, two pages of DMA memory,
+   the request queue in the first, and DRIVER_OK. */
+static void start_device(UINT32 bootstrap)
 {
-    volatile UINT8 *control = device.config + msix + MSIX_CONTROL;
-    UINT32 table = mmio_read32(device.config + msix + MSIX_TABLE);
-    UINT32 index = table & MSIX_TABLE_BIR;
-    UINT32 offset = table & MSIX_TABLE_OFFSET;
-    volatile UINT8 *entry;
+    VIRTIO_DRIVER *virtio = &device.virtio;
+    UINT64 accepted, addresses[DMA_PAGES];
 
-    if (index >= PCI_BARS || offset > boot.device.bar_size[index] ||
-        MSIX_ENTRY_SIZE > boot.device.bar_size[index] - offset)
-        fail("the MSI-X table lies outside its BAR", ERR_OUT_OF_RANGE);
-    entry = bar(index) + offset + QUEUE_VECTOR * MSIX_ENTRY_SIZE;
-    mmio_write16(control, (UINT16)(mmio_read16(control) |
-                                   MSIX_CONTROL_ENABLE |
-                                   MSIX_CONTROL_MASK_ALL));
-    mmio_write64(entry + MSIX_ENTRY_ADDRESS, address);
-    mmio_write32(entry + MSIX_ENTRY_DATA, data);
-    mmio_write32(entry + MSIX_ENTRY_CONTROL, 0);
-    mmio_write16(control,
-                 (UINT16)(mmio_read16(control) & ~MSIX_CONTROL_MASK_ALL));
-}
-
-static void set_up_interrupt(UINT32 msix)
-{
-    UINT64 address;
-    UINT32 data;
-
-    if (!msix)
-        fail("the function has no MSI-X capability", ERR_NOT_SUPPORTED);
-    check(port_create(PORT_CAPACITY, &device.port), "port_create");
-    check(interrupt_create(boot.irq,
-                           INTERRUPT_SOURCE_MSI + boot.device.requester, 0,
-                           &device.interrupt, &address, &data),
-          "interrupt_create");
-    check(interrupt_bind(device.interrupt, device.port, QUEUE_KEY),
-          "interrupt_bind");
-    enable_msix(msix, address, data);
-}
-
-/* Two pages of DMA memory, both pinned for a device that reads and
-   writes them: the queue, and the request. */
-static void set_up_dma(void)
-{
-    UINT64 addresses[DMA_PAGES];
-    volatile UINT8 *mapped;
-    UINT32 section;
-
-    check(section_create(DMA_PAGES * PAGE_SIZE, 0, &section),
-          "section_create");
-    mapped = map(section, DMA_PAGES * PAGE_SIZE, "mapping the DMA pages");
-    check(section_pin(boot.initiator, section, 0, DMA_PAGES * PAGE_SIZE,
-                      PIN_DEVICE_READ | PIN_DEVICE_WRITE, addresses,
-                      &device.pin),
-          "section_pin");
-    handle_close(section);
-    device.queue = mapped;
-    device.request = mapped + PAGE_SIZE;
-    device.queue_device = addresses[0];
-    device.request_device = addresses[1];
-}
-
-/* 4.1.5.1.3: select the queue, size it, give the device its parts'
-   addresses as two 32-bit halves each (4.1.3.1) and its MSI-X entry,
-   which the device confirms by reading it back (4.1.5.1.2.2), then
-   enable it. */
-static void set_up_queue(UINT32 notify_cap)
-{
-    volatile UINT8 *common = device.common;
-    UINT32 multiplier =
-        mmio_read32(device.config + notify_cap + VIRTIO_CAP_NOTIFY_MULTIPLIER);
-    UINT32 notify_off;
-    UINT16 maximum;
-
-    mmio_write16(common + VIRTIO_COMMON_QUEUE_SELECT, REQUEST_QUEUE);
-    maximum = mmio_read16(common + VIRTIO_COMMON_QUEUE_SIZE);
-    if (maximum < QUEUE_SIZE)
-        fail("the request queue is smaller than the driver needs", maximum);
-    mmio_write16(common + VIRTIO_COMMON_QUEUE_SIZE, QUEUE_SIZE);
-    mmio_write64(common + VIRTIO_COMMON_QUEUE_DESC, device.queue_device);
-    mmio_write64(common + VIRTIO_COMMON_QUEUE_DRIVER,
-                 device.queue_device + AVAIL_OFFSET);
-    mmio_write64(common + VIRTIO_COMMON_QUEUE_DEVICE,
-                 device.queue_device + USED_OFFSET);
-    mmio_write16(common + VIRTIO_COMMON_QUEUE_MSIX_VECTOR, QUEUE_VECTOR);
-    if (mmio_read16(common + VIRTIO_COMMON_QUEUE_MSIX_VECTOR) != QUEUE_VECTOR)
-        fail("the device refused the queue's MSI-X entry", ERR_NOT_SUPPORTED);
-    mmio_write16(common + VIRTIO_COMMON_CONFIG_MSIX_VECTOR, NO_VECTOR);
-    notify_off = mmio_read16(common + VIRTIO_COMMON_QUEUE_NOTIFY_OFF);
-    device.notify = structure(notify_cap, (UINT64)notify_off * multiplier,
-                              NOTIFY_WIDTH);
-    mmio_write16(common + VIRTIO_COMMON_QUEUE_ENABLE, 1);
-}
-
-/* 3.1.1, steps 1 to 8. Bus mastering comes on only after the reset, so a
-   device a dead driver left running reaches no memory through its old
-   rings. */
-static void start_device(void)
-{
-    UINT32 vendor[VIRTIO_CAP_TYPES], msix;
-    UINT64 offered, accepted;
-
-    find_capabilities(vendor, &msix);
-    if (!vendor[VIRTIO_CAP_COMMON] || !vendor[VIRTIO_CAP_NOTIFY] ||
-        !vendor[VIRTIO_CAP_DEVICE])
-        fail("a virtio structure capability is missing", ERR_NOT_SUPPORTED);
-    device.common =
-        structure(vendor[VIRTIO_CAP_COMMON], 0, VIRTIO_COMMON_SIZE);
-    device.device_config =
-        structure(vendor[VIRTIO_CAP_DEVICE], 0, sizeof(UINT64));
-    reset();
-    mmio_write16(device.config + PCI_COMMAND,
-                 (UINT16)(mmio_read16(device.config + PCI_COMMAND) |
-                          PCI_COMMAND_BUS_MASTER));
-    set_up_interrupt(msix);
-    set_status(VIRTIO_STATUS_ACKNOWLEDGE);
-    set_status(VIRTIO_STATUS_DRIVER);
-    offered = device_features();
-    if (!(offered & 1ULL << FEATURE_VERSION_1))
-        fail("the device offers no VERSION_1", ERR_NOT_SUPPORTED);
-    accepted = offered & FEATURES_ACCEPTED;
-    accept_features(accepted);
-    set_status(VIRTIO_STATUS_FEATURES_OK);
-    if (!(mmio_read8(device.common + VIRTIO_COMMON_DEVICE_STATUS) &
-          VIRTIO_STATUS_FEATURES_OK)) {
-        set_status(VIRTIO_STATUS_FAILED);
-        fail("the device refused the features", ERR_NOT_SUPPORTED);
-    }
+    virtio_driver_open(virtio, "nova-virtio-blk", VIRTIO_BLK_EXIT_FAILED,
+                       bootstrap, CONFIG_SIZE);
+    handle_close(bootstrap);
+    virtio_driver_interrupt(virtio, QUEUE_KEY);
+    accepted = virtio_driver_negotiate(virtio, FEATURES_ACCEPTED);
     device.capacity = read_capacity();
-    set_up_dma();
-    set_up_queue(vendor[VIRTIO_CAP_NOTIFY]);
-    set_status(VIRTIO_STATUS_DRIVER_OK);
+    device.queue = virtio_driver_dma(virtio, DMA_PAGES, addresses,
+                                     &device.pin);
+    device.request = device.queue + PAGE_SIZE;
+    device.request_device = addresses[1];
+    device.notify =
+        virtio_driver_queue(virtio, REQUEST_QUEUE, QUEUE_SIZE, addresses[0],
+                            addresses[0] + AVAIL_OFFSET,
+                            addresses[0] + USED_OFFSET);
+    virtio_driver_set_status(virtio, VIRTIO_STATUS_DRIVER_OK);
     say("nova-virtio-blk: ");
-    pci_say_function(boot.device.requester);
+    pci_say_function(virtio->device.requester);
     say(" running: features ");
     say_hex(accepted);
     say(", capacity ");
@@ -480,25 +184,21 @@ static void start_device(void)
 /* ------------------------------------------------------------------------
    Requests. */
 
-static volatile UINT8 *descriptor(UINT32 index)
-{
-    return device.queue + index * DESCRIPTOR_SIZE;
-}
-
 static void set_descriptor(UINT32 index, UINT64 address, UINT32 length,
                            UINT16 flags, UINT16 next)
 {
-    volatile UINT8 *d = descriptor(index);
+    volatile UINT8 *d = device.queue + index * VIRTQ_DESCRIPTOR_SIZE;
 
-    *(volatile UINT64 *)(d + DESC_ADDRESS) = address;
-    *(volatile UINT32 *)(d + DESC_LENGTH) = length;
-    *(volatile UINT16 *)(d + DESC_FLAGS) = flags;
-    *(volatile UINT16 *)(d + DESC_NEXT) = next;
+    *(volatile UINT64 *)(d + VIRTQ_DESC_ADDRESS) = address;
+    *(volatile UINT32 *)(d + VIRTQ_DESC_LENGTH) = length;
+    *(volatile UINT16 *)(d + VIRTQ_DESC_FLAGS) = flags;
+    *(volatile UINT16 *)(d + VIRTQ_DESC_NEXT) = next;
 }
 
 static UINT16 used_index(void)
 {
-    return *(volatile UINT16 *)(device.queue + USED_OFFSET + RING_INDEX);
+    return *(volatile UINT16 *)(device.queue + USED_OFFSET +
+                                VIRTQ_RING_INDEX);
 }
 
 /* Wait for the device's notification, an interrupt packet, and
@@ -514,23 +214,19 @@ static void wait_used(void)
 
     check(clock_monotonic(&now), "clock_monotonic");
     do {
-        check(port_wait(device.port, now + REQUEST_TIMEOUT_NS, &packet),
+        check(port_wait(device.virtio.port, now + REQUEST_TIMEOUT_NS, &packet),
               "no interrupt came for a request");
         if (packet.type != PACKET_INTERRUPT || packet.key != QUEUE_KEY)
             fail("an unexpected packet came", packet.type);
         device.interrupts++;
-        check(interrupt_ack(device.interrupt), "interrupt_ack");
+        check(interrupt_ack(device.virtio.interrupt), "interrupt_ack");
     } while (used_index() == device.used_seen);
     load_fence();
 }
 
-/* Read one sector, at lba, into the request page's data (5.2.6). The
-   descriptors and the ring entry are stored before the fence and the
-   index after it, so the device sees the chain before the index exposes
-   it (2.7.13, step 4 and 2.7.13.3.1); the index is stored before the
-   fence that comes ahead of reading the device's flags (step 6,
-   2.7.13.4.1); the notification is a write of the queue's index to its
-   notify address (4.1.5.2). */
+/* Read one sector, at lba, into the request page's data (5.2.6), as a
+   chain of the three descriptors from 0 that the ring's next entry
+   names. */
 static const volatile UINT8 *read_sector(UINT64 lba)
 {
     volatile UINT8 *avail = device.queue + AVAIL_OFFSET;
@@ -544,24 +240,22 @@ static const volatile UINT8 *read_sector(UINT64 lba)
     *(volatile UINT32 *)(device.request + REQUEST_RESERVED) = 0;
     *(volatile UINT64 *)(device.request + REQUEST_SECTOR) = lba;
     device.request[STATUS_OFFSET] = REQUEST_STATUS_UNSET;
-    set_descriptor(0, device.request_device, REQUEST_HEADER_SIZE, DESC_F_NEXT,
-                   1);
+    set_descriptor(0, device.request_device, REQUEST_HEADER_SIZE,
+                   VIRTQ_DESC_F_NEXT, 1);
     set_descriptor(1, device.request_device + DATA_OFFSET, SECTOR_SIZE,
-                   DESC_F_WRITE | DESC_F_NEXT, 2);
-    set_descriptor(2, device.request_device + STATUS_OFFSET, 1, DESC_F_WRITE,
-                   0);
-    *(volatile UINT16 *)(avail + RING_ENTRIES + slot * sizeof(UINT16)) = 0;
-    store_fence();
+                   VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT, 2);
+    set_descriptor(2, device.request_device + STATUS_OFFSET, 1,
+                   VIRTQ_DESC_F_WRITE, 0);
+    *(volatile UINT16 *)(avail + VIRTQ_RING_ENTRIES +
+                         slot * VIRTQ_AVAIL_ENTRY_SIZE) = 0;
     device.avail_index++;
-    *(volatile UINT16 *)(avail + RING_INDEX) = device.avail_index;
-    memory_fence();
-    if (!(*(volatile UINT16 *)(used + RING_FLAGS) & USED_F_NO_NOTIFY))
-        mmio_write16(device.notify, REQUEST_QUEUE);
+    virtio_driver_publish(avail, used, device.notify, REQUEST_QUEUE,
+                          device.avail_index);
     wait_used();
-    element = used + RING_ENTRIES + device.used_seen % QUEUE_SIZE *
-                                        USED_ELEMENT_SIZE;
+    element = used + VIRTQ_RING_ENTRIES +
+              device.used_seen % QUEUE_SIZE * VIRTQ_USED_ELEMENT_SIZE;
     device.used_seen++;
-    if (*(volatile UINT32 *)element != 0 ||
+    if (*(volatile UINT32 *)(element + VIRTQ_USED_ID) != 0 ||
         device.request[STATUS_OFFSET] != REQUEST_STATUS_OK)
         fail("a read request failed", device.request[STATUS_OFFSET]);
     device.reads++;
@@ -672,19 +366,12 @@ _Noreturn void virtio_blk_main(UINT32 bootstrap, UINT64 argument)
     UINT64 start;
 
     (void)argument;
-    read_bootstrap(bootstrap);
-    device.config = map_device(boot.config_resource, boot.device.config,
-                               PCI_CONFIG_SIZE,
-                               "cannot map the configuration space");
-    mmio_write16(device.config + PCI_COMMAND,
-                 (UINT16)(mmio_read16(device.config + PCI_COMMAND) |
-                          PCI_COMMAND_MEMORY | PCI_COMMAND_INTX_DISABLE));
-    start_device();
+    start_device(bootstrap);
     start = first_partition();
     if (!start)
         fail("the disk names no partition", ERR_NOT_SUPPORTED);
     say_boot_sector(start);
-    reset();
+    virtio_driver_reset(&device.virtio);
     check(pin_release(device.pin), "pin_release");
     say("nova-virtio-blk: ");
     say_number(device.reads);

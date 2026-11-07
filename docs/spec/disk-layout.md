@@ -84,6 +84,8 @@ Both disks hold:
 \NOVA\INIT.EXE           the first user process
 \NOVA\NTDLL.DLL          ntdll for 32-bit processes
 \NOVA\VIRTBLK.EXE        the virtio block driver
+\NOVA\VIRTINP.EXE        the virtio input driver
+\NOVA\INPUTLOG.EXE       the input driver's client
 ```
 
 The test disk adds the inputs of the bootstrap check, the chain the first
@@ -128,6 +130,8 @@ a directory takes as many clusters as its entries fill:
 | `\NOVA\INIT.EXE` | `INIT    EXE` |
 | `\NOVA\NTDLL.DLL` | `NTDLL   DLL` |
 | `\NOVA\VIRTBLK.EXE` | `VIRTBLK EXE` |
+| `\NOVA\VIRTINP.EXE` | `VIRTINP EXE` |
+| `\NOVA\INPUTLOG.EXE` | `INPUTLOGEXE` |
 | `\NOVA\HEX0SEED.EXE` | `HEX0SEEDEXE` |
 | `\NOVA\` *name*`.`*ext* | *name* padded to 8 bytes with spaces, then *ext* padded to 3 |
 

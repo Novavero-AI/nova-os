@@ -17,6 +17,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [replay.md](replay.md) | Every nondeterministic input a process can receive, and how a recording captures or excludes it |
 | [compat.md](compat.md) | How a 32-bit Windows program runs: its process, ntdll, paths and the stand-in file protocol |
 | [storage.md](storage.md) | The directory protocol and per-process views, the native file system, the store at `/store`, its builds and garbage collection, and the first milestone |
+| [input.md](input.md) | The virtio input driver, the key events it sends a client, its report to the platform driver and how that supervises it |
 
 ## Firmware and platform
 
@@ -418,10 +419,31 @@ April 8, 2026 (OASIS).
 - Access: free download, under the Non-Assertion Mode of the OASIS IPR
   Policy.
 - sha256: `497b7b989b5161444e87866c264a46be90911b8f4738eadf4dd4f52eb37c8727`
-- Used by: drivers for QEMU's virtio devices: the virtio block driver
-  (`drivers/virtio_blk.c`), for the PCI transport (4.1), split
-  virtqueues (2.7) and the block device (5.2); [storage.md](storage.md),
-  for when a block write is stable (5.2.6.2).
+- Used by: drivers for QEMU's virtio devices, for the PCI transport
+  (4.1) and split virtqueues (2.7) (`drivers/virtio_driver.c`): the
+  virtio block driver (`drivers/virtio_blk.c`), for the block device
+  (5.2), and the virtio input driver (`drivers/virtio_input.c`,
+  [input.md](input.md)), for the input device (5.8);
+  [storage.md](storage.md), for when a block write is stable (5.2.6.2).
+
+**Linux input subsystem**, tag `v7.3`, commit
+`c03c1a14507dfaf8b856c2608f9ac216021fc222`: the event codes header,
+`include/uapi/linux/input-event-codes.h`, and the event codes
+documentation, `Documentation/input/event-codes.rst`. VIRTIO 1.4 5.8
+defers to them for the meaning of an input event.
+
+- Documents: <https://raw.githubusercontent.com/torvalds/linux/v7.3/include/uapi/linux/input-event-codes.h>,
+  <https://raw.githubusercontent.com/torvalds/linux/v7.3/Documentation/input/event-codes.rst>
+- Access: free. The header is GPL-2.0-only with the Linux syscall note,
+  the documentation GPL-2.0; [input.md](input.md) cites their values
+  and copies none of their text.
+- sha256: `c51a642306313045e83b853c729902eadf50856c3af5e260bbfc762e54e798ae`
+  (header) and
+  `09e7dab4c380a6554133553114fcf805c3c3be0df4bf2ea991ebe729fcee5d36`
+  (documentation)
+- Used by: [input.md](input.md): the event type `EV_KEY` (1) and the key
+  codes (the header); a key event's values, 0 released, 1 pressed and 2
+  repeated (the documentation, `EV_KEY`).
 
 **eXtensible Host Controller Interface for Universal Serial Bus (xHCI)
 Requirements Specification**, revision 2.0, October 2025, document
