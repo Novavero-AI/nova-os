@@ -13,6 +13,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [objects.md](objects.md) | The kernel's object types, handles and access rights, the namespace, waiting and object lifetime |
 | [ipc.md](ipc.md) | Channels and ports, how user-mode drivers reach interrupts, device memory and DMA, and asynchronous I/O requests |
 | [syscalls.md](syscalls.md) | The x86-64 system-call entry, its register convention, error codes and the first calls |
+| [replay.md](replay.md) | Every nondeterministic input a process can receive, and how a recording captures or excludes it |
 
 ## Firmware and platform
 
