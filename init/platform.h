@@ -8,6 +8,7 @@
 
 #include "native.h"
 #include "pci.h"
+#include "program.h"
 
 typedef struct {
     UINT32 debug_log; /* the root system resource */
@@ -56,6 +57,21 @@ UINT32 platform_driver_handles(const PLATFORM *platform,
    the one interrupt vector a driver takes, as I10 has a supervisor do;
    HANDLE_INVALID, logged, if it cannot be made. */
 UINT32 platform_driver_job(const PLATFORM *platform);
+
+/* Lay out a program the supervisor keeps running, with its bootstrap
+   message written and its other messages queued: on OK, *program is
+   loaded, not started, and *bootstrap the end of its bootstrap channel
+   it is to start with; otherwise nothing is left open, and the status
+   says why, which the supervisor logs. */
+typedef UINT32 (*PLATFORM_LOAD)(const PLATFORM *platform, PROGRAM *program,
+                                UINT32 *bootstrap);
+
+/* Start the program load lays out, which log lines call name, and keep
+   it running for the life of the system: the supervisor watches it and
+   starts it again with load when it ends, as the restart policy allows.
+   Returns 1 if it started; 0, logged, if it did not and was given up. */
+int platform_keep(const PLATFORM *platform, const char *name,
+                  PLATFORM_LOAD load);
 
 /* Supervise what platform_start left running for the life of the
    system: restart a driver or its client that ends, as the policy

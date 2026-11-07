@@ -16,8 +16,10 @@
    \nova\console.exe, whose bootstrap message console.c writes
    (docs/spec/input.md, docs/spec/console.md).
 
-   init supervises the three for the life of the system (ipc.md I10). It
-   waits for them through one port, on which a watch of each one's
+   init supervises the three for the life of the system (ipc.md I10),
+   and the programs it keeps running that are not drivers, the accounts
+   service and login among them (platform_keep). It waits for them
+   through one port, on which a watch of each one's
    process queues a packet when it ends, and a watch of the input
    driver's bootstrap channel one when it reports. One that ends, or does
    not start, is started again as the restart policy below allows, a
@@ -96,11 +98,12 @@ static const JOB_LIMITS driver_limits = {DRIVER_INTERRUPT_VECTORS};
 #define EVENT_REPORTED 1
 
 /* What a child does once started: a driver that does its work and ends,
-   one that reports with an endpoint and runs on, or that driver's
-   client. */
+   one that reports with an endpoint and runs on, that driver's client,
+   or a program kept running that drives nothing. */
 #define KIND_FINISHES 0
 #define KIND_REPORTS 1
 #define KIND_CLIENT 2
+#define KIND_PROGRAM 3
 
 /* How a child stands: not started, or not to be; started, with what it
    was started for still awaited, its end for one that finishes and its
@@ -143,11 +146,13 @@ static SEGMENT segment;
    starts numbers its starts, for its packets' keys; restarted is the
    time of its last restart, if it has had one. client_start, for a
    driver that reports, is the start of the client its endpoint went to
-   since its own last start, or 0. */
+   since its own last start, or 0. A program kept running is laid out by
+   its load. */
 typedef struct {
     const char *name;
     const char *file;
     UINT32 kind;
+    PLATFORM_LOAD load;
     FUNCTION *function;
     PCI_DEVICE_BOOTSTRAP device;
     UINT32 initiator;
@@ -162,7 +167,12 @@ typedef struct {
 #define CHILD_BLOCK 0
 #define CHILD_INPUT 1
 #define CHILD_CLIENT 2
-#define CHILDREN 3
+
+/* The programs platform_keep keeps running take the places after the
+   drivers' and the console's: the accounts service and login. */
+#define CHILD_FIRST_PROGRAM 3
+#define PROGRAMS_MAX 2
+#define CHILDREN (CHILD_FIRST_PROGRAM + PROGRAMS_MAX)
 
 static FOUND found_functions;
 static CHILD children[CHILDREN] = {
@@ -706,6 +716,35 @@ static int start_client(const PLATFORM *platform, CHILD *child)
     return 1;
 }
 
+/* Start child, a program kept running, as its load lays it out.
+   Returns 1 with its process in child; 0, logged, with nothing left
+   open, if it did not start. */
+static int start_program(const PLATFORM *platform, CHILD *child)
+{
+    PROGRAM program;
+    UINT32 bootstrap = HANDLE_INVALID;
+    UINT32 status = child->load(platform, &program, &bootstrap);
+
+    if (status == OK) {
+        say_child("starting the ", child, "\r\n");
+        status = watch(child, program.process, PROCESS_TERMINATED,
+                       EVENT_ENDED);
+        if (status == OK)
+            status = program_start(&program, bootstrap);
+        if (status != OK) {
+            close_if_open(&bootstrap);
+            close_if_open(&program.thread);
+            close_if_open(&program.process);
+        }
+    }
+    if (status != OK) {
+        say_status("cannot start the ", child, "", status);
+        return 0;
+    }
+    child->process = program.process;
+    return 1;
+}
+
 /* ------------------------------------------------------------------------
    The restart policy. */
 
@@ -769,17 +808,26 @@ static int restarting(CHILD *child)
 }
 
 /* Start child, and again while it does not start and the policy allows.
-   A driver that reports is awaited, one that finishes too; a client
-   runs. */
+   A driver that reports is awaited, one that finishes too; a client and
+   a program kept running run. */
 static void launch(const PLATFORM *platform, CHILD *child)
 {
+    int started;
+
     for (;;) {
         child->starts++;
         child->client_start = 0;
-        if (child->kind == KIND_CLIENT ? start_client(platform, child)
-                                       : start_driver(platform, child)) {
-            child->state = child->kind == KIND_CLIENT ? STATE_RUNNING
-                                                      : STATE_STARTING;
+        if (child->kind == KIND_CLIENT)
+            started = start_client(platform, child);
+        else if (child->kind == KIND_PROGRAM)
+            started = start_program(platform, child);
+        else
+            started = start_driver(platform, child);
+        if (started) {
+            child->state = child->kind == KIND_CLIENT ||
+                                   child->kind == KIND_PROGRAM
+                               ? STATE_RUNNING
+                               : STATE_STARTING;
             return;
         }
         if (!stopped(platform, child) || !restarting(child))
@@ -995,6 +1043,28 @@ int platform_start(const PLATFORM *platform)
     say_number(status);
     say("\r\n");
     return 0;
+}
+
+int platform_keep(const PLATFORM *platform, const char *name,
+                  PLATFORM_LOAD load)
+{
+    CHILD *child = 0;
+    UINT32 i;
+
+    for (i = CHILD_FIRST_PROGRAM; i < CHILDREN && !child; i++)
+        if (!children[i].name)
+            child = &children[i];
+    if (!child) {
+        say("nova-init: no room to keep the ");
+        say(name);
+        say(" running\r\n");
+        return 0;
+    }
+    child->name = name;
+    child->kind = KIND_PROGRAM;
+    child->load = load;
+    launch(platform, child);
+    return child->state == STATE_RUNNING;
 }
 
 UINT32 platform_supervise(const PLATFORM *platform)

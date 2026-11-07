@@ -68,11 +68,24 @@ UINT8 *map_into_init_at(UINT32 section, UINT64 address, UINT64 size,
    volume holds none of the chain's inputs, 0 if not. */
 int chain_run(UINT32 job);
 
+/* The store service and the namespace server, which store_run starts
+   and leaves running for the life of the system, through init's
+   channels to them: the namespace's root, with every right, and the
+   store service's control channel, with CLOSURE. init keeps both, and
+   opens through them what it gives the programs it starts after
+   startup. */
+typedef struct {
+    UINT32 names;
+    UINT32 control;
+} STORE_SERVICES;
+
 /* Start the store service over image and the namespace server, publish
    /store, and run the test program from /store in job with a view of
    its closure (store.c), creating each program's debug log from
-   debug_log. Returns 1 if the program passed its checks and both
-   services ended once init closed its channels to them, 0 if not. */
-int store_run(UINT32 job, UINT32 debug_log, const BOOT_FILE_VIEW *image);
+   debug_log. Returns 1, with init's channels to the two services, which
+   run on, in *services, if the program passed its checks; 0, with both
+   HANDLE_INVALID, if not. */
+int store_run(UINT32 job, UINT32 debug_log, const BOOT_FILE_VIEW *image,
+              STORE_SERVICES *services);
 
 #endif

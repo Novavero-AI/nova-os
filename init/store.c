@@ -9,11 +9,12 @@
    namespace it finds the test program by path, asks the store service
    for the program's closure directory, and starts the program with a
    view of that directory under /store and nothing else (F5), and with
-   one argument, a store path outside the closure. It reads the
-   program's exit code, closes its own channels to both services, which
-   end once no channel to them is left, and waits for them. While the
-   namespace server runs, the data disk's /data and /users are published
-   beside /store and checked (data.c). */
+   one argument, a store path outside the closure, and reads the
+   program's exit code. Both services run on, for the life of the
+   system, and init keeps its channels to them (STORE_SERVICES): login
+   and its sessions reach /store, /data and /users through them. The
+   data disk's /data and /users are published beside /store and checked
+   (data.c). */
 
 #include "init.h"
 #include "data.h"
@@ -42,11 +43,6 @@
 /* What the program's view grants: read and list its closure, and map
    its files executable, which a launcher does for it. */
 #define CLOSURE_RIGHTS (IO_RIGHT_READ | IO_RIGHT_EXECUTE | IO_RIGHT_LIST)
-
-typedef struct {
-    UINT32 process;
-    const char *name;
-} SERVICE;
 
 static UINT8 message[CHANNEL_MAX_BYTES];
 
@@ -483,23 +479,23 @@ static UINT32 start_hello(UINT32 job, UINT32 debug_log, const VIEW *view,
                  LAUNCH_FIRST_DIRECTORY + 1);
 }
 
-int store_run(UINT32 job, UINT32 debug_log, const BOOT_FILE_VIEW *image)
+int store_run(UINT32 job, UINT32 debug_log, const BOOT_FILE_VIEW *image,
+              STORE_SERVICES *services)
 {
     STORE_IMAGE store_image;
-    SERVICE store, names;
     IO_ATTRIBUTES attributes;
     char outside[LAUNCH_PREFIX_MAX + STORE_BASE_NAME_MAX];
     UINT32 control, store_root, root = HANDLE_INVALID, closure, hello;
-    UINT32 status = OK, store_exit, names_exit = 0, hello_exit = 0;
+    UINT32 store, names = HANDLE_INVALID, status = OK, hello_exit = 0;
 
-    store.name = "the store service";
-    names.name = "the namespace server";
-    names.process = HANDLE_INVALID;
+    services->names = HANDLE_INVALID;
+    services->control = HANDLE_INVALID;
     namespace_view.count = 0;
-    store.process =
+    store =
         start_store(job, debug_log, image, &store_image, &control, &store_root);
-    if (store.process == HANDLE_INVALID)
+    if (store == HANDLE_INVALID)
         return 0;
+    handle_close(store);
     if (!join(program_path, sizeof program_path, STORE_DIRECTORY,
               store_image.boot_name, store_image.boot_name_length,
               "/" NAMESPACE_PROGRAM) ||
@@ -507,10 +503,12 @@ int store_run(UINT32 job, UINT32 debug_log, const BOOT_FILE_VIEW *image)
               store_image.boot_name_length, ""))
         status = ERR_OUT_OF_RANGE;
     if (status == OK) {
-        names.process =
+        names =
             start_namespace(job, debug_log, store_root, program_path, &root);
-        if (names.process == HANDLE_INVALID)
+        if (names == HANDLE_INVALID)
             status = ERR_BAD_STATE;
+        else
+            handle_close(names);
     }
     if (status == OK)
         status = publish(root, STORE_NAME, &store_root);
@@ -548,12 +546,13 @@ int store_run(UINT32 job, UINT32 debug_log, const BOOT_FILE_VIEW *image)
     }
     if (store_root != HANDLE_INVALID)
         handle_close(store_root);
-    if (root != HANDLE_INVALID)
-        handle_close(root);
-    handle_close(control);
-    if (names.process != HANDLE_INVALID)
-        names_exit = end_of(names.process, names.name);
-    store_exit = end_of(store.process, store.name);
-    return hello_exit == HELLO_EXIT_PASSED && names_exit == SERVICE_EXIT_DONE &&
-           store_exit == SERVICE_EXIT_DONE;
+    if (hello_exit != HELLO_EXIT_PASSED) {
+        if (root != HANDLE_INVALID)
+            handle_close(root);
+        handle_close(control);
+        return 0;
+    }
+    services->names = root;
+    services->control = control;
+    return 1;
 }

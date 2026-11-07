@@ -9,10 +9,13 @@
    drivers as the platform driver (platform.c). Then it reports to the
    kernel on its bootstrap channel that its startup is done
    (docs/spec/boot-protocol.md, Startup done), hands the display to the
-   console once the kernel releases it (console.c), and runs on as the
-   drivers' supervisor (ipc.md I10). Before the store service it starts
-   the data disk's file system service, whose /data and /users the
-   namespace then publishes beside /store (data.c).
+   console once the kernel releases it (console.c), starts the accounts
+   service and login (login_start.c), and runs on as the supervisor of
+   the drivers, the console and those two (ipc.md I10). Before the store
+   service it starts the data disk's file system service, whose /data
+   and /users the namespace then publishes beside /store (data.c). The
+   store service and the namespace server run on after startup, and
+   init keeps its channels to them (STORE_SERVICES).
    A failed check is logged, if the log is reachable, and ends the
    process with EXIT_CHECK_FAILED, with no report, which the kernel reads
    with process_info and logs; so does EXIT_SUPERVISION_FAILED, if
@@ -21,6 +24,7 @@
 #include "init.h"
 #include "console.h"
 #include "data.h"
+#include "login_start.h"
 #include "platform.h"
 
 #define EXIT_CHECK_FAILED 1
@@ -67,6 +71,7 @@ static UINT64 scratch = SCRATCH_BASE;
 static BOOT_FILE_VIEW files[BOOT_FILES_MAX];
 static UINT32 file_count;
 static BOOT_FILE_VIEW store_image;
+static STORE_SERVICES services;
 
 static int lower(int c)
 {
@@ -328,13 +333,14 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     check_watches();
     check_clock();
     data_start(&platform, job);
-    check(store_run(job, debug_log, &store_image),
+    check(store_run(job, debug_log, &store_image, &services),
           "the test program did not pass from /store");
     check(chain_run(job), "the seed chain did not build nova-nix's links");
     check(platform_start(&platform), "the platform driver's startup failed");
     say("nova-init: checks passed\r\n");
     report_startup_done(bootstrap);
     console_start(&platform, bootstrap);
+    login_start(&platform, &services);
     status = platform_supervise(&platform);
     say("nova-init: supervision stopped, status ");
     say_number(status);

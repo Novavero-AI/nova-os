@@ -5,14 +5,15 @@
    one the next display and sessions go to. The display goes only after
    the kernel has released it, so a console started before the release
    gets it from console_start, and one started after from
-   console_started. */
+   console_started, which also gives login a session on it
+   (login_start.c); login's first session comes with its own start. */
 
 #include "console.h"
 #include "console_protocol.h"
 #include "init.h"
 #include "input_protocol.h"
+#include "login_start.h"
 
-#define DEMO_FILE "conecho.exe"
 #define PIXEL_BYTES 4
 
 /* The rights each handle the console gets travels with: the debug log
@@ -26,9 +27,6 @@
     (CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT)
 #define FRAMEBUFFER_RIGHTS RESOURCE_RIGHT_USE
 
-/* A program's bootstrap channel queues the one message it is sent. */
-#define PROGRAM_CHANNEL_CAPACITY 1
-
 static UINT32 control = HANDLE_INVALID;
 static int released;
 
@@ -39,13 +37,6 @@ static void say_status(const char *what, UINT32 status)
     say(", status ");
     say_number(status);
     say("\r\n");
-}
-
-static void close_if_open(UINT32 *handle)
-{
-    if (*handle != HANDLE_INVALID)
-        handle_close(*handle);
-    *handle = HANDLE_INVALID;
 }
 
 static void close_handles(HANDLE_TRANSFER *handles, UINT32 count)
@@ -122,57 +113,6 @@ UINT32 console_session(void)
     return HANDLE_INVALID;
 }
 
-/* Start the demo client in the root job with a session; it runs
-   unsupervised, and ends when its session does. */
-static void start_demo(const PLATFORM *platform)
-{
-    const BOOT_FILE_VIEW *file = boot_file(DEMO_FILE);
-    HANDLE_TRANSFER handles[CONSOLE_PROGRAM_HANDLES];
-    PROGRAM program;
-    UINT32 mine = HANDLE_INVALID, theirs = HANDLE_INVALID, transaction = 0;
-    UINT32 status;
-
-    if (!file) {
-        say("nova-init: no \\nova\\" DEMO_FILE ", the console's demo "
-            "client\r\n");
-        return;
-    }
-    program.process = HANDLE_INVALID;
-    program.thread = HANDLE_INVALID;
-    handles[CONSOLE_PROGRAM_DEBUG_LOG].handle = HANDLE_INVALID;
-    handles[CONSOLE_PROGRAM_DEBUG_LOG].rights = CONSOLE_LOG_RIGHTS;
-    handles[CONSOLE_PROGRAM_SESSION].handle = console_session();
-    handles[CONSOLE_PROGRAM_SESSION].rights = CONSOLE_SESSION_RIGHTS;
-    status = handles[CONSOLE_PROGRAM_SESSION].handle == HANDLE_INVALID
-                 ? ERR_BAD_STATE
-                 : load_boot_file(platform->job, file, &program);
-    if (status == OK)
-        status = resource_create(platform->debug_log,
-                                 SYSTEM_PRIVILEGE_DEBUG_LOG, 1,
-                                 &handles[CONSOLE_PROGRAM_DEBUG_LOG].handle);
-    if (status == OK)
-        status = channel_create(PROGRAM_CHANNEL_CAPACITY, &mine, &theirs);
-    if (status == OK)
-        status = channel_write(mine, &transaction,
-                               CONSOLE_PROGRAM_MESSAGE_SIZE, handles,
-                               CONSOLE_PROGRAM_HANDLES);
-    if (status != OK)
-        close_handles(handles, CONSOLE_PROGRAM_HANDLES);
-    if (status == OK)
-        status = program_start(&program, theirs);
-    if (status == OK)
-        theirs = HANDLE_INVALID;
-    close_if_open(&theirs);
-    close_if_open(&mine);
-    close_if_open(&program.thread);
-    close_if_open(&program.process);
-    if (status != OK) {
-        say_status("the console's demo client did not start", status);
-        return;
-    }
-    say("nova-init: started \\nova\\" DEMO_FILE " on the console\r\n");
-}
-
 UINT32 console_bootstrap(const PLATFORM *platform, UINT32 process,
                          UINT32 channel)
 {
@@ -214,7 +154,7 @@ void console_started(const PLATFORM *platform)
     if (!released)
         return;
     send_display(platform);
-    start_demo(platform);
+    login_console_started();
 }
 
 void console_start(const PLATFORM *platform, UINT32 bootstrap)
@@ -235,5 +175,4 @@ void console_start(const PLATFORM *platform, UINT32 bootstrap)
         return;
     }
     send_display(platform);
-    start_demo(platform);
 }

@@ -98,13 +98,4 @@ _Static_assert(sizeof(CONSOLE_SETUP) == CONSOLE_SETUP_SIZE,
 #define CONSOLE_SESSION_RIGHTS                                            \
     (CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT | RIGHT_TRANSFER)
 
-/* ------------------------------------------------------------------------
-   A program the first process starts on the console (init/console.h):
-   its bootstrap message is CONSOLE_PROGRAM_MESSAGE_SIZE bytes, a
-   transaction ID of 0, and these handles in this order. */
-#define CONSOLE_PROGRAM_MESSAGE_SIZE 4
-#define CONSOLE_PROGRAM_DEBUG_LOG 0
-#define CONSOLE_PROGRAM_SESSION 1 /* with CONSOLE_SESSION_RIGHTS */
-#define CONSOLE_PROGRAM_HANDLES 2
-
 #endif

@@ -434,7 +434,7 @@ takes the next, so:
   system, which give it console sessions and `/data` and `/users`. The
   store service and the namespace server run on after its startup, and
   it keeps its channels to them, through which login reaches `/store`.
-  Login replaces the console's demo client
+  Login is the console's program
   ([console.md C2](console.md#c2-starting-the-console)).
 - **The store service:** a control channel opens another through an
   open of the empty path, so that each start of login gets its own.

@@ -87,15 +87,12 @@ A program gets a session from the first process: it creates a channel
 of `CONSOLE_SESSION_CAPACITY` messages, sends one end to the console and
 passes the other to the program with `CONSOLE_SESSION_RIGHTS`, which
 include `TRANSFER`, so that the program can hand it on
-(`console_session` in `init/console.h`). The program's bootstrap message
-is `CONSOLE_PROGRAM_MESSAGE_SIZE` (4) bytes, a transaction ID of 0, and
-two handles: the debug log and its session. At the end of startup,
-after the release, the first process starts `\nova\conecho.exe`, a
-demo client that writes a greeting, echoes each line it reads and logs
-its length (never its bytes), and reads a line without echo when the
-line is `secret`, logging nothing of it. A console that
-ends closes every session; when the platform driver restarts it, the
-first process starts the demo client again with a new session.
+(`console_session` in `init/console.h`). The program on the console is
+login ([accounts.md](accounts.md) A6, A7), which the first process
+starts after the release, with a session, and supervises. A console
+that ends closes every session; when the platform driver restarts it,
+the first process gives login a session on the new console, and login
+takes it in place of the one that closed.
 
 - **Why the keyboard's client:** the console is where keys are typed,
   and the platform driver already supervises the client and hands it a
