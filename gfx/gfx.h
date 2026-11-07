@@ -27,6 +27,18 @@ typedef struct {
     INT64 head;
 } SPINNER;
 
+/* Pixels from (left, top) up to but not including (right, bottom). */
+typedef struct {
+    INT64 left, top, right, bottom;
+} RECT;
+
+/* The screen's pixel value for the sRGB codes r, g and b, 0..255. */
+UINT32 gfx_pixel(const SCREEN *screen, INT64 r, INT64 g, INT64 b);
+
+/* The sRGB code whose light mixes the light of codes from and to, to's
+   weighted by weight of total and from's by the rest. */
+INT64 gfx_cross_fade(INT64 from, INT64 to, INT64 weight, INT64 total);
+
 void gfx_clear(const SCREEN *screen);
 
 /* Draw the wordmark and place the spinner beneath it. */
@@ -34,5 +46,10 @@ void gfx_boot_screen(const SCREEN *screen, SPINNER *spinner);
 
 /* Draw the spinner's current frame and advance its head. */
 void gfx_spinner_step(const SCREEN *screen, SPINNER *spinner);
+
+/* The part of the screen the boot screen draws on, clipped to the screen:
+   every pixel outside it is black. */
+void gfx_boot_bounds(const SCREEN *screen, const SPINNER *spinner,
+                     RECT *bounds);
 
 #endif

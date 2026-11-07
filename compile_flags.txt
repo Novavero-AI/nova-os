@@ -4,3 +4,4 @@
 -Iinclude
 -Igfx
 -Iboot
+-Ikernel

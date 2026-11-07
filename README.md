@@ -7,10 +7,12 @@ seed and compared.
 
 It boots in a UEFI virtual machine. nova-boot, the loader, draws the boot
 screen, loads the kernel from `\nova\kernel.exe`, exits the firmware's boot
-services and jumps to the kernel, which keeps the boot screen's spinner
-turning and reports itself on the first serial port.
+services and jumps to the kernel, which reports itself on the first serial
+port and, once started, fades the boot screen into the desktop background.
 [DESIGN.md](DESIGN.md) holds the principles, the decisions made so far and
-the stages.
+the stages; [design/backgrounds](design/backgrounds/README.md) holds the
+background's prototypes and the check that `gfx/limb.c` draws Limb's
+pixels.
 
 ## Build
 
@@ -31,8 +33,8 @@ cc -o x86_64-win32-tcc -I cfg -I tinycc-$rev \
   -I include -I gfx -I boot -Wl,-subsystem=efiapp -Wl,-e=efi_main \
   -o BOOTX64.EFI boot/nova-boot.c boot/tables.c boot/switch.S gfx/gfx.c
 ./x86_64-win32-tcc -shared -nostdlib -nostdinc -I tinycc-$rev/include \
-  -I include -I gfx -I boot -Wl,-subsystem=native -Wl,-e=kernel_main \
-  -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
+  -I include -I gfx -I boot -I kernel -Wl,-subsystem=native \
+  -Wl,-e=kernel_main -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
   -o kernel.exe kernel/main.c kernel/x86_64/arch.c kernel/x86_64/gdt.c \
   kernel/x86_64/idt.c kernel/x86_64/apic.c kernel/x86_64/paging.c \
   kernel/x86_64/serial.c kernel/x86_64/clock.c kernel/x86_64/context.c \
@@ -40,7 +42,7 @@ cc -o x86_64-win32-tcc -I cfg -I tinycc-$rev \
   kernel/mm/page.c kernel/mm/page_test.c kernel/sched/thread.c \
   kernel/sched/wait.c kernel/sched/sched_test.c kernel/random/chacha20.c \
   kernel/random/sha256.c kernel/random/generator.c kernel/random/random.c \
-  kernel/random/random_test.c gfx/gfx.c
+  kernel/random/random_test.c gfx/gfx.c gfx/limb.c gfx/background.c
 ```
 
 `-shared` makes TinyCC write base relocations, which the firmware needs to
@@ -53,8 +55,8 @@ gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `BOOTX64.EFI` | 23,040 | `e6c75ca8b843d83ed5c370281004f9640f68d0cb4cb0732c6001825adc6d2b9f` |
-| `kernel.exe` | 50,176 | `6c7fdd5de41f8a8d2a8de4d5f9f55134c77994f6fa4f6e405e5a0b8a5b9cab28` |
+| `BOOTX64.EFI` | 24,064 | `7620901be7ebf6a01676fb6be221f6a8a59ea4bae078fd3eb3829aeb4fc16f7c` |
+| `kernel.exe` | 59,904 | `8dcebc1bf856f5982f245b74636a2f4c8b91af9ea55f5b01e457992fc5d3c030` |
 
 ## Disk image
 
@@ -74,8 +76,8 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `383e386a45a9d9e9d01d22acf53cbe3467dc6ef6d5520b11d50a29ccefb83790` |
-| `disk.vhdx` | 71,303,168 | `2b10365cc12619416edcb7567f868ba1a4776285e41c1007bdb63818a3604171` |
+| `disk.img` | 67,108,864 | `908d5292bdb3aeccffd05556082f1eb0155b47bc0c1368d18e1c0d8921aeb9cd` |
+| `disk.vhdx` | 71,303,168 | `ec591412823c5fc590a482b9a19132a46b4438635fc575a74c16be84907a1d80` |
 
 To boot either file in QEMU, replace the `fat:esp` drive in the command
 below with `-drive if=virtio,format=raw,file=disk.img` or

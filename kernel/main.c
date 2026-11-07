@@ -9,14 +9,17 @@
    allocator, checks it and reports on the first serial port; starts its
    clock, the scheduler and the timer; seeds the random number
    generator; starts a thread that keeps the boot screen's spinner
-   turning and one that tests the threads; and becomes the idle
-   thread. */
+   turning and a startup thread that tests the threads, then stops the
+   spinner and fades the boot screen into the desktop background; and
+   becomes the idle thread. */
 
+#include "background.h"
 #include "boot_info.h"
 #include "cpu.h"
 #include "mm/page.h"
 #include "random/random.h"
 #include "sched/thread.h"
+#include "sched/wait.h"
 #include "x86_64/arch.h"
 #include "x86_64/clock.h"
 #include "x86_64/serial.h"
@@ -24,8 +27,13 @@
 #define FRAME_MS 33
 #define BYTES_PER_MIB (1024 * 1024)
 
+/* Signalled by the startup thread when startup has finished; the
+   spinner stops on it. */
+#define STARTUP_DONE USER_SIGNAL(0)
+
 static THREAD spinner_thread;
-static THREAD test_thread;
+static THREAD startup_thread;
+static EVENT startup_done;
 
 static void serial_mib(UINT64 pages)
 {
@@ -70,17 +78,34 @@ static void check_boot_info(const BOOT_INFO *info)
 }
 
 /* A frame every FRAME_MS, on absolute deadlines, so that a late frame
-   does not delay the ones after it. */
+   does not delay the ones after it, until startup is done. */
 static void spin(void *argument)
 {
     BOOT_INFO *info = argument;
     UINT64 next = clock_monotonic();
+    UINT32 observed;
 
     for (;;) {
         gfx_spinner_step(&info->screen, &info->spinner);
         next += FRAME_MS * NS_PER_MS;
-        sleep_until(next);
+        if (wait_one(&startup_done.waitable, STARTUP_DONE, next,
+                     &observed) == OK)
+            return;
     }
+}
+
+/* Test the threads, then stop the spinner and, once its thread has ended
+   so that nothing else draws, fade into the desktop background. */
+static void startup(void *argument)
+{
+    BOOT_INFO *info = argument;
+    UINT32 observed;
+
+    sched_self_test(&spinner_thread);
+    event_signal(&startup_done, 0, STARTUP_DONE);
+    wait_one(&spinner_thread.waitable, THREAD_TERMINATED, DEADLINE_INFINITE,
+             &observed);
+    background_fade_in(info);
 }
 
 static void start_clock(UINT64 tsc_per_ms)
@@ -127,7 +152,8 @@ VOID kernel_main(BOOT_INFO *info)
     serial_number(TIME_SLICE_MS);
     serial_write(" ms\r\n");
     random_init(info);
+    event_init(&startup_done);
     start_thread(&spinner_thread, spin, info);
-    start_thread(&test_thread, sched_self_test, &spinner_thread);
+    start_thread(&startup_thread, startup, info);
     sched_idle();
 }

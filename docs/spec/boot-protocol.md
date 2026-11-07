@@ -146,7 +146,7 @@ x86-64 PE.
 | 32 | `screen.height` | `INT64` | `VerticalResolution` |
 | 40 | `screen.stride` | `INT64` | `PixelsPerScanLine`; pixel (x, y) is `pixels[y * stride + x]` |
 | 48 | `screen.format` | `UINT32` | `EFI_GRAPHICS_PIXEL_FORMAT`: 0 (byte 0 red) or 1 (byte 0 blue) |
-| 56 | `spinner` | `SPINNER` | The boot screen spinner's centre, size and head angle (`gfx/gfx.h`), for the kernel to keep it turning |
+| 56 | `spinner` | `SPINNER` | The boot screen spinner's centre, size and head angle (`gfx/gfx.h`), from which the kernel finds the part of the screen the boot screen covers |
 | 96 | `tsc_per_ms` | `UINT64` | Timestamp-counter ticks per millisecond |
 | 104 | `memory_map` | `UINT8 *` | The direct-map address of the memory map `ExitBootServices` accepted |
 | 112 | `memory_map_size` | `UINTN` | Size of the map in bytes |
