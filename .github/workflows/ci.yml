@@ -139,13 +139,14 @@ jobs:
   # max offers every feature TCG has. The KVM boot runs on the runner's
   # own processor. Every boot attaches a writable copy of data.img as the
   # data disk, as README.md's Run command does, and each system boot
-  # types the first account's creation and runs whoami in its shell; the
-  # persistence boot then boots the same copy again and logs in with that
-  # account. The five bad-GPT boots change its GPT, a CRC's byte, the
-  # entry array's, the pool's entry moved below the usable LBAs, or with
-  # them, over the table, or a second entry over it, and check that the
-  # file system service refuses the disk and that login does not start
-  # without it.
+  # types the first account's creation, runs whoami and the file
+  # commands in its shell, and reads the data disk on the runner after
+  # each; the persistence boot then boots the same copy again, logs in
+  # with that account and shows the file the first boot wrote. The five
+  # bad-GPT boots change its GPT, a CRC's byte, the entry array's, the
+  # pool's entry moved below the usable LBAs, or with them, over the
+  # table, or a second entry over it, and check that the file system
+  # service refuses the disk and that login does not start without it.
   boot:
     name: ${{ matrix.name }}
     needs: reproduce
