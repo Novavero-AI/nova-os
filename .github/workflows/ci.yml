@@ -1,0 +1,225 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to a pull request supersedes the run in flight. Any other
+# run is grouped by its commit, so that a push to main neither cancels
+# nor waits behind the run of the push before it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Ubuntu's OVMF, from the ovmf package the boot jobs install, whose
+  # version and file hashes the install step prints.
+  OVMF_CODE: /usr/share/OVMF/OVMF_CODE_4M.fd
+  OVMF_VARS: /usr/share/OVMF/OVMF_VARS_4M.fd
+
+jobs:
+  # The lint runs on a named image with a named clang, so that a new
+  # runner image cannot bring a new clang release, and its diagnostics,
+  # to an unrelated change.
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # git grep exits 0 on a match, 1 on none and above 1 on an error.
+      - name: Tracked text is ASCII, with no em or en dash
+        run: |
+          status=0
+          LC_ALL=C git grep -nIP '[^\x00-\x7F]' || status=$?
+          if [ "$status" -eq 0 ]; then
+            echo "::error::The lines above are not ASCII; tracked text is ASCII only, with no em or en dash."
+            exit 1
+          fi
+          [ "$status" -eq 1 ]
+
+      - name: Clang gives no warning
+        env:
+          CLANG: clang-18
+        run: ci/clang-warnings.sh
+
+      - name: The speculation masks match the comparisons they stand in for
+        run: |
+          cc -std=c11 -Wall -Wextra -pedantic -Werror -I include \
+            -o "$RUNNER_TEMP/check-masks" tools/check-masks.c
+          "$RUNNER_TEMP/check-masks"
+
+      - name: gfx/limb.c draws Limb as its prototype does
+        run: design/backgrounds/check-limb.sh
+
+      - name: The workflows pass actionlint
+        run: |
+          archive=actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archive"
+          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+
+  # No cache: every byte is built from the pinned sources on each run,
+  # with each host's own compiler building TinyCC.
+  reproduce:
+    name: Reproduce (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux
+          - os: macos-latest
+            name: macOS
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show the host compiler
+        run: cc --version
+
+      - name: The README's blocks build the bytes its tables give
+        run: ci/reproduce.sh "$RUNNER_TEMP/reproduce"
+
+      - name: TinyCC gives no warning
+        run: ci/tinycc-warnings.sh "$RUNNER_TEMP/warnings"
+
+      - name: Upload the disk images
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: disk-images
+          path: |
+            ${{ runner.temp }}/reproduce/disk.img
+            ${{ runner.temp }}/reproduce/chain.img
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload what was built
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reproduce-${{ matrix.name }}
+          path: |
+            ${{ runner.temp }}/reproduce/*.EFI
+            ${{ runner.temp }}/reproduce/*.exe
+            ${{ runner.temp }}/reproduce/*.dll
+            ${{ runner.temp }}/reproduce/*.img
+            ${{ runner.temp }}/reproduce/*.vhdx
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Each boot runs the disk images the reproduce jobs checked against the
+  # README, on a named image, so that the QEMU and EDK2 releases it boots
+  # with (8.2 and 2024.02) change only with an edit here; Ubuntu's updates
+  # to their packages still arrive. The TCG boots emulate each
+  # processor, so each CPU model gives the kernel the features it names:
+  # Skylake-Client is an Intel model that needs page-table isolation, and
+  # max offers every feature TCG has. The KVM boot runs on the runner's
+  # own processor.
+  boot:
+    name: ${{ matrix.name }}
+    needs: reproduce
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Boot (default)
+            mode: system
+            disk: disk.img
+            accel: tcg
+            minutes: 15
+          - name: Boot (Skylake)
+            mode: system
+            disk: disk.img
+            accel: tcg
+            cpu: Skylake-Client
+            expect: rdcl page-table isolation
+            minutes: 15
+          - name: Boot (max)
+            mode: system
+            disk: disk.img
+            accel: tcg
+            cpu: max
+            minutes: 15
+          - name: Boot (KVM)
+            mode: system
+            disk: disk.img
+            accel: kvm
+            cpu: host
+            minutes: 15
+          - name: Chain
+            mode: chain
+            disk: chain.img
+            accel: tcg
+            minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the disk images
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: disk-images
+          path: disk-images
+
+      - name: Install QEMU and OVMF
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends qemu-system-x86 ovmf
+          dpkg-query --show qemu-system-x86 ovmf
+          sha256sum "$OVMF_CODE" "$OVMF_VARS"
+
+      # The runner's /dev/kvm belongs to the kvm group, which the runner's
+      # user is not in.
+      - name: Let the runner's user open /dev/kvm
+        if: matrix.accel == 'kvm'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Boot ${{ matrix.disk }} and check its serial log
+        env:
+          MODE: ${{ matrix.mode }}
+          DISK: disk-images/${{ matrix.disk }}
+          ACCEL: ${{ matrix.accel }}
+          CPU: ${{ matrix.cpu }}
+          EXPECT: ${{ matrix.expect }}
+        run: |
+          python3 -I ci/boot.py --code "$OVMF_CODE" --vars "$OVMF_VARS" \
+            --log "$RUNNER_TEMP/serial.log" ${EXPECT:+--expect "$EXPECT"} \
+            "$MODE" "$DISK" -- -accel "$ACCEL" ${CPU:+-cpu "$CPU"}
+
+      - name: Upload the serial log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.name }} serial log
+          path: ${{ runner.temp }}/serial.log
+          if-no-files-found: ignore
+          retention-days: 7
