@@ -1,7 +1,7 @@
 /* The UEFI interfaces nova-boot calls, written out from the UEFI
-   Specification 2.10: 2.3 (data types, x64 calling convention), 4.3.1
-   (EFI_SYSTEM_TABLE), 4.4.1 (EFI_BOOT_SERVICES), 7.1 (CheckEvent), 7.2
-   (AllocatePages, GetMemoryMap, AllocatePool, FreePool), 7.3
+   Specification 2.11: 2.3 (data types, x64 calling convention), 4.3.1
+   (EFI_SYSTEM_TABLE), 4.4.1 (EFI_BOOT_SERVICES), 7.2 (AllocatePages,
+   FreePages, GetMemoryMap, AllocatePool, FreePool), 7.3
    (HandleProtocol, LocateProtocol), 7.4.6 (ExitBootServices), 7.5
    (Stall, SetWatchdogTimer), 9.1 (EFI_LOADED_IMAGE_PROTOCOL), 12.9
    (EFI_GRAPHICS_OUTPUT_PROTOCOL), 13.4 and 13.5 (simple file system, file
@@ -16,7 +16,6 @@
 
 typedef UINTN EFI_STATUS;
 typedef VOID *EFI_HANDLE;
-typedef VOID *EFI_EVENT;
 typedef UINT64 EFI_PHYSICAL_ADDRESS;
 typedef UINT16 CHAR16;
 
@@ -24,6 +23,7 @@ typedef UINT16 CHAR16;
 #define EFI_ERROR_BIT 0x8000000000000000ULL
 #define EFI_LOAD_ERROR (EFI_ERROR_BIT | 1)
 #define EFI_BUFFER_TOO_SMALL (EFI_ERROR_BIT | 5)
+#define EFI_INCOMPATIBLE_VERSION (EFI_ERROR_BIT | 25)
 
 /* EFI_ALLOCATE_TYPE and EFI_MEMORY_TYPE values. */
 #define ALLOCATE_ANY_PAGES 0
@@ -34,6 +34,7 @@ typedef UINT16 CHAR16;
 #define EFI_CONVENTIONAL_MEMORY 7
 
 #define EFI_PAGE_SIZE 4096
+#define EFI_MEMORY_DESCRIPTOR_VERSION 1
 #define EFI_FILE_MODE_READ 1
 #define EFI_FILE_END 0xFFFFFFFFFFFFFFFFULL /* SetPosition to end of file */
 
@@ -60,12 +61,6 @@ typedef struct {
     UINT64 Attribute;
 } EFI_MEMORY_DESCRIPTOR;
 
-typedef struct {
-    VOID *Reset;
-    VOID *ReadKeyStroke;
-    EFI_EVENT WaitForKey;
-} EFI_SIMPLE_TEXT_INPUT_PROTOCOL;
-
 /* The table through LocateProtocol, the last member nova-boot calls. */
 typedef struct {
     EFI_TABLE_HEADER Hdr;
@@ -73,7 +68,7 @@ typedef struct {
     VOID *RestoreTPL;
     EFI_STATUS (*AllocatePages)(UINTN Type, UINTN MemoryType, UINTN Pages,
                                 EFI_PHYSICAL_ADDRESS *Memory);
-    VOID *FreePages;
+    EFI_STATUS (*FreePages)(EFI_PHYSICAL_ADDRESS Memory, UINTN Pages);
     EFI_STATUS (*GetMemoryMap)(UINTN *MemoryMapSize, VOID *MemoryMap,
                                UINTN *MapKey, UINTN *DescriptorSize,
                                UINT32 *DescriptorVersion);
@@ -116,6 +111,7 @@ typedef struct {
 } EFI_BOOT_SERVICES;
 
 _Static_assert(offsetof(EFI_BOOT_SERVICES, AllocatePages) == 0x28, "");
+_Static_assert(offsetof(EFI_BOOT_SERVICES, FreePages) == 0x30, "");
 _Static_assert(offsetof(EFI_BOOT_SERVICES, GetMemoryMap) == 0x38, "");
 _Static_assert(offsetof(EFI_BOOT_SERVICES, AllocatePool) == 0x40, "");
 _Static_assert(offsetof(EFI_BOOT_SERVICES, FreePool) == 0x48, "");
@@ -130,7 +126,7 @@ typedef struct {
     CHAR16 *FirmwareVendor;
     UINT32 FirmwareRevision;
     EFI_HANDLE ConsoleInHandle;
-    EFI_SIMPLE_TEXT_INPUT_PROTOCOL *ConIn;
+    VOID *ConIn;
     EFI_HANDLE ConsoleOutHandle;
     VOID *ConOut;
     EFI_HANDLE StandardErrorHandle;

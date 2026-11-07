@@ -1,6 +1,7 @@
 /* What nova-boot hands the kernel at its entry, kernel_main(BOOT_INFO *).
-   The record lives in nova-boot's image, which the memory map marks as
-   loader data, so it survives ExitBootServices. */
+   The record lives in nova-boot's image, which the memory map types as
+   loader code or data, so it survives ExitBootServices;
+   docs/spec/boot-protocol.md gives the full contract. */
 
 #ifndef NOVA_BOOT_INFO_H
 #define NOVA_BOOT_INFO_H

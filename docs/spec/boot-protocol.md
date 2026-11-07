@@ -23,12 +23,18 @@ nova-boot, in order:
    another format.
 3. Reads and places the kernel image ([Kernel image](#kernel-image)).
 4. Measures the timestamp counter against `Stall(50000)`.
-5. Allocates a buffer for the memory map, takes the map and calls
-   `ExitBootServices` with its key, retaking the map and retrying up to
-   three times in all (UEFI 7.4.6).
-6. Calls the kernel's entry. If the kernel returns, nova-boot halts.
+5. Takes the memory map into a buffer it allocates with room for four
+   more descriptors, growing the buffer if the map outgrows it, and calls
+   `ExitBootServices` with the map's key. A refused key means the map
+   changed after it was taken; nova-boot retakes it and tries again, three
+   calls in all (UEFI 7.4.6).
+6. Clears the interrupt flag and calls the kernel's entry. If the kernel
+   returns, nova-boot halts.
 
-On a failure nova-boot returns an error `EFI_STATUS` to the firmware.
+Until it first calls `ExitBootServices`, nova-boot meets a failure by
+freeing what it allocated (UEFI 7.2) and returning an error `EFI_STATUS`
+to the firmware. After that call only the memory allocation services
+remain (UEFI 7.4.6), so a failure halts the processor.
 
 ## Kernel image
 
@@ -49,7 +55,10 @@ A PE32+ image (PE Format):
 - `MZ` at offset 0, the offset of the PE signature at 0x3C, the signature
   `PE\0\0`;
 - COFF `Machine` `IMAGE_FILE_MACHINE_AMD64` (0x8664);
+- `IMAGE_FILE_RELOCS_STRIPPED` clear, since nova-boot places the image
+  wherever it gets pages;
 - optional-header `Magic` 0x20B (PE32+);
+- a nonzero `AddressOfEntryPoint`;
 - a base relocation table (data directory 5) holding only
   `IMAGE_REL_BASED_DIR64` (10) and `IMAGE_REL_BASED_ABSOLUTE` (0) entries,
   or no base relocation table when the image contains no absolute
@@ -58,9 +67,14 @@ A PE32+ image (PE Format):
 - `SectionAlignment` of 4096 or less, since nova-boot places the image at a
   4 KiB boundary.
 
+nova-boot rejects an image whose headers, section table, sections,
+relocation blocks or relocated locations reach outside the file or
+`SizeOfImage`. It reads a data directory only when `NumberOfRvaAndSizes`
+and `SizeOfOptionalHeader` both cover it (PE Format, Optional Header).
+
 The README's build links the kernel with `-subsystem=native`
-(`IMAGE_SUBSYSTEM_NATIVE`, 1) and `-e=kernel_main`. nova-boot does not read
-`Subsystem`.
+(`IMAGE_SUBSYSTEM_NATIVE`, 1), `-e=kernel_main`, and section and file
+alignments of 4096 and 512 bytes. nova-boot does not read `Subsystem`.
 
 ### Placement
 
@@ -120,9 +134,9 @@ The memory map is an array of `EFI_MEMORY_DESCRIPTOR` (UEFI 7.2.3) of
 ## Machine state at entry
 
 UEFI defines the processor state during boot services (UEFI 2.3.4) and what
-`ExitBootServices` changes (UEFI 7.4.6). nova-boot changes nothing between
-`ExitBootServices` returning and the call, so the kernel starts in the
-boot-services state with the changes below.
+`ExitBootServices` changes (UEFI 7.4.6). Between `ExitBootServices`
+returning and the call nova-boot changes only the interrupt flag, so the
+kernel starts in the boot-services state with the changes below.
 
 ### Processor mode
 
@@ -155,8 +169,8 @@ boot-services pool once `CpuDxe` extends it to 256 vectors
 UEFI enables interrupts during boot services (UEFI 2.3.4) and stops the
 firmware timer in `ExitBootServices` (UEFI 7.4.6); it does not state the
 interrupt flag afterwards. EDK II clears it at the end of a successful
-`ExitBootServices` (`CoreExitBootServices`). `kernel_main` executes `cli`
-first.
+`ExitBootServices` (`CoreExitBootServices`). nova-boot clears it before it
+calls the kernel, so interrupts are disabled at entry on any firmware.
 
 ### Flags and floating point
 
@@ -225,75 +239,6 @@ to its own stack, GDT, IDT and page tables before it allocates from
 `EfiBootServicesCode` or `EfiBootServicesData`, and copies what it needs
 from `BOOT_INFO` and the map before it reuses `EfiLoaderCode` or
 `EfiLoaderData`.
-
-## Where main departs from the specifications
-
-Each entry is behaviour in main that a specification contradicts, with
-the change that brings it in line.
-
-1. **The map's descriptor size before the first map.** `efi_main` sizes the
-   map buffer from the `descriptor_size` its first `GetMemoryMap` call,
-   made with an empty buffer, leaves behind, and does not check that
-   call's status. That call fails with `EFI_BUFFER_TOO_SMALL`, and UEFI
-   7.2.3 does not say `DescriptorSize` is returned on that error (EDK II
-   returns it). Initialise it to `sizeof(EFI_MEMORY_DESCRIPTOR)` and
-   require `EFI_BUFFER_TOO_SMALL` from the first call.
-2. **The descriptor version.** The kernel reads version 1 descriptors
-   without checking. Fail the boot unless `DescriptorVersion` is
-   `EFI_MEMORY_DESCRIPTOR_VERSION` (1, UEFI 7.2.3).
-3. **Returning after `ExitBootServices` was called.** On a failed map or
-   after three refused attempts, `efi_main` returns to the firmware. After
-   the first call a loader may use only the memory allocation services
-   (UEFI 7.4.6), and EDK II has already stopped its timer by then. Once
-   `ExitBootServices` has been called, retry with a freshly sized buffer
-   and halt on failure instead of returning.
-4. **Resources on failure.** UEFI 7.2 requires an image to free what it
-   allocated before returning to the firmware. `place_kernel` returns
-   without freeing the kernel's pages when it rejects a relocation, and
-   `efi_main` returns without freeing them when the map buffer cannot be
-   allocated. Free the kernel's pages on every failure before
-   `ExitBootServices`.
-5. **Probing the data directories.** `place_kernel` reads data directory 5
-   without checking `SizeOfOptionalHeader` or `NumberOfRvaAndSizes`; the
-   PE Format says the first must, and the second should, bound every
-   data-directory probe. It also copies sections and applies relocations
-   without checking them against the file size and `SizeOfImage`. Check
-   `NumberOfRvaAndSizes > 5`, that the optional header and section table
-   lie inside the file, and that every section, relocation block and
-   relocated location lies inside the file or the image.
-6. **Images without relocations.** An image with
-   `IMAGE_FILE_RELOCS_STRIPPED` must load at its `ImageBase` (PE Format,
-   Characteristics). `place_kernel` places every image anywhere. Reject an
-   image with that flag set.
-7. **Section alignment.** `place_kernel` does not read `SectionAlignment`.
-   Reject an image whose `SectionAlignment` exceeds 4096.
-8. **The kernel's PE header.** For `-subsystem=native` TinyCC lays sections
-   out on 32-byte boundaries but writes `SectionAlignment` 0x1000 and
-   `FileAlignment` 0x200 into the header (`tccpe.c`, lines 633-634 and
-   2046-2048 at the pinned commit). The resulting `kernel.exe` places
-   `.text` at RVA 0x20, inside its 0x240 bytes of headers. Its section
-   addresses, its `SizeOfImage` (0x1B20) and two of its raw data offsets
-   (0x240, 0x1A80) are not multiples of the declared alignments, as the PE
-   Format requires them to be. Linking with
-   `-Wl,-section-alignment=1000 -Wl,-file-alignment=200` (hexadecimal)
-   gives an image whose layout matches its header.
-9. **Interrupts at entry.** The interrupt flag at entry depends on the
-   firmware (see [Interrupts](#interrupts)). Execute `cli` in nova-boot
-   after `ExitBootServices` succeeds, so that interrupts are disabled at
-   entry on any firmware.
-10. **Comments on memory.** `include/boot_info.h` says the memory map marks
-    nova-boot's image as loader data; EDK II marks it loader code. State
-    both, or place `BOOT_INFO` in an `EfiLoaderData` allocation.
-    `kernel/main.c` says the kernel runs on the loader's stack; it runs on
-    the firmware's ([Stack](#stack)). It also says UEFI's note on memory
-    after `ExitBootServices` lists boot-services code and data and
-    conventional memory; the note lists `EfiLoaderCode` and
-    `EfiLoaderData` as well.
-11. **Opening the kernel.** `read_kernel` ignores the status of
-    `SetPosition` and `GetPosition`; if either fails, for example because
-    the path names a directory (UEFI 13.5.11, 13.5.12), the size it reads
-    is uninitialised. Check both statuses, or take the size and the
-    directory attribute from `GetInfo` with `EFI_FILE_INFO` (UEFI 13.5.16).
 
 ## Undecided
 

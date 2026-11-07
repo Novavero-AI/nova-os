@@ -32,18 +32,22 @@ cc -o x86_64-win32-tcc -I cfg -I tinycc-$rev \
   -o BOOTX64.EFI boot/nova-boot.c gfx/gfx.c
 ./x86_64-win32-tcc -shared -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I gfx -I boot -Wl,-subsystem=native -Wl,-e=kernel_main \
+  -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
   -o kernel.exe kernel/main.c gfx/gfx.c
 ```
 
 `-shared` makes TinyCC write base relocations, which the firmware needs to
 load nova-boot, and nova-boot to load the kernel, at addresses of their
-choosing; TinyCC writes them only for a DLL-style image. Each build gives
-the same bytes:
+choosing; TinyCC writes them only for a DLL-style image. For the native
+subsystem TinyCC aligns sections to 32 bytes but still writes the
+4096 and 512 byte alignments into the header, so the kernel's link sets
+those alignments (in hexadecimal) to make its layout match. Each build
+gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `BOOTX64.EFI` | 12,288 | `ab4e544bb7bbaedec751efe9bf33c0fadc983c33779df076bc2a5c1fa2e8e0e8` |
-| `kernel.exe` | 7,072 | `05979731411ee3ee6a743a703c4337b19d6bd2ea26ff91cf008ddd0957868dbe` |
+| `BOOTX64.EFI` | 13,824 | `ca1e6d23da16987618f74974839962dbbbc1b38cb0607fd77bb5cd54ff8e25a6` |
+| `kernel.exe` | 8,192 | `eeaa8868d60bf460c67381ae09359833b021000056b5368ca52b48bcc224b68a` |
 
 ## Run
 
