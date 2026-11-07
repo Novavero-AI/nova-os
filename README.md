@@ -1,9 +1,9 @@
 # nova-os
 
-nova-os is an operating system in early development: an NT-style hybrid
-kernel, written in C and built entirely from source down to a 1,623-byte
-seed, so that every byte of a release can be rebuilt from that seed and
-compared.
+nova-os is an operating system in early development: NT's object model on
+a small kernel core, written in C and built entirely from source down to a
+1,623-byte seed, so that every byte of a release can be rebuilt from that
+seed and compared.
 
 It boots in a UEFI virtual machine. nova-boot, the loader, draws the boot
 screen, loads the kernel from `\nova\kernel.exe`, exits the firmware's boot

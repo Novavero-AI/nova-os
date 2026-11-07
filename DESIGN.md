@@ -1,37 +1,49 @@
 # nova-os design
 
-nova-os is an operating system with an NT-style hybrid kernel, written in C
-and built entirely from source down to a 1,623-byte hex0 seed, so that every
-byte of a release can be rebuilt from that seed and compared.
+nova-os is an operating system with NT's object model on a small kernel
+core, written in C and built entirely from source down to a 1,623-byte hex0
+seed, so that every byte of a release can be rebuilt from that seed and
+compared.
 
 ## Principles
 
 1. **Reproducible from the seed.** Every artifact, from the compiler to the
    kernel to the boot image, is a nova-nix derivation whose chain starts at
    stage0-pe32's seed. The same inputs give the same bytes.
-2. **NT-style, not POSIX.** A hybrid kernel in NT's layers: a hardware
-   abstraction layer (HAL), the kernel proper (scheduling, interrupts,
-   synchronization), and an executive (object manager, memory manager,
-   process manager, I/O manager, security), exposed through a native
-   system-call API. Programming interfaces sit above it as subsystems; a
+2. **NT's model, not POSIX, on a small core.** The programming model is
+   NT's: kernel objects in one namespace, handles with access rights,
+   objects a thread can wait on, and asynchronous I/O requests, exposed
+   through a native system-call API. The kernel keeps only what needs the
+   processor's privilege: address spaces, threads and scheduling,
+   interrupts and timers, physical memory, the object and handle table,
+   and messages between processes. Drivers, file systems, networking and
+   the compositor are user-mode processes holding handles to the devices
+   and memory they serve, so a failed driver is restarted instead of
+   stopping the system, and the privileged core stays small enough to
+   prove. Programming interfaces sit above the native API as subsystems; a
    POSIX layer, if one is ever wanted, is one of them, never the base.
 3. **Interface and developer experience first.** The boot screen and the
    desktop are designed, not left for last. Building, booting and seeing a
    change takes one command and seconds. Applications get a documented,
    modern API over the native one, and an SDK.
 4. **Portable by construction.** Boot through UEFI, discover hardware
-   through ACPI, and keep everything hardware-specific behind the HAL.
-   x86-64 first, then ARM64.
+   through ACPI, and keep everything hardware-specific in the kernel's
+   architecture layer and in drivers. x86-64 first, then ARM64.
 5. **Verifiable.** A proof checker built from the seed ships in the base
-   system, and chosen invariants of the system carry machine-checked proofs.
+   system, and chosen invariants of the system, the kernel core's isolation
+   first, carry machine-checked proofs.
    The boot image's TPM measurements can be computed from source, so a
    machine's signed boot record shows it runs the code built from the seed.
-6. **Self-hosting.** nova-os runs the seed ladder itself and rebuilds
+6. **Self-hosting.** nova-os runs the seed ladder and nova-nix and rebuilds
    itself; the result must equal the Windows-hosted build byte for byte.
 
 ## Decisions
 
 - **Language:** C, the language the seed ladder reaches first.
+- **Kernel structure:** a small privileged core with drivers in user mode
+  (principle 2). A driver that moves memory by DMA is confined only where
+  the platform's IOMMU confines it; without one, its isolation is not
+  enforced.
 - **License:** Apache-2.0. Code is written from public documentation and
   observed behavior; nothing is copied from Microsoft, from leaked sources,
   or from GPL projects (ReactOS, Linux, stage0-uefi).
@@ -53,11 +65,13 @@ Each stage is demonstrable on its own and reproducible from the seed.
 2. **Kernel:** the loader hands the machine to the kernel, which sets up
    paging, interrupts, a timer, physical memory management and a
    framebuffer console.
-3. **NT-style core:** the object manager, handles, processes and threads,
-   and system calls.
-4. **Userland and interface:** a shell, the native API's user layer, the
-   desktop.
-5. **Self-hosting:** the seed ladder runs on nova-os and rebuilds it.
+3. **Core:** the kernel's own address spaces, threads and scheduling, user
+   mode, the object and handle table, messages between processes, and the
+   system-call API.
+4. **Userland and interface:** user-mode drivers, a shell, the native API's
+   user layer, the desktop.
+5. **Self-hosting:** the seed ladder and nova-nix run on nova-os and
+   rebuild it.
 
 ## Testing
 
