@@ -32,7 +32,12 @@ last frame the kernel releases the display, and the first process hands
 it to the console, which draws a translucent panel over the background
 and serves programs text output and lines typed at the keyboard; the
 first process starts a demo client, `conecho.exe`, which echoes them
-([docs/spec/console.md](docs/spec/console.md)).
+([docs/spec/console.md](docs/spec/console.md)). With a data disk attached
+as a second virtio drive, the first process starts first the block
+driver serving that disk and the file system service, `fs.exe`, over it,
+publishes the disk's `/data` and `/users` beside `/store`, and runs
+`fstest.exe`, which checks them
+([docs/spec/storage.md](docs/spec/storage.md), F18).
 [DESIGN.md](DESIGN.md) holds the principles, the decisions made so far and
 the stages; [design/backgrounds](design/backgrounds/README.md) holds the
 background's prototypes and the check that `gfx/limb.c` draws Limb's
@@ -41,7 +46,7 @@ prototype and the check that `gfx/font.c` draws its glyphs.
 
 ## Build
 
-The eleven images are compiled by TinyCC at commit
+The thirteen images are compiled by TinyCC at commit
 cb41cbfe717e4c00d7bb70035cda5ee5f0ff9341, built twice: as a cross
 compiler that writes x86-64 PE, and as one that writes i386 PE for ntdll.
 The archive's sha256 is
@@ -87,10 +92,9 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   -I test -Wl,-subsystem=native -Wl,-e=init_main \
   -Wl,-section-alignment=1000 -Wl,-file-alignment=200 -o init.exe \
   init/init.c init/chain.c init/compat.c init/view.c init/platform.c \
-  init/loader.c init/store.c init/console.c drivers/pci.c \
-  drivers/virtio_pci.c \
-  store/reader.c lib/path.c lib/log.c native/native.S \
-  kernel/random/sha256.c
+  init/loader.c init/store.c init/console.c init/data.c drivers/pci.c \
+  drivers/virtio_pci.c store/reader.c lib/path.c lib/log.c \
+  native/native.S kernel/random/sha256.c
 ./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I native -I lib -I drivers -Wl,-subsystem=native \
   -Wl,-e=virtio_blk_main -Wl,-section-alignment=1000 \
@@ -128,6 +132,16 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   -Wl,-e=namespace_main -Wl,-section-alignment=1000 \
   -Wl,-file-alignment=200 -o namespace.exe namespace/namespace.c \
   lib/name.c lib/log.c native/native.S
+./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
+  -I include -I native -I lib -I kernel/random -Wl,-subsystem=native \
+  -Wl,-e=fs_main -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
+  -o fs.exe fs/fs.c fs/pool.c lib/name.c lib/log.c native/native.S \
+  kernel/random/sha256.c
+./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
+  -I include -I native -I lib -I test -Wl,-subsystem=native \
+  -Wl,-e=fstest_main -Wl,-section-alignment=1000 \
+  -Wl,-file-alignment=200 -o fstest.exe test/fstest.c lib/path.c \
+  lib/log.c native/native.S
 cc -o mknar -I include -I kernel/random tools/mknar.c tools/store_path.c \
   kernel/random/sha256.c
 cc -o mkstore -I include -I kernel/random tools/mkstore.c \
@@ -154,7 +168,8 @@ choosing; TinyCC writes them only for a DLL-style image. `init.exe` is
 linked without it: the kernel places the first process at the image's own
 base address, and the first process places each program it starts, the
 drivers `virtblk.exe` and `virtinp.exe`, the console `console.exe`, its
-demo client `conecho.exe` and the programs from `/store`, at its own. `ntdll.dll` is
+demo client `conecho.exe`, the file system service `fs.exe` and its
+check `fstest.exe`, and the programs from `/store`, at its own. `ntdll.dll` is
 linked with `-shared` for its export table, which TinyCC writes only for a
 DLL, and is placed at its own base address too. For the native subsystem
 TinyCC aligns sections to 32 bytes but still writes the 4096 and 512 byte
@@ -167,15 +182,17 @@ build gives the same bytes:
 |---|---|---|
 | `BOOTX64.EFI` | 29,696 | `ed744ea9428e8fd8a0cd1f8173cdfead7fc0d9ad98f1fa48b1f94f417337c70f` |
 | `kernel.exe` | 204,288 | `6edb7be4b54dac086a78abd90fa971fed1c03fec9329b3a0c5460ad85257ed8d` |
-| `init.exe` | 79,360 | `0a2734f7ac754e013fbb7eee0fd2f502231c675abbb3c8f8efc7899625e8c3c9` |
+| `init.exe` | 86,528 | `a17f2e623024f28265c948d1efa1e7e88db9bef6474175b07c2fe0cdda7e2f1c` |
 | `virtblk.exe` | 19,456 | `a2de25a81f08fa0532490fc052599fe7f37e05ba2143b0608e38c7513bbacebb` |
 | `virtinp.exe` | 15,872 | `6eeae2fd7f9aa438f70d64b15875303de4c8a742a833d0a0da8dfd2af6258993` |
 | `console.exe` | 36,352 | `6f253fa95047e4c4ce65ae5c69e3be1bc4beb1998a80e854d7b8a4cc4435dc32` |
 | `conecho.exe` | 6,144 | `a78a008998f676d00669164bf89be404226613d70c214801a7fb677801ec3dde` |
 | `ntdll.dll` | 10,240 | `9a43b4e3b773c1b5a3b6eb541fd0de9c3f3675d2867d1193b707118648853d10` |
 | `store.exe` | 28,160 | `6c2004434bd1aa91c9e797d04398c8baf6353bbb7541687c2fd8c763d7a226a1` |
-| `namespace.exe` | 10,752 | `82b0360f1e11f9c0a36256ab6bfd14c1b11bdacf561d06b33c7a1074229ae026` |
-| `hello.exe` | 19,456 | `07e52f7cdde3866d48a6703d95db36b43db212fb9a134922d7ac46c5230762d4` |
+| `namespace.exe` | 11,264 | `fe832b8bee0a71596a0f46fcb3c11aeef6e3681442717de8b83db2d2226bb818` |
+| `hello.exe` | 20,480 | `a16e2ef2125bfa94b500f47e5bc2c2d3fe023678127696dfb1d154f51013b35d` |
+| `fs.exe` | 40,960 | `755bc6f61b4dbb31d4ffdfba10a016c0d7da0c0ca73a3489785be1cb6c4993b6` |
+| `fstest.exe` | 32,256 | `2701e471de727631c0ab5e323c35662139c8872d43474cae0a7a70229e03be1e` |
 
 The block also writes the store image, `store.img`
 ([docs/spec/store-image.md](docs/spec/store-image.md)), from three
@@ -196,7 +213,7 @@ block above. Each build gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `store.img` | 69,632 | `7d6166b15c54ef3244804885051d71f56322f3bbcdda32725a9deb3fd8229975` |
+| `store.img` | 69,632 | `2d1282c737a15f49008c85ccf01a0fe5bb99851e40760e62139db10e643e3e8c` |
 
 ## Disk image
 
@@ -208,14 +225,19 @@ Partition, formatted FAT32, holding `\EFI\BOOT\BOOTX64.EFI` and in
 ([docs/spec/disk-layout.md](docs/spec/disk-layout.md)). The tool is C99
 with only the standard library, so the host compiler or TinyCC builds it.
 
-The block below writes two disks. The system's, `disk.img` and
-`disk.vhdx`, holds in `\NOVA\` the kernel, `INIT.EXE`, `NTDLL.DLL`,
-`VIRTBLK.EXE`, `VIRTINP.EXE`, `CONSOLE.EXE`, `CONECHO.EXE` and
-`STORE.IMG`. The test
-disk, `chain.img` and `chain.vhdx`, holds the same files and the inputs of
-stage0-pe32's chain up to M1, which the bootstrap check reads: its seed
-and the files of stage0-pe32 and of the M2libc, M2-Planet and mescc-tools
-trees it builds from, at the commits nova-nix's stage0-pe32 package pins.
+The block below writes two boot disks and a data disk. The system's,
+`disk.img` and `disk.vhdx`, holds in `\NOVA\` the kernel, `INIT.EXE`,
+`NTDLL.DLL`, `VIRTBLK.EXE`, `VIRTINP.EXE`, `CONSOLE.EXE`, `CONECHO.EXE`,
+`STORE.IMG`, `FS.EXE` and `FSTEST.EXE`. The test disk, `chain.img` and
+`chain.vhdx`, holds the same files and the inputs of stage0-pe32's chain
+up to M1, which the bootstrap check reads: its seed and the files of
+stage0-pe32 and of the M2libc, M2-Planet and mescc-tools trees it builds
+from, at the commits nova-nix's stage0-pe32 package pins.
+`tools/mkdata.c` writes the data disk, `data.img`, raw, of the size given
+in MiB: a GPT with one pool partition holding an empty data volume
+([docs/spec/pool-format.md](docs/spec/pool-format.md)). It is C99 too,
+and shares the pool's encoding, `fs/pool.c`, with the file system
+service.
 
 ```sh
 raw=https://raw.githubusercontent.com/Novavero-AI
@@ -254,9 +276,14 @@ m1-macro.c $mescc/M1-macro.c
 EOF
 cc -o mkimage tools/mkimage.c
 ./mkimage disk.img disk.vhdx BOOTX64.EFI kernel.exe init.exe ntdll.dll \
-  virtblk.exe virtinp.exe console.exe conecho.exe store.img
+  virtblk.exe virtinp.exe console.exe conecho.exe store.img fs.exe \
+  fstest.exe
 ./mkimage chain.img chain.vhdx BOOTX64.EFI kernel.exe init.exe ntdll.dll \
-  virtblk.exe virtinp.exe console.exe conecho.exe store.img chain/*
+  virtblk.exe virtinp.exe console.exe conecho.exe store.img fs.exe \
+  fstest.exe chain/*
+cc -o mkdata -I include -I kernel/random -I fs tools/mkdata.c fs/pool.c \
+  kernel/random/sha256.c
+./mkdata data.img 64
 ```
 
 The chain's inputs are those trees' files, unmodified:
@@ -294,30 +321,36 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `281ac7b5b0d61a92b68e359ebe20d42b3e2c56ccb1bb8091b4f7328ae9ad493d` |
-| `disk.vhdx` | 71,303,168 | `67f10c4c2efa9fc581e2db80828c645bf1cfeceafc4a718919e434a2e60e0de9` |
-| `chain.img` | 67,108,864 | `df4e7a68004faf35f99959ad604a66f827e75c85ce465383ca1d50d242e3b94f` |
-| `chain.vhdx` | 71,303,168 | `98b287ffd23b3c60b405954abf3eb34708a812dc14808d8d88b3c872eafcb8dd` |
+| `disk.img` | 67,108,864 | `71a4cd46b74ec354f89c9377eeefe3cd1fa751bc748cc49e0abebaaf031c3366` |
+| `disk.vhdx` | 71,303,168 | `38440da4a15d48abc5c9a84a5c703339485b6d1d093e8842afe135d09ff020b2` |
+| `chain.img` | 67,108,864 | `a25b0d249704946b1a3ec6ac5ed02b0cf3ef4bb7a22d49c5050e0acd94c4ff48` |
+| `chain.vhdx` | 71,303,168 | `0c16e33ff5407084c4f0b0feb5998954aac8b03de0be6a767c66e3d181262101` |
+| `data.img` | 67,108,864 | `fc0e119b885b341b5385e351b1f334c4da7cb921ef2dfbd994e9e20917e27804` |
 
 ## Run
 
 With QEMU and the EDK2 firmware it bundles (under `$(brew --prefix)/share/qemu`
-on a Mac with Homebrew), the system boots from `disk.img`:
+on a Mac with Homebrew), the system boots from `disk.img`, with a copy of
+`data.img` as its data disk:
 
 ```sh
 fw=$(brew --prefix)/share/qemu
 cp $fw/edk2-i386-vars.fd vars.fd && chmod u+w vars.fd
+cp data.img data-run.img
 qemu-system-x86_64 -machine q35 -m 256M \
   -drive if=pflash,format=raw,readonly=on,file=$fw/edk2-x86_64-code.fd \
   -drive if=pflash,format=raw,file=vars.fd \
   -drive if=virtio,format=raw,readonly=on,file=disk.img \
+  -drive if=virtio,format=raw,file=data-run.img \
   -net none -device virtio-rng-pci -device virtio-keyboard-pci \
   -device qemu-xhci -device usb-tablet -serial stdio
 ```
 
 The kernel prints its lines to the terminal through the serial port,
-among them the first process's and the test program's from `/store`,
-which say `nova-hello: checks passed`,
+among them the first process's, the data disk's and the test program's
+from `/store`, which say `nova-fs: pool at lba 2048` and what the file
+system service opened, `nova-init: /data and /users published from the
+data disk`, `nova-fstest: checks passed`, `nova-hello: checks passed`,
 `nova-init: the bootstrap check is not on this disk` and
 `nova-init: checks passed`, after which the kernel says
 `nova: first process reports startup done`, fades into the desktop and
@@ -334,9 +367,22 @@ Under QEMU's emulation, without hardware acceleration, the chain takes
 about 11 minutes on an Apple M2. With `format=vhdx`, the same drive
 boots `disk.vhdx` or `chain.vhdx`.
 
+`fstest.exe` counts the data disk's boots, writes a file at the first
+and reads it back byte for byte at each after; booted again, the same
+`data-run.img` keeps what the last boot wrote. Without the data disk's
+drive the first process says `nova-init: no data disk: no second virtio
+block function` and goes on. A system disk whose `\NOVA\` also holds a
+file named `FSLOOP` has `fstest.exe` commit generations of its crash
+state until the machine stops, so that a test can kill QEMU at any
+moment and check, at the next boot, that the disk holds the generation
+last committed or the one after it, whole.
+
 The firmware's variable store needs a writable copy. The disk is attached
 through virtio, so that the virtio block driver has the boot disk to
-read, and read-only, so that a boot leaves the image as built. The
+read, and read-only, so that a boot leaves the image as built. The data
+disk is attached writable, as a copy, since each boot writes it, and
+after the system's, since the first process takes the second virtio
+block function for it. The
 virtio-rng device gives the firmware a random number generator, which
 nova-boot asks for the seed of the kernel's generator: QEMU's default
 processor has neither RDRAND nor RDSEED, so without the device the

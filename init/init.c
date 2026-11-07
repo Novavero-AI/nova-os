@@ -10,7 +10,9 @@
    kernel on its bootstrap channel that its startup is done
    (docs/spec/boot-protocol.md, Startup done), hands the display to the
    console once the kernel releases it (console.c), and runs on as the
-   drivers' supervisor (ipc.md I10).
+   drivers' supervisor (ipc.md I10). Before the store service it starts
+   the data disk's file system service, whose /data and /users the
+   namespace then publishes beside /store (data.c).
    A failed check is logged, if the log is reachable, and ends the
    process with EXIT_CHECK_FAILED, with no report, which the kernel reads
    with process_info and logs; so does EXIT_SUPERVISION_FAILED, if
@@ -18,6 +20,7 @@
 
 #include "init.h"
 #include "console.h"
+#include "data.h"
 #include "platform.h"
 
 #define EXIT_CHECK_FAILED 1
@@ -305,6 +308,7 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     check_errors(bootstrap);
     check_watches();
     check_clock();
+    data_start(&platform, job);
     check(store_run(job, debug_log, &store_image),
           "the test program did not pass from /store");
     check(chain_run(job), "the seed chain did not build nova-nix's links");

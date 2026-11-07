@@ -88,6 +88,8 @@ Both disks hold:
 \NOVA\CONSOLE.EXE        the console, the input driver's client
 \NOVA\CONECHO.EXE        the console's demo client
 \NOVA\STORE.IMG          the store image
+\NOVA\FS.EXE             the file system service, for a data disk
+\NOVA\FSTEST.EXE         the data disk's check
 ```
 
 The test disk adds the inputs of the bootstrap check, the chain the first
@@ -138,6 +140,8 @@ a directory takes as many clusters as its entries fill:
 | `\NOVA\CONSOLE.EXE` | `CONSOLE EXE` |
 | `\NOVA\CONECHO.EXE` | `CONECHO EXE` |
 | `\NOVA\STORE.IMG` | `STORE   IMG` |
+| `\NOVA\FS.EXE` | `FS      EXE` |
+| `\NOVA\FSTEST.EXE` | `FSTEST  EXE` |
 | `\NOVA\HEX0SEED.EXE` | `HEX0SEEDEXE` |
 | `\NOVA\` *name*`.`*ext* | *name* padded to 8 bytes with spaces, then *ext* padded to 3 |
 
@@ -163,6 +167,8 @@ when it was built.
   variable for an installed system (UEFI 3.1, 13.3.1.3).
 - **4,096-byte blocks.** VHDX and GPT allow them (UEFI 5.3.1 sets
   `FirstUsableLBA` at least 6 for them).
-- **The system partition.** A partition for the rest of nova-os needs its
-  own partition type GUID (UEFI 5.3.3).
+- **The system partition.** A pool, the partition the native file system
+  keeps its volumes in, has the type GUID [pool-format.md](pool-format.md)
+  gives, and a data disk holds one; where the system's own pool lies, on
+  this disk or another, is open.
 - **ARM64.** `\EFI\BOOT\BOOTAA64.EFI` (UEFI Table 3.4).

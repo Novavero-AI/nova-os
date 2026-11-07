@@ -11,9 +11,12 @@
    view of that directory under /store and nothing else (F5), and with
    one argument, a store path outside the closure. It reads the
    program's exit code, closes its own channels to both services, which
-   end once no channel to them is left, and waits for them. */
+   end once no channel to them is left, and waits for them. While the
+   namespace server runs, the data disk's /data and /users are published
+   beside /store and checked (data.c). */
 
 #include "init.h"
+#include "data.h"
 #include "directory_protocol.h"
 #include "hello.h"
 #include "launch.h"
@@ -511,6 +514,8 @@ int store_run(UINT32 job, UINT32 debug_log, const BOOT_FILE_VIEW *image)
     }
     if (status == OK)
         status = publish(root, STORE_NAME, &store_root);
+    if (status == OK)
+        data_mount(job, debug_log, root);
     if (status == OK)
         status = view_add(&namespace_view, "/", root);
     if (status == OK)

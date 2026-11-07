@@ -269,6 +269,85 @@ UINT32 io_read(UINT32 channel, UINT64 offset, void *buffer, UINT32 length,
     return OK;
 }
 
+/* A request of operation for length bytes at offset with flags, its
+   data the count bytes at data, which follow it, answered with no
+   bytes, or a write's count. The request is built in reply_bytes, which
+   holds the largest a request carries, and its header is kept apart to
+   check the reply against. */
+static UINT32 io_change(UINT32 channel, UINT32 operation, UINT64 offset,
+                        UINT32 length, UINT32 flags, const UINT8 *data,
+                        UINT32 count, UINT64 *information)
+{
+    IO_REQUEST *request = (IO_REQUEST *)reply_bytes, sent;
+    UINT32 status, reply_length;
+
+    request->operation = operation;
+    request->offset = offset;
+    request->length = length;
+    request->rights = 0;
+    request->flags = flags;
+    request->reserved = 0;
+    copy(reply_bytes + sizeof *request, data, count);
+    status = io_send(channel, request, sizeof *request + count, 0, 0);
+    if (status != OK)
+        return status;
+    sent = *request;
+    status = io_receive(channel, &sent, reply_bytes, sizeof reply_bytes,
+                        &reply_length, 0);
+    if (status == OK && reply_length != sizeof(IO_REPLY))
+        status = ERR_BAD_STATE;
+    if (status == OK && information)
+        *information = ((const IO_REPLY *)reply_bytes)->information;
+    return status;
+}
+
+UINT32 io_write(UINT32 channel, UINT64 offset, const void *buffer,
+                UINT32 length, UINT32 *count)
+{
+    UINT64 written = 0;
+    UINT32 status;
+
+    *count = 0;
+    if (length > IO_TRANSFER_MAX)
+        return ERR_INVALID_ARGS;
+    status = io_change(channel, IO_WRITE, offset, length, 0, buffer, length,
+                       &written);
+    if (status == OK && written > length)
+        status = ERR_BAD_STATE;
+    if (status == OK)
+        *count = (UINT32)written;
+    return status;
+}
+
+UINT32 io_truncate(UINT32 channel, UINT64 size)
+{
+    return io_change(channel, IO_TRUNCATE, size, 0, 0, 0, 0, 0);
+}
+
+UINT32 io_flush(UINT32 channel)
+{
+    return io_change(channel, IO_FLUSH, 0, 0, 0, 0, 0, 0);
+}
+
+UINT32 io_remove(UINT32 channel, const UINT8 *path, UINT32 length)
+{
+    if (length > IO_PATH_MAX)
+        return ERR_INVALID_ARGS;
+    return io_change(channel, IO_REMOVE, 0, length, 0, path, length, 0);
+}
+
+UINT32 io_rename(UINT32 channel, const UINT8 *from, UINT32 from_length,
+                 const UINT8 *to, UINT32 to_length, UINT32 flags)
+{
+    if (from_length > IO_PATH_MAX || to_length > IO_PATH_MAX)
+        return ERR_INVALID_ARGS;
+    copy(joined, from, from_length);
+    copy(joined + from_length, to, to_length);
+    return io_change(channel, IO_RENAME, from_length,
+                     from_length + to_length, flags, joined,
+                     from_length + to_length, 0);
+}
+
 UINT32 io_get_section(UINT32 channel, UINT32 rights,
                       RECEIVED_HANDLE *received, UINT64 *size)
 {
@@ -303,8 +382,8 @@ UINT32 io_get_section(UINT32 channel, UINT32 rights,
    and wait for the reply on the new channel, *mine, which stays open on
    OK. */
 static UINT32 open_once(UINT32 directory, UINT32 operation, const UINT8 *path,
-                        UINT32 length, UINT32 rights, UINT32 *mine,
-                        UINT32 *reply_length)
+                        UINT32 length, UINT32 rights, UINT32 flags,
+                        UINT32 *mine, UINT32 *reply_length)
 {
     IO_REQUEST *request = (IO_REQUEST *)request_bytes;
     HANDLE_TRANSFER transfer;
@@ -318,7 +397,7 @@ static UINT32 open_once(UINT32 directory, UINT32 operation, const UINT8 *path,
     request->offset = 0;
     request->length = length;
     request->rights = rights;
-    request->flags = 0;
+    request->flags = flags;
     request->reserved = 0;
     copy(request_bytes + sizeof(IO_REQUEST), path, length);
     transfer.handle = theirs;
@@ -433,7 +512,7 @@ UINT32 io_open(UINT32 directory, UINT32 operation, const UINT8 *path,
     *channel = HANDLE_INVALID;
     if (length > IO_PATH_MAX)
         return ERR_INVALID_ARGS;
-    status = open_once(directory, operation, path, length, rights, channel,
+    status = open_once(directory, operation, path, length, rights, 0, channel,
                        &reply_length);
     if (status != OK)
         return status;
@@ -449,6 +528,12 @@ UINT32 io_open(UINT32 directory, UINT32 operation, const UINT8 *path,
 UINT32 view_open(const VIEW *view, const char *path, UINT32 rights,
                  UINT32 *channel, IO_ATTRIBUTES *attributes)
 {
+    return view_create(view, path, rights, 0, channel, attributes);
+}
+
+UINT32 view_create(const VIEW *view, const char *path, UINT32 rights,
+                   UINT32 flags, UINT32 *channel, IO_ATTRIBUTES *attributes)
+{
     const VIEW_ENTRY *e;
     const IO_ATTRIBUTES *a =
         (const IO_ATTRIBUTES *)(reply_bytes + sizeof(IO_REPLY));
@@ -463,7 +548,8 @@ UINT32 view_open(const VIEW *view, const char *path, UINT32 rights,
             return ERR_NOT_FOUND;
         rest = e->length < length ? e->length + 1 : length;
         status = open_once(e->directory, IO_OPEN, current + rest,
-                           length - rest, rights, &mine, &reply_length);
+                           length - rest, rights, flags, &mine,
+                           &reply_length);
         if (status != OK)
             return status;
         if (a->kind != IO_KIND_LINK) {

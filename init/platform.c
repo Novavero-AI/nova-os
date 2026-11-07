@@ -8,7 +8,9 @@
    its requester ID, with PIN alone. init keeps the initiator's RELEASE.
 
    The first virtio block function goes to \nova\virtblk.exe, which reads
-   the boot disk and ends. The first virtio input function goes to
+   the boot disk and ends. The walk notes the second as the data disk,
+   whose driver and file system service data.c starts, with this file's
+   BAR sizing and driver handles. The first virtio input function goes to
    \nova\virtinp.exe, which runs on: once its device is live it reports
    with an endpoint, which init hands to its client, the console,
    \nova\console.exe, whose bootstrap message console.c writes
@@ -119,9 +121,10 @@ typedef struct {
                                in init once it is first reset, or 0 */
 } FUNCTION;
 
-/* The first function of each kind a driver serves. */
+/* The first function of each kind a driver serves, and the data disk,
+   the second virtio block function. */
 typedef struct {
-    FUNCTION block, input;
+    FUNCTION block, input, data;
 } FOUND;
 
 /* The buses of one ECAM range, each mapped into init when first
@@ -239,7 +242,8 @@ static void note_virtio(FOUND *found, UINT32 id, UINT32 requester,
                         UINT64 config, volatile UINT8 *mapped)
 {
     if (id == VIRTIO_BLK_PCI_DEVICE || id == VIRTIO_BLK_PCI_TRANSITIONAL)
-        note(&found->block, requester, config, mapped);
+        note(found->block.config ? &found->data : &found->block, requester,
+             config, mapped);
     else if (id == VIRTIO_INPUT_PCI_DEVICE)
         note(&found->input, requester, config, mapped);
 }
@@ -295,20 +299,22 @@ static void scan_bus(const PLATFORM *platform, UINT32 bus, FOUND *found)
     }
 }
 
-/* Each range starts with no bus visited; the windows of an earlier one
-   stay mapped. The walk stops after the range in which the last kind
-   is found. */
+/* The walk, made once, by whichever of data.c and platform_start asks
+   first. Each range starts with no bus visited; the windows of an
+   earlier one stay mapped. The walk stops after the range in which the
+   last kind is found. */
 static void scan(const PLATFORM *platform, FOUND *found)
 {
     const BOOTSTRAP_PLATFORM *boot = platform->boot;
+    static int scanned;
     UINT32 i, bus;
 
-    found->block.config = 0;
-    found->block.common = 0;
-    found->input.config = 0;
-    found->input.common = 0;
+    if (scanned)
+        return;
+    scanned = 1;
     for (i = 0; i < boot->ecam_count && i < BOOTSTRAP_ECAM_RANGES_MAX &&
-                !(found->block.config && found->input.config);
+                !(found->block.config && found->input.config &&
+                  found->data.config);
          i++) {
         segment.range = &boot->ecam[i];
         for (bus = 0; bus < BUSES; bus++)
@@ -372,19 +378,22 @@ static void size_bars(volatile UINT8 *config, PCI_DEVICE_BOOTSTRAP *device)
     mmio_write16(config + PCI_COMMAND, command);
 }
 
-/* The bootstrap record for child's function, with its BARs sized, and an
-   initiator for its requester ID. Returns 0, logged, with nothing left
-   open, if the initiator cannot be made. */
-static int prepare(const PLATFORM *platform, CHILD *child)
+/* The bootstrap record for function, with its BARs sized. */
+static void describe(const FUNCTION *function, PCI_DEVICE_BOOTSTRAP *device)
 {
-    const FUNCTION *function = child->function;
-    PCI_DEVICE_BOOTSTRAP *device = &child->device;
-
     size_bars(function->mapped, device);
     device->requester = function->requester;
     device->reserved = 0;
     device->config = function->config;
-    if (initiator_create(platform->dma, function->requester,
+}
+
+/* The bootstrap record for child's function, and an initiator for its
+   requester ID. Returns 0, logged, with nothing left open, if the
+   initiator cannot be made. */
+static int prepare(const PLATFORM *platform, CHILD *child)
+{
+    describe(child->function, &child->device);
+    if (initiator_create(platform->dma, child->function->requester,
                          &child->initiator) == OK)
         return 1;
     say_child("cannot create the initiator for the ", child, "\r\n");
@@ -400,14 +409,19 @@ static void close_handles(const HANDLE_TRANSFER *handles, UINT32 count)
             handle_close(handles[i].handle);
 }
 
-/* The handles of the driver's bootstrap message, as pci.h orders them.
-   Returns the handle count, or 0, with none left open, if a call
-   fails. */
-static UINT32 driver_handles(const PLATFORM *platform,
-                             const FUNCTION *function,
-                             const PCI_DEVICE_BOOTSTRAP *device,
-                             UINT32 process, UINT32 initiator,
-                             HANDLE_TRANSFER *handles)
+int platform_data_disk(const PLATFORM *platform, PCI_DEVICE_BOOTSTRAP *device)
+{
+    scan(platform, &found_functions);
+    if (!found_functions.data.config)
+        return 0;
+    describe(&found_functions.data, device);
+    return 1;
+}
+
+UINT32 platform_driver_handles(const PLATFORM *platform,
+                               const PCI_DEVICE_BOOTSTRAP *device,
+                               UINT32 process, UINT32 initiator,
+                               HANDLE_TRANSFER *handles)
 {
     UINT32 count = PCI_HANDLE_BARS, i;
 
@@ -422,9 +436,9 @@ static UINT32 driver_handles(const PLATFORM *platform,
         handle_duplicate(initiator, DRIVER_INITIATOR_RIGHTS,
                          &handles[PCI_HANDLE_INITIATOR].handle) != OK ||
         resource_create(platform->irq,
-                        INTERRUPT_SOURCE_MSI + function->requester, 1,
+                        INTERRUPT_SOURCE_MSI + device->requester, 1,
                         &handles[PCI_HANDLE_IRQ].handle) != OK ||
-        resource_create(platform->mmio, function->config, PCI_CONFIG_SIZE,
+        resource_create(platform->mmio, device->config, PCI_CONFIG_SIZE,
                         &handles[PCI_HANDLE_CONFIG].handle) != OK) {
         close_handles(handles, PCI_HANDLE_BARS);
         return 0;
@@ -585,10 +599,7 @@ static UINT32 watch(const CHILD *child, UINT32 handle, UINT32 signals,
     return status;
 }
 
-/* A job of its own for a driver, a child of the root job that grants it
-   driver_limits, as I10 has a supervisor do; HANDLE_INVALID, logged, if
-   it cannot be made. */
-static UINT32 driver_job(const PLATFORM *platform)
+UINT32 platform_driver_job(const PLATFORM *platform)
 {
     UINT32 job;
     UINT32 status = job_create(platform->job, &driver_limits, &job);
@@ -609,7 +620,7 @@ static int start_driver(const PLATFORM *platform, CHILD *child)
 {
     HANDLE_TRANSFER handles[PCI_HANDLES_MAX];
     PROGRAM program;
-    UINT32 job = driver_job(platform);
+    UINT32 job = platform_driver_job(platform);
     UINT32 mine = HANDLE_INVALID, theirs = HANDLE_INVALID, count = 0;
     UINT32 status = ERR_NO_MEMORY;
 
@@ -618,8 +629,9 @@ static int start_driver(const PLATFORM *platform, CHILD *child)
     if (job != HANDLE_INVALID)
         status = loader_load(job, boot_file(child->file), &program);
     if (status == OK) {
-        count = driver_handles(platform, child->function, &child->device,
-                               program.process, child->initiator, handles);
+        count = platform_driver_handles(platform, &child->device,
+                                        program.process, child->initiator,
+                                        handles);
         status = count ? channel_create(CHANNEL_CAPACITY, &mine, &theirs)
                        : ERR_NO_MEMORY;
     }

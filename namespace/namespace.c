@@ -9,6 +9,11 @@
    step; unpublishing removes it (F4). The server holds no per-process
    state: a process's view names the directories it reaches (F5).
 
+   The root carries WRITE so that an open below a publication can ask
+   for it, rights narrowing at every open (F1); the server behind the
+   name grants at most what its published directory carries. The root
+   itself is written only by publishing.
+
    Each root channel belongs to a client (F17). The root channel of the
    bootstrap message, its starter's, starts one, and so does each open
    of the root through it, which is how the starter hands the root to
@@ -33,7 +38,8 @@
 #define PUBLICATIONS_MAX 16
 
 #define ROOT_RIGHTS                                                       \
-    (IO_RIGHT_READ | IO_RIGHT_EXECUTE | IO_RIGHT_LIST | IO_RIGHT_PUBLISH)
+    (IO_RIGHT_READ | IO_RIGHT_WRITE | IO_RIGHT_EXECUTE | IO_RIGHT_LIST |   \
+     IO_RIGHT_PUBLISH)
 
 /* Whether opening the root through a channel starts a client. */
 typedef enum {
@@ -204,7 +210,11 @@ static int find(const UINT8 *name, UINT32 length, UINT32 *index)
    Requests. */
 
 /* An open: of the root itself for the empty path; otherwise passed on,
-   below the name its first component publishes. */
+   with its flags, below the name its first component publishes. A
+   create needs WRITE on the channel it comes through, as on any
+   directory. The server creates nothing, so an open with IO_OPEN_CREATE
+   of the root itself, or of a name the root does not hold, is not
+   supported. */
 static void open_path(const CHANNEL *c, const IO_REQUEST *request,
                       const UINT8 *path)
 {
@@ -220,10 +230,16 @@ static void open_path(const CHANNEL *c, const IO_REQUEST *request,
     while (n < request->length && path[n] != '/')
         n++;
     rest = n < request->length ? n + 1 : n;
-    if (request->flags || request->reserved)
+    if ((request->flags & ~IO_OPEN_FLAGS) || request->reserved ||
+        ((request->flags & (IO_OPEN_EXCLUSIVE | IO_OPEN_DIRECTORY)) &&
+         !(request->flags & IO_OPEN_CREATE)))
         status = ERR_INVALID_ARGS;
-    else if (request->rights & ~c->rights)
+    else if ((request->rights & ~c->rights) ||
+             ((request->flags & IO_OPEN_CREATE) &&
+              !(c->rights & IO_RIGHT_WRITE)))
         status = ERR_ACCESS_DENIED;
+    else if ((request->flags & IO_OPEN_CREATE) && request->length == 0)
+        status = ERR_NOT_SUPPORTED;
     else if (request->length > IO_PATH_MAX ||
              (request->length && !name_valid(path, n)) ||
              (rest == request->length && rest > n))
@@ -239,14 +255,16 @@ static void open_path(const CHANNEL *c, const IO_REQUEST *request,
             return;
         }
     } else if (!find(path, n, &index))
-        status = ERR_NOT_FOUND;
+        status = (request->flags & IO_OPEN_CREATE) && rest == request->length
+                     ? ERR_NOT_SUPPORTED
+                     : ERR_NOT_FOUND;
     if (status == OK) {
         forward->transaction = request->transaction;
         forward->operation = IO_OPEN;
         forward->offset = 0;
         forward->length = request->length - rest;
         forward->rights = request->rights;
-        forward->flags = 0;
+        forward->flags = request->flags;
         forward->reserved = 0;
         copy(reply + sizeof *forward, path + rest, request->length - rest);
         transfer.handle = endpoint;
