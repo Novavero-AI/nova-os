@@ -35,7 +35,7 @@ static void destroy(OBJECT *object)
 }
 
 static const OBJECT_TYPE interrupt_type = {TYPE_INTERRUPT, last_handle,
-                                           destroy, 0};
+                                           destroy, 0, 0};
 
 STATUS interrupt_create(const RESOURCE *resource, UINT64 source,
                         UINT32 options, JOB *job, INTERRUPT **out,

@@ -61,62 +61,42 @@ static STATUS handle_duplicate_call(const UINT64 *arguments, UINT64 *results)
     return status;
 }
 
-/* object_wait_one(handle, signals, deadline): observed signals. */
+/* object_wait_one(handle, signals, deadline): observed signals, reported
+   also when a closing handle cancels the wait (O9). */
 static STATUS object_wait_one_call(const UINT64 *arguments, UINT64 *results)
 {
-    OBJECT *object;
-    WAITABLE *waitable;
-    UINT32 observed;
-    STATUS status = handle_get_waitable(caller_handles(), (UINT32)arguments[0],
-                                        RIGHT_WAIT, &object, &waitable);
+    WAIT_ENTRY entry;
+    STATUS status;
 
-    if (status != OK)
-        return status;
-    status = wait_one(waitable, (UINT32)arguments[1], arguments[2], &observed);
-    object_release(object);
-    results[0] = observed;
+    entry.handle = (UINT32)arguments[0];
+    entry.signals = (UINT32)arguments[1];
+    entry.observed = 0;
+    status = handle_wait(caller_handles(), &entry, 1, arguments[2]);
+    results[0] = entry.observed;
     return status;
 }
 
 /* object_wait_many(items, count, deadline): writes each WAIT_ENTRY's
-   observed signals, also when the deadline passes. */
+   observed signals, also when the deadline passes or a closing handle
+   cancels the wait (O9). */
 static STATUS object_wait_many_call(const UINT64 *arguments, UINT64 *results)
 {
     WAIT_ENTRY entries[WAIT_MANY_MAX];
-    WAIT_ITEM items[WAIT_MANY_MAX];
-    OBJECT *objects[WAIT_MANY_MAX];
     UINT64 address = arguments[0];
     UINT32 count = (UINT32)arguments[1];
-    UINT32 taken, i;
-    STATUS status;
+    STATUS status, copied;
 
     (void)results;
     if (count > WAIT_MANY_MAX)
         return ERR_OUT_OF_RANGE;
     status = copy_from_user(entries, address, count * sizeof(WAIT_ENTRY));
-    for (taken = 0; status == OK && taken < count;) {
-        status = handle_get_waitable(caller_handles(), entries[taken].handle,
-                                     RIGHT_WAIT, &objects[taken],
-                                     &items[taken].object);
-        if (status == OK) {
-            items[taken].signals = entries[taken].signals;
-            taken++;
-        }
+    if (status == OK)
+        status = handle_wait(caller_handles(), entries, count, arguments[2]);
+    if (status == OK || status == ERR_TIMED_OUT || status == ERR_CANCELED) {
+        copied = copy_to_user(address, entries, count * sizeof(WAIT_ENTRY));
+        if (copied != OK)
+            status = copied;
     }
-    if (status == OK) {
-        status = wait_many(items, count, arguments[2]);
-        for (i = 0; i < count; i++)
-            entries[i].observed = items[i].observed;
-        if (status == OK || status == ERR_TIMED_OUT) {
-            STATUS copied =
-                copy_to_user(address, entries, count * sizeof(WAIT_ENTRY));
-
-            if (copied != OK)
-                status = copied;
-        }
-    }
-    for (i = 0; i < taken; i++)
-        object_release(objects[i]);
     return status;
 }
 
@@ -205,16 +185,9 @@ static STATUS port_create_call(const UINT64 *arguments, UINT64 *results)
 /* port_wait(port, deadline, packet). */
 static STATUS port_wait_call(const UINT64 *arguments, UINT64 *results)
 {
-    OBJECT *port;
-    STATUS status = handle_get(caller_handles(), (UINT32)arguments[0],
-                               TYPE_PORT, PORT_RIGHT_READ, &port);
-
     (void)results;
-    if (status != OK)
-        return status;
-    status = port_wait((PORT *)port, arguments[1], arguments[2]);
-    object_release(port);
-    return status;
+    return port_wait(caller_handles(), (UINT32)arguments[0], arguments[1],
+                     arguments[2]);
 }
 
 static STATUS clock_monotonic_call(const UINT64 *arguments, UINT64 *results)
@@ -765,6 +738,12 @@ UINT32 syscall_argument_count(UINT64 number)
 int syscall_served_32_bit(UINT64 number)
 {
     return number < CALL_COUNT && calls[number].lane_32_bit;
+}
+
+int syscall_reports_results(UINT64 number, STATUS status)
+{
+    return status == ERR_BUFFER_TOO_SMALL ||
+           (number == CALL_OBJECT_WAIT_ONE && status == ERR_CANCELED);
 }
 
 STATUS syscall_invoke(UINT64 number, const UINT64 *arguments,

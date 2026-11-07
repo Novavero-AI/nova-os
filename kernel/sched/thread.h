@@ -109,11 +109,12 @@ void sched_timer_interrupt(void);
 UINT64 sched_take_longest_tick(void);
 
 /* For waits, with interrupts disabled. sched_block blocks the running
-   thread, which is not the boot thread, until sched_wake or the deadline
-   ends its wait, and returns OK or ERR_TIMED_OUT accordingly. sched_wake
-   leaves a thread that is not blocked as it is: a wait ends once. */
+   thread, which is not the boot thread, until sched_end_wait or the
+   deadline ends its wait, and returns the status sched_end_wait gave or
+   ERR_TIMED_OUT. sched_end_wait leaves a thread that is not blocked as
+   it is: a wait ends once. */
 STATUS sched_block(UINT64 deadline);
-void sched_wake(THREAD *thread);
+void sched_end_wait(THREAD *thread, STATUS status);
 
 /* The boot-time self-test of threads, scheduling and waits, run as a
    thread whose argument is the spinner's thread. It logs each result to

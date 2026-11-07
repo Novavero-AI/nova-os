@@ -190,8 +190,8 @@ void per_cpu_set_kernel_stack(UINT64 top)
 
 /* A stack argument's address wraps past the top of the address space
    only to below 0x28, which user_range_valid refuses. A failed call
-   reports 0 in every result, except ERR_BUFFER_TOO_SMALL, which reports
-   the sizes needed (S7). R10 comes back zero (S4). */
+   reports 0 in every result, except where syscall_reports_results says
+   otherwise (S7). R10 comes back zero (S4). */
 void syscall_dispatch(INTERRUPT_FRAME *frame)
 {
     UINT64 arguments[SYSCALL_ARGUMENTS_MAX];
@@ -212,7 +212,7 @@ void syscall_dispatch(INTERRUPT_FRAME *frame)
                                 (count - REGISTER_ARGUMENTS) * sizeof(UINT64));
     if (status == OK)
         status = syscall_invoke(frame->rax, arguments, results);
-    if (status != OK && status != ERR_BUFFER_TOO_SMALL)
+    if (status != OK && !syscall_reports_results(frame->rax, status))
         for (i = 0; i < SYSCALL_RESULTS; i++)
             results[i] = 0;
     frame->rax = status;
@@ -264,7 +264,7 @@ void compat_syscall_dispatch(INTERRUPT_FRAME *frame)
                                 count * sizeof(UINT64));
     if (status == OK)
         status = syscall_invoke(number, arguments, results);
-    if (status != OK && status != ERR_BUFFER_TOO_SMALL)
+    if (status != OK && !syscall_reports_results(number, status))
         for (i = 0; i < SYSCALL_RESULTS; i++)
             results[i] = 0;
     disable_interrupts();

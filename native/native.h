@@ -45,12 +45,15 @@ UINT32 debug_write(UINT32 resource, const void *bytes, UINT64 count);
 
 /* Wait until any of signals is active on the object handle names, which
    needs RIGHT_WAIT, or the deadline on the monotonic clock passes
-   (ERR_TIMED_OUT), and report the signals observed. */
+   (ERR_TIMED_OUT), and report the signals observed. If another thread
+   closes handle meanwhile, the wait ends with ERR_CANCELED and reports
+   HANDLE_CLOSED among them. */
 UINT32 object_wait_one(UINT32 handle, UINT32 signals, UINT64 deadline,
                        UINT32 *observed);
 
 /* object_wait_one on up to WAIT_MANY_MAX objects at once, writing each
-   entry's observed signals. */
+   entry's observed signals, also when the wait times out or is
+   cancelled. */
 UINT32 object_wait_many(WAIT_ENTRY *items, UINT32 count, UINT64 deadline);
 
 /* A new channel whose endpoints each queue up to capacity messages. */
@@ -102,7 +105,8 @@ UINT32 handle_duplicate(UINT32 handle, UINT32 rights, UINT32 *duplicate);
 UINT32 port_create(UINT32 capacity, UINT32 *port);
 
 /* Take the next packet from port into packet, waiting for one until the
-   deadline, an absolute time on the monotonic clock. Needs
+   deadline, an absolute time on the monotonic clock. If another thread
+   closes port meanwhile, the wait ends with ERR_CANCELED. Needs
    PORT_RIGHT_READ. */
 UINT32 port_wait(UINT32 port, UINT64 deadline, PORT_PACKET *packet);
 

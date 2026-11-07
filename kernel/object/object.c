@@ -147,12 +147,18 @@ static HANDLE_ENTRY *entry_of(HANDLE_TABLE *table, UINT32 value)
     return entry;
 }
 
-/* Free entry and return the handle it held. The next handle placed there
-   gets the next generation, so value names nothing from now on. */
-static OBJECT *free_entry(HANDLE_ENTRY *entry)
+/* Free entry, of table, and return the handle it held, ending every wait
+   made through it first (O9). The next handle placed there gets the next
+   generation, so value names nothing from now on. With interrupts
+   disabled. */
+static OBJECT *free_entry(HANDLE_TABLE *table, HANDLE_ENTRY *entry)
 {
     OBJECT *object = entry->object;
+    UINT32 index = (UINT32)(entry - table->entries);
 
+    if (object->type->handle_waits)
+        waitable_cancel(object->type->handle_waits(object), table,
+                        handle_value(table, index));
     entry->object = 0;
     entry->rights = 0;
     entry->state = HANDLE_FREE;
@@ -162,9 +168,9 @@ static OBJECT *free_entry(HANDLE_ENTRY *entry)
     return object;
 }
 
-static void close_entry(HANDLE_ENTRY *entry)
+static void close_entry(HANDLE_TABLE *table, HANDLE_ENTRY *entry)
 {
-    object_close(free_entry(entry));
+    object_close(free_entry(table, entry));
 }
 
 void handle_table_close_all(HANDLE_TABLE *table)
@@ -174,7 +180,7 @@ void handle_table_close_all(HANDLE_TABLE *table)
 
     for (i = 0; i < HANDLE_TABLE_CAPACITY; i++)
         if (table->entries[i].state == HANDLE_IN_USE)
-            close_entry(&table->entries[i]);
+            close_entry(table, &table->entries[i]);
     restore_interrupts(flags);
 }
 
@@ -284,7 +290,7 @@ STATUS handle_peek(HANDLE_TABLE *table, UINT32 value, OBJECT **object,
 
 void handle_take(HANDLE_TABLE *table, UINT32 value)
 {
-    free_entry(entry_of(table, value));
+    free_entry(table, entry_of(table, value));
 }
 
 STATUS handle_duplicate(HANDLE_TABLE *table, UINT32 value, UINT32 rights,
@@ -312,13 +318,67 @@ STATUS handle_duplicate(HANDLE_TABLE *table, UINT32 value, UINT32 rights,
     return status;
 }
 
+/* Check each entry's handle, then wait through them all; objects
+   receives the object of each handle checked, *taken their count, for
+   the caller to release. The WAIT_ITEMs live in this frame and the
+   objects in the caller's, so that neither frame reaches the 4096 bytes
+   at which TinyCC calls __chkstk (random.c). */
+static STATUS check_and_wait(HANDLE_TABLE *table, WAIT_ENTRY *entries,
+                             UINT32 count, UINT64 deadline, OBJECT **objects,
+                             UINT32 *taken)
+{
+    WAIT_ITEM items[WAIT_MANY_MAX];
+    STATUS status = OK;
+    UINT32 i;
+
+    for (*taken = 0; status == OK && *taken < count;) {
+        i = *taken;
+        status = handle_get_waitable(table, entries[i].handle, RIGHT_WAIT,
+                                     &objects[i], &items[i].object);
+        if (status == OK) {
+            items[i].signals = entries[i].signals;
+            items[i].handle_table = table;
+            items[i].handle = entries[i].handle;
+            (*taken)++;
+        }
+    }
+    if (status != OK)
+        return status;
+    status = wait_many(items, count, deadline);
+    for (i = 0; i < count; i++)
+        entries[i].observed = items[i].observed;
+    return status;
+}
+
+/* Interrupts stay disabled from the first handle's check until the wait
+   blocks, and again from its waking to the end, so a handle cannot leave
+   the table between its check and the wait's start, where its close
+   would find no wait to end. */
+STATUS handle_wait(HANDLE_TABLE *table, WAIT_ENTRY *entries, UINT32 count,
+                   UINT64 deadline)
+{
+    OBJECT *objects[WAIT_MANY_MAX];
+    UINT32 taken, i;
+    UINT64 flags;
+    STATUS status;
+
+    if (count > WAIT_MANY_MAX)
+        return ERR_OUT_OF_RANGE;
+    flags = save_and_disable_interrupts();
+    status = check_and_wait(table, entries, count, deadline, objects, &taken);
+    for (i = 0; i < taken; i++)
+        object_release(objects[i]);
+    restore_interrupts(flags);
+    return status;
+}
+
 STATUS handle_close(HANDLE_TABLE *table, UINT32 value)
 {
     UINT64 flags = save_and_disable_interrupts();
     HANDLE_ENTRY *entry = entry_of(table, value);
 
     if (entry)
-        close_entry(entry);
+        close_entry(table, entry);
     restore_interrupts(flags);
     return entry ? OK : ERR_BAD_HANDLE;
 }

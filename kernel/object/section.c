@@ -40,7 +40,7 @@ static void destroy(OBJECT *object)
     page_free_mapped(section);
 }
 
-static const OBJECT_TYPE section_type = {TYPE_SECTION, 0, destroy, 0};
+static const OBJECT_TYPE section_type = {TYPE_SECTION, 0, destroy, 0, 0};
 
 STATUS section_create(UINT64 size, SECTION **out)
 {

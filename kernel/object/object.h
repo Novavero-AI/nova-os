@@ -5,11 +5,12 @@
    call holds the object a handle named for as long as it uses it. A
    handle may sit in a process's handle table, travel in a channel
    message, or be held by the kernel code that created the object until
-   it places the handle. When the last handle goes the type's last-handle
-   rule runs, even while references remain; when the last reference goes
-   the object is destroyed. Both run from a work list, never by
-   recursion, so a chain of objects that hold handles to each other ends
-   in a loop, not a deep stack (O10).
+   it places the handle. A handle that leaves a table, closed or moved,
+   ends every wait made through it (O9). When the last handle goes the
+   type's last-handle rule runs, even while references remain; when the
+   last reference goes the object is destroyed. Both run from a work
+   list, never by recursion, so a chain of objects that hold handles to
+   each other ends in a loop, not a deep stack (O10).
 
    On one processor every change runs with interrupts disabled, which
    keeps out the timer and preemption alike. */
@@ -25,13 +26,18 @@ typedef struct OBJECT OBJECT;
 
 /* What the kernel does with an object of a type: its number as user code
    sees it (native_abi.h); what happens when its last handle goes, or 0
-   for nothing; how it is destroyed, which frees its memory; and where its
-   signals are, or 0 for a type that is not waitable (O9). */
+   for nothing; how it is destroyed, which frees its memory; where its
+   signals are, or 0 for a type that is not waitable (O9); and where the
+   waits made through a handle to it are linked, which closing the handle
+   ends (O9), or 0 for a type no call waits on. A port is waited on by
+   port_wait, not through its signals, so the last two differ for it
+   alone. */
 typedef struct {
     UINT32 number;
     void (*last_handle)(OBJECT *object);
     void (*destroy)(OBJECT *object);
     WAITABLE *(*waitable)(OBJECT *object);
+    WAITABLE *(*handle_waits)(OBJECT *object);
 } OBJECT_TYPE;
 
 struct OBJECT {
@@ -116,6 +122,17 @@ STATUS handle_get(HANDLE_TABLE *table, UINT32 value, UINT32 type,
 STATUS handle_get_waitable(HANDLE_TABLE *table, UINT32 value, UINT32 rights,
                            OBJECT **object, WAITABLE **waitable);
 
+/* object_wait_one and object_wait_many (O9): wait through the count
+   handles of table that entries name, each of which needs RIGHT_WAIT,
+   until a signal an entry asks for is active on its object or the
+   deadline passes, and write each entry's observed signals. Returns OK;
+   ERR_TIMED_OUT; ERR_CANCELED if one of the handles leaves table
+   meanwhile, with HANDLE_CLOSED among that entry's observed signals; the
+   first failing entry's handle check (handle_get_waitable); or
+   ERR_OUT_OF_RANGE for more than WAIT_MANY_MAX entries. */
+STATUS handle_wait(HANDLE_TABLE *table, WAIT_ENTRY *entries, UINT32 count,
+                   UINT64 deadline);
+
 /* Remove the handle value names from table and close it. Returns OK or
    ERR_BAD_HANDLE. */
 STATUS handle_close(HANDLE_TABLE *table, UINT32 value);
@@ -132,7 +149,8 @@ STATUS handle_duplicate(HANDLE_TABLE *table, UINT32 value, UINT32 rights,
    disabled across both so that nothing changes between them: the object
    and rights of the handle value names, or ERR_BAD_HANDLE, taking no
    reference; and the removal of that handle without closing it, its
-   handle and reference passing to the caller. */
+   handle and reference passing to the caller. A wait through the handle
+   ends as if it had closed. */
 STATUS handle_peek(HANDLE_TABLE *table, UINT32 value, OBJECT **object,
                    UINT32 *rights);
 void handle_take(HANDLE_TABLE *table, UINT32 value);

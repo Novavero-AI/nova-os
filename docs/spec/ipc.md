@@ -191,6 +191,9 @@ order queued.
    fails for lack of memory. A registration that cannot be charged to the
    caller's job fails with `ERR_NO_MEMORY`.
 4. Closing the watched handle ends its watch; packets already queued stay.
+5. A thread blocked in `port_wait` whose port handle closes, or leaves
+   its table in a message, wakes with `ERR_CANCELED`, as a wait on a
+   closed handle does ([objects.md O9](objects.md#o9-waiting)).
 
 - **Why:** a port is the one place a single thread waits for client
   requests, interrupts and completions together, the need Heiser and

@@ -2,7 +2,8 @@
    interrupt handler queues packets too. A port signals its internal
    WAITABLE while its queue is not empty; waiters block on that and
    re-check the queue when they wake, so each packet goes to exactly one
-   of them (ipc.md I4). */
+   of them (ipc.md I4). The waits are linked there, so closing the handle
+   a waiter waits through ends its wait. */
 
 #include "port.h"
 #include "interrupt.h"
@@ -31,7 +32,13 @@ static void destroy(OBJECT *object)
     page_free_mapped(object);
 }
 
-static const OBJECT_TYPE port_type = {TYPE_PORT, last_handle, destroy, 0};
+static WAITABLE *queue_of(OBJECT *object)
+{
+    return &((PORT *)object)->waitable;
+}
+
+static const OBJECT_TYPE port_type = {TYPE_PORT, last_handle, destroy, 0,
+                                      queue_of};
 
 STATUS port_create(UINT32 capacity, PORT **out)
 {
@@ -92,31 +99,42 @@ void port_remove(PORT *port, PACKET_NODE *node)
     restore_interrupts(flags);
 }
 
-/* The copy runs with interrupts disabled, so the packet it copies is the
-   one it dequeues; a fault in it fails the copy and leaves the packet
-   queued. */
-STATUS port_wait(PORT *port, UINT64 deadline, UINT64 packet)
+/* Interrupts stay disabled from the handle's check to the end, except
+   while the thread is blocked, so a close of the handle always finds the
+   wait it ends, and the packet copied is the one dequeued; a fault in
+   the copy fails it and leaves the packet queued. A waiter woken for a
+   packet another thread took first waits again. */
+STATUS port_wait(HANDLE_TABLE *table, UINT32 value, UINT64 deadline,
+                 UINT64 packet)
 {
-    UINT64 flags;
-    UINT32 observed;
-    STATUS status;
+    UINT64 flags = save_and_disable_interrupts();
+    OBJECT *object;
+    PORT *port;
+    WAIT_ITEM item;
+    STATUS status = handle_get(table, value, TYPE_PORT, PORT_RIGHT_READ,
+                               &object);
 
-    if (!user_range_valid(packet, sizeof(PORT_PACKET)))
-        return ERR_BAD_ADDRESS;
-    for (;;) {
-        flags = save_and_disable_interrupts();
-        if (port->first) {
-            PACKET_NODE *node = port->first;
-
-            status = copy_to_user(packet, &node->packet, sizeof(PORT_PACKET));
-            if (status == OK)
-                port_remove(port, node);
-            restore_interrupts(flags);
-            return status;
-        }
+    if (status != OK) {
         restore_interrupts(flags);
-        if (wait_one(&port->waitable, PORT_SIGNAL_PACKET, deadline,
-                     &observed) == ERR_TIMED_OUT)
-            return ERR_TIMED_OUT;
+        return status;
     }
+    port = (PORT *)object;
+    item.object = &port->waitable;
+    item.signals = PORT_SIGNAL_PACKET;
+    item.handle_table = table;
+    item.handle = value;
+    if (!user_range_valid(packet, sizeof(PORT_PACKET)))
+        status = ERR_BAD_ADDRESS;
+    while (status == OK && !port->first)
+        status = wait_many(&item, 1, deadline);
+    if (status == OK) {
+        PACKET_NODE *node = port->first;
+
+        status = copy_to_user(packet, &node->packet, sizeof(PORT_PACKET));
+        if (status == OK)
+            port_remove(port, node);
+    }
+    object_release(object);
+    restore_interrupts(flags);
+    return status;
 }

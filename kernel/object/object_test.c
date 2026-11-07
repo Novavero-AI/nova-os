@@ -1,13 +1,17 @@
 /* The boot-time self-test of kernel objects, run by the startup thread
    before the first process, so that every object it makes is gone
    before any process could see it. It checks that interrupt vectors are
-   charged to a job's quota (docs/spec/objects.md O6), logs the result to
-   the serial port, and halts with the reason at the first failure. */
+   charged to a job's quota (docs/spec/objects.md O6), and that closing a
+   handle ends the waits made through it (O9); it logs each result to the
+   serial port and halts with the reason at the first failure. */
 
+#include "channel.h"
 #include "interrupt.h"
 #include "process.h"
 #include "cpu.h"
+#include "../x86_64/clock.h"
 #include "../x86_64/serial.h"
+#include "../x86_64/user.h"
 
 /* The quota of the test's job, and the requester ID its interrupts are
    made for. No device is given their vectors, which are freed again
@@ -15,6 +19,26 @@
 #define TEST_VECTORS 2
 #define TEST_REQUESTER 0
 #define TEST_SOURCE (INTERRUPT_SOURCE_MSI + TEST_REQUESTER)
+
+/* A waiter of the cancel test is a kernel thread, whose tables map no
+   user memory, waiting in port_wait for a packet that never comes: its
+   packet address is checked and never written. A waiter ends well
+   within JOIN_LIMIT_NS of its handle's close, and the test checks every
+   POLL_MS that both have blocked. */
+#define TEST_PACKET USER_BASE
+#define JOIN_LIMIT_NS (5 * NS_PER_SECOND)
+#define POLL_MS 1
+
+/* A thread waiting through a handle in the cancel test's table, and how
+   its wait ended. */
+typedef struct {
+    THREAD thread;
+    HANDLE_TABLE *table;
+    WAIT_ENTRY entry;
+    STATUS status;
+} WAITER;
+
+static WAITER port_waiter, channel_waiter;
 
 static void check(int passed, const char *reason)
 {
@@ -81,8 +105,99 @@ static void test_vector_quota(void)
                  "destroyed\r\n");
 }
 
+static void port_waiter_main(void *argument)
+{
+    WAITER *waiter = argument;
+
+    waiter->status = port_wait(waiter->table, waiter->entry.handle,
+                               DEADLINE_INFINITE, TEST_PACKET);
+}
+
+static void channel_waiter_main(void *argument)
+{
+    WAITER *waiter = argument;
+
+    waiter->status =
+        handle_wait(waiter->table, &waiter->entry, 1, DEADLINE_INFINITE);
+}
+
+static void start_waiter(WAITER *waiter, THREAD_ENTRY entry,
+                         HANDLE_TABLE *table, OBJECT *object, UINT32 rights,
+                         UINT32 signals)
+{
+    UINT32 index;
+
+    check(handle_reserve(table, &index) == OK, "a test table was full");
+    waiter->table = table;
+    waiter->entry.handle = handle_place(table, index, object, rights);
+    waiter->entry.signals = signals;
+    waiter->entry.observed = 0;
+    waiter->status = OK;
+    check(thread_create(&waiter->thread, entry, waiter) == OK,
+          "no memory for a waiter");
+    thread_start(&waiter->thread);
+}
+
+static void await_blocked(const WAITER *waiter)
+{
+    UINT64 limit = clock_monotonic() + JOIN_LIMIT_NS;
+
+    while (waiter->thread.state != THREAD_BLOCKED) {
+        check(clock_monotonic() < limit, "a waiter did not block");
+        sleep_until(clock_monotonic() + POLL_MS * NS_PER_MS);
+    }
+}
+
+static void join(WAITER *waiter)
+{
+    UINT32 observed;
+
+    check(wait_one(&waiter->thread.waitable, THREAD_TERMINATED,
+                   clock_monotonic() + JOIN_LIMIT_NS, &observed) == OK,
+          "a wait through a closed handle went on");
+}
+
+/* One thread blocks in port_wait on a port, another in object_wait_one
+   on a channel endpoint, each through a handle in a table of the test's
+   own and with no deadline; closing each handle must end its wait with
+   ERR_CANCELED, the channel's with HANDLE_CLOSED observed. */
+static void test_canceled_waits(void)
+{
+    HANDLE_TABLE *table = handle_table_create();
+    ENDPOINT *endpoint, *peer;
+    PORT *port;
+
+    check(table != 0, "no memory for the cancel test's table");
+    check(port_create(1, &port) == OK, "no memory for the cancel test's port");
+    check(channel_create(1, &endpoint, &peer) == OK,
+          "no memory for the cancel test's channel");
+    start_waiter(&port_waiter, port_waiter_main, table, &port->object,
+                 PORT_RIGHTS, 0);
+    start_waiter(&channel_waiter, channel_waiter_main, table,
+                 &endpoint->object, CHANNEL_RIGHTS, CHANNEL_READABLE);
+    await_blocked(&port_waiter);
+    await_blocked(&channel_waiter);
+    handle_close(table, port_waiter.entry.handle);
+    handle_close(table, channel_waiter.entry.handle);
+    join(&port_waiter);
+    join(&channel_waiter);
+    check(port_waiter.status == ERR_CANCELED,
+          "port_wait did not end with ERR_CANCELED when its port handle "
+          "closed");
+    check(channel_waiter.status == ERR_CANCELED &&
+              (channel_waiter.entry.observed & HANDLE_CLOSED),
+          "object_wait_one did not end with ERR_CANCELED and "
+          "HANDLE_CLOSED when its handle closed");
+    object_close(&peer->object);
+    handle_table_destroy(table);
+    serial_write("nova: objects: threads blocked in port_wait and "
+                 "object_wait_one with no deadline ended with ERR_CANCELED "
+                 "when their handles closed\r\n");
+}
+
 void object_self_test(void)
 {
     test_vector_quota();
+    test_canceled_waits();
     serial_write("nova: object self-test passed\r\n");
 }

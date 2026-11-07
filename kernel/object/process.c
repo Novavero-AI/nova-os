@@ -51,7 +51,7 @@ static WAITABLE *process_waitable(OBJECT *object)
 }
 
 static const OBJECT_TYPE process_type = {TYPE_PROCESS, last_handle, destroy,
-                                         process_waitable};
+                                         process_waitable, process_waitable};
 
 STATUS process_create(JOB *job, UINT32 options, PROCESS **out)
 {
@@ -105,7 +105,7 @@ static WAITABLE *thread_waitable(OBJECT *object)
 }
 
 static const OBJECT_TYPE thread_type = {TYPE_THREAD, 0, thread_destroy,
-                                        thread_waitable};
+                                        thread_waitable, thread_waitable};
 
 STATUS process_thread_create(PROCESS *process, USER_THREAD **out)
 {

@@ -113,7 +113,7 @@ static WAITABLE *waitable_of(OBJECT *object)
 }
 
 static const OBJECT_TYPE channel_type = {TYPE_CHANNEL, last_handle, destroy,
-                                         waitable_of};
+                                         waitable_of, waitable_of};
 
 STATUS channel_create(UINT32 capacity, ENDPOINT **first, ENDPOINT **second)
 {

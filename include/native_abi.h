@@ -127,7 +127,10 @@
 #define INITIATOR_RIGHT_PIN 0x1
 #define INITIATOR_RIGHT_RELEASE 0x2
 
-/* Signals (O9): a process's and a thread's, and a channel endpoint's. */
+/* Signals (O9): a process's and a thread's, a channel endpoint's, and
+   the synthetic bit 23 a wait observes on an object whose handle closed
+   during the wait. */
+#define HANDLE_CLOSED 0x800000
 #define PROCESS_TERMINATED 0x1
 #define THREAD_TERMINATED 0x1
 #define CHANNEL_READABLE 0x1

@@ -371,7 +371,9 @@ Every call returns a 32-bit status in EAX, zero-extended into RAX. 0 is
 success; any other value is one of the codes below. A call that fails
 changes nothing, except where its description says otherwise, and its
 result registers are 0 except where its description says otherwise
-(`ERR_BUFFER_TOO_SMALL` reports the sizes needed).
+(`ERR_BUFFER_TOO_SMALL` reports the sizes needed, and `object_wait_one`
+cancelled by a closing handle the signals it observed,
+[objects.md O9](objects.md#o9-waiting)).
 
 | Code | Name | Meaning |
 |---|---|---|

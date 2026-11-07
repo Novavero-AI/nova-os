@@ -44,10 +44,14 @@ void port_enqueue(PORT *port, PACKET_NODE *node);
 /* Take node out of port's queue, if it is queued. */
 void port_remove(PORT *port, PACKET_NODE *node);
 
-/* port_wait: copy the first queued packet to the PORT_PACKET at user
-   address packet and dequeue it, waiting until the deadline for one if
-   none is queued. Returns OK, ERR_TIMED_OUT, or ERR_BAD_ADDRESS, which
-   leaves the packet queued (docs/spec/syscalls.md S6). */
-STATUS port_wait(PORT *port, UINT64 deadline, UINT64 packet);
+/* port_wait through the handle value in table, which needs
+   PORT_RIGHT_READ: copy the first queued packet to the PORT_PACKET at
+   user address packet and dequeue it, waiting until the deadline for one
+   if none is queued. Returns OK; the handle's check (handle_get);
+   ERR_BAD_ADDRESS, which leaves the packet queued (docs/spec/syscalls.md
+   S6); ERR_TIMED_OUT; or ERR_CANCELED if the handle leaves table
+   meanwhile (docs/spec/objects.md O9). */
+STATUS port_wait(HANDLE_TABLE *table, UINT32 value, UINT64 deadline,
+                 UINT64 packet);
 
 #endif

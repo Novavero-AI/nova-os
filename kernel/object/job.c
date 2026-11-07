@@ -20,7 +20,7 @@ static void destroy(OBJECT *object)
     page_free_mapped(job);
 }
 
-static const OBJECT_TYPE job_type = {TYPE_JOB, 0, destroy, 0};
+static const OBJECT_TYPE job_type = {TYPE_JOB, 0, destroy, 0, 0};
 
 static JOB *create(JOB *parent, UINT32 vector_limit)
 {

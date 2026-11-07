@@ -63,7 +63,7 @@ static void pin_destroy(OBJECT *object)
 }
 
 static const OBJECT_TYPE pin_type = {TYPE_PIN, pin_last_handle, pin_destroy,
-                                     0};
+                                     0, 0};
 
 /* Its quarantined pins move to the leaked list; its live pins leave its
    list, to go there too if they are quarantined later. */
@@ -89,7 +89,7 @@ static void initiator_destroy(OBJECT *object)
 }
 
 static const OBJECT_TYPE initiator_type = {
-    TYPE_INITIATOR, initiator_last_handle, initiator_destroy, 0};
+    TYPE_INITIATOR, initiator_last_handle, initiator_destroy, 0, 0};
 
 STATUS initiator_create(const RESOURCE *resource, UINT64 requester,
                         INITIATOR **out)

@@ -415,7 +415,14 @@ user signals, set and cleared with `object_signal`.
    `DEADLINE_INFINITE` (all ones) never expires and 0 polls.
 4. If a handle being waited on is closed by another thread, the wait ends
    with `ERR_CANCELED` and that item's observed signals include
-   `HANDLE_CLOSED`.
+   `HANDLE_CLOSED`. A handle closes for this rule when it leaves the
+   waiter's table by any call: `handle_close`, a transfer in a channel
+   message, or `process_start`'s move of the bootstrap handle.
+   `object_wait_many` writes every item's observed signals and
+   `object_wait_one` returns its own when the wait is cancelled, and a
+   thread blocked in `port_wait` ends the same way when its port handle
+   closes ([ipc.md I4](ipc.md#i4-ports)), so no thread stays blocked on an
+   object it holds no handle to.
 5. Results can be stale by the time the caller acts on them; a woken
    reader must tolerate finding a channel already drained by another
    thread, as Zircon warns ([Signals][zx-signals]).

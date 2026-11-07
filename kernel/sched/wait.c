@@ -25,8 +25,24 @@ void waitable_update(WAITABLE *object, UINT32 clear, UINT32 set)
     for (item = object->watchers; item; item = item->next) {
         item->observed |= object->signals;
         if (object->signals & item->signals)
-            sched_wake(item->waiter);
+            sched_end_wait(item->waiter, OK);
     }
+    restore_interrupts(flags);
+}
+
+/* A waiter woken already but not yet run is still linked, and observes
+   the close too, so its wait reports it. */
+void waitable_cancel(WAITABLE *object, const void *handle_table,
+                     UINT32 handle)
+{
+    UINT64 flags = save_and_disable_interrupts();
+    WAIT_ITEM *item;
+
+    for (item = object->watchers; item; item = item->next)
+        if (item->handle_table == handle_table && item->handle == handle) {
+            item->observed |= HANDLE_CLOSED;
+            sched_end_wait(item->waiter, ERR_CANCELED);
+        }
     restore_interrupts(flags);
 }
 
@@ -36,6 +52,16 @@ static int satisfied(const WAIT_ITEM *items, UINT32 count)
 
     for (i = 0; i < count; i++)
         if (items[i].observed & items[i].signals)
+            return 1;
+    return 0;
+}
+
+static int handle_closed(const WAIT_ITEM *items, UINT32 count)
+{
+    UINT32 i;
+
+    for (i = 0; i < count; i++)
+        if (items[i].observed & HANDLE_CLOSED)
             return 1;
     return 0;
 }
@@ -85,6 +111,8 @@ STATUS wait_many(WAIT_ITEM *items, UINT32 count, UINT64 deadline)
             unwatch(&items[i]);
             items[i].observed |= items[i].object->signals;
         }
+        if (handle_closed(items, count))
+            status = ERR_CANCELED;
     }
     restore_interrupts(flags);
     return status;
@@ -98,6 +126,8 @@ STATUS wait_one(WAITABLE *object, UINT32 signals, UINT64 deadline,
 
     item.object = object;
     item.signals = signals;
+    item.handle_table = 0;
+    item.handle = HANDLE_INVALID;
     status = wait_many(&item, 1, deadline);
     *observed = item.observed;
     return status;

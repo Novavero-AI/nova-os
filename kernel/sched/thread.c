@@ -361,7 +361,7 @@ STATUS sched_block(UINT64 deadline)
     return self->wait_status;
 }
 
-void sched_wake(THREAD *thread)
+void sched_end_wait(THREAD *thread, STATUS status)
 {
     CPU *cpu = cpu_self();
 
@@ -369,5 +369,5 @@ void sched_wake(THREAD *thread)
         return;
     if (thread->deadline != DEADLINE_INFINITE)
         remove_timeout(cpu, thread);
-    end_wait(cpu, thread, OK);
+    end_wait(cpu, thread, status);
 }
