@@ -2,14 +2,14 @@
    ranges the kernel found in the ACPI MCFG table, from each range's
    first bus down through the bridges, mapping each bus it visits once,
    and logs each function. The first virtio block function goes to the
-   virtio block driver, \nova\virtblk.exe, a process of its own whose
-   bootstrap message (pci.h) carries resources covering only that
-   function: its configuration space, its memory BARs, its
-   message-signalled interrupts and an initiator for its requester ID,
-   with PIN alone. init keeps the initiator's RELEASE: once the driver
-   has ended, it clears the function's Bus Master Enable, which stops the
-   function's DMA, and releases the initiator's quarantine (ipc.md
-   I10). */
+   virtio block driver, \nova\virtblk.exe, a process of its own in a
+   job of its own, whose bootstrap message (pci.h) carries resources
+   covering only that function: its configuration space, its memory
+   BARs, its message-signalled interrupts and an initiator for its
+   requester ID, with PIN alone. init keeps the initiator's RELEASE. Once
+   the driver has ended, init clears the function's Bus Master Enable,
+   resets the device, releases the initiator's quarantine and, if the
+   driver failed, starts it again (ipc.md I10). */
 
 #include "platform.h"
 #include "init.h"
@@ -17,6 +17,7 @@
 #include "mmio.h"
 #include "pci.h"
 #include "virtio_blk.h"
+#include "virtio_pci.h"
 
 #define BUS_SIZE ((UINT64)1 << PCI_BUS_SHIFT)
 #define BUSES 256
@@ -37,10 +38,16 @@
 
 static const JOB_LIMITS driver_limits = {DRIVER_INTERRUPT_VECTORS};
 
+/* How many times init starts a driver: once, and once more if it fails,
+   since a failure that repeats at once is not one a restart cures. */
+#define DRIVER_STARTS 2
+
 typedef struct {
     UINT32 requester;
     UINT64 config;          /* physical */
     volatile UINT8 *mapped; /* in init, inside its bus's mapping */
+    volatile UINT8 *common; /* its virtio common configuration, mapped
+                               in init once it is first reset, or 0 */
 } FUNCTION;
 
 /* The buses of one ECAM range, each mapped into init when first
@@ -148,6 +155,7 @@ static void scan(const PLATFORM *platform, FUNCTION *found)
     UINT32 i, bus;
 
     found->config = 0;
+    found->common = 0;
     for (i = 0; i < boot->ecam_count && i < BOOTSTRAP_ECAM_RANGES_MAX &&
                 !found->config;
          i++) {
@@ -357,25 +365,76 @@ static UINT32 run_driver(const PLATFORM *platform, const BOOT_FILE_VIEW *file,
     return exit_code;
 }
 
-/* Clear the function's Bus Master Enable, so it starts no more DMA, and
-   once a read shows the bit clear, release what its initiator holds in
-   quarantine (ipc.md I8, I10). init does not reset the device itself: a
-   driver started for it again resets it before it enables bus mastering
-   (VIRTIO 1.4 3.1.1), so the device never reaches the released pages
-   through the rings the dead driver left it. */
-static void stop_function(const FUNCTION *found, UINT32 initiator)
+/* The function's virtio common configuration structure (VIRTIO 1.4
+   4.1.4.3), mapped uncached into init from the BAR its capability names,
+   or 0 if it has none or the capability places it outside the BAR. */
+static volatile UINT8 *map_common(const PLATFORM *platform,
+                                  const FUNCTION *found,
+                                  const PCI_DEVICE_BOOTSTRAP *device)
 {
+    UINT32 structures[VIRTIO_CAP_TYPES], msix, cap, index;
+    UINT64 offset, first, end;
+    volatile UINT8 *mapped;
+
+    virtio_pci_capabilities(found->mapped, structures, &msix);
+    cap = structures[VIRTIO_CAP_COMMON];
+    if (!cap)
+        return 0;
+    index = mmio_read8(found->mapped + cap + VIRTIO_CAP_BAR);
+    offset = mmio_read32(found->mapped + cap + VIRTIO_CAP_OFFSET);
+    if (index >= PCI_BARS || offset > device->bar_size[index] ||
+        VIRTIO_COMMON_SIZE > device->bar_size[index] - offset)
+        return 0;
+    first = offset - offset % PAGE_SIZE;
+    end = (offset + VIRTIO_COMMON_SIZE + PAGE_SIZE - 1) / PAGE_SIZE *
+          PAGE_SIZE;
+    mapped = map_device(platform, device->bar_base[index] + first,
+                        end - first);
+    return mapped ? mapped + (offset - first) : 0;
+}
+
+/* Stop the function once its driver has ended (ipc.md I10): clear Bus
+   Master Enable, so it starts no more DMA, with Memory Space Enable set
+   so its registers answer; reset the device by writing 0 to its
+   device_status, after which it neither notifies nor touches its queues
+   (VIRTIO 1.4 4.1.4.3, 2.4.1), so none of the pages they named is in
+   use any more (3.3.1); and then release what the initiator holds in
+   quarantine (ipc.md I8). Returns 1 if the function was stopped and the
+   quarantine released; 0 if not, and the quarantine then stays. */
+static int stop_function(const PLATFORM *platform, FUNCTION *found,
+                         const PCI_DEVICE_BOOTSTRAP *device,
+                         UINT32 initiator)
+{
+    UINT16 command = mmio_read16(found->mapped + PCI_COMMAND);
+    UINT8 status;
+
     mmio_write16(found->mapped + PCI_COMMAND,
-                 (UINT16)(mmio_read16(found->mapped + PCI_COMMAND) &
+                 (UINT16)((command | PCI_COMMAND_MEMORY) &
                           ~PCI_COMMAND_BUS_MASTER));
     if (mmio_read16(found->mapped + PCI_COMMAND) & PCI_COMMAND_BUS_MASTER) {
         say("nova-init: bus mastering stays on; the initiator's quarantine "
             "stays\r\n");
-        return;
+        return 0;
     }
-    if (initiator_release_quarantine(initiator) == OK)
-        say("nova-init: bus mastering off, initiator's quarantine "
-            "released\r\n");
+    if (!found->common)
+        found->common = map_common(platform, found, device);
+    if (!found->common) {
+        say("nova-init: no virtio common configuration to reset the device "
+            "through; the initiator's quarantine stays\r\n");
+        return 0;
+    }
+    status = mmio_read8(found->common + VIRTIO_COMMON_DEVICE_STATUS);
+    if (!virtio_pci_reset(found->common)) {
+        say("nova-init: the device did not finish its reset; the "
+            "initiator's quarantine stays\r\n");
+        return 0;
+    }
+    if (initiator_release_quarantine(initiator) != OK)
+        return 0;
+    say("nova-init: bus mastering off, device reset from status ");
+    say_hex(status);
+    say(", initiator's quarantine released\r\n");
+    return 1;
 }
 
 int platform_run(const PLATFORM *platform)
@@ -383,7 +442,7 @@ int platform_run(const PLATFORM *platform)
     const BOOT_FILE_VIEW *file = boot_file(DRIVER_FILE);
     PCI_DEVICE_BOOTSTRAP device;
     FUNCTION found;
-    UINT32 initiator, exit_code;
+    UINT32 initiator, exit_code = 0, start;
 
     scan(platform, &found);
     if (!found.config) {
@@ -403,8 +462,14 @@ int platform_run(const PLATFORM *platform)
         say("nova-init: cannot create the function's initiator\r\n");
         return 0;
     }
-    exit_code = run_driver(platform, file, &found, &device, initiator);
-    stop_function(&found, initiator);
+    for (start = 0; start < DRIVER_STARTS; start++) {
+        if (start)
+            say("nova-init: restarting the virtio block driver\r\n");
+        exit_code = run_driver(platform, file, &found, &device, initiator);
+        if (!stop_function(platform, &found, &device, initiator) ||
+            exit_code == VIRTIO_BLK_EXIT_DONE)
+            break;
+    }
     handle_close(initiator);
     return exit_code == VIRTIO_BLK_EXIT_DONE;
 }

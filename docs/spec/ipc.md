@@ -620,6 +620,17 @@ asserts `TERMINATED`:
    the namespace.
 4. Clients open the device again by name.
 
+The supervisor first clears the function's Bus Master Enable, so it
+starts no DMA while the reset runs. A virtio device's reset is a write
+of 0 to `device_status` in its common configuration structure: "The
+device MUST reset when 0 is written to device_status, and present a 0 in
+device_status once that is done" (VIRTIO 1.4 4.1.4.3.1). From then "A
+device MUST NOT send notifications or interact with the queues" until a
+driver initializes it again (2.4.1), which is what releasing the
+quarantine needs: a driver "MUST ensure a virtqueue isn't live (by device
+reset) before removing exposed buffers" (3.3.1). A device that does not
+finish its reset keeps its quarantine and gets no new driver.
+
 - **Why:** everything the dead driver held is released by the kernel's
   ordinary lifetime rules ([objects.md O10](objects.md#o10-object-lifetime));
   the supervisor needs no cooperation from it.

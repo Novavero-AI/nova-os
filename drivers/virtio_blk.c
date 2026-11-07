@@ -16,44 +16,7 @@
 #include "mmio.h"
 #include "native.h"
 #include "pci.h"
-
-/* The virtio structure capability (4.1.4): cfg_type, bar, offset and
-   length; the notification capability adds notify_off_multiplier
-   (4.1.4.4). */
-#define CAP_CFG_TYPE 3
-#define CAP_BAR 4
-#define CAP_OFFSET 8
-#define CAP_LENGTH 12
-#define CAP_NOTIFY_MULTIPLIER 16
-#define CAP_COMMON 1
-#define CAP_NOTIFY 2
-#define CAP_DEVICE 4
-#define CAP_TYPES 5
-
-/* struct virtio_pci_common_cfg (4.1.4.3). */
-#define COMMON_DEVICE_FEATURE_SELECT 0
-#define COMMON_DEVICE_FEATURE 4
-#define COMMON_DRIVER_FEATURE_SELECT 8
-#define COMMON_DRIVER_FEATURE 12
-#define COMMON_CONFIG_MSIX_VECTOR 16
-#define COMMON_DEVICE_STATUS 20
-#define COMMON_CONFIG_GENERATION 21
-#define COMMON_QUEUE_SELECT 22
-#define COMMON_QUEUE_SIZE 24
-#define COMMON_QUEUE_MSIX_VECTOR 26
-#define COMMON_QUEUE_ENABLE 28
-#define COMMON_QUEUE_NOTIFY_OFF 30
-#define COMMON_QUEUE_DESC 32
-#define COMMON_QUEUE_DRIVER 40
-#define COMMON_QUEUE_DEVICE 48
-#define COMMON_SIZE 56
-
-/* Device status bits (2.1). */
-#define STATUS_ACKNOWLEDGE 1
-#define STATUS_DRIVER 2
-#define STATUS_DRIVER_OK 4
-#define STATUS_FEATURES_OK 8
-#define STATUS_FAILED 128
+#include "virtio_pci.h"
 
 /* Feature bits, as bit numbers in the 64 the driver negotiates: the block
    device's RO (5.2.3) and the reserved VERSION_1, ACCESS_PLATFORM and
@@ -123,7 +86,6 @@
 /* Where the driver maps its sections: from MAP_BASE up, each mapping at
    the next free address, far above its image and below its stack. */
 #define MAP_BASE 0x0000000200000000ULL
-#define RESET_POLLS 1000000
 #define PORT_CAPACITY 1
 #define QUEUE_KEY 1
 
@@ -291,31 +253,12 @@ static volatile UINT8 *bar(UINT32 index)
 }
 
 /* The first virtio structure capability of each type, and the MSI-X
-   capability, from the capability list (4.1.4.1). The list is walked at
-   most PCI_CAPS_MAX steps, so a looping list ends. */
+   capability, from the capability list (4.1.4.1). */
 static void find_capabilities(UINT32 *vendor, UINT32 *msix)
 {
-    UINT32 at, steps, type;
-
-    for (type = 0; type < CAP_TYPES; type++)
-        vendor[type] = 0;
-    *msix = 0;
     if (!(mmio_read16(device.config + PCI_STATUS) & PCI_STATUS_CAPABILITIES))
         fail("the function has no capability list", ERR_NOT_SUPPORTED);
-    at = mmio_read8(device.config + PCI_CAPABILITIES) & PCI_CAP_POINTER_MASK;
-    for (steps = 0; at && steps < PCI_CAPS_MAX; steps++) {
-        UINT32 id = mmio_read8(device.config + at + PCI_CAP_ID);
-
-        if (id == PCI_CAP_MSIX && !*msix)
-            *msix = at;
-        if (id == PCI_CAP_VENDOR) {
-            type = mmio_read8(device.config + at + CAP_CFG_TYPE);
-            if (type < CAP_TYPES && !vendor[type])
-                vendor[type] = at;
-        }
-        at = mmio_read8(device.config + at + PCI_CAP_NEXT) &
-             PCI_CAP_POINTER_MASK;
-    }
+    virtio_pci_capabilities(device.config, vendor, msix);
 }
 
 /* Where in the driver the structure capability cap describes lies, from
@@ -323,9 +266,9 @@ static void find_capabilities(UINT32 *vendor, UINT32 *msix)
    structure and within its BAR. */
 static volatile UINT8 *structure(UINT32 cap, UINT64 at, UINT64 size)
 {
-    UINT32 index = mmio_read8(device.config + cap + CAP_BAR);
-    UINT64 offset = mmio_read32(device.config + cap + CAP_OFFSET);
-    UINT64 length = mmio_read32(device.config + cap + CAP_LENGTH);
+    UINT32 index = mmio_read8(device.config + cap + VIRTIO_CAP_BAR);
+    UINT64 offset = mmio_read32(device.config + cap + VIRTIO_CAP_OFFSET);
+    UINT64 length = mmio_read32(device.config + cap + VIRTIO_CAP_LENGTH);
 
     if (at > length || size > length - at || index >= PCI_BARS ||
         offset + at > boot.device.bar_size[index] ||
@@ -339,42 +282,38 @@ static volatile UINT8 *structure(UINT32 cap, UINT64 at, UINT64 size)
 
 static void set_status(UINT8 bits)
 {
-    mmio_write8(device.common + COMMON_DEVICE_STATUS,
-                (UINT8)(mmio_read8(device.common + COMMON_DEVICE_STATUS) |
-                        bits));
+    volatile UINT8 *status = device.common + VIRTIO_COMMON_DEVICE_STATUS;
+
+    mmio_write8(status, (UINT8)(mmio_read8(status) | bits));
 }
 
-/* Writing 0 resets the device, which is done once a read gives 0 again
-   (4.1.4.3.2, 2.4.2). */
 static void reset(void)
 {
-    UINT32 polls;
-
-    mmio_write8(device.common + COMMON_DEVICE_STATUS, 0);
-    for (polls = 0; polls < RESET_POLLS; polls++)
-        if (mmio_read8(device.common + COMMON_DEVICE_STATUS) == 0)
-            return;
-    fail("the device did not finish its reset", ERR_TIMED_OUT);
+    if (!virtio_pci_reset(device.common))
+        fail("the device did not finish its reset", ERR_TIMED_OUT);
 }
 
 static UINT64 device_features(void)
 {
+    volatile UINT8 *common = device.common;
     UINT64 features;
 
-    mmio_write32(device.common + COMMON_DEVICE_FEATURE_SELECT, 0);
-    features = mmio_read32(device.common + COMMON_DEVICE_FEATURE);
-    mmio_write32(device.common + COMMON_DEVICE_FEATURE_SELECT, 1);
-    features |= (UINT64)mmio_read32(device.common + COMMON_DEVICE_FEATURE)
+    mmio_write32(common + VIRTIO_COMMON_DEVICE_FEATURE_SELECT, 0);
+    features = mmio_read32(common + VIRTIO_COMMON_DEVICE_FEATURE);
+    mmio_write32(common + VIRTIO_COMMON_DEVICE_FEATURE_SELECT, 1);
+    features |= (UINT64)mmio_read32(common + VIRTIO_COMMON_DEVICE_FEATURE)
                 << FEATURE_WORD_BITS;
     return features;
 }
 
 static void accept_features(UINT64 features)
 {
-    mmio_write32(device.common + COMMON_DRIVER_FEATURE_SELECT, 0);
-    mmio_write32(device.common + COMMON_DRIVER_FEATURE, (UINT32)features);
-    mmio_write32(device.common + COMMON_DRIVER_FEATURE_SELECT, 1);
-    mmio_write32(device.common + COMMON_DRIVER_FEATURE,
+    volatile UINT8 *common = device.common;
+
+    mmio_write32(common + VIRTIO_COMMON_DRIVER_FEATURE_SELECT, 0);
+    mmio_write32(common + VIRTIO_COMMON_DRIVER_FEATURE, (UINT32)features);
+    mmio_write32(common + VIRTIO_COMMON_DRIVER_FEATURE_SELECT, 1);
+    mmio_write32(common + VIRTIO_COMMON_DRIVER_FEATURE,
                  (UINT32)(features >> FEATURE_WORD_BITS));
 }
 
@@ -385,10 +324,10 @@ static UINT64 read_capacity(void)
     UINT32 before, after, low, high;
 
     do {
-        before = mmio_read8(device.common + COMMON_CONFIG_GENERATION);
+        before = mmio_read8(device.common + VIRTIO_COMMON_CONFIG_GENERATION);
         low = mmio_read32(device.device_config + CONFIG_CAPACITY);
         high = mmio_read32(device.device_config + CONFIG_CAPACITY + 4);
-        after = mmio_read8(device.common + COMMON_CONFIG_GENERATION);
+        after = mmio_read8(device.common + VIRTIO_COMMON_CONFIG_GENERATION);
     } while (before != after);
     return (UINT64)high << FEATURE_WORD_BITS | low;
 }
@@ -465,28 +404,28 @@ static void set_up_queue(UINT32 notify_cap)
 {
     volatile UINT8 *common = device.common;
     UINT32 multiplier =
-        mmio_read32(device.config + notify_cap + CAP_NOTIFY_MULTIPLIER);
+        mmio_read32(device.config + notify_cap + VIRTIO_CAP_NOTIFY_MULTIPLIER);
     UINT32 notify_off;
     UINT16 maximum;
 
-    mmio_write16(common + COMMON_QUEUE_SELECT, REQUEST_QUEUE);
-    maximum = mmio_read16(common + COMMON_QUEUE_SIZE);
+    mmio_write16(common + VIRTIO_COMMON_QUEUE_SELECT, REQUEST_QUEUE);
+    maximum = mmio_read16(common + VIRTIO_COMMON_QUEUE_SIZE);
     if (maximum < QUEUE_SIZE)
         fail("the request queue is smaller than the driver needs", maximum);
-    mmio_write16(common + COMMON_QUEUE_SIZE, QUEUE_SIZE);
-    mmio_write64(common + COMMON_QUEUE_DESC, device.queue_device);
-    mmio_write64(common + COMMON_QUEUE_DRIVER,
+    mmio_write16(common + VIRTIO_COMMON_QUEUE_SIZE, QUEUE_SIZE);
+    mmio_write64(common + VIRTIO_COMMON_QUEUE_DESC, device.queue_device);
+    mmio_write64(common + VIRTIO_COMMON_QUEUE_DRIVER,
                  device.queue_device + AVAIL_OFFSET);
-    mmio_write64(common + COMMON_QUEUE_DEVICE,
+    mmio_write64(common + VIRTIO_COMMON_QUEUE_DEVICE,
                  device.queue_device + USED_OFFSET);
-    mmio_write16(common + COMMON_QUEUE_MSIX_VECTOR, QUEUE_VECTOR);
-    if (mmio_read16(common + COMMON_QUEUE_MSIX_VECTOR) != QUEUE_VECTOR)
+    mmio_write16(common + VIRTIO_COMMON_QUEUE_MSIX_VECTOR, QUEUE_VECTOR);
+    if (mmio_read16(common + VIRTIO_COMMON_QUEUE_MSIX_VECTOR) != QUEUE_VECTOR)
         fail("the device refused the queue's MSI-X entry", ERR_NOT_SUPPORTED);
-    mmio_write16(common + COMMON_CONFIG_MSIX_VECTOR, NO_VECTOR);
-    notify_off = mmio_read16(common + COMMON_QUEUE_NOTIFY_OFF);
+    mmio_write16(common + VIRTIO_COMMON_CONFIG_MSIX_VECTOR, NO_VECTOR);
+    notify_off = mmio_read16(common + VIRTIO_COMMON_QUEUE_NOTIFY_OFF);
     device.notify = structure(notify_cap, (UINT64)notify_off * multiplier,
                               NOTIFY_WIDTH);
-    mmio_write16(common + COMMON_QUEUE_ENABLE, 1);
+    mmio_write16(common + VIRTIO_COMMON_QUEUE_ENABLE, 1);
 }
 
 /* 3.1.1, steps 1 to 8. Bus mastering comes on only after the reset, so a
@@ -494,36 +433,39 @@ static void set_up_queue(UINT32 notify_cap)
    rings. */
 static void start_device(void)
 {
-    UINT32 vendor[CAP_TYPES], msix;
+    UINT32 vendor[VIRTIO_CAP_TYPES], msix;
     UINT64 offered, accepted;
 
     find_capabilities(vendor, &msix);
-    if (!vendor[CAP_COMMON] || !vendor[CAP_NOTIFY] || !vendor[CAP_DEVICE])
+    if (!vendor[VIRTIO_CAP_COMMON] || !vendor[VIRTIO_CAP_NOTIFY] ||
+        !vendor[VIRTIO_CAP_DEVICE])
         fail("a virtio structure capability is missing", ERR_NOT_SUPPORTED);
-    device.common = structure(vendor[CAP_COMMON], 0, COMMON_SIZE);
-    device.device_config = structure(vendor[CAP_DEVICE], 0, sizeof(UINT64));
+    device.common =
+        structure(vendor[VIRTIO_CAP_COMMON], 0, VIRTIO_COMMON_SIZE);
+    device.device_config =
+        structure(vendor[VIRTIO_CAP_DEVICE], 0, sizeof(UINT64));
     reset();
     mmio_write16(device.config + PCI_COMMAND,
                  (UINT16)(mmio_read16(device.config + PCI_COMMAND) |
                           PCI_COMMAND_BUS_MASTER));
     set_up_interrupt(msix);
-    set_status(STATUS_ACKNOWLEDGE);
-    set_status(STATUS_DRIVER);
+    set_status(VIRTIO_STATUS_ACKNOWLEDGE);
+    set_status(VIRTIO_STATUS_DRIVER);
     offered = device_features();
     if (!(offered & 1ULL << FEATURE_VERSION_1))
         fail("the device offers no VERSION_1", ERR_NOT_SUPPORTED);
     accepted = offered & FEATURES_ACCEPTED;
     accept_features(accepted);
-    set_status(STATUS_FEATURES_OK);
-    if (!(mmio_read8(device.common + COMMON_DEVICE_STATUS) &
-          STATUS_FEATURES_OK)) {
-        set_status(STATUS_FAILED);
+    set_status(VIRTIO_STATUS_FEATURES_OK);
+    if (!(mmio_read8(device.common + VIRTIO_COMMON_DEVICE_STATUS) &
+          VIRTIO_STATUS_FEATURES_OK)) {
+        set_status(VIRTIO_STATUS_FAILED);
         fail("the device refused the features", ERR_NOT_SUPPORTED);
     }
     device.capacity = read_capacity();
     set_up_dma();
-    set_up_queue(vendor[CAP_NOTIFY]);
-    set_status(STATUS_DRIVER_OK);
+    set_up_queue(vendor[VIRTIO_CAP_NOTIFY]);
+    set_status(VIRTIO_STATUS_DRIVER_OK);
     say("nova-virtio-blk: ");
     pci_say_function(boot.device.requester);
     say(" running: features ");

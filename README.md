@@ -67,13 +67,13 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   -I include -I native -I lib -I drivers -I kernel/random \
   -Wl,-subsystem=native -Wl,-e=init_main -Wl,-section-alignment=1000 \
   -Wl,-file-alignment=200 -o init.exe init/init.c init/seed.c \
-  init/platform.c init/loader.c drivers/pci.c lib/log.c native/native.S \
-  kernel/random/sha256.c
+  init/platform.c init/loader.c drivers/pci.c drivers/virtio_pci.c \
+  lib/log.c native/native.S kernel/random/sha256.c
 ./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I native -I lib -I drivers -Wl,-subsystem=native \
   -Wl,-e=virtio_blk_main -Wl,-section-alignment=1000 \
   -Wl,-file-alignment=200 -o virtblk.exe drivers/virtio_blk.c \
-  drivers/pci.c lib/log.c native/native.S
+  drivers/virtio_pci.c drivers/pci.c lib/log.c native/native.S
 ./i386-win32-tcc -shared -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -Wl,-subsystem=native -Wl,-e=ntdll_entry \
   -Wl,-section-alignment=1000 -Wl,-file-alignment=200 \
@@ -98,8 +98,8 @@ same bytes:
 |---|---|---|
 | `BOOTX64.EFI` | 28,160 | `c065d95e36210db04b3817e7a0dc5dd145790a151d842e962548cbefb7c9b12f` |
 | `kernel.exe` | 129,024 | `c537b7e876ff8f4ae0dd6652f8c43dbc9b4b105c33a3d7cd86c857307bc1a87c` |
-| `init.exe` | 32,256 | `9a5d8dfe78b98754fed226be67316ff1b02e006e8642b2eb516775945f0a1261` |
-| `virtblk.exe` | 14,336 | `2ccfda4a4aae2ddcf999cd4da7e0fd8bdf6ebd1182d2712d923d802f9867a115` |
+| `init.exe` | 34,304 | `e36e98ec21f3f886fe13c5ffdb1cb6092596e9f444a819ed2875d3b33f5f063c` |
+| `virtblk.exe` | 14,848 | `c1bce54d00c905a867e88ed7a9cfaaf860264be5ddac929609d96a704df124dd` |
 | `ntdll.dll` | 9,216 | `dcbe0870b27aefe05ef8c4bdf756b94c4f9c73b46667367282a0ade4aafe97b8` |
 
 ## Disk image
@@ -135,8 +135,8 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `1f33c1095c9cf9bc340d2c08daf83d2fe1657c2ba4a9b5a95bea391f27e10b47` |
-| `disk.vhdx` | 71,303,168 | `fecaf456cd88b28e59f67ee1364e9af7e3da13c7190e072cec494d63ddee139e` |
+| `disk.img` | 67,108,864 | `a78d08157118d99ab182a8bf032796a39a70a036d2579b2417818cd699f52b39` |
+| `disk.vhdx` | 71,303,168 | `3f265976ce3159c86d07db0dfca4084059cc5ffa30af7b83cbbd9254445ca28e` |
 
 To boot either file in QEMU, replace the `fat:esp` drive in the command
 below with `-drive if=virtio,format=raw,file=disk.img` or

@@ -16,9 +16,10 @@ typedef struct {
 } PLATFORM;
 
 /* Find the first virtio block function and run its driver,
-   \nova\virtblk.exe, to its end, then stop the function's DMA. Returns 1
-   if the driver ended with VIRTIO_BLK_EXIT_DONE, or if there is no such
-   function or no driver file; 0 if the driver failed. */
+   \nova\virtblk.exe, to its end, then stop the function and reset its
+   device, and run the driver once more if it failed. Returns 1 if the
+   driver ended with VIRTIO_BLK_EXIT_DONE, or if there is no such
+   function or no driver file; 0 if it failed. */
 int platform_run(const PLATFORM *platform);
 
 #endif
