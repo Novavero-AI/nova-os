@@ -16,11 +16,12 @@
 
 #include "native_abi.h"
 
-/* Home slots of the first three register arguments, and the stack slots
-   of the sixth and seventh arguments. */
+/* Home slots of the four register arguments, and the stack slots of the
+   sixth and seventh arguments. */
 #define HOME_RCX 0x08
 #define HOME_RDX 0x10
 #define HOME_R8 0x18
+#define HOME_R9 0x20
 #define ARGUMENT_6 0x30
 #define ARGUMENT_7 0x38
 
@@ -94,5 +95,100 @@ thread_exit:
 debug_write:
     movq %rcx, %r10
     movl $CALL_DEBUG_WRITE, %eax
+    syscall
+    ret
+
+/* UINT32 object_wait_one(UINT32 handle, UINT32 signals, UINT64 deadline,
+                          UINT32 *observed) */
+    .globl object_wait_one
+object_wait_one:
+    movq %r9, HOME_R9(%rsp)
+    movq %rcx, %r10
+    movl $CALL_OBJECT_WAIT_ONE, %eax
+    syscall
+    movq HOME_R9(%rsp), %rcx
+    movl %edx, (%rcx)
+    ret
+
+/* UINT32 object_wait_many(WAIT_ENTRY *items, UINT32 count, UINT64 deadline) */
+    .globl object_wait_many
+object_wait_many:
+    movq %rcx, %r10
+    movl $CALL_OBJECT_WAIT_MANY, %eax
+    syscall
+    ret
+
+/* UINT32 channel_create(UINT32 capacity, UINT32 *first, UINT32 *second) */
+    .globl channel_create
+channel_create:
+    movq %rdx, HOME_RDX(%rsp)
+    movq %r8, HOME_R8(%rsp)
+    movq %rcx, %r10
+    movl $CALL_CHANNEL_CREATE, %eax
+    syscall
+    movq HOME_RDX(%rsp), %rcx
+    movl %edx, (%rcx)
+    movq HOME_R8(%rsp), %rcx
+    movl %r8d, (%rcx)
+    ret
+
+/* UINT32 channel_write(UINT32 channel, const void *bytes, UINT32 byte_count,
+                        const HANDLE_TRANSFER *handles, UINT32 handle_count) */
+    .globl channel_write
+channel_write:
+    movq %rcx, %r10
+    movl $CALL_CHANNEL_WRITE, %eax
+    syscall
+    ret
+
+/* UINT32 process_create(UINT32 job, UINT32 options, UINT32 *process) */
+    .globl process_create
+process_create:
+    movq %r8, HOME_R8(%rsp)
+    movq %rcx, %r10
+    movl $CALL_PROCESS_CREATE, %eax
+    syscall
+    movq HOME_R8(%rsp), %rcx
+    movl %edx, (%rcx)
+    ret
+
+/* UINT32 process_start(UINT32 process, UINT32 thread, UINT64 entry,
+                        UINT64 stack, UINT32 bootstrap, UINT64 argument) */
+    .globl process_start
+process_start:
+    movq %rcx, %r10
+    movl $CALL_PROCESS_START, %eax
+    syscall
+    ret
+
+/* UINT32 thread_create(UINT32 process, UINT32 *thread) */
+    .globl thread_create
+thread_create:
+    movq %rdx, HOME_RDX(%rsp)
+    movq %rcx, %r10
+    movl $CALL_THREAD_CREATE, %eax
+    syscall
+    movq HOME_RDX(%rsp), %rcx
+    movl %edx, (%rcx)
+    ret
+
+/* UINT32 section_create(UINT64 size, UINT32 options, UINT32 *section) */
+    .globl section_create
+section_create:
+    movq %r8, HOME_R8(%rsp)
+    movq %rcx, %r10
+    movl $CALL_SECTION_CREATE, %eax
+    syscall
+    movq HOME_R8(%rsp), %rcx
+    movl %edx, (%rcx)
+    ret
+
+/* UINT32 process_map(UINT32 process, UINT32 section, UINT64 offset,
+                      UINT64 address, UINT64 size, UINT32 protection);
+   the mapping's address, the call's result, is the address given. */
+    .globl process_map
+process_map:
+    movq %rcx, %r10
+    movl $CALL_PROCESS_MAP, %eax
     syscall
     ret

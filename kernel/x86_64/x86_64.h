@@ -9,6 +9,7 @@
 #define EXCEPTION_COUNT 32
 #define NMI_VECTOR 2
 #define BREAKPOINT_VECTOR 3
+#define INVALID_OPCODE_VECTOR 6
 #define DOUBLE_FAULT_VECTOR 8
 #define GENERAL_PROTECTION_VECTOR 13
 #define PAGE_FAULT_VECTOR 14
@@ -27,6 +28,11 @@
 #define TIMER_VECTOR 0x20
 #define SPURIOUS_VECTOR 0xff
 
+/* A user thread of a 32-bit process enters the kernel with INT
+   COMPAT_GATE_VECTOR (native_abi.h, docs/spec/syscalls.md S11). The
+   kernel never routes an interrupt source to that vector, so an event on
+   it is always the INT. */
+
 /* The vector slot of a frame built by the system-call entry, a value no
    interrupt or exception has. */
 #define SYSCALL_FRAME_VECTOR 0x100
@@ -38,6 +44,7 @@
    user selectors carry RPL 3 and sit in that order. */
 #define KERNEL_CODE_SELECTOR 0x08
 #define KERNEL_DATA_SELECTOR 0x10
+#define USER_CODE32_SELECTOR 0x1b
 #define USER_DATA_SELECTOR 0x23
 #define USER_CODE_SELECTOR 0x2b
 #define TSS_SELECTOR 0x30
@@ -71,6 +78,12 @@
 #ifndef __ASSEMBLER__
 
 #include "types.h"
+
+/* The FS and GS base MSRs (APM 4.5.3): the running user thread's
+   thread-local storage base (S10), and while the kernel runs, the
+   per-CPU block (S3). */
+#define IA32_FS_BASE 0xc0000100u
+#define IA32_GS_BASE 0xc0000101u
 
 /* The operand of LGDT and LIDT: the table's size minus one, then its
    address (SDM Vol. 3A 3.5.1). */
@@ -114,6 +127,7 @@ static inline int has_error_code(UINT64 vector)
 extern const UINT64 exception_stubs[EXCEPTION_COUNT];
 void timer_stub(void);
 void spurious_stub(void);
+void compat_gate_stub(void);
 
 /* syscall.S: where SYSCALL from 64-bit and from compatibility mode
    enters the kernel. */
@@ -140,6 +154,7 @@ void tss_set_kernel_stack(UINT64 top);
    the exit path's return-address check. */
 void user_mode_init(void);
 void syscall_dispatch(INTERRUPT_FRAME *frame);
+void compat_syscall_dispatch(INTERRUPT_FRAME *frame);
 _Noreturn void syscall_compat(void);
 _Noreturn void user_exception(const INTERRUPT_FRAME *frame);
 _Noreturn void user_bad_return(const INTERRUPT_FRAME *frame);

@@ -107,10 +107,10 @@ syscall_entry:
     subq $SHADOW_SPACE, %rsp
     call user_bad_return
 
-/* SYSCALL from compatibility mode enters here (IA32_CSTAR). No user code
-   segment is 32-bit, so user code cannot reach compatibility mode; if it
-   ever does, the calling thread ends (S2). The kernel stack's top is
-   16-byte aligned, so RSP is aligned at the call. */
+/* SYSCALL from compatibility mode enters here (IA32_CSTAR) on AMD
+   processors. A 32-bit thread enters by its own gate (S11), so this
+   entry ends the calling process (S2). The kernel stack's top is 16-byte
+   aligned, so RSP is aligned at the call. */
     .globl syscall_compat_entry
 syscall_compat_entry:
     SWITCH_TO_KERNEL_STACK

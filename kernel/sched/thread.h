@@ -19,10 +19,6 @@
 #define THREAD_STACK_PAGES 4
 #define THREAD_STACK_RUN (1 + THREAD_STACK_PAGES)
 
-/* The signal a thread asserts once it has exited and its stack is free
-   (docs/spec/objects.md O9). */
-#define THREAD_TERMINATED (1u << 0)
-
 typedef void (*THREAD_ENTRY)(void *argument);
 
 /* No state is 0, so thread_start refuses a zeroed THREAD that was never
@@ -61,16 +57,23 @@ struct THREAD {
    to the thread until the waiter runs. Returns OK or ERR_NO_MEMORY. */
 STATUS thread_create(THREAD *thread, THREAD_ENTRY entry, void *argument);
 
-/* Make thread a new user thread of process, which will enter user mode at
-   entry with RSP stack and arguments argument1 and argument2
-   (arch_context_init_user), on the page tables at address_space, with its
-   vector state in fpu. It gets a kernel stack as thread_create's threads
-   do. The process owns the THREAD and the fpu area; process_thread_reaped
-   is called once the thread has exited and its stack is free. Returns OK
-   or ERR_NO_MEMORY. */
+/* Make thread a new user thread of process, which will enter user mode in
+   mode at entry with stack pointer stack and arguments argument1 and
+   argument2 (arch_context_init_user), on the page tables at
+   address_space, with its vector state in fpu. It gets a kernel stack as
+   thread_create's threads do. The process owns the THREAD and the fpu
+   area, and initialized the THREAD's waitable when it made the thread's
+   object, since waits on that object may already watch it;
+   process_thread_reaped is called once the thread has exited and its
+   stack is free. Returns OK or ERR_NO_MEMORY. */
 STATUS thread_create_user(THREAD *thread, struct PROCESS *process,
-                          UINT64 address_space, UINT8 *fpu, UINT64 entry,
-                          UINT64 stack, UINT64 argument1, UINT64 argument2);
+                          UINT64 address_space, UINT8 *fpu, USER_MODE mode,
+                          UINT64 entry, UINT64 stack, UINT64 argument1,
+                          UINT64 argument2);
+
+/* Set the running user thread's thread-local storage base, its FS base
+   (docs/spec/syscalls.md S10). */
+void thread_set_tls_base(UINT64 base);
 
 /* Make a new thread ready to run. Returns OK, or ERR_BAD_STATE if it has
    been started before. */

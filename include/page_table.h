@@ -35,6 +35,10 @@
 #define PTE_LARGE (1ULL << 7)
 #define PTE_PAT (1ULL << 7)
 #define PTE_LARGE_PAT (1ULL << 12)
+/* A PTE's bits 10:9 are ignored by the processor (SDM Vol. 3A Table
+   5-20); the kernel marks with bit 9 a user page the address space
+   borrows from a section and does not free. */
+#define PTE_BORROWED (1ULL << 9)
 /* XD: no instruction fetch through the entry. Reserved, and so a fault
    if set, while IA32_EFER.NXE is clear. */
 #define PTE_NO_EXECUTE (1ULL << 63)

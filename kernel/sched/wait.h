@@ -16,12 +16,9 @@
 #define USER_SIGNAL_SHIFT 24
 #define USER_SIGNAL(n) (1u << (USER_SIGNAL_SHIFT + (n)))
 
-/* The most objects one wait_many watches (O9). */
-#define WAIT_MANY_MAX 64
-
-/* A deadline is a time on the monotonic clock (x86_64/clock.h); this one
-   never passes, and 0 has always passed, so it polls (O9). */
-#define DEADLINE_INFINITE 0xffffffffffffffffULL
+/* A deadline is a time on the monotonic clock (x86_64/clock.h);
+   DEADLINE_INFINITE (native_abi.h) never passes, and 0 has always passed,
+   so it polls (O9). WAIT_MANY_MAX is native_abi.h's too. */
 
 typedef struct WAIT_ITEM WAIT_ITEM;
 

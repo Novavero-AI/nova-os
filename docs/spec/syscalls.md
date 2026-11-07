@@ -51,7 +51,7 @@ them (CPUID.80000001H:EDX[11], SDM 6.8.8).
 | `IA32_EFER` | C000_0080h | `SCE` (bit 0) set, other bits kept (SDM 2.2.1, APM 3.1.7) |
 | `IA32_STAR` | C000_0081h | 0x001B_0008_0000_0000: `SYSRET` selector base 0x1B in bits 63:48, `SYSCALL` selector 0x08 in bits 47:32, bits 31:0 zero |
 | `IA32_LSTAR` | C000_0082h | The kernel's system-call entry |
-| `CSTAR` | C000_0083h | An entry that terminates the calling thread |
+| `CSTAR` | C000_0083h | An entry that ends the calling process as an invalid opcode would |
 | `IA32_FMASK` | C000_0084h | 0x0004_4700: clears TF (8), IF (9), DF (10), NT (14) and AC (18) on entry |
 | `IA32_KERNEL_GS_BASE` | C000_0102h | The CPU's per-CPU block while user code runs |
 
@@ -68,7 +68,7 @@ The GDT grows by three entries after the kernel's existing two
 | 0x00 | Null |
 | 0x08 | Kernel code, 64-bit (unchanged) |
 | 0x10 | Kernel data (unchanged) |
-| 0x18 | Null: the 32-bit user code slot `SYSRET` would use to return to 32-bit code |
+| 0x18 | User code, 32-bit (L clear, D set), DPL 3; loaded as 0x1B by the 32-bit lane (S11) |
 | 0x20 | User data, DPL 3; loaded as 0x23 |
 | 0x28 | User code, 64-bit, DPL 3; loaded as 0x2B |
 | 0x30 | The CPU's 64-bit TSS, a 16-byte descriptor (SDM 10.2.3) |
@@ -86,10 +86,13 @@ room for the I/O permission bitmap ([ipc.md I6](ipc.md#i6-device-memory-and-io-p
 The kernel stores a pointer to the CPU's per-CPU block at the top of each
 IST stack (S3).
 
-- **Why `CSTAR` terminates:** `CSTAR` is the entry for `SYSCALL` from
-  compatibility mode (APM 6.1.1). nova-os defines no 32-bit user code
-  segment, so user code cannot reach compatibility mode; if it ever did,
-  the entry kills the thread instead of running a path nobody tests.
+- **Why `CSTAR` ends the process:** `CSTAR` is the entry for `SYSCALL`
+  from compatibility mode (APM 6.1.1), which Intel processors do not
+  support (SDM 6.8.8). 32-bit code enters by the gate of S11, so the
+  entry ends the process as the #UD an Intel processor raises would,
+  and the outcome is one on both vendors. The 32-bit code descriptor at
+  0x18 is the one a 32-bit `SYSRET` would load; the kernel executes only
+  the 64-bit form.
 - **Why these flags:** IF clear keeps maskable interrupts from arriving
   while the kernel is still on the user's stack, since a handler at the
   same privilege level runs on the current stack (SDM 7.12.1). TF clear
@@ -438,7 +441,7 @@ column marks an array the kernel fills in user memory.
 | 16 | `port_wait` | port, deadline, packet | | `READ` | Same; writes the packet |
 | 17 | `clock_monotonic` | | nanoseconds | | The kernel owns the time base (`BOOT_INFO.tsc_per_ms`) |
 | 18 | `job_create` | parent job, limits | handle | `CREATE_JOB` | Kernel-memory quota |
-| 19 | `process_create` | job | handle | `CREATE_PROCESS` | Address spaces and handle tables |
+| 19 | `process_create` | job, options | handle | `CREATE_PROCESS`; `WRITE_EXECUTE` for `PROCESS_OPTION_WRITE_EXECUTE` | Address spaces and handle tables |
 | 20 | `process_start` | process, thread, entry, stack, bootstrap handle, argument | | `CREATE_THREAD`; `START` on the thread; `TRANSFER` on the bootstrap handle | Starts a thread and moves a handle between tables |
 | 21 | `process_exit` | exit code | (does not return) | | Termination |
 | 22 | `process_info` | process | state, exit code | `INSPECT` | Process state is kernel state |
@@ -464,6 +467,18 @@ column marks an array the kernel fills in user memory.
 | 42 | `random_read` | bytes, byte count | | | The kernel's own generator, which it needs before any server runs; results are recorded for replay ([replay.md](replay.md)), as with Zircon's `zx_cprng_draw` ([cprng_draw][zx-cprng]) |
 | 43 | `task_exception_channel` | process or job | handle | `TERMINATE` | Faults are raised by the processor and reach the kernel first ([objects.md O10](objects.md#o10-object-lifetime)) |
 | 44 | `thread_set_tls_base` | base | | | Without `WRFSBASE`, a 64-bit segment base is loaded with `WRMSR`, at CPL 0 only (S10) |
+
+`process_create`'s options are `PROCESS_OPTION_32_BIT` (1), whose threads
+run 32-bit code (S11), and `PROCESS_OPTION_WRITE_EXECUTE` (2), whose
+mappings may be writable and executable at once
+([objects.md O5](objects.md#o5-access-rights)); another bit fails with
+`ERR_INVALID_ARGS`. `section_create` rounds `size` up to whole pages and
+fills them with zeros; `SECTION_MAX_SIZE` (2 MiB) is its limit, and no
+option is defined yet. `process_map` takes a fixed address, page-aligned
+like `offset` and `size`, and a protection of `MAP_READ` (1) with
+`MAP_WRITE` (2), `MAP_EXECUTE` (4), both or neither; a range that is
+partly mapped already fails with `ERR_BAD_STATE`, and its result is the
+address. A mapping holds its section until the process terminates.
 
 A new thread, from `process_start` or `thread_start`, begins at `entry`
 with RCX and RDX holding its two arguments, every other general-purpose
@@ -525,6 +540,8 @@ base. The base is part of the thread's user state, like its vector
 registers (S4): the kernel saves `IA32_FS_BASE` (C000_0100h, APM 4.5.3)
 when it switches away from the thread and loads it when it switches
 back, so the thread keeps whatever base it last had, however it was set.
+In compatibility mode an FS override adds the base's low 32 bits (SDM
+3.4.4), which is how a 32-bit thread reaches its TEB (S11).
 CR4.FSGSBASE (bit 16) stays clear, so `RDFSBASE`, `WRFSBASE`, `RDGSBASE`
 and `WRGSBASE` are not enabled (SDM 2.5); loading a non-null selector
 into FS still sets the base, from the descriptor's 32-bit base (SDM
@@ -548,6 +565,99 @@ into FS still sets the base, from the descriptor's 32-bit base (SDM
   the call kept for processors that do not. Its cost is two mechanisms,
   and user code able to set GS's base as well, which the kernel would
   then also save and restore on every switch.
+
+## S11. The 32-bit lane
+
+**Decided.**
+
+A process created with `PROCESS_OPTION_32_BIT` runs 32-bit code: its
+threads start in compatibility mode with CS 0x1B, whose descriptor has L
+clear and D set, so their default operand and address size is 32 bits
+(SDM 6.2.1, 12.8.5.3), and SS, DS and ES 0x23, a flat 4 GiB data segment
+with B set, so the stack is 32-bit (SDM 3.4.5). Such a thread enters the
+kernel with `INT 0x80` (`COMPAT_GATE_VECTOR`) and leaves through the
+`IRETQ` exit of every interrupt from user mode, which returns to
+compatibility mode because the frame's CS is 0x1B (SDM 7.14.3).
+
+The gate is a 64-bit interrupt gate of DPL 3, the only gate user code may
+raise with `INT n`; every other vector's gate has DPL 0, so `INT n`
+there raises #GP (SDM 7.12.1.2). As an interrupt gate it clears IF, which
+stays clear until the entry has swapped GS (S3); the call then runs with
+interrupts enabled, as a `SYSCALL` does. The kernel never routes an
+interrupt source to vector 0x80, so an event there is always the `INT`.
+
+| Register | At `INT 0x80` | After return |
+|---|---|---|
+| EAX | Call number (S8) | Status (S7) |
+| EDX | Address of the arguments: one 8-byte little-endian value each, as many as S8 gives the call | Result 1 |
+| ECX | | Result 2 |
+| EBX, ESI, EDI, EBP, ESP | | Preserved |
+| All x87 and SSE state | | Preserved |
+
+The kernel reads only the low 32 bits of EAX and EDX, since the upper 32
+bits of a general register are undefined once compatibility-mode code
+has run (SDM Vol. 1 3.4.1.1), copies the arguments with the user-memory
+routines (S6), and returns each result zero-extended. A call is served
+on the lane only if every result fits in 32 bits and a 32-bit process
+has a use for it: `handle_close`, `object_wait_one`, `object_wait_many`,
+`channel_create`, `channel_write`, `channel_read`, `process_exit`,
+`process_info`, `thread_exit`, `debug_write` and `thread_set_tls_base`.
+Any other number fails with `ERR_NOT_SUPPORTED`. Every pointer and
+length is checked as S6 checks a 64-bit caller's.
+
+Compatibility mode uses DS, ES, FS and GS, and faults on any access
+through one that holds a null selector (SDM 6.4.1), while 64-bit mode
+ignores them but for FS's and GS's bases (SDM 3.4.4, 6.4.1.1). User code
+of either mode can load them, so each user thread keeps its own four
+selectors, which the kernel saves and loads with its FS base on every
+switch, and one thread's choice never reaches another's code.
+
+A new thread of a 32-bit process begins at `entry` with ESP equal to
+`stack`, ECX and EDX its two arguments, the other general registers
+zero, EFLAGS 0x202, the user data selector 0x23 in DS, ES, FS and GS,
+and FS base 0. `entry` and `stack` must lie below
+4 GiB, the most a compatibility-mode address reaches, and `stack` must be
+a multiple of 4, the size every x86 argument is widened to ("Argument
+Passing and Naming Conventions", Microsoft Learn), or `process_start`
+fails with `ERR_INVALID_ARGS`.
+
+A thread of a 64-bit process that executes `INT 0x80`, in whatever mode
+its code has reached, ends its process with exit code 13, as the #GP of a
+DPL 0 gate would. A 32-bit process's thread that executes `SYSCALL` ends
+its process with exit code 6 (S2), and one that far-jumps to 64-bit code
+reaches the `SYSCALL` entry like any 64-bit thread.
+
+- **Why `INT`:** it is the one entry that works from compatibility mode
+  on both vendors. Intel processors do not support `SYSCALL` there (SDM
+  6.8.8), and AMD processors raise #UD for `SYSENTER` in long mode (APM
+  6.1.2). The processor switches to the kernel stack and saves the stack
+  pointer itself (SDM 7.14.4), so S5's windows do not arise.
+- **Why results in two registers:** EAX, ECX and EDX are the registers a
+  called x86 function may change ("Argument Passing and Naming
+  Conventions"); the others are preserved, so a stub saves nothing.
+- **Why a process option:** the lane is the 32-bit process's interface,
+  and a 64-bit process gains nothing from it that `SYSCALL` lacks; the
+  kernel decides from the process, which user code cannot change, and
+  not from the mode the code runs in, which any user code can change by
+  a far transfer to the 32-bit descriptor.
+- **Cost:** a gate and segment descriptor load per call (S1), and the
+  arguments read from memory.
+- **Not taken:** a far transfer to 64-bit user code that then executes
+  `SYSCALL`, as a 64-bit layer under 32-bit code would do. It needs a
+  64-bit user-mode library in every 32-bit process. A call gate into the
+  kernel, which IA-32e mode allows (SDM 2.1.2.1): it changes neither GS nor
+  IF, so it would need the windows S3 closes for `SYSCALL`.
+
+The gate enters through the same path as every interrupt from user mode
+(S9), with the same measures: RFLAGS.AC cleared, `SWAPGS` decided by the
+saved CS, and the return address checked against `USER_TOP` (S5). None
+of the per-entry and per-exit measures of
+[speculation.md M3](speculation.md#m3-the-measures-by-path) is in the
+kernel yet on any path, the `SYSCALL` entry included: the LFENCE after
+the conditional `SWAPGS` (M5), IBRS writes (M6), IBPB (M9, M10), the
+32-CALL overwrite (M7), the BHB-clearing sequence (M8), page-table
+isolation (M11), VERW (M13) and the masked call number (M4). The lane
+takes each when the interrupt entry does.
 
 ## References
 

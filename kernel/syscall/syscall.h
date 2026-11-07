@@ -14,6 +14,9 @@
    names no call this kernel implements. */
 UINT32 syscall_argument_count(UINT64 number);
 
+/* Whether the 32-bit lane serves call number (S11). */
+int syscall_served_32_bit(UINT64 number);
+
 /* Run call number on arguments, writing its results; returns its status,
    or ERR_NOT_SUPPORTED for a number that names no call (S3). The calling
    thread's process is the caller. */

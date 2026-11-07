@@ -9,12 +9,13 @@
 
 #include "types.h"
 #include "gfx.h"
+#include "native_abi.h"
 
 /* "NOVABOOT" in memory order: the record is nova-boot's. */
 #define BOOT_INFO_MAGIC 0x544F4F4241564F4EULL
 
 /* The layout below and the machine state that comes with it. */
-#define BOOT_INFO_VERSION 4
+#define BOOT_INFO_VERSION 5
 
 /* The EFI_RNG_PROTOCOL instances nova-boot asks for a seed, at most, and
    the bytes it asks each for: 256 bits, the security level UEFI 37.5
@@ -30,6 +31,14 @@ typedef struct {
     UINT8 bytes[BOOT_RANDOM_SEED_SIZE];
 } BOOT_RANDOM_SEED;
 
+/* A file nova-boot read from \nova\: its name, ASCII and NUL-terminated
+   as the firmware reported it, and its contents. */
+typedef struct {
+    char name[BOOT_FILE_NAME_SIZE];
+    UINT8 *data;
+    UINTN size;
+} BOOT_FILE;
+
 typedef struct {
     UINT64 magic;
     UINT64 version;
@@ -41,8 +50,8 @@ typedef struct {
     UINTN descriptor_size;
     UINT64 random_seed_count; /* entries of random_seeds filled in */
     BOOT_RANDOM_SEED random_seeds[BOOT_RANDOM_SEEDS];
-    UINT8 *init_image; /* \nova\init.exe, the first process's image */
-    UINTN init_image_size;
+    UINT64 file_count; /* entries of files filled in */
+    BOOT_FILE files[BOOT_FILES_MAX]; /* \nova\init.exe among them */
 } BOOT_INFO;
 
 #endif

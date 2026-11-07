@@ -12,6 +12,7 @@
    whole stub. */
 
 #include "x86_64.h"
+#include "native_abi.h"
 
 /* The Microsoft x64 convention: the caller reserves 32 bytes above the
    return address for the callee's four register arguments. */
@@ -96,6 +97,9 @@ EXCEPTION(30)
 EXCEPTION(31)
 INTERRUPT(timer_stub, TIMER_VECTOR)
 INTERRUPT(spurious_stub, SPURIOUS_VECTOR)
+/* INT n pushes no error code (SDM Vol. 3A 7.13), so the 32-bit lane's gate
+   takes the external interrupt's stub. */
+INTERRUPT(compat_gate_stub, COMPAT_GATE_VECTOR)
 
 /* The CPU aligns RSP to 16 bytes before it pushes its frame (SDM Vol. 3A
    7.14.2), and INTERRUPT_FRAME is a multiple of 16 bytes, so RSP is

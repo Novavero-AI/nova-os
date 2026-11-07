@@ -1,8 +1,9 @@
 # Boot protocol (x86-64)
 
 nova-boot (`\EFI\BOOT\BOOTX64.EFI`) is the UEFI application that loads
-the kernel (`\nova\kernel.exe`), reads the first user process's image
-(`\nova\init.exe`), builds the kernel's page tables, exits the
+the kernel (`\nova\kernel.exe`), reads the other files in `\nova\`, the
+first user process's image (`\nova\init.exe`) among them, builds the
+kernel's page tables, exits the
 firmware's boot services and calls the kernel's entry with a `BOOT_INFO`
 record. This document is the contract between the two as
 `boot/nova-boot.c`, `include/boot_info.h`, `include/memory_layout.h`,
@@ -35,8 +36,7 @@ nova-boot, in order:
    It calls `SetMode` only to change the mode, then draws the boot
    screen. It fails if no mode it can draw to is in use.
 3. Reads and places the kernel image ([Kernel image](#kernel-image)),
-   then reads the first process's image
-   ([First process image](#first-process-image)).
+   then reads the boot files ([Boot files](#boot-files)).
 4. Allocates the kernel's stack and builds the kernel's page tables
    ([Paging](#paging)). It fails with `EFI_UNSUPPORTED` if the processor
    does not report the PAT ([Memory types](#memory-types)).
@@ -57,7 +57,7 @@ nova-boot, in order:
 
 Until it first calls `ExitBootServices`, nova-boot meets a failure by
 freeing what it allocated (UEFI 7.2), the kernel's tables and stack and
-the first process's image included, and returning an error
+the boot files included, and returning an error
 `EFI_STATUS` to the firmware. After that call only the memory
 allocation services remain (UEFI 7.4.6), so a failure halts the
 processor.
@@ -124,22 +124,33 @@ holds stay valid once the lower half is unmapped. The kernel's tables map
 the image page by page with the rights of its sections
 ([Paging](#paging)).
 
-## First process image
+## Boot files
 
 ### Location
 
-The first user process's image is the file `\nova\init.exe` on the same
-volume as the kernel, opened the same way; on disk it may be
-`\NOVA\INIT.EXE` ([disk-layout.md](disk-layout.md)). nova-boot fails the
-boot if it cannot read it.
+The boot files are every file in the directory `\nova\` on the same
+volume as the kernel, opened the same way, except `kernel.exe`;
+subdirectories are not read. nova-boot reads each entry of the directory
+with `EFI_FILE_PROTOCOL.Read`, which returns an `EFI_FILE_INFO` per entry
+and an empty buffer after the last (UEFI 13.5.5, 13.5.16), and compares
+names without regard to case, as FAT does (UEFI 13.3.1.2). It fails the
+boot with `EFI_UNSUPPORTED` for more than `BOOT_FILES_MAX` (8) files, a
+file larger than `SECTION_MAX_SIZE` (2 MiB), or a name that is not
+printable ASCII or does not fit `BOOT_FILE_NAME_SIZE` (32) bytes with its
+terminator, and with `EFI_NOT_FOUND` if `init.exe` is not among them, so
+the kernel is handed every file there or none.
+[disk-layout.md](disk-layout.md) gives the names the image tool writes.
 
 ### Handoff
 
-nova-boot reads the whole file into pool memory of type `EfiLoaderData`
-(UEFI 7.2.4), does not interpret it, and passes its direct-map address
-and size in `BOOT_INFO`. The kernel loads it into the first process.
+nova-boot reads each whole file into pool memory of type `EfiLoaderData`
+(UEFI 7.2.4), does not interpret it, and passes its name as the firmware
+reported it, its direct-map address and its size in `BOOT_INFO`. The
+kernel loads `init.exe` into the first process and passes every file to
+that process as a section it may only read, with the files' names and
+sizes in its bootstrap message (`include/native_abi.h`).
 
-### Format
+### First process image
 
 The kernel loads a PE32+ image (PE Format) that has:
 
@@ -193,7 +204,7 @@ x86-64 PE.
 | Offset | Field | Type | Meaning |
 |---|---|---|---|
 | 0 | `magic` | `UINT64` | `BOOT_INFO_MAGIC`, 0x544F4F4241564F4E: "NOVABOOT" in memory order |
-| 8 | `version` | `UINT64` | `BOOT_INFO_VERSION`, 4 for the record and entry state this document describes |
+| 8 | `version` | `UINT64` | `BOOT_INFO_VERSION`, 5 for the record and entry state this document describes |
 | 16 | `screen.pixels` | `UINT32 *` | The direct-map address of `FrameBufferBase` of the graphics mode in use (UEFI 12.9.2) |
 | 24 | `screen.width` | `INT64` | `HorizontalResolution` |
 | 32 | `screen.height` | `INT64` | `VerticalResolution` |
@@ -207,10 +218,12 @@ x86-64 PE.
 | 128 | `random_seed_count` | `UINT64` | Entries of `random_seeds` filled in, at most `BOOT_RANDOM_SEEDS` (4) |
 | 136 + 40i | `random_seeds[i].status` | `UINT64` | The `EFI_STATUS` of asking instance i for a seed; the seed is valid only if it is 0 (`EFI_SUCCESS`) |
 | 144 + 40i | `random_seeds[i].bytes` | `UINT8[32]` | The seed |
-| 296 | `init_image` | `UINT8 *` | The direct-map address of the first process's image as read from `\nova\init.exe` |
-| 304 | `init_image_size` | `UINTN` | Its size in bytes |
+| 296 | `file_count` | `UINT64` | Entries of `files` filled in, at most `BOOT_FILES_MAX` (8) |
+| 304 + 48i | `files[i].name` | `char[32]` | The file's name in `\nova\`, ASCII and NUL-terminated, as the firmware reported it |
+| 336 + 48i | `files[i].data` | `UINT8 *` | The direct-map address of the file's contents |
+| 344 + 48i | `files[i].size` | `UINTN` | Its size in bytes |
 
-The record is 312 bytes and lives in nova-boot's `.data` section; `info`
+The record is 688 bytes and lives in nova-boot's `.data` section; `info`
 is its direct-map address. The kernel reads `magic` and `version` before
 any other field and halts, logging both, on a value it was not built
 for. Another layout, or another machine state at entry, takes another
@@ -484,7 +497,7 @@ except what the types below reserve (UEFI 7.2, Table 7.10 and its note):
 |---|---|---|
 | `EfiConventionalMemory` | 7 | Free |
 | `EfiBootServicesCode`, `EfiBootServicesData` | 3, 4 | Free, once the kernel has moved off them (below) |
-| `EfiLoaderCode`, `EfiLoaderData` | 1, 2 | The kernel's to use; they hold the kernel image, nova-boot and `BOOT_INFO`, the memory map, the first process's image, and the kernel's page tables and stack |
+| `EfiLoaderCode`, `EfiLoaderData` | 1, 2 | The kernel's to use; they hold the kernel image, nova-boot and `BOOT_INFO`, the memory map, the boot files, and the kernel's page tables and stack |
 | `EfiPersistentMemory` | 14 | Usable like conventional memory, contents non-volatile |
 | `EfiACPIReclaimMemory` | 9 | Preserve until the ACPI tables are read |
 | `EfiRuntimeServicesCode`, `EfiRuntimeServicesData` | 5, 6 | Preserve |
@@ -495,8 +508,8 @@ except what the types below reserve (UEFI 7.2, Table 7.10 and its note):
 | `EfiUnacceptedMemoryType` | 15 | Accept before use |
 
 nova-boot's allocations are `EfiLoaderCode` (the kernel image) and
-`EfiLoaderData` (the memory map, the first process's image and the
-kernel's page tables and stack).
+`EfiLoaderData` (the memory map, the boot files and the kernel's page
+tables and stack).
 `BOOT_INFO` is in nova-boot's own image,
 which UEFI types `EfiLoaderCode` for code and `EfiLoaderData` for data
 (UEFI 2.1.1, Table 2.1); EDK II allocates an application's whole image as
@@ -545,8 +558,8 @@ This version leaves open:
   the kernel falls back to without one.
 - **The serial console.** Which port the kernel uses and who programs it;
   ACPI's SPCR and DBG2 tables describe debug ports.
-- **Load options and further files.** A command line, or files beyond the
-  kernel and the first process's image.
+- **Load options and further directories.** A command line, or boot
+  files beyond `\nova\`'s own.
 - **ARM64.** The AArch64 entry state (UEFI 2.3.6), the image
   `\EFI\BOOT\BOOTAA64.EFI` and `Machine` 0xAA64.
 - **Measured and Secure Boot.** What nova-boot measures and how.

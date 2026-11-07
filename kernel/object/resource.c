@@ -8,7 +8,7 @@ static void destroy(OBJECT *object)
     page_free_mapped(object);
 }
 
-static const OBJECT_TYPE resource_type = {TYPE_RESOURCE, 0, destroy};
+static const OBJECT_TYPE resource_type = {TYPE_RESOURCE, 0, destroy, 0};
 
 RESOURCE *resource_create_root_system(void)
 {

@@ -43,4 +43,49 @@ _Noreturn void thread_exit(void);
    log. Needs RESOURCE_RIGHT_USE on a resource that covers the debug log. */
 UINT32 debug_write(UINT32 resource, const void *bytes, UINT64 count);
 
+/* Wait until any of signals is active on the object handle names, which
+   needs RIGHT_WAIT, or the deadline on the monotonic clock passes
+   (ERR_TIMED_OUT), and report the signals observed. */
+UINT32 object_wait_one(UINT32 handle, UINT32 signals, UINT64 deadline,
+                       UINT32 *observed);
+
+/* object_wait_one on up to WAIT_MANY_MAX objects at once, writing each
+   entry's observed signals. */
+UINT32 object_wait_many(WAIT_ENTRY *items, UINT32 count, UINT64 deadline);
+
+/* A new channel whose endpoints each queue up to capacity messages. */
+UINT32 channel_create(UINT32 capacity, UINT32 *first, UINT32 *second);
+
+/* Write a message of byte_count bytes and handle_count handles, which
+   leave the caller's table, to channel, which needs CHANNEL_RIGHT_WRITE.
+   A full queue at the other end gives ERR_SHOULD_WAIT; a closed one
+   ERR_PEER_CLOSED. */
+UINT32 channel_write(UINT32 channel, const void *bytes, UINT32 byte_count,
+                     const HANDLE_TRANSFER *handles, UINT32 handle_count);
+
+/* A new process in job, which needs JOB_RIGHT_CREATE_PROCESS, with
+   PROCESS_OPTION_ bits; PROCESS_OPTION_WRITE_EXECUTE also needs
+   JOB_RIGHT_WRITE_EXECUTE. */
+UINT32 process_create(UINT32 job, UINT32 options, UINT32 *process);
+
+/* Start process's first thread, thread, at entry with stack, passing it
+   bootstrap, which leaves the caller's table, and argument. Needs
+   PROCESS_RIGHT_CREATE_THREAD, THREAD_RIGHT_START and RIGHT_TRANSFER on
+   the bootstrap handle. */
+UINT32 process_start(UINT32 process, UINT32 thread, UINT64 entry,
+                     UINT64 stack, UINT32 bootstrap, UINT64 argument);
+
+/* A new thread of process, which needs PROCESS_RIGHT_CREATE_THREAD. */
+UINT32 thread_create(UINT32 process, UINT32 *thread);
+
+/* A new section of size bytes, rounded up to pages, all zero; options
+   must be 0. */
+UINT32 section_create(UINT64 size, UINT32 options, UINT32 *section);
+
+/* Map size bytes of section from offset at address in process, which
+   needs PROCESS_RIGHT_MAP, with MAP_ protection bits, which need the
+   matching section rights. */
+UINT32 process_map(UINT32 process, UINT32 section, UINT64 offset,
+                   UINT64 address, UINT64 size, UINT32 protection);
+
 #endif

@@ -15,6 +15,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [syscalls.md](syscalls.md) | The x86-64 system-call entry, its register convention, error codes and the first calls |
 | [speculation.md](speculation.md) | The speculative-execution mitigations on entry from and exit to user mode and at a process switch, and how the kernel detects which apply |
 | [replay.md](replay.md) | Every nondeterministic input a process can receive, and how a recording captures or excludes it |
+| [compat.md](compat.md) | How a 32-bit Windows program runs: its process, ntdll, paths and the stand-in file protocol |
 
 ## Firmware and platform
 
@@ -83,7 +84,8 @@ release as Volume 3.
 - Used by: user-mode drivers' I/O-port access ([ipc.md](ipc.md), I6), for
   the I/O permission bitmap (20.5.2); the kernel's random number
   generator, for RDRAND and RDSEED and their retries (7.3.17) and CPUID's
-  leaf range (21.1.3).
+  leaf range (21.1.3); the 32-bit lane, for the general registers' upper
+  halves in compatibility mode (3.4.1.1).
 
 **Intel 64 and IA-32 Architectures Software Developer's Manual, Volume 2
 (2A, 2B, 2C and 2D): Instruction Set Reference, A-Z**, order number
@@ -286,6 +288,68 @@ updated November 5, 2025.
 - Used by: every nova-os image (TinyCC's x86_64-win32 target), firmware
   calls (UEFI 2.3.4.2), the kernel entry and the system-call convention
   ([syscalls.md](syscalls.md)).
+
+## Windows compatibility
+
+Microsoft Learn pages and open specifications, each pinned as fetched on
+November 7, 2026 with the date it shows as its last update. Used by:
+[compat.md](compat.md), `include/nt32.h`, ntdll (`ntdll/ntdll.c`) and the
+32-bit lane ([syscalls.md S11](syscalls.md#s11-the-32-bit-lane)). Access:
+free web pages; MS-ERREF and MS-SMB2 under Microsoft's Open
+Specifications terms.
+
+| Page | Updated | sha256 |
+|---|---|---|
+| [TEB (winternl.h)][ms-teb] | 2024-05-29 | `6bceaadb1721e142725195a4a32694cf91e6ca60495251669e20ffbda902368b` |
+| [PEB (winternl.h)][ms-peb] | 2022-09-01 | `44690a16f009a01093425492edf60d26535a91892cc5b42c0d92ca392b2fb2b0` |
+| [PEB_LDR_DATA (winternl.h)][ms-ldr] | 2024-02-22 | `1d4e819dbfde0c2992ef4d90e60dfe20cde1928260f07f64d8638ebbeca36fca` |
+| [RTL_USER_PROCESS_PARAMETERS (winternl.h)][ms-params] | 2024-02-22 | `e211deb26a9a92bcbb1b56641e56468c50cebd09d814aadb0318aae71b622536` |
+| [_UNICODE_STRING (ntdef.h)][ms-unicode] | 2024-02-22 | `3be29607c409759a7b93e68e5269ec936f810cdbea0ed0bc803c761989fafbf1` |
+| [_OBJECT_ATTRIBUTES (ntdef.h)][ms-oa] | 2023-08-09 | `3bf9ea1a7624efeb2bc1e4f30678f1bc2fb3d14f34469aed45d5dd79738b173b` |
+| [LIST_ENTRY (ntdef.h)][ms-list] | 2021-04-02 | `f7caf67826f0ffab8f34eea4156e89d950c69497a3e5242fea42b2ab3b7adbca` |
+| [_IO_STATUS_BLOCK (wdm.h)][ms-iosb] | 2022-02-25 | `1fb045a3827def44428bbcf8553476cddeb1074b9bf4bc6c9d8265cc97987612` |
+| [NtCreateFile function (winternl.h)][ms-create] | 2021-10-13 | `5bc4f3dc9991d0bbc77c8b0af71690869c988740c26cd2fd6bf1b5f01243e062` |
+| [NtReadFile function (ntifs.h)][ms-read] | 2023-07-06 | `1cee672a2a9cba820c9568d401a483121f8cf92011aa156a66b81af6d43a02c6` |
+| [NtWriteFile function (ntifs.h)][ms-write] | 2023-07-06 | `406dffc655626287d381e946956756217593ee79d1db8092145f54990a855c41` |
+| [NtClose function (ntifs.h)][ms-close] | 2024-02-22 | `0735bb7902046fe6aa405c8552af3b924e34946678fd8b3f3b5d42be45604b4b` |
+| [ZwTerminateProcess function (ntddk.h)][ms-terminate] | 2023-02-28 | `b03ea4d9c659497864209dffb643a9ecbcc9289b833601502b4a3f9ae88cd694` |
+| [ZwCurrentProcess Macro][ms-current] | 2023-03-01 | `3713699fdcb313d8125425e35a87ff871e4c0f79eee90e5d2693458c0858c6a2` |
+| [Naming Files, Paths, and Namespaces][ms-naming] | 2024-08-28 | `f1f1b4f6b41241f58742eb6050ba4dd9409720f62a4d1b1ff131417193b00691` |
+| [__stdcall][ms-stdcall] | 2025-02-10 | `95d0de9ae535b11699e4244020017a8cfa919eb9607454c4d20eb666b55211e9` |
+| [Argument Passing and Naming Conventions][ms-arguments] | 2025-10-03 | `da72f0dd7febe8a67a2d6265af9d8107a9efe36c642751f2c9d22434232722e1` |
+| [MS-ERREF 2.3.1 NTSTATUS Values][ms-erref-values] | 2021-11-16 | `eb8b93ae6e40f6851e3b9172b8db2c18f6e0fc7150a636dbc1d22fb1a4152a57` |
+| [MS-SMB2 2.2.13 SMB2 CREATE Request][ms-smb2-create] | 2023-02-28 | `85535072834d14fed56ba4d86d67d2a7c2f6e8241ae9f398dfc00b0f83579f19` |
+| [MS-SMB2 2.2.13.1.1 File_Pipe_Printer_Access_Mask][ms-smb2-access] | 2023-02-28 | `dbf068fe3ac25cda41f31a761dbc4b9e85bf55be0d5e53a8e879c48dbacea4e0` |
+| [MS-SMB2 2.2.14 SMB2 CREATE Response][ms-smb2-response] | 2025-04-07 | `dae9e65c1bf41681c5390670a97c468659a16ad1967466867782d5997f13b05d` |
+
+[ms-teb]: https://learn.microsoft.com/en-us/windows/win32/api/winternl/ns-winternl-teb
+[ms-peb]: https://learn.microsoft.com/en-us/windows/win32/api/winternl/ns-winternl-peb
+[ms-ldr]: https://learn.microsoft.com/en-us/windows/win32/api/winternl/ns-winternl-peb_ldr_data
+[ms-params]: https://learn.microsoft.com/en-us/windows/win32/api/winternl/ns-winternl-rtl_user_process_parameters
+[ms-unicode]: https://learn.microsoft.com/en-us/windows/win32/api/ntdef/ns-ntdef-_unicode_string
+[ms-oa]: https://learn.microsoft.com/en-us/windows/win32/api/ntdef/ns-ntdef-_object_attributes
+[ms-list]: https://learn.microsoft.com/en-us/windows/win32/api/ntdef/ns-ntdef-list_entry
+[ms-iosb]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_io_status_block
+[ms-create]: https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile
+[ms-read]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntreadfile
+[ms-write]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntwritefile
+[ms-close]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntclose
+[ms-terminate]: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/nf-ntddk-zwterminateprocess
+[ms-current]: https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/zwcurrentprocess
+[ms-naming]: https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file
+[ms-stdcall]: https://learn.microsoft.com/en-us/cpp/cpp/stdcall
+[ms-arguments]: https://learn.microsoft.com/en-us/cpp/cpp/argument-passing-and-naming-conventions
+[ms-erref-values]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55
+[ms-smb2-create]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/e8fb45c1-a03d-44ca-b7ae-47385cfd7997
+[ms-smb2-access]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/77b36d0f-6016-458a-a7a0-0f4a72ae1534
+[ms-smb2-response]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/d166aa9e-0b53-410e-b35e-3933d8131927
+
+**stage0-pe32**, commit `ff1c2ad86a91d3d7d086722ffed49dfe18dd50d0`, the
+revision nova-nix builds its chain from (GPL-3.0). Its seed,
+`bootstrap-seeds/PE32/i386/hex0-seed.exe`, and `x86/hex0_x86.hex0` are
+test inputs, fetched by hash ([README](../../README.md#disk-image)); the
+source was read only to learn which fields and values the seed uses, and
+nothing of it is copied ([compat.md](compat.md)).
 
 ## Storage and file systems
 

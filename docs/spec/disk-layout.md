@@ -79,6 +79,9 @@ The partition holds a FAT32 file system (UEFI 13.3; FAT):
 \EFI\BOOT\BOOTX64.EFI    nova-boot
 \NOVA\KERNEL.EXE         the kernel
 \NOVA\INIT.EXE           the first user process
+\NOVA\NTDLL.DLL          ntdll for 32-bit processes
+\NOVA\HEX0SEED.EXE       stage0-pe32's seed, hex0-seed.exe
+\NOVA\HEX0_X86.HEX       the source the seed assembles, hex0_x86.hex0
 ```
 
 `\EFI\BOOT\BOOTX64.EFI` is the file the firmware starts when a boot option
@@ -88,10 +91,13 @@ the x64 name as `BOOTx64.EFI` with `Machine` 0x8664. An EFI System
 Partition on a hard disk has the directory `\EFI` in its root, and `BOOT`
 under it holds the images used to recover booting (UEFI 13.3.1.3).
 
-`\NOVA\KERNEL.EXE` and `\NOVA\INIT.EXE` are the files nova-boot opens
-as `\nova\kernel.exe` and `\nova\init.exe`
-([boot-protocol.md](boot-protocol.md)). Neither is a UEFI image, and UEFI
-sets no location for files an application reads (UEFI 13.3.1.3).
+`\NOVA\KERNEL.EXE` is the file nova-boot opens as `\nova\kernel.exe`, and
+the others in `\NOVA` are the boot files it reads beside it
+([boot-protocol.md](boot-protocol.md#boot-files)). None is a UEFI image,
+and UEFI sets no location for files an application reads (UEFI
+13.3.1.3). The seed and its source are stage0-pe32's files, unmodified,
+under the 8.3 names below; the first process gives them to the seed
+under stage0-pe32's own names ([compat.md](compat.md)).
 
 Every name fits 8.3 and is stored as a short directory entry only, in
 uppercase (UEFI 13.3.1.2), with no long-name entries:
@@ -104,6 +110,9 @@ uppercase (UEFI 13.3.1.2), with no long-name entries:
 | `\NOVA` | `NOVA` followed by 7 spaces |
 | `\NOVA\KERNEL.EXE` | `KERNEL  EXE` |
 | `\NOVA\INIT.EXE` | `INIT    EXE` |
+| `\NOVA\NTDLL.DLL` | `NTDLL   DLL` |
+| `\NOVA\HEX0SEED.EXE` | `HEX0SEEDEXE` |
+| `\NOVA\HEX0_X86.HEX` | `HEX0_X86HEX` |
 
 FAT matches names without regard to case ("Name Matching In Short & Long
 Names"), so `\nova\kernel.exe`, `\nova\init.exe` and `BOOTx64.EFI`

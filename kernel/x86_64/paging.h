@@ -33,12 +33,14 @@ int paging_unmap_direct(UINT64 physical);
    tables that translate it exist by then, so this needs no page. */
 void paging_restore_direct(UINT64 physical);
 
-/* What a user mapping allows. No value is both writable and executable,
-   so no user mapping can be (docs/spec/objects.md O5). */
+/* What a user mapping allows. Only a process whose creator granted it
+   may have a mapping both writable and executable (docs/spec/objects.md
+   O5); process_map checks that before it asks for one. */
 typedef enum {
     USER_READ,
     USER_READ_WRITE,
-    USER_READ_EXECUTE
+    USER_READ_EXECUTE,
+    USER_READ_WRITE_EXECUTE
 } USER_PROTECTION;
 
 /* A new address space: a top table whose upper half is the kernel's and
@@ -53,7 +55,21 @@ UINT64 paging_space_create(void);
 int paging_map_user(UINT64 space, UINT64 linear, UINT64 physical,
                     USER_PROTECTION protection);
 
-/* Remove every lower-half mapping of space, freeing the pages they map
+/* Map the 4 KiB page at physical at user address linear in space, as
+   paging_map_user does, but leave the page its owner's, a section's: the
+   space never frees it. Returns 0 if a table is needed and no page is
+   free. */
+int paging_map_user_borrowed(UINT64 space, UINT64 linear, UINT64 physical,
+                             USER_PROTECTION protection);
+
+/* Whether anything is mapped at the user page linear in space. */
+int paging_user_mapped(UINT64 space, UINT64 linear);
+
+/* Remove the borrowed page paging_map_user_borrowed mapped at linear in
+   space, leaving the page to its owner. */
+void paging_unmap_user_borrowed(UINT64 space, UINT64 linear);
+
+/* Remove every lower-half mapping of space, freeing the pages it owns
    and the tables that mapped them. The space stays usable as a kernel
    address space. */
 void paging_space_clear(UINT64 space);

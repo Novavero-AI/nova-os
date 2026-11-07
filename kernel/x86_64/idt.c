@@ -26,8 +26,14 @@ _Static_assert(sizeof(IDT_GATE) == 16, "an IDT gate is 16 bytes");
 /* Present, DPL 0, type 1110b: a 64-bit interrupt gate (SDM Vol. 3A
    Table 3-2), which clears IF on entry (SDM Vol. 3A 7.12.1.3). With DPL
    0, user code cannot raise any vector with INT n, INT3 or INTO: the
-   processor raises #GP instead (SDM Vol. 3A 7.12.1.2). */
+   processor raises #GP instead (SDM Vol. 3A 7.12.1.2). The 32-bit lane's
+   gate alone has DPL 3, so that INT n reaches it from CPL 3; the
+   processor checks a gate's DPL only for INT n, INT3 and INTO, so it
+   changes nothing for other events (7.12.1.2). An interrupt gate rather
+   than a trap gate: IF stays clear until the entry has swapped GS
+   (entry.S), and the dispatch sets it once the call is under way. */
 #define GATE_PRESENT 0x80
+#define GATE_DPL_USER 0x60
 #define GATE_INTERRUPT 0x0e
 
 /* Vectors without a handler keep an all-zero gate. Its type is not an
@@ -38,14 +44,14 @@ static IDT_GATE idt[VECTOR_COUNT];
 /* ist 0 keeps the interrupted stack, or takes RSP0 from the TSS on a
    change to CPL 0; 1 to 7 switch to that IST slot's stack (SDM Vol. 3A
    7.14.4, 7.14.5). */
-static void set_gate(UINT32 vector, UINT64 handler, UINT8 ist)
+static void set_gate(UINT32 vector, UINT64 handler, UINT8 ist, UINT8 dpl)
 {
     IDT_GATE *gate = &idt[vector];
 
     gate->offset_low = (UINT16)handler;
     gate->selector = KERNEL_CODE_SELECTOR;
     gate->ist = ist;
-    gate->type = GATE_PRESENT | GATE_INTERRUPT;
+    gate->type = GATE_PRESENT | dpl | GATE_INTERRUPT;
     gate->offset_middle = (UINT16)(handler >> 16);
     gate->offset_high = (UINT32)(handler >> 32);
 }
@@ -56,14 +62,15 @@ void idt_load(void)
     UINT32 vector;
 
     for (vector = 0; vector < EXCEPTION_COUNT; vector++)
-        set_gate(vector, exception_stubs[vector], 0);
-    set_gate(NMI_VECTOR, exception_stubs[NMI_VECTOR], NMI_IST);
+        set_gate(vector, exception_stubs[vector], 0, 0);
+    set_gate(NMI_VECTOR, exception_stubs[NMI_VECTOR], NMI_IST, 0);
     set_gate(DOUBLE_FAULT_VECTOR, exception_stubs[DOUBLE_FAULT_VECTOR],
-             DOUBLE_FAULT_IST);
+             DOUBLE_FAULT_IST, 0);
     set_gate(MACHINE_CHECK_VECTOR, exception_stubs[MACHINE_CHECK_VECTOR],
-             MACHINE_CHECK_IST);
-    set_gate(TIMER_VECTOR, (UINT64)timer_stub, 0);
-    set_gate(SPURIOUS_VECTOR, (UINT64)spurious_stub, 0);
+             MACHINE_CHECK_IST, 0);
+    set_gate(TIMER_VECTOR, (UINT64)timer_stub, 0, 0);
+    set_gate(SPURIOUS_VECTOR, (UINT64)spurious_stub, 0, 0);
+    set_gate(COMPAT_GATE_VECTOR, (UINT64)compat_gate_stub, 0, GATE_DPL_USER);
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (UINT64)idt;
     __asm__ volatile("lidt %0" : : "m"(idtr) : "memory");
@@ -131,6 +138,13 @@ void interrupt_dispatch(INTERRUPT_FRAME *frame)
     case SPURIOUS_VECTOR:
         /* Never set in the in-service register, so it takes no EOI (SDM
            Vol. 3A 13.9). */
+        break;
+    case COMPAT_GATE_VECTOR:
+        /* The kernel never executes INT, so an entry from kernel mode is
+           a bug. */
+        if (!(frame->cs & SELECTOR_RPL_MASK))
+            exception_halt(frame);
+        compat_syscall_dispatch(frame);
         break;
     default:
         exception_halt(frame);

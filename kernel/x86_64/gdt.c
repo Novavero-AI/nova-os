@@ -1,7 +1,7 @@
 /* The kernel's global descriptor table, in the layout of
    docs/spec/syscalls.md S2: the null descriptor, 64-bit kernel code,
-   kernel data, a null slot where SYSRET would find 32-bit user code,
-   user data, 64-bit user code and the 64-bit TSS. The firmware's table
+   kernel data, 32-bit user code for compatibility mode, user data,
+   64-bit user code and the 64-bit TSS. The firmware's table
    has its own layout (EDK2's CpuDxe puts 64-bit code at selector 0x38);
    with its own, the kernel names the selectors its interrupt gates and
    SYSCALL and SYSRET use. The TSS holds RSP0, the running thread's
@@ -26,7 +26,14 @@
 /* 64-bit mode ignores the base and limit (SDM Vol. 3A 3.2.4); every
    descriptor still describes a flat 4 GiB segment, as EDK2's do. The
    user descriptors differ from the kernel's only in their privilege
-   level. */
+   level, except the 32-bit code descriptor: with L clear the processor
+   runs its code in compatibility mode, and with D set that code's
+   default operand and address size is 32 bits (SDM Vol. 3A 3.4.5,
+   6.2.1, 12.8.5.3). Compatibility mode honours the base and limit, and
+   the user data descriptor, which the same 32-bit code loads as DS, ES,
+   FS and SS, is flat with D/B set, so its stack is 32-bit (3.2.4,
+   3.4.5). No descriptor user code can load as SS is 16-bit, so no IRETQ
+   returns to a stack that would take only the low 16 bits of RSP. */
 #define KERNEL_CODE                                                         \
     (DESC_LIMIT_FLAT | DESC_READ_WRITE | DESC_CODE | DESC_CODE_OR_DATA |    \
      DESC_PRESENT | DESC_LONG | DESC_PAGE_GRANULAR)
@@ -35,6 +42,9 @@
      DESC_DEFAULT_32 | DESC_PAGE_GRANULAR)
 #define USER_CODE (KERNEL_CODE | DESC_DPL_USER)
 #define USER_DATA (KERNEL_DATA | DESC_DPL_USER)
+#define USER_CODE32                                                        \
+    (DESC_LIMIT_FLAT | DESC_READ_WRITE | DESC_CODE | DESC_CODE_OR_DATA |   \
+     DESC_DPL_USER | DESC_PRESENT | DESC_DEFAULT_32 | DESC_PAGE_GRANULAR)
 
 /* The encodings EDK2's CpuDxe loads for its LINEAR_CODE64_SEL and
    LINEAR_DATA64_SEL, and the same with DPL 3. */
@@ -42,6 +52,7 @@ _Static_assert(KERNEL_CODE == 0x00af9a000000ffffULL, "kernel code");
 _Static_assert(KERNEL_DATA == 0x00cf92000000ffffULL, "kernel data");
 _Static_assert(USER_CODE == 0x00affa000000ffffULL, "user code");
 _Static_assert(USER_DATA == 0x00cff2000000ffffULL, "user data");
+_Static_assert(USER_CODE32 == 0x00cffa000000ffffULL, "32-bit user code");
 
 /* A TSS descriptor in 64-bit mode is 16 bytes: the limit and the low 32
    bits of the base where a segment descriptor has them, type 1001b for an
@@ -60,12 +71,13 @@ _Static_assert(USER_DATA == 0x00cff2000000ffffULL, "user data");
 #define SELECTOR_INDEX(selector) ((selector) / DESCRIPTOR_SIZE)
 #define GDT_ENTRIES (SELECTOR_INDEX(TSS_SELECTOR) + 2)
 
-/* The null descriptors at 0 and at 0x18 stay zero. Not const: loading a
-   selector sets its descriptor's accessed bit (SDM Vol. 3A 3.4.5.1), and
-   LTR marks the TSS busy. */
+/* The null descriptor at 0 stays zero. Not const: loading a selector
+   sets its descriptor's accessed bit (SDM Vol. 3A 3.4.5.1), and LTR
+   marks the TSS busy. */
 static UINT64 gdt[GDT_ENTRIES] = {
     [SELECTOR_INDEX(KERNEL_CODE_SELECTOR)] = KERNEL_CODE,
     [SELECTOR_INDEX(KERNEL_DATA_SELECTOR)] = KERNEL_DATA,
+    [SELECTOR_INDEX(USER_CODE32_SELECTOR)] = USER_CODE32,
     [SELECTOR_INDEX(USER_DATA_SELECTOR)] = USER_DATA,
     [SELECTOR_INDEX(USER_CODE_SELECTOR)] = USER_CODE,
 };
@@ -101,13 +113,14 @@ static UINT8 machine_check_stack[FAULT_STACK_SIZE];
    and TinyCC's assembler has no mnemonic for it. */
 #define FAR_RETURN_64 ".byte 0x48, 0xcb\n"
 
-/* DS, ES, FS and GS hold the user data selector in kernel and user mode
-   alike. 64-bit mode ignores their bases, except FS's and GS's, and
+/* DS, ES, FS and GS start with the user data selector, which a new user
+   thread starts with too; from then on each user thread keeps its own
+   (context.c). 64-bit mode ignores their bases, except FS's and GS's, and
    their limits and attributes (SDM Vol. 3A 3.4.4), so the kernel loses
    nothing by them; and a return to user mode loads a null selector into
    any of them whose DPL is below 3 (SDM Vol. 3A 6.8.6), which this one's
-   is not, so no return touches them. GS's base is set afterwards: a
-   segment load clears it (SDM Vol. 3A 3.4.4). */
+   is not. GS's base is set afterwards: a segment load clears it (SDM
+   Vol. 3A 3.4.4). */
 static void reload_segments(void)
 {
     __asm__ volatile("pushq %0\n\t"

@@ -188,18 +188,28 @@ Events and pins have no type-specific rights. Mapping a section with a
 protection needs the matching section rights: `READ` for read, `WRITE` for
 write, `EXECUTE` for execute. A mapping records the section rights of the
 handle it was made with, and `process_protect` can change its protection
-only within them. No mapping is both writable and executable unless the
-process's job carries `WRITE_EXECUTE`, which a creator passes on only to a
-program whose recipe declares it (DESIGN.md, principle 7); the seed chain's
-programs, each a single readable, writable and executable section, are
-the case it exists for.
+only within them. No mapping is both writable and executable unless its
+process was created with `PROCESS_OPTION_WRITE_EXECUTE`
+([syscalls.md S8](syscalls.md#s8-the-first-calls)), which
+`process_create` grants only on a job handle that carries
+`WRITE_EXECUTE`; a creator passes it on only to a program whose recipe
+declares it (DESIGN.md, principle 7). The seed chain's programs, each a
+single readable, writable and executable section, are the case it exists
+for. The kernel creates the first process without the option and gives
+it the root job's handle with the right, so the first process can grant
+it and cannot use it. The rule is per mapping: a process that holds a
+section with `WRITE` and `EXECUTE` can still write code through one
+mapping and run it through another, or change a mapping's protection
+with `process_protect`.
 
 Rules:
 
 1. A call that creates an object returns a handle with every right the
    type defines, except that a channel endpoint never carries `DUPLICATE`
-   ([ipc.md](ipc.md#i1-channels)) and a device section never carries
-   `EXECUTE` or `PIN` ([ipc.md](ipc.md#i6-device-memory-and-io-ports)).
+   ([ipc.md](ipc.md#i1-channels)), a device section never carries
+   `EXECUTE` or `PIN` ([ipc.md](ipc.md#i6-device-memory-and-io-ports)),
+   and a job's handle carries `WRITE_EXECUTE` only if the handle of the
+   job it was created in did.
 2. `handle_duplicate`, `handle_restrict` and a transfer in a channel
    message take a rights mask, or `RIGHTS_SAME` (all ones) to keep the
    source's rights. A mask that is not a subset of the source's rights

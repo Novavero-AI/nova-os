@@ -219,6 +219,8 @@ static UINT64 protection_bits(USER_PROTECTION protection)
         return PTE_WRITABLE | PTE_NO_EXECUTE;
     case USER_READ_EXECUTE:
         return 0;
+    case USER_READ_WRITE_EXECUTE:
+        return PTE_WRITABLE;
     case USER_READ:
         break;
     }
@@ -240,30 +242,78 @@ UINT64 paging_space_create(void)
     return page;
 }
 
+/* The PTE that maps user address linear in space, adding the tables on
+   the way down when add is set; 0 if a table is missing and add is
+   clear, or if one is needed and no page is free. With interrupts
+   disabled. */
+static UINT64 *user_entry(UINT64 space, UINT64 linear, int add)
+{
+    UINT64 *table = direct_map(space);
+    int level;
+
+    for (level = levels; level > PAGE_TABLE_LEVEL; level--) {
+        UINT64 *entry = &table[table_index(linear, level)];
+
+        if (!(*entry & PTE_PRESENT) && (!add || !add_table(entry, PTE_USER)))
+            return 0;
+        table = table_at(*entry);
+    }
+    return &table[table_index(linear, PAGE_TABLE_LEVEL)];
+}
+
+static int map_user(UINT64 space, UINT64 linear, UINT64 bits)
+{
+    UINT64 flags = save_and_disable_interrupts();
+    UINT64 *entry = user_entry(space, linear, 1);
+
+    if (entry)
+        *entry = bits | PTE_PRESENT | PTE_USER;
+    restore_interrupts(flags);
+    return entry != 0;
+}
+
 int paging_map_user(UINT64 space, UINT64 linear, UINT64 physical,
                     USER_PROTECTION protection)
 {
+    return map_user(space, linear, physical | protection_bits(protection));
+}
+
+int paging_map_user_borrowed(UINT64 space, UINT64 linear, UINT64 physical,
+                             USER_PROTECTION protection)
+{
+    return map_user(space, linear,
+                    physical | protection_bits(protection) | PTE_BORROWED);
+}
+
+int paging_user_mapped(UINT64 space, UINT64 linear)
+{
     UINT64 flags = save_and_disable_interrupts();
-    UINT64 *table = direct_map(space);
-    int level, mapped = 1;
+    UINT64 *entry = user_entry(space, linear, 0);
+    int mapped = entry && (*entry & PTE_PRESENT);
 
-    for (level = levels; mapped && level > PAGE_TABLE_LEVEL; level--) {
-        UINT64 *entry = &table[table_index(linear, level)];
-
-        if (!(*entry & PTE_PRESENT) && !add_table(entry, PTE_USER))
-            mapped = 0;
-        else
-            table = table_at(*entry);
-    }
-    if (mapped)
-        table[table_index(linear, PAGE_TABLE_LEVEL)] =
-            physical | PTE_PRESENT | PTE_USER | protection_bits(protection);
     restore_interrupts(flags);
     return mapped;
 }
 
-/* Free the pages table maps at level and below, and the tables below it.
-   The depth is the paging depth, at most five. */
+/* The processor may cache a translation for a speculative access the
+   code never makes (SDM Vol. 3A 5.10.2.2), so a space in use is
+   reloaded; no user translation is global, and a space not in use has
+   none cached, since loading CR3 invalidated them (5.10.4.1). */
+void paging_unmap_user_borrowed(UINT64 space, UINT64 linear)
+{
+    UINT64 flags = save_and_disable_interrupts();
+    UINT64 *entry = user_entry(space, linear, 0);
+
+    if (entry)
+        *entry = 0;
+    if ((read_cr3() & PTE_ADDRESS) == space)
+        write_cr3(space);
+    restore_interrupts(flags);
+}
+
+/* Free the pages table maps at level and below, other than borrowed
+   ones, and the tables below it. The depth is the paging depth, at most
+   five. */
 static void free_below(UINT64 *table, int level)
 {
     UINT64 i;
@@ -273,7 +323,8 @@ static void free_below(UINT64 *table, int level)
             continue;
         if (level > PAGE_TABLE_LEVEL)
             free_below(table_at(table[i]), level - 1);
-        page_free(table[i] & PTE_ADDRESS);
+        if (level > PAGE_TABLE_LEVEL || !(table[i] & PTE_BORROWED))
+            page_free(table[i] & PTE_ADDRESS);
         table[i] = 0;
     }
 }

@@ -26,6 +26,7 @@ typedef UINT16 CHAR16;
 #define EFI_LOAD_ERROR (EFI_ERROR_BIT | 1)
 #define EFI_UNSUPPORTED (EFI_ERROR_BIT | 3)
 #define EFI_BUFFER_TOO_SMALL (EFI_ERROR_BIT | 5)
+#define EFI_NOT_FOUND (EFI_ERROR_BIT | 14)
 #define EFI_INCOMPATIBLE_VERSION (EFI_ERROR_BIT | 25)
 
 /* EFI_ALLOCATE_TYPE and EFI_MEMORY_TYPE values. */
@@ -172,6 +173,25 @@ struct EFI_FILE_PROTOCOL {
     EFI_STATUS (*GetPosition)(EFI_FILE_PROTOCOL *This, UINT64 *Position);
     EFI_STATUS (*SetPosition)(EFI_FILE_PROTOCOL *This, UINT64 Position);
 };
+
+/* A directory's Read returns one of these per entry, and an empty buffer
+   after the last (UEFI 13.5.5, 13.5.16). The three times are EFI_TIME,
+   16 bytes each (UEFI 8.3), which nova-boot does not read. */
+#define EFI_FILE_DIRECTORY 0x10ULL
+#define EFI_TIME_SIZE 16
+
+typedef struct {
+    UINT64 Size;
+    UINT64 FileSize;
+    UINT64 PhysicalSize;
+    UINT8 CreateTime[EFI_TIME_SIZE];
+    UINT8 LastAccessTime[EFI_TIME_SIZE];
+    UINT8 ModificationTime[EFI_TIME_SIZE];
+    UINT64 Attribute;
+    CHAR16 FileName[];
+} EFI_FILE_INFO;
+
+_Static_assert(offsetof(EFI_FILE_INFO, FileName) == 80, "");
 
 typedef struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;

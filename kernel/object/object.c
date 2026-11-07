@@ -147,9 +147,9 @@ static HANDLE_ENTRY *entry_of(HANDLE_TABLE *table, UINT32 value)
     return entry;
 }
 
-/* Free entry and close its handle. The next handle placed there gets the
-   next generation, so value names nothing from now on. */
-static void close_entry(HANDLE_ENTRY *entry)
+/* Free entry and return the handle it held. The next handle placed there
+   gets the next generation, so value names nothing from now on. */
+static OBJECT *free_entry(HANDLE_ENTRY *entry)
 {
     OBJECT *object = entry->object;
 
@@ -159,7 +159,12 @@ static void close_entry(HANDLE_ENTRY *entry)
     entry->generation = entry->generation == GENERATION_LAST
                             ? GENERATION_FIRST
                             : entry->generation + 1;
-    object_close(object);
+    return object;
+}
+
+static void close_entry(HANDLE_ENTRY *entry)
+{
+    object_close(free_entry(entry));
 }
 
 void handle_table_close_all(HANDLE_TABLE *table)
@@ -241,6 +246,45 @@ STATUS handle_get(HANDLE_TABLE *table, UINT32 value, UINT32 type,
     }
     restore_interrupts(flags);
     return status;
+}
+
+STATUS handle_get_waitable(HANDLE_TABLE *table, UINT32 value, UINT32 rights,
+                           OBJECT **object, WAITABLE **waitable)
+{
+    UINT64 flags = save_and_disable_interrupts();
+    HANDLE_ENTRY *entry = entry_of(table, value);
+    STATUS status = OK;
+
+    if (!entry)
+        status = ERR_BAD_HANDLE;
+    else if (!entry->object->type->waitable)
+        status = ERR_NOT_SUPPORTED;
+    else if ((entry->rights & rights) != rights)
+        status = ERR_ACCESS_DENIED;
+    if (status == OK) {
+        *object = entry->object;
+        *waitable = entry->object->type->waitable(entry->object);
+        entry->object->references++;
+    }
+    restore_interrupts(flags);
+    return status;
+}
+
+STATUS handle_peek(HANDLE_TABLE *table, UINT32 value, OBJECT **object,
+                   UINT32 *rights)
+{
+    HANDLE_ENTRY *entry = entry_of(table, value);
+
+    if (!entry)
+        return ERR_BAD_HANDLE;
+    *object = entry->object;
+    *rights = entry->rights;
+    return OK;
+}
+
+void handle_take(HANDLE_TABLE *table, UINT32 value)
+{
+    free_entry(entry_of(table, value));
 }
 
 STATUS handle_close(HANDLE_TABLE *table, UINT32 value)

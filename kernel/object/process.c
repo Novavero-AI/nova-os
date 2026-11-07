@@ -1,8 +1,11 @@
 /* Processes and their user threads. A process's memory is three pages:
    the PROCESS, its handle table and its top page table; each user thread
-   adds a page for its THREAD and one for its vector state (fpu.h), besides
-   its kernel stack. Its address space owns every page it maps, since no
-   mapping is shared yet (paging.h). */
+   adds a page for its USER_THREAD and one for its vector state (fpu.h),
+   besides its kernel stack. Its address space owns the pages the kernel
+   maps for it, its first image and stack, and borrows the pages of the
+   sections process_map maps, which the PROCESS holds until it ends. */
+
+#include <stddef.h>
 
 #include "process.h"
 #include "cpu.h"
@@ -11,15 +14,15 @@
 #include "../x86_64/paging.h"
 #include "../x86_64/user.h"
 
-/* The stack a new thread starts on is 8 more than a multiple of 16, as
-   after a call pushed its return address (docs/spec/syscalls.md S8). */
+/* A 64-bit thread's stack is 8 more than a multiple of 16, as after a
+   call pushed its return address (docs/spec/syscalls.md S8). A 32-bit
+   thread's entry and stack lie below 4 GiB, the most compatibility mode
+   addresses, and its stack is 4-byte aligned, the alignment the x86
+   conventions widen every argument to (S11). */
 #define STACK_ALIGNMENT 16
 #define STACK_START_OFFSET 8
-
-typedef struct {
-    THREAD thread;
-    UINT8 *fpu;
-} USER_THREAD;
+#define COMPAT_ADDRESS_LIMIT 0x100000000ULL
+#define COMPAT_STACK_ALIGNMENT 4
 
 /* A process never started is destroyed with its last handle; a started
    one runs on until it exits or is killed (O10). */
@@ -38,12 +41,19 @@ static void destroy(OBJECT *object)
 
     paging_space_destroy(process->space);
     handle_table_destroy(process->handles);
+    object_release(&process->job->object);
     page_free_mapped(process);
 }
 
-static const OBJECT_TYPE process_type = {TYPE_PROCESS, last_handle, destroy};
+static WAITABLE *process_waitable(OBJECT *object)
+{
+    return &((PROCESS *)object)->waitable;
+}
 
-STATUS process_create(PROCESS **out)
+static const OBJECT_TYPE process_type = {TYPE_PROCESS, last_handle, destroy,
+                                         process_waitable};
+
+STATUS process_create(JOB *job, UINT32 options, PROCESS **out)
 {
     PROCESS *process = page_alloc_mapped();
 
@@ -59,56 +69,203 @@ STATUS process_create(PROCESS **out)
     }
     object_init(&process->object, &process_type);
     waitable_init(&process->waitable);
+    object_retain(&job->object);
+    process->job = job;
+    process->options = options;
     process->state = PROCESS_STATE_NEW;
     process->exit_code = 0;
     process->threads = 0;
+    process->mapping_count = 0;
     *out = process;
     return OK;
 }
 
-/* The thread holds a reference to its process while it runs (O10). */
-STATUS process_start(PROCESS *process, UINT64 entry, UINT64 stack,
-                     OBJECT *bootstrap, UINT32 rights, UINT64 argument)
+int process_is_32_bit(const PROCESS *process)
 {
-    USER_THREAD *user;
-    UINT8 *fpu;
+    return (process->options & PROCESS_OPTION_32_BIT) != 0;
+}
+
+/* ------------------------------------------------------------------------
+   Threads. A started thread's object holds one reference for the
+   scheduler, which process_thread_reaped drops; a thread never started
+   is destroyed with its last handle (O10). */
+
+static void thread_destroy(OBJECT *object)
+{
+    USER_THREAD *user = (USER_THREAD *)object;
+
+    page_free_mapped(user->fpu);
+    object_release(&user->process->object);
+    page_free_mapped(user);
+}
+
+static WAITABLE *thread_waitable(OBJECT *object)
+{
+    return &((USER_THREAD *)object)->thread.waitable;
+}
+
+static const OBJECT_TYPE thread_type = {TYPE_THREAD, 0, thread_destroy,
+                                        thread_waitable};
+
+STATUS process_thread_create(PROCESS *process, USER_THREAD **out)
+{
+    USER_THREAD *user = page_alloc_mapped();
+    UINT8 *fpu = user ? page_alloc_mapped() : 0;
+
+    if (!fpu) {
+        if (user)
+            page_free_mapped(user);
+        return ERR_NO_MEMORY;
+    }
+    fpu_state_init(fpu);
+    object_init(&user->object, &thread_type);
+    waitable_init(&user->thread.waitable);
+    object_retain(&process->object);
+    user->process = process;
+    user->fpu = fpu;
+    user->started = 0;
+    *out = user;
+    return OK;
+}
+
+static int start_allowed(const PROCESS *process, UINT64 entry, UINT64 stack)
+{
+    if (process_is_32_bit(process))
+        return entry < COMPAT_ADDRESS_LIMIT && stack < COMPAT_ADDRESS_LIMIT &&
+               stack % COMPAT_STACK_ALIGNMENT == 0;
+    return entry < user_space_top() && stack < user_space_top() &&
+           stack % STACK_ALIGNMENT == STACK_START_OFFSET;
+}
+
+/* The thread's object holds a reference to its process, and the process
+   is RUNNING from here until it terminates (O10). */
+STATUS process_start(PROCESS *process, USER_THREAD *thread, UINT64 entry,
+                     UINT64 stack, OBJECT *bootstrap, UINT32 rights,
+                     UINT64 argument)
+{
+    USER_MODE mode = process_is_32_bit(process) ? USER_MODE_COMPATIBILITY
+                                                : USER_MODE_64_BIT;
     UINT32 index;
 
-    if (process->state != PROCESS_STATE_NEW)
+    if (process->state != PROCESS_STATE_NEW || thread->started)
         return ERR_BAD_STATE;
-    if (entry >= user_space_top() || stack >= user_space_top() ||
-        stack % STACK_ALIGNMENT != STACK_START_OFFSET)
+    if (thread->process != process || !start_allowed(process, entry, stack))
         return ERR_INVALID_ARGS;
     if (handle_reserve(process->handles, &index) != OK)
         return ERR_NO_MEMORY;
-    user = page_alloc_mapped();
-    fpu = user ? page_alloc_mapped() : 0;
-    if (fpu) {
-        fpu_state_init(fpu);
-        user->fpu = fpu;
-    }
-    if (!fpu || thread_create_user(&user->thread, process, process->space,
-                                   fpu, entry, stack,
-                                   handle_value(process->handles, index),
-                                   argument) != OK) {
-        if (fpu)
-            page_free_mapped(fpu);
-        if (user)
-            page_free_mapped(user);
+    if (thread_create_user(&thread->thread, process, process->space,
+                           thread->fpu, mode, entry, stack,
+                           handle_value(process->handles, index),
+                           argument) != OK) {
         handle_unreserve(process->handles, index);
         return ERR_NO_MEMORY;
     }
     handle_place(process->handles, index, bootstrap, rights);
-    object_retain(&process->object);
+    object_retain(&thread->object);
+    thread->started = 1;
     process->state = PROCESS_STATE_RUNNING;
     process->threads = 1;
-    thread_start(&user->thread);
+    thread_start(&thread->thread);
     return OK;
 }
 
+/* The THREAD is inside its object, which the scheduler's reference keeps
+   until here; waiters on the thread hold references of their own. */
+void process_thread_reaped(THREAD *thread)
+{
+    USER_THREAD *user =
+        (USER_THREAD *)((UINT8 *)thread - offsetof(USER_THREAD, thread));
+
+    object_release(&user->object);
+}
+
+/* ------------------------------------------------------------------------
+   Mappings. */
+
+static int protection_of(UINT32 protection, USER_PROTECTION *out)
+{
+    switch (protection) {
+    case MAP_READ:
+        *out = USER_READ;
+        return 1;
+    case MAP_READ | MAP_WRITE:
+        *out = USER_READ_WRITE;
+        return 1;
+    case MAP_READ | MAP_EXECUTE:
+        *out = USER_READ_EXECUTE;
+        return 1;
+    case MAP_READ | MAP_WRITE | MAP_EXECUTE:
+        *out = USER_READ_WRITE_EXECUTE;
+        return 1;
+    }
+    return 0;
+}
+
+UINT32 process_map_rights(UINT32 protection)
+{
+    return ((protection & MAP_READ) ? SECTION_RIGHT_READ : 0) |
+           ((protection & MAP_WRITE) ? SECTION_RIGHT_WRITE : 0) |
+           ((protection & MAP_EXECUTE) ? SECTION_RIGHT_EXECUTE : 0);
+}
+
+static int page_aligned(UINT64 value)
+{
+    return value % PAGE_SIZE == 0;
+}
+
+/* With interrupts disabled from the checks to the last page, the range
+   cannot change under the call. */
+STATUS process_map(PROCESS *process, SECTION *section, UINT64 offset,
+                   UINT64 address, UINT64 size, UINT32 protection)
+{
+    USER_PROTECTION user_protection;
+    UINT64 pages, i, flags;
+    STATUS status = OK;
+
+    if (!protection_of(protection, &user_protection) ||
+        !page_aligned(offset) || !page_aligned(address) ||
+        !page_aligned(size) || size == 0 || !user_range_valid(address, size))
+        return ERR_INVALID_ARGS;
+    if (user_protection == USER_READ_WRITE_EXECUTE &&
+        !(process->options & PROCESS_OPTION_WRITE_EXECUTE))
+        return ERR_ACCESS_DENIED;
+    pages = size / PAGE_SIZE;
+    if (offset / PAGE_SIZE > section->pages ||
+        pages > section->pages - offset / PAGE_SIZE)
+        return ERR_OUT_OF_RANGE;
+    flags = save_and_disable_interrupts();
+    if (process->state == PROCESS_STATE_TERMINATED)
+        status = ERR_BAD_STATE;
+    for (i = 0; status == OK && i < pages; i++)
+        if (paging_user_mapped(process->space, address + i * PAGE_SIZE))
+            status = ERR_BAD_STATE;
+    if (status == OK && process->mapping_count == PROCESS_MAX_MAPPINGS)
+        status = ERR_NO_MEMORY;
+    for (i = 0; status == OK && i < pages; i++)
+        if (!paging_map_user_borrowed(
+                process->space, address + i * PAGE_SIZE,
+                section->physical[offset / PAGE_SIZE + i], user_protection))
+            status = ERR_NO_MEMORY;
+    if (status == ERR_NO_MEMORY)
+        while (i-- > 0)
+            paging_unmap_user_borrowed(process->space, address + i * PAGE_SIZE);
+    if (status == OK) {
+        object_retain(&section->object);
+        process->mappings[process->mapping_count++] = section;
+    }
+    restore_interrupts(flags);
+    return status;
+}
+
+/* ------------------------------------------------------------------------
+   Termination. */
+
+/* The space is cleared before the sections go, so no translation of a
+   section's page outlives the reference that keeps the page. */
 void process_terminate(PROCESS *process, UINT32 exit_code)
 {
     UINT64 flags = save_and_disable_interrupts();
+    UINT32 count, i;
 
     if (process->state == PROCESS_STATE_TERMINATED) {
         restore_interrupts(flags);
@@ -116,9 +273,13 @@ void process_terminate(PROCESS *process, UINT32 exit_code)
     }
     process->state = PROCESS_STATE_TERMINATED;
     process->exit_code = exit_code;
+    count = process->mapping_count;
+    process->mapping_count = 0;
     restore_interrupts(flags);
     handle_table_close_all(process->handles);
     paging_space_clear(process->space);
+    for (i = 0; i < count; i++)
+        object_release(&process->mappings[i]->object);
     waitable_update(&process->waitable, 0, PROCESS_TERMINATED);
 }
 
@@ -160,17 +321,4 @@ _Noreturn void process_thread_exit(void)
 _Noreturn void process_fault(UINT32 vector)
 {
     process_exit(vector);
-}
-
-/* The THREAD goes as soon as it has asserted THREAD_TERMINATED, which
-   is safe because nothing waits on a user thread: no handle to one
-   exists yet. */
-void process_thread_reaped(THREAD *thread)
-{
-    USER_THREAD *user = (USER_THREAD *)thread;
-    PROCESS *process = thread->process;
-
-    page_free_mapped(user->fpu);
-    page_free_mapped(user);
-    object_release(&process->object);
 }

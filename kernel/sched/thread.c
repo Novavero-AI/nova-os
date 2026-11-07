@@ -220,7 +220,6 @@ static UINT64 init_thread(THREAD *thread, THREAD_ENTRY entry, void *argument,
     thread->entry = entry;
     thread->argument = argument;
     thread->switches = 0;
-    waitable_init(&thread->waitable);
     thread->process = process;
     return (UINT64)direct_map(run + THREAD_STACK_RUN * PAGE_SIZE);
 }
@@ -231,21 +230,31 @@ STATUS thread_create(THREAD *thread, THREAD_ENTRY entry, void *argument)
 
     if (!top)
         return ERR_NO_MEMORY;
+    waitable_init(&thread->waitable);
     arch_context_init(&thread->context, top, thread_run);
     return OK;
 }
 
 STATUS thread_create_user(THREAD *thread, struct PROCESS *process,
-                          UINT64 address_space, UINT8 *fpu, UINT64 entry,
-                          UINT64 stack, UINT64 argument1, UINT64 argument2)
+                          UINT64 address_space, UINT8 *fpu, USER_MODE mode,
+                          UINT64 entry, UINT64 stack, UINT64 argument1,
+                          UINT64 argument2)
 {
     UINT64 top = init_thread(thread, 0, 0, process);
 
     if (!top)
         return ERR_NO_MEMORY;
-    arch_context_init_user(&thread->context, top, address_space, fpu, entry,
-                           stack, argument1, argument2);
+    arch_context_init_user(&thread->context, top, address_space, fpu, mode,
+                           entry, stack, argument1, argument2);
     return OK;
+}
+
+void thread_set_tls_base(UINT64 base)
+{
+    UINT64 flags = save_and_disable_interrupts();
+
+    arch_set_tls_base(&thread_current()->context, base);
+    restore_interrupts(flags);
 }
 
 STATUS thread_start(THREAD *thread)

@@ -1,6 +1,7 @@
 /* nova-boot: the UEFI loader. It draws the boot screen, loads the kernel
-   from \nova\kernel.exe on the volume it was booted from and reads the
-   first process's image from \nova\init.exe beside it, builds the
+   from \nova\kernel.exe on the volume it was booted from and reads every
+   other file in \nova\, the first process's image init.exe among them,
+   builds the
    kernel's page tables, measures the timestamp counter against Stall,
    asks the firmware's random number generators for seeds, takes the
    final memory map, exits boot services, loads the kernel's
@@ -31,7 +32,14 @@ static EFI_GUID simple_file_system_guid = {
     {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
 
 static CHAR16 kernel_path[] = L"\\nova\\kernel.exe";
-static CHAR16 init_path[] = L"\\nova\\init.exe";
+static CHAR16 nova_path[] = L"\\nova";
+#define KERNEL_NAME "kernel.exe"
+#define INIT_NAME "init.exe"
+
+/* Room for one directory entry: an EFI_FILE_INFO with a FAT long name of
+   up to 255 characters and its terminator (fatgen103, "FAT Long
+   Directory Entries"), in UINT64s for the structure's alignment. */
+#define DIRECTORY_ENTRY_WORDS 128
 
 #define CALIBRATION_MICROSECONDS 50000
 
@@ -334,14 +342,12 @@ static EFI_STATUS read_file(EFI_BOOT_SERVICES *boot, EFI_FILE_PROTOCOL *file,
     return EFI_SUCCESS;
 }
 
-/* Read the file at path on nova-boot's own volume into pool memory of
-   type EfiLoaderData. */
-static EFI_STATUS read_boot_file(EFI_HANDLE image, EFI_BOOT_SERVICES *boot,
-                                 CHAR16 *path, UINT8 **data, UINTN *size)
+/* The root directory of nova-boot's own volume. */
+static EFI_STATUS open_volume(EFI_HANDLE image, EFI_BOOT_SERVICES *boot,
+                              EFI_FILE_PROTOCOL **root)
 {
     EFI_LOADED_IMAGE_PROTOCOL *loaded;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *volume;
-    EFI_FILE_PROTOCOL *root, *file;
     EFI_STATUS status;
 
     status = boot->HandleProtocol(image, &loaded_image_guid,
@@ -352,15 +358,153 @@ static EFI_STATUS read_boot_file(EFI_HANDLE image, EFI_BOOT_SERVICES *boot,
                                   &simple_file_system_guid, (VOID **)&volume);
     if (status != EFI_SUCCESS)
         return status;
-    status = volume->OpenVolume(volume, &root);
-    if (status != EFI_SUCCESS)
-        return status;
-    status = root->Open(root, &file, path, EFI_FILE_MODE_READ, 0);
+    return volume->OpenVolume(volume, root);
+}
+
+/* Read the file at path, from directory, into pool memory of type
+   EfiLoaderData. */
+static EFI_STATUS read_path(EFI_BOOT_SERVICES *boot,
+                            EFI_FILE_PROTOCOL *directory, CHAR16 *path,
+                            UINT8 **data, UINTN *size)
+{
+    EFI_FILE_PROTOCOL *file;
+    EFI_STATUS status;
+
+    status = directory->Open(directory, &file, path, EFI_FILE_MODE_READ, 0);
     if (status == EFI_SUCCESS) {
         status = read_file(boot, file, data, size);
         file->Close(file);
     }
+    return status;
+}
+
+/* Read the file at path on nova-boot's own volume. */
+static EFI_STATUS read_boot_file(EFI_HANDLE image, EFI_BOOT_SERVICES *boot,
+                                 CHAR16 *path, UINT8 **data, UINTN *size)
+{
+    EFI_FILE_PROTOCOL *root;
+    EFI_STATUS status = open_volume(image, boot, &root);
+
+    if (status != EFI_SUCCESS)
+        return status;
+    status = read_path(boot, root, path, data, size);
     root->Close(root);
+    return status;
+}
+
+static CHAR16 lower(CHAR16 c)
+{
+    return c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c;
+}
+
+/* Whether name, as the firmware reports it, is ascii regardless of case,
+   as FAT matches names (UEFI 13.3.1.2). */
+static int same_name(const CHAR16 *name, const char *ascii)
+{
+    while (*name && lower(*name) == (CHAR16)lower((CHAR16)*ascii)) {
+        name++;
+        ascii++;
+    }
+    return *name == 0 && *ascii == 0;
+}
+
+/* Copy name into the BOOT_FILE_NAME_SIZE bytes at out. Returns 0 if a
+   character is not printable ASCII or the name does not fit. */
+static int ascii_name(const CHAR16 *name, char *out)
+{
+    UINT32 i;
+
+    for (i = 0; i < BOOT_FILE_NAME_SIZE; i++) {
+        if (name[i] == 0) {
+            out[i] = 0;
+            return i > 0;
+        }
+        if (name[i] < ' ' || name[i] > '~')
+            return 0;
+        out[i] = (char)name[i];
+    }
+    return 0;
+}
+
+static void free_files(EFI_BOOT_SERVICES *boot)
+{
+    UINT64 i;
+
+    for (i = 0; i < boot_info.file_count; i++)
+        boot->FreePool(boot_info.files[i].data);
+    boot_info.file_count = 0;
+}
+
+/* Read each file of directory except the kernel into boot_info.files. A
+   name that is not printable ASCII or does not fit BOOT_FILE_NAME_SIZE,
+   a file larger than SECTION_MAX_SIZE, the most the kernel passes on in
+   one section, or more than BOOT_FILES_MAX files, fail the boot with
+   EFI_UNSUPPORTED, so that the kernel is handed every file there or
+   none. */
+static EFI_STATUS read_files(EFI_BOOT_SERVICES *boot,
+                             EFI_FILE_PROTOCOL *directory)
+{
+    UINT64 entry[DIRECTORY_ENTRY_WORDS];
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)entry;
+    UINTN size;
+    EFI_STATUS status;
+
+    for (;;) {
+        BOOT_FILE *file = &boot_info.files[boot_info.file_count];
+
+        size = sizeof entry;
+        status = directory->Read(directory, &size, entry);
+        if (status != EFI_SUCCESS || size == 0)
+            return status;
+        if ((info->Attribute & EFI_FILE_DIRECTORY) ||
+            same_name(info->FileName, KERNEL_NAME))
+            continue;
+        if (boot_info.file_count == BOOT_FILES_MAX ||
+            info->FileSize > SECTION_MAX_SIZE ||
+            !ascii_name(info->FileName, file->name))
+            return EFI_UNSUPPORTED;
+        status = read_path(boot, directory, info->FileName, &file->data,
+                           &file->size);
+        if (status != EFI_SUCCESS)
+            return status;
+        boot_info.file_count++;
+    }
+}
+
+static int init_read(void)
+{
+    UINT64 i;
+    CHAR16 name[BOOT_FILE_NAME_SIZE];
+    UINT32 j;
+
+    for (i = 0; i < boot_info.file_count; i++) {
+        for (j = 0; j < BOOT_FILE_NAME_SIZE; j++)
+            name[j] = (UINT8)boot_info.files[i].name[j];
+        if (same_name(name, INIT_NAME))
+            return 1;
+    }
+    return 0;
+}
+
+/* Read \nova\'s files, which must include the first process's image,
+   into boot_info. On failure none stays read. */
+static EFI_STATUS read_nova_files(EFI_HANDLE image, EFI_BOOT_SERVICES *boot)
+{
+    EFI_FILE_PROTOCOL *root, *directory;
+    EFI_STATUS status = open_volume(image, boot, &root);
+
+    if (status != EFI_SUCCESS)
+        return status;
+    status = root->Open(root, &directory, nova_path, EFI_FILE_MODE_READ, 0);
+    if (status == EFI_SUCCESS) {
+        status = read_files(boot, directory);
+        directory->Close(directory);
+    }
+    root->Close(root);
+    if (status == EFI_SUCCESS && !init_read())
+        status = EFI_NOT_FOUND;
+    if (status != EFI_SUCCESS)
+        free_files(boot);
     return status;
 }
 
@@ -892,10 +1036,14 @@ static EFI_STATUS exit_boot_services(EFI_HANDLE image,
 _Noreturn static void enter_kernel(const KERNEL_IMAGE *kernel,
                                    const PAGE_TABLES *tables)
 {
+    UINT64 i;
+
     disable_interrupts();
     boot_info.magic = BOOT_INFO_MAGIC;
     boot_info.version = BOOT_INFO_VERSION;
     boot_info.screen.pixels = direct_map((UINT64)boot_info.screen.pixels);
+    for (i = 0; i < boot_info.file_count; i++)
+        boot_info.files[i].data = direct_map((UINT64)boot_info.files[i].data);
     wrmsr(IA32_PAT, NOVA_PAT);
     if (tables->no_execute)
         wrmsr(IA32_EFER, rdmsr(IA32_EFER) | EFER_NO_EXECUTE);
@@ -913,8 +1061,8 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *mode;
     KERNEL_IMAGE kernel;
     ADDRESS_SPACE space;
-    UINT8 *file, *init;
-    UINTN file_size, init_size;
+    UINT8 *file;
+    UINTN file_size;
     UINT64 t0;
     EFI_STATUS status;
 
@@ -945,18 +1093,17 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     boot->FreePool(file);
     if (status != EFI_SUCCESS)
         return status;
-    /* The kernel loads the first process's image itself; nova-boot hands
-       it over as read, in memory the kernel keeps. */
-    status = read_boot_file(ImageHandle, boot, init_path, &init, &init_size);
+    /* The kernel loads the first process's image itself, and hands the
+       other files to that process; nova-boot hands them over as read, in
+       memory the kernel keeps. */
+    status = read_nova_files(ImageHandle, boot);
     if (status != EFI_SUCCESS) {
         boot->FreePages(kernel.base, kernel.pages);
         return status;
     }
-    boot_info.init_image = direct_map((UINT64)init);
-    boot_info.init_image_size = init_size;
     status = build_address_space(boot, &kernel, gop->Mode, &space);
     if (status != EFI_SUCCESS) {
-        boot->FreePool(init);
+        free_files(boot);
         boot->FreePages(kernel.base, kernel.pages);
         return status;
     }
@@ -970,7 +1117,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     status = exit_boot_services(ImageHandle, boot);
     if (status != EFI_SUCCESS) {
         free_address_space(boot, &space);
-        boot->FreePool(init);
+        free_files(boot);
         boot->FreePages(kernel.base, kernel.pages);
         return status;
     }

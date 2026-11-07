@@ -30,12 +30,26 @@
 /* The numbers of the calls this kernel implements (S8). Number 0 is
    reserved and names no call. */
 #define CALL_HANDLE_CLOSE 1
+#define CALL_OBJECT_WAIT_ONE 6
+#define CALL_OBJECT_WAIT_MANY 7
+#define CALL_CHANNEL_CREATE 10
+#define CALL_CHANNEL_WRITE 11
 #define CALL_CHANNEL_READ 12
 #define CALL_CLOCK_MONOTONIC 17
+#define CALL_PROCESS_CREATE 19
+#define CALL_PROCESS_START 20
 #define CALL_PROCESS_EXIT 21
 #define CALL_PROCESS_INFO 22
+#define CALL_THREAD_CREATE 23
 #define CALL_THREAD_EXIT 25
+#define CALL_SECTION_CREATE 27
+#define CALL_PROCESS_MAP 28
 #define CALL_DEBUG_WRITE 41
+#define CALL_THREAD_SET_TLS_BASE 44
+
+/* The vector of the 32-bit lane's gate, which a thread of a 32-bit
+   process enters with INT (S11). */
+#define COMPAT_GATE_VECTOR 0x80
 
 /* A handle value holds its table index in bits 31:8 and a generation
    from 1 to 255 in bits 7:0 (O3). Generation 0 is never issued, so 0 is
@@ -49,7 +63,10 @@
    event 4, channel 5, port 6, job 7, resource 8, interrupt 9, initiator
    10, pin 11. These are the types this kernel implements. */
 #define TYPE_PROCESS 1
+#define TYPE_THREAD 2
+#define TYPE_SECTION 3
 #define TYPE_CHANNEL 5
+#define TYPE_JOB 7
 #define TYPE_RESOURCE 8
 
 /* Rights (O5): bits 16 to 19 are common to every type, bits 0 to 15
@@ -65,10 +82,43 @@
 #define PROCESS_RIGHT_TERMINATE 0x4
 #define PROCESS_RIGHT_INSPECT 0x8
 
+#define THREAD_RIGHT_START 0x1
+#define THREAD_RIGHT_TERMINATE 0x2
+
+#define SECTION_RIGHT_READ 0x1
+#define SECTION_RIGHT_WRITE 0x2
+#define SECTION_RIGHT_EXECUTE 0x4
+#define SECTION_RIGHT_PIN 0x8
+
 #define CHANNEL_RIGHT_READ 0x1
 #define CHANNEL_RIGHT_WRITE 0x2
 
+#define JOB_RIGHT_CREATE_PROCESS 0x1
+#define JOB_RIGHT_CREATE_JOB 0x2
+#define JOB_RIGHT_TERMINATE 0x4
+#define JOB_RIGHT_WRITE_EXECUTE 0x8
+
 #define RESOURCE_RIGHT_USE 0x1
+
+/* Signals (O9): a process's and a thread's, and a channel endpoint's. */
+#define PROCESS_TERMINATED 0x1
+#define THREAD_TERMINATED 0x1
+#define CHANNEL_READABLE 0x1
+#define CHANNEL_WRITABLE 0x2
+#define CHANNEL_PEER_CLOSED 0x4
+
+/* process_create's options (S8): the process's threads run 32-bit code
+   in compatibility mode and may enter by the 32-bit lane (S11); and its
+   mappings may be writable and executable at once, which the job handle
+   must carry JOB_RIGHT_WRITE_EXECUTE for (O5). */
+#define PROCESS_OPTION_32_BIT 0x1
+#define PROCESS_OPTION_WRITE_EXECUTE 0x2
+
+/* process_map's protection: read, read-write, read-execute, or all
+   three; any other combination is refused. */
+#define MAP_READ 0x1
+#define MAP_WRITE 0x2
+#define MAP_EXECUTE 0x4
 
 /* A process's state as process_info reports it: created and not yet
    started, started, or terminated. Every value is nonzero, since a
@@ -77,8 +127,27 @@
 #define PROCESS_STATE_RUNNING 2
 #define PROCESS_STATE_TERMINATED 3
 
-/* The most handles one message carries (ipc.md I1). */
+/* The most bytes and handles one message carries, and the most messages
+   an endpoint's queue holds (ipc.md I1). */
+#define CHANNEL_MAX_BYTES 65536
 #define CHANNEL_MAX_HANDLES 64
+#define CHANNEL_MAX_CAPACITY 1024
+
+/* The most objects one object_wait_many watches (O9). */
+#define WAIT_MANY_MAX 64
+
+/* The largest section section_create makes: its page list fills one
+   page. */
+#define SECTION_MAX_SIZE 0x200000
+
+/* The first process's bootstrap message (ipc.md I6): the root system
+   resource, the process itself, the root job, then one read-only section
+   for each file nova-boot read from \nova\, in the order of the
+   message's bytes, which are a BOOTSTRAP_FILE for each. A name is ASCII,
+   NUL-terminated, as the firmware reported it. */
+#define BOOTSTRAP_FIRST_FILE 3
+#define BOOT_FILES_MAX 8
+#define BOOT_FILE_NAME_SIZE 32
 
 /* The most bytes one debug_write writes. The kernel copies them all
    before it writes any, so a call that fails on its buffer writes
@@ -89,6 +158,9 @@
 
 #include "types.h"
 
+/* A deadline that never passes (O9). */
+#define DEADLINE_INFINITE 0xffffffffffffffffULL
+
 /* What channel_read writes for each handle it moves into the reader's
    table (ipc.md I2). */
 typedef struct {
@@ -96,6 +168,26 @@ typedef struct {
     UINT32 type;
     UINT32 rights;
 } RECEIVED_HANDLE;
+
+/* A handle channel_write moves, with the rights it travels with, or
+   RIGHTS_SAME (ipc.md I2). */
+typedef struct {
+    UINT32 handle;
+    UINT32 rights;
+} HANDLE_TRANSFER;
+
+/* One object of object_wait_many: the handle and the signals waited for,
+   and the signals the call observed, which it writes (O9). */
+typedef struct {
+    UINT32 handle;
+    UINT32 signals;
+    UINT32 observed;
+} WAIT_ENTRY;
+
+typedef struct {
+    UINT64 size;
+    char name[BOOT_FILE_NAME_SIZE];
+} BOOTSTRAP_FILE;
 
 #endif
 #endif

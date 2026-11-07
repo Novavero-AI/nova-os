@@ -18,17 +18,20 @@
 #define NOVA_OBJECT_H
 
 #include "../status.h"
+#include "../sched/wait.h"
 #include "memory_layout.h"
 
 typedef struct OBJECT OBJECT;
 
 /* What the kernel does with an object of a type: its number as user code
    sees it (native_abi.h); what happens when its last handle goes, or 0
-   for nothing; and how it is destroyed, which frees its memory. */
+   for nothing; how it is destroyed, which frees its memory; and where its
+   signals are, or 0 for a type that is not waitable (O9). */
 typedef struct {
     UINT32 number;
     void (*last_handle)(OBJECT *object);
     void (*destroy)(OBJECT *object);
+    WAITABLE *(*waitable)(OBJECT *object);
 } OBJECT_TYPE;
 
 struct OBJECT {
@@ -107,8 +110,23 @@ void handle_unreserve(HANDLE_TABLE *table, UINT32 index);
 STATUS handle_get(HANDLE_TABLE *table, UINT32 value, UINT32 type,
                   UINT32 rights, OBJECT **object);
 
+/* handle_get for a call that takes a waitable object of any type: the
+   type check is that the type is waitable, ERR_NOT_SUPPORTED otherwise
+   (docs/spec/syscalls.md S7). On OK *waitable is the object's signals. */
+STATUS handle_get_waitable(HANDLE_TABLE *table, UINT32 value, UINT32 rights,
+                           OBJECT **object, WAITABLE **waitable);
+
 /* Remove the handle value names from table and close it. Returns OK or
    ERR_BAD_HANDLE. */
 STATUS handle_close(HANDLE_TABLE *table, UINT32 value);
+
+/* For moving handles out of a table into a message, with interrupts
+   disabled across both so that nothing changes between them: the object
+   and rights of the handle value names, or ERR_BAD_HANDLE, taking no
+   reference; and the removal of that handle without closing it, its
+   handle and reference passing to the caller. */
+STATUS handle_peek(HANDLE_TABLE *table, UINT32 value, OBJECT **object,
+                   UINT32 *rights);
+void handle_take(HANDLE_TABLE *table, UINT32 value);
 
 #endif

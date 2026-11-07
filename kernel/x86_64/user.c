@@ -1,6 +1,7 @@
-/* User mode on x86-64: the processor set up for it, the C side of the
-   system-call entry, faults from user mode, and the checks and copies of
-   user memory (docs/spec/syscalls.md S1 to S6). */
+/* User mode on x86-64: the processor set up for it, the C sides of the
+   system-call entry and of the 32-bit lane's gate, faults from user mode,
+   and the checks and copies of user memory (docs/spec/syscalls.md S1 to
+   S6, S11). */
 
 #include "user.h"
 #include "x86_64.h"
@@ -19,7 +20,6 @@
 #define IA32_LSTAR 0xc0000082u
 #define IA32_CSTAR 0xc0000083u
 #define IA32_FMASK 0xc0000084u
-#define IA32_GS_BASE 0xc0000101u
 #define IA32_KERNEL_GS_BASE 0xc0000102u
 #define EFER_SYSCALL (1ULL << 0)
 
@@ -222,10 +222,55 @@ void syscall_dispatch(INTERRUPT_FRAME *frame)
     frame->r10 = 0;
 }
 
+/* A 32-bit thread enters by INT (S11). Intel processors do not support
+   SYSCALL in compatibility mode (SDM Vol. 3A 6.8.8), and AMD's enter
+   here (APM 6.1.1), so the process ends as for an invalid opcode, which
+   keeps the outcome one on both. */
 _Noreturn void syscall_compat(void)
 {
-    serial_write("nova: syscall from compatibility mode, thread ended\r\n");
-    process_thread_exit();
+    serial_write("nova: syscall from compatibility mode, process ended\r\n");
+    process_fault(INVALID_OPCODE_VECTOR);
+}
+
+/* The 32-bit lane (S11). Code in compatibility mode sees only the low 32
+   bits of a general register, and the upper 32 are undefined once it
+   has run (SDM Vol. 1 3.4.1.1), so the call number and the argument
+   array's address are read from EAX and EDX alone, and the results are
+   zero-extended. A process not created 32-bit ends as an INT to a gate
+   of DPL 0 would end it, with #GP (SDM Vol. 3A 7.12.1.2): whatever mode
+   its code reaches, the lane is not its interface. The interrupt gate
+   left IF clear; the call runs with it set, as SYSCALL's do, and the
+   return through return_to_user needs it clear again (entry.S). */
+void compat_syscall_dispatch(INTERRUPT_FRAME *frame)
+{
+    UINT64 arguments[SYSCALL_ARGUMENTS_MAX];
+    UINT64 results[SYSCALL_RESULTS];
+    UINT32 number = (UINT32)frame->rax;
+    UINT32 count = syscall_argument_count(number);
+    STATUS status = OK;
+    UINT32 i;
+
+    if (!process_is_32_bit(process_current())) {
+        serial_write("nova: 32-bit gate entered by a 64-bit process, ended\r\n");
+        process_fault(GENERAL_PROTECTION_VECTOR);
+    }
+    enable_interrupts();
+    for (i = 0; i < SYSCALL_RESULTS; i++)
+        results[i] = 0;
+    if (!syscall_served_32_bit(number))
+        status = ERR_NOT_SUPPORTED;
+    else if (count)
+        status = copy_from_user(arguments, (UINT32)frame->rdx,
+                                count * sizeof(UINT64));
+    if (status == OK)
+        status = syscall_invoke(number, arguments, results);
+    if (status != OK && status != ERR_BUFFER_TOO_SMALL)
+        for (i = 0; i < SYSCALL_RESULTS; i++)
+            results[i] = 0;
+    disable_interrupts();
+    frame->rax = status;
+    frame->rdx = (UINT32)results[0];
+    frame->rcx = (UINT32)results[1];
 }
 
 /* ------------------------------------------------------------------------

@@ -1,43 +1,98 @@
-/* Processes (docs/spec/objects.md O2, O6, O10): an address space, a
-   handle table, and the user threads that run in them. A process starts
-   with one thread and one handle, the bootstrap handle its creator
-   passes; until thread_create exists that thread is its only one. */
+/* Processes and their user threads (docs/spec/objects.md O2, O6, O10):
+   an address space, a handle table, and the user threads that run in
+   them. A process belongs to a job and starts with one thread and one
+   handle, the bootstrap handle its creator passes. */
 
 #ifndef NOVA_PROCESS_H
 #define NOVA_PROCESS_H
 
-#include "object.h"
+#include "job.h"
+#include "section.h"
 #include "../sched/thread.h"
 
-/* The signal a process asserts once it has terminated (O9). */
-#define PROCESS_TERMINATED (1u << 0)
+/* The most process_map calls one process takes; each holds its section
+   until the process terminates. */
+#define PROCESS_MAX_MAPPINGS 128
+
+/* The rights a new process's handle carries (O5, rule 1). */
+#define PROCESS_RIGHTS                                                    \
+    (PROCESS_RIGHT_MAP | PROCESS_RIGHT_CREATE_THREAD |                    \
+     PROCESS_RIGHT_TERMINATE | PROCESS_RIGHT_INSPECT | RIGHT_DUPLICATE |  \
+     RIGHT_TRANSFER | RIGHT_WAIT)
+
+/* The rights a new thread's handle carries (O5, rule 1). */
+#define THREAD_RIGHTS                                                     \
+    (THREAD_RIGHT_START | THREAD_RIGHT_TERMINATE | RIGHT_DUPLICATE |      \
+     RIGHT_TRANSFER | RIGHT_WAIT)
 
 typedef struct PROCESS PROCESS;
 
 struct PROCESS {
     OBJECT object;
     WAITABLE waitable;
+    JOB *job;     /* held for the process's life */
+    UINT32 options; /* PROCESS_OPTION_32_BIT, _WRITE_EXECUTE */
     UINT64 space; /* the physical address of its top page table */
     HANDLE_TABLE *handles;
     UINT32 state; /* PROCESS_STATE_NEW, _RUNNING or _TERMINATED */
     UINT32 exit_code;
     UINT32 threads; /* started and not yet exited */
+    UINT32 mapping_count;
+    SECTION *mappings[PROCESS_MAX_MAPPINGS];
 };
 
-/* A new process with an empty address space and handle table, and its
-   creator's handle. Returns OK or ERR_NO_MEMORY. */
-STATUS process_create(PROCESS **process);
+/* A user thread as an object: created for a process by thread_create
+   and run by process_start. */
+typedef struct {
+    OBJECT object;
+    THREAD thread;
+    UINT8 *fpu;
+    PROCESS *process; /* held for the thread object's life */
+    UINT32 started;
+} USER_THREAD;
 
-/* Start a new process's first thread at entry, with RSP stack, the
-   bootstrap handle's value in the process as its first argument and
-   argument as its second (docs/spec/syscalls.md S8). bootstrap is a
-   handle the caller holds, which passes to the process's table with
-   rights. Returns OK; ERR_BAD_STATE if process has been started;
-   ERR_INVALID_ARGS if entry or stack is at or above USER_TOP or stack is
-   not 8 more than a multiple of 16 (S5, S8); or ERR_NO_MEMORY. On
-   failure the caller keeps the handle. */
-STATUS process_start(PROCESS *process, UINT64 entry, UINT64 stack,
-                     OBJECT *bootstrap, UINT32 rights, UINT64 argument);
+/* A new process in job, with an empty address space and handle table,
+   and its creator's handle. options are PROCESS_OPTION_ bits, which the
+   caller has checked against its job handle. Returns OK or
+   ERR_NO_MEMORY. */
+STATUS process_create(JOB *job, UINT32 options, PROCESS **process);
+
+/* Whether the process's threads run in compatibility mode (S11). */
+int process_is_32_bit(const PROCESS *process);
+
+/* A new thread of process, not yet started, with its creator's handle.
+   Returns OK or ERR_NO_MEMORY. */
+STATUS process_thread_create(PROCESS *process, USER_THREAD **thread);
+
+/* Start a new process's first thread, thread, at entry with stack
+   pointer stack, the bootstrap handle's value in the process as its
+   first argument and argument as its second (docs/spec/syscalls.md S8,
+   S11). bootstrap is a handle the caller holds, which passes to the
+   process's table with rights. Returns OK; ERR_BAD_STATE if process or
+   thread has been started; ERR_INVALID_ARGS if thread belongs to
+   another process, or entry or stack lies outside what the process's
+   mode allows (S5, S8, S11); or ERR_NO_MEMORY. On failure the caller
+   keeps the handle. */
+STATUS process_start(PROCESS *process, USER_THREAD *thread, UINT64 entry,
+                     UINT64 stack, OBJECT *bootstrap, UINT32 rights,
+                     UINT64 argument);
+
+/* The section rights a mapping with protection, MAP_ bits, needs (O5). */
+UINT32 process_map_rights(UINT32 protection);
+
+/* Map size bytes of section from offset at address in process, with
+   protection MAP_ bits; the caller holds the section by a handle with
+   process_map_rights(protection). Returns OK; ERR_INVALID_ARGS for a
+   protection that is not read, read-write, read-execute or all three, or
+   an offset, address or size that is not a whole number of pages or
+   leaves user memory; ERR_ACCESS_DENIED if the protection is writable
+   and executable and the process was not created with
+   PROCESS_OPTION_WRITE_EXECUTE (O5); ERR_OUT_OF_RANGE if the range
+   passes the section's end; ERR_BAD_STATE if the process has terminated
+   or a page of the range is mapped; or ERR_NO_MEMORY. A call that fails
+   maps nothing. */
+STATUS process_map(PROCESS *process, SECTION *section, UINT64 offset,
+                   UINT64 address, UINT64 size, UINT32 protection);
 
 /* End process with exit_code: close every handle in its table, remove
    its mappings, record the code and assert PROCESS_TERMINATED (O10). A
@@ -63,7 +118,7 @@ _Noreturn void process_thread_exit(void);
 _Noreturn void process_fault(UINT32 vector);
 
 /* Called once a user thread has exited and its kernel stack is free:
-   free the thread and drop its reference to its process. */
+   drop the scheduler's reference to its thread object. */
 void process_thread_reaped(THREAD *thread);
 
 /* The first process (docs/spec/ipc.md I6), as a kernel thread's entry
