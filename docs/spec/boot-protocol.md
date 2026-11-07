@@ -212,16 +212,21 @@ alignments of 4096 and 512 bytes, without `-shared`.
 ### Startup done
 
 The kernel keeps the boot screen's spinner turning until the first
-process reports that its startup is done, then stops it and fades the
-boot screen into the desktop background (`kernel/main.c`). The first
-process does not end there: it stays as the supervisor of the drivers
-it started ([ipc.md I10](ipc.md#i10-driver-failure-and-restart)).
+process reports that its startup is done, then stops it, fades the
+boot screen into the desktop background (`kernel/main.c`) and releases
+the display. The first process does not end there: it stays as the
+supervisor of the drivers it started
+([ipc.md I10](ipc.md#i10-driver-failure-and-restart)).
 
 The report is one message on the first process's bootstrap channel:
 `BOOTSTRAP_DONE_SIZE` (4) bytes, a transaction ID of 0, and no handles
 (`include/native_abi.h`). The kernel keeps its own end of the channel
 open until the report comes, and takes the first message there as the
-report. The first process's endpoint carries `READ`, `WRITE` and `WAIT`
+report. It then keeps the end open until the fade has drawn its last
+frame, and closes it: from then on the kernel never draws on the
+screen, and the first process takes `PEER_CLOSED` on its endpoint as
+the display's release ([console.md C1](console.md#c1-the-display-handoff)).
+The first process's endpoint carries `READ`, `WRITE` and `WAIT`
 but not `TRANSFER`, so it can never leave the first process, in a
 message or as another process's bootstrap handle, and no other process
 can report in its place. If the first process's endpoint closes with
@@ -236,7 +241,7 @@ logs the process's end and exit code if they come.
   on its bootstrap channel the same way
   ([input.md K3](input.md#k3-the-report-and-the-client)).
 - **Cost:** the kernel holds its end of the channel, a page, until the
-  report, and a first process that closes its endpoint before it
+  fade ends, and a first process that closes its endpoint before it
   reports gets no fade.
 - **Not taken:** an event passed in the bootstrap message, which the
   first process signals with `object_signal`. Its cost is a handle more

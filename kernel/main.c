@@ -11,9 +11,9 @@
    random number generator; starts a thread that keeps the boot screen's
    spinner turning and a startup thread that tests the kernel's objects
    and threads, starts the first user process and, once it reports that
-   its startup is done, stops the spinner and fades the boot screen into
-   the desktop background, then logs the process's end if it ever comes;
-   and becomes the idle thread. */
+   its startup is done, stops the spinner, fades the boot screen into the
+   desktop background and releases the display to it, then logs the
+   process's end if it ever comes; and becomes the idle thread. */
 
 #include "background.h"
 #include "boot_info.h"
@@ -103,12 +103,14 @@ static void spin(void *argument)
 /* Test the kernel's objects and threads and start the first process.
    Once it has reported that its startup is done, stop the spinner and,
    once its thread has ended so that nothing else draws, fade into the
-   desktop background; if it closed its bootstrap channel without the
-   report, stop the spinner and leave the boot screen. The first process
-   then runs on as the supervisor (docs/spec/ipc.md I10), and the thread
-   logs its end if it comes. The thread self-test counts free pages, so
-   no other thread may allocate or free any while it runs; it runs
-   before the first process, since the processes it starts run on. */
+   desktop background and release the display, after which the kernel
+   never draws (docs/spec/console.md C1); if it closed its bootstrap
+   channel without the report, stop the spinner and leave the boot
+   screen. The first process then runs on as the supervisor
+   (docs/spec/ipc.md I10), and the thread logs its end if it comes. The
+   thread self-test counts free pages, so no other thread may allocate or
+   free any while it runs; it runs before the first process, since the
+   processes it starts run on. */
 static void startup(void *argument)
 {
     BOOT_INFO *info = argument;
@@ -121,8 +123,10 @@ static void startup(void *argument)
     event_signal(&spinner_stop, 0, SPINNER_STOP);
     wait_one(&spinner_thread.waitable, THREAD_TERMINATED, DEADLINE_INFINITE,
              &observed);
-    if (started)
+    if (started) {
         background_fade_in(info);
+        first_process_release_display();
+    }
     first_process_wait();
 }
 

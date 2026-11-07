@@ -173,10 +173,16 @@ void object_self_test(void *boot_info);
    image nova-boot read from \nova\init.exe into a new process, pass it
    its bootstrap message and start it, then wait until it reports that
    its startup is done (docs/spec/boot-protocol.md, Startup done).
-   Returns 1 once it has reported, 0 if its end of the bootstrap channel
-   closed with no report, by handle_close or by its end. Halts, with the
-   reason, if the image cannot be loaded or memory runs out. */
+   Returns 1 once it has reported, keeping the kernel's end of the
+   bootstrap channel open; 0 if the process's end closed with no report,
+   by handle_close or by its end. Halts, with the reason, if the image
+   cannot be loaded or memory runs out. */
 int first_process_start(void *boot_info);
+
+/* Release the display to the first process once the kernel has drawn
+   its last frame: close the kernel's end of the bootstrap channel, if
+   first_process_start left it open (docs/spec/console.md C1). */
+void first_process_release_display(void);
 
 /* Wait for the first process, once started, to end, and log the exit
    code process_info reports. */

@@ -232,9 +232,11 @@
 /* The first process reports that its startup is done with one message
    on its bootstrap channel: BOOTSTRAP_DONE_SIZE bytes, a transaction ID
    of 0 (ipc.md I3), and no handles. The kernel holds the channel's other
-   end until the report comes, and the first process's endpoint carries
-   CHANNEL_RIGHT_READ, CHANNEL_RIGHT_WRITE and RIGHT_WAIT but not
-   RIGHT_TRANSFER, so it never leaves the first process
+   end until the report comes and its fade into the desktop has drawn its
+   last frame, then closes it and draws no more, so CHANNEL_PEER_CLOSED
+   there releases the display to the first process. The first process's
+   endpoint carries CHANNEL_RIGHT_READ, CHANNEL_RIGHT_WRITE and RIGHT_WAIT
+   but not RIGHT_TRANSFER, so it never leaves the first process
    (docs/spec/boot-protocol.md, Startup done). */
 #define BOOTSTRAP_DONE_SIZE 4
 
@@ -296,12 +298,6 @@ typedef struct {
     UINT32 reserved;
 } ECAM_RANGE;
 
-typedef struct {
-    UINT32 ecam_count;
-    UINT32 reserved;
-    ECAM_RANGE ecam[BOOTSTRAP_ECAM_RANGES_MAX];
-} BOOTSTRAP_PLATFORM;
-
 /* The screen nova-boot drew on (docs/spec/console.md C1): the physical
    address of pixel (0, 0), the size in pixels, the pixels per scan line,
    and the EFI_GRAPHICS_PIXEL_FORMAT, 0 (byte 0 red) or 1 (byte 0
@@ -313,6 +309,13 @@ typedef struct {
     UINT32 stride;
     UINT32 format;
 } BOOTSTRAP_DISPLAY;
+
+typedef struct {
+    UINT32 ecam_count;
+    UINT32 reserved;
+    ECAM_RANGE ecam[BOOTSTRAP_ECAM_RANGES_MAX];
+    BOOTSTRAP_DISPLAY display;
+} BOOTSTRAP_PLATFORM;
 
 /* A port packet (ipc.md I4). An interrupt packet's payload starts with
    the interrupt's time on the monotonic clock in nanoseconds. A signal

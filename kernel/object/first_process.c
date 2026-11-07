@@ -17,21 +17,24 @@
       read.
 
    The message's bytes are a BOOTSTRAP_PLATFORM naming the PCI Express
-   configuration space the ACPI MCFG table describes, then the store image's
-   and the files' names and sizes (native_abi.h). The root I/O-port resource
-   and the framebuffer's section that I6 lists join the message as the
-   kernel implements their calls. The first process itself is not
+   configuration space the ACPI MCFG table describes and the display
+   nova-boot drew on, then the store image's and the files' names and
+   sizes (native_abi.h). The root I/O-port resource that I6 lists joins
+   the message as the kernel implements its calls. The first process
+   itself is not
    created with PROCESS_OPTION_WRITE_EXECUTE: the root job's handle carries
    the right for it to pass on, and no mapping of its own may be writable
    and executable (O5).
 
    The kernel keeps its own end of the channel until the process reports
    on it that its startup is done, or closes its end without reporting
-   (docs/spec/boot-protocol.md, Startup done). The process's endpoint
-   lacks TRANSFER, so no other process can ever hold it and report in
-   the first process's place. Later the kernel waits for the process to
-   end, logs the exit code process_info reports and closes its handle to
-   the process. */
+   (docs/spec/boot-protocol.md, Startup done); after a report, until the
+   fade into the desktop has drawn its last frame, when closing it
+   releases the display (docs/spec/console.md C1). The process's
+   endpoint lacks TRANSFER, so no other process can ever hold it and
+   report in the first process's place. Later the kernel waits for the
+   process to end, logs the exit code process_info reports and closes
+   its handle to the process. */
 
 #include <stddef.h>
 
@@ -89,8 +92,11 @@ _Static_assert(offsetof(BOOTSTRAP_BYTES, files) ==
                    sizeof(BOOTSTRAP_PLATFORM) + sizeof(BOOTSTRAP_FILE),
                "the names follow the platform record directly");
 
-/* The first process, held from its start until it has ended. */
+/* The first process, held from its start until it has ended, and the
+   kernel's end of its bootstrap channel, held from its start until the
+   display is released, or 0. */
 static PROCESS *first;
+static ENDPOINT *bootstrap;
 
 static void fail(const char *what, STATUS status)
 {
@@ -203,7 +209,18 @@ static OBJECT *root_resource(RESOURCE_KIND kind, UINT64 base, UINT64 size)
     return &resource->object;
 }
 
-static void describe_platform(BOOTSTRAP_PLATFORM *platform)
+static void describe_display(const SCREEN *screen,
+                             BOOTSTRAP_DISPLAY *display)
+{
+    display->base = (UINT64)screen->pixels - DIRECT_MAP_BASE;
+    display->width = (UINT32)screen->width;
+    display->height = (UINT32)screen->height;
+    display->stride = (UINT32)screen->stride;
+    display->format = screen->format;
+}
+
+static void describe_platform(const BOOT_INFO *info,
+                              BOOTSTRAP_PLATFORM *platform)
 {
     UINT32 i;
 
@@ -216,6 +233,7 @@ static void describe_platform(BOOTSTRAP_PLATFORM *platform)
         platform->ecam[i].start_bus = range->start_bus;
         platform->ecam[i].end_bus = range->end_bus;
     }
+    describe_display(&info->screen, &platform->display);
 }
 
 static void send_bootstrap(PROCESS *process, JOB *job, ENDPOINT *kernel_end,
@@ -226,7 +244,7 @@ static void send_bootstrap(PROCESS *process, JOB *job, ENDPOINT *kernel_end,
     UINT32 count = BOOTSTRAP_FIRST_FILE;
     UINT64 i;
 
-    describe_platform(&bytes.platform);
+    describe_platform(info, &bytes.platform);
     object_add_handle(&process->object);
     handles[0].object = root_resource(RESOURCE_SYSTEM, 0, SYSTEM_PRIVILEGES);
     handles[0].rights = RESOURCE_RIGHTS;
@@ -318,14 +336,24 @@ int first_process_start(void *boot_info)
     say_started(&image, stack);
     wait_one(&kernel_end->waitable, CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
              DEADLINE_INFINITE, &observed);
-    object_close(&kernel_end->object);
     if (observed & CHANNEL_READABLE) {
+        bootstrap = kernel_end;
         say_line("nova: first process reports startup done\r\n");
         return 1;
     }
+    object_close(&kernel_end->object);
     say_line("nova: first process closed its bootstrap channel without "
              "reporting startup done\r\n");
     return 0;
+}
+
+void first_process_release_display(void)
+{
+    if (!bootstrap)
+        return;
+    object_close(&bootstrap->object);
+    bootstrap = 0;
+    say_line("nova: display released to the first process\r\n");
 }
 
 void first_process_wait(void)
