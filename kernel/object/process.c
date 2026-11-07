@@ -73,8 +73,10 @@ STATUS process_create(JOB *job, UINT32 options, PROCESS **out)
     process->job = job;
     process->options = options;
     process->state = PROCESS_STATE_NEW;
+    process->terminating = 0;
     process->exit_code = 0;
     process->threads = 0;
+    process->running = 0;
     process->mapping_count = 0;
     *out = process;
     return OK;
@@ -88,7 +90,8 @@ int process_is_32_bit(const PROCESS *process)
 /* ------------------------------------------------------------------------
    Threads. A started thread's object holds one reference for the
    scheduler, which process_thread_reaped drops; a thread never started
-   is destroyed with its last handle (O10). */
+   is destroyed with its last handle (O10). A started thread is on its
+   process's running list until it exits. */
 
 static void thread_destroy(OBJECT *object)
 {
@@ -137,14 +140,37 @@ static int start_allowed(const PROCESS *process, UINT64 entry, UINT64 stack)
            stack % STACK_ALIGNMENT == STACK_START_OFFSET;
 }
 
+static USER_MODE mode_of(const PROCESS *process)
+{
+    return process_is_32_bit(process) ? USER_MODE_COMPATIBILITY
+                                      : USER_MODE_64_BIT;
+}
+
+static USER_THREAD *user_thread_of(THREAD *thread)
+{
+    return (USER_THREAD *)((UINT8 *)thread - offsetof(USER_THREAD, thread));
+}
+
+/* Make a thread whose THREAD thread_create_user has set up runnable,
+   holding the scheduler's reference, on its process's running list.
+   With interrupts disabled. */
+static void run_thread(PROCESS *process, USER_THREAD *thread)
+{
+    object_retain(&thread->object);
+    thread->started = 1;
+    thread->next_running = process->running;
+    process->running = thread;
+    process->threads++;
+    thread_start(&thread->thread);
+}
+
 /* The thread's object holds a reference to its process, and the process
    is RUNNING from here until it terminates (O10). */
 STATUS process_start(PROCESS *process, USER_THREAD *thread, UINT64 entry,
                      UINT64 stack, OBJECT *bootstrap, UINT32 rights,
                      UINT64 argument)
 {
-    USER_MODE mode = process_is_32_bit(process) ? USER_MODE_COMPATIBILITY
-                                                : USER_MODE_64_BIT;
+    UINT64 flags;
     UINT32 index;
 
     if (process->state != PROCESS_STATE_NEW || thread->started)
@@ -154,29 +180,49 @@ STATUS process_start(PROCESS *process, USER_THREAD *thread, UINT64 entry,
     if (handle_reserve(process->handles, &index) != OK)
         return ERR_NO_MEMORY;
     if (thread_create_user(&thread->thread, process, process->space,
-                           thread->fpu, mode, entry, stack,
+                           thread->fpu, mode_of(process), entry, stack,
                            handle_value(process->handles, index),
                            argument) != OK) {
         handle_unreserve(process->handles, index);
         return ERR_NO_MEMORY;
     }
     handle_place(process->handles, index, bootstrap, rights);
-    object_retain(&thread->object);
-    thread->started = 1;
+    flags = save_and_disable_interrupts();
     process->state = PROCESS_STATE_RUNNING;
-    process->threads = 1;
-    thread_start(&thread->thread);
+    run_thread(process, thread);
+    restore_interrupts(flags);
     return OK;
+}
+
+/* Interrupts stay disabled from the state's check until the thread is on
+   the running list, so a termination that begins meanwhile stops it. */
+STATUS process_thread_start(USER_THREAD *thread, UINT64 entry, UINT64 stack,
+                            UINT64 argument1, UINT64 argument2)
+{
+    PROCESS *process = thread->process;
+    UINT64 flags = save_and_disable_interrupts();
+    STATUS status = OK;
+
+    if (thread->started || process->state != PROCESS_STATE_RUNNING ||
+        process->terminating)
+        status = ERR_BAD_STATE;
+    else if (!start_allowed(process, entry, stack))
+        status = ERR_INVALID_ARGS;
+    else if (thread_create_user(&thread->thread, process, process->space,
+                                thread->fpu, mode_of(process), entry, stack,
+                                argument1, argument2) != OK)
+        status = ERR_NO_MEMORY;
+    if (status == OK)
+        run_thread(process, thread);
+    restore_interrupts(flags);
+    return status;
 }
 
 /* The THREAD is inside its object, which the scheduler's reference keeps
    until here; waiters on the thread hold references of their own. */
 void process_thread_reaped(THREAD *thread)
 {
-    USER_THREAD *user =
-        (USER_THREAD *)((UINT8 *)thread - offsetof(USER_THREAD, thread));
-
-    object_release(&user->object);
+    object_release(&user_thread_of(thread)->object);
 }
 
 /* ------------------------------------------------------------------------
@@ -234,7 +280,7 @@ STATUS process_map(PROCESS *process, SECTION *section, UINT64 offset,
         pages > section->pages - offset / PAGE_SIZE)
         return ERR_OUT_OF_RANGE;
     flags = save_and_disable_interrupts();
-    if (process->state == PROCESS_STATE_TERMINATED)
+    if (process->terminating)
         status = ERR_BAD_STATE;
     for (i = 0; status == OK && i < pages; i++)
         if (paging_user_mapped(process->space, address + i * PAGE_SIZE))
@@ -261,27 +307,54 @@ STATUS process_map(PROCESS *process, SECTION *section, UINT64 offset,
 /* ------------------------------------------------------------------------
    Termination. */
 
-/* The space is cleared before the sections go, so no translation of a
-   section's page outlives the reference that keeps the page. */
-void process_terminate(PROCESS *process, UINT32 exit_code)
+/* The last step, once no thread of the process is left: the space is
+   cleared before the sections go, so no translation of a section's page
+   outlives the reference that keeps the page. */
+static void finish(PROCESS *process)
 {
     UINT64 flags = save_and_disable_interrupts();
-    UINT32 count, i;
+    UINT32 count = process->mapping_count, i;
 
-    if (process->state == PROCESS_STATE_TERMINATED) {
-        restore_interrupts(flags);
-        return;
-    }
-    process->state = PROCESS_STATE_TERMINATED;
-    process->exit_code = exit_code;
-    count = process->mapping_count;
     process->mapping_count = 0;
     restore_interrupts(flags);
     handle_table_close_all(process->handles);
     paging_space_clear(process->space);
     for (i = 0; i < count; i++)
         object_release(&process->mappings[i]->object);
+    flags = save_and_disable_interrupts();
+    process->state = PROCESS_STATE_TERMINATED;
+    restore_interrupts(flags);
     waitable_update(&process->waitable, 0, PROCESS_TERMINATED);
+}
+
+/* A thread not yet blocked when it is stopped finds stopping set when it
+   next would block or return to user mode. */
+void process_terminate(PROCESS *process, UINT32 exit_code)
+{
+    UINT64 flags = save_and_disable_interrupts();
+    USER_THREAD *thread;
+    UINT32 left;
+
+    if (process->terminating) {
+        restore_interrupts(flags);
+        return;
+    }
+    process->terminating = 1;
+    process->exit_code = exit_code;
+    for (thread = process->running; thread; thread = thread->next_running) {
+        thread->thread.stopping = 1;
+        sched_end_wait(&thread->thread, ERR_CANCELED);
+    }
+    left = process->threads;
+    restore_interrupts(flags);
+    if (left == 0)
+        finish(process);
+}
+
+void process_user_return(void)
+{
+    if (thread_current()->stopping)
+        process_thread_exit();
 }
 
 void process_info(PROCESS *process, UINT32 *state, UINT32 *exit_code)
@@ -289,7 +362,8 @@ void process_info(PROCESS *process, UINT32 *state, UINT32 *exit_code)
     UINT64 flags = save_and_disable_interrupts();
 
     *state = process->state;
-    *exit_code = process->exit_code;
+    *exit_code =
+        process->state == PROCESS_STATE_TERMINATED ? process->exit_code : 0;
     restore_interrupts(flags);
 }
 
@@ -304,15 +378,27 @@ _Noreturn void process_exit(UINT32 exit_code)
     process_thread_exit();
 }
 
+/* The thread leaves the running list; the last to leave finishes the
+   process, terminating it with exit code 0 if nothing had (O10). */
 _Noreturn void process_thread_exit(void)
 {
-    PROCESS *process = process_current();
+    USER_THREAD *self = user_thread_of(thread_current());
+    PROCESS *process = self->process;
     UINT64 flags = save_and_disable_interrupts();
-    UINT32 left = --process->threads;
+    USER_THREAD **link = &process->running;
+    UINT32 left;
 
+    while (*link != self)
+        link = &(*link)->next_running;
+    *link = self->next_running;
+    left = --process->threads;
+    if (left == 0 && !process->terminating) {
+        process->terminating = 1;
+        process->exit_code = 0;
+    }
     restore_interrupts(flags);
     if (left == 0)
-        process_terminate(process, 0);
+        finish(process);
     thread_exit();
 }
 

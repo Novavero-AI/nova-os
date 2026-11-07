@@ -47,6 +47,8 @@ struct THREAD {
     UINT64 switches; /* times the scheduler has switched to it */
     WAITABLE waitable;
     struct PROCESS *process; /* a user thread's process; 0 for a kernel thread */
+    int stopping; /* its process is terminating: it waits no more, and
+                     exits instead of returning to user mode */
 };
 
 /* Make thread a new thread that will run entry(argument) and then exit,
@@ -83,7 +85,8 @@ STATUS thread_start(THREAD *thread);
 _Noreturn void thread_exit(void);
 
 /* Called on a new user thread's first switch, before it enters user mode,
-   as thread_run is for a kernel thread (switch.S). */
+   as thread_run is for a kernel thread (switch.S). A thread stopped
+   before it ever ran exits here. */
 void thread_user_first_run(void);
 
 THREAD *thread_current(void);
@@ -111,8 +114,9 @@ UINT64 sched_take_longest_tick(void);
 /* For waits, with interrupts disabled. sched_block blocks the running
    thread, which is not the boot thread, until sched_end_wait or the
    deadline ends its wait, and returns the status sched_end_wait gave or
-   ERR_TIMED_OUT. sched_end_wait leaves a thread that is not blocked as
-   it is: a wait ends once. */
+   ERR_TIMED_OUT; a thread that is stopping does not block, and gets
+   ERR_CANCELED at once. sched_end_wait leaves a thread that is not
+   blocked as it is: a wait ends once. */
 STATUS sched_block(UINT64 deadline);
 void sched_end_wait(THREAD *thread, STATUS status);
 

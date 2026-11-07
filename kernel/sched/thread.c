@@ -197,6 +197,7 @@ static void thread_run(void)
 void thread_user_first_run(void)
 {
     finish_switch(cpu_self());
+    process_user_return();
 }
 
 /* ------------------------------------------------------------------------
@@ -221,6 +222,7 @@ static UINT64 init_thread(THREAD *thread, THREAD_ENTRY entry, void *argument,
     thread->argument = argument;
     thread->switches = 0;
     thread->process = process;
+    thread->stopping = 0;
     return (UINT64)direct_map(run + THREAD_STACK_RUN * PAGE_SIZE);
 }
 
@@ -353,6 +355,8 @@ STATUS sched_block(UINT64 deadline)
     CPU *cpu = cpu_self();
     THREAD *self = cpu->current;
 
+    if (self->stopping)
+        return ERR_CANCELED;
     self->state = THREAD_BLOCKED;
     self->deadline = deadline;
     if (deadline != DEADLINE_INFINITE)

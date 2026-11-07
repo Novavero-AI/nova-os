@@ -184,6 +184,15 @@ thread_create:
     movl %edx, (%rcx)
     ret
 
+/* UINT32 thread_start(UINT32 thread, UINT64 entry, UINT64 stack,
+                       UINT64 argument1, UINT64 argument2) */
+    .globl thread_start
+thread_start:
+    movq %rcx, %r10
+    movl $CALL_THREAD_START, %eax
+    syscall
+    ret
+
 /* UINT32 section_create(UINT64 size, UINT32 options, UINT32 *section) */
     .globl section_create
 section_create:

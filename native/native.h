@@ -87,6 +87,12 @@ UINT32 process_start(UINT32 process, UINT32 thread, UINT64 entry,
 /* A new thread of process, which needs PROCESS_RIGHT_CREATE_THREAD. */
 UINT32 thread_create(UINT32 process, UINT32 *thread);
 
+/* Start thread, a further thread of a running process, at entry with
+   stack and its two arguments in RCX and RDX. Needs THREAD_RIGHT_START. A
+   process that is terminating starts no thread (ERR_BAD_STATE). */
+UINT32 thread_start(UINT32 thread, UINT64 entry, UINT64 stack,
+                    UINT64 argument1, UINT64 argument2);
+
 /* A new section of size bytes, rounded up to pages, all zero; options
    must be 0. */
 UINT32 section_create(UINT64 size, UINT32 options, UINT32 *section);

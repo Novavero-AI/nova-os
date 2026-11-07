@@ -7,6 +7,7 @@
 #include "cpu.h"
 #include "serial.h"
 #include "../object/interrupt.h"
+#include "../object/process.h"
 #include "../sched/thread.h"
 
 #define VECTOR_COUNT 256
@@ -128,6 +129,10 @@ static void kernel_page_fault(INTERRUPT_FRAME *frame)
     frame->rip = fixup;
 }
 
+/* An interrupt from user mode returns there from here with interrupts
+   disabled until IRETQ, so a thread whose process is terminating, stopped
+   while it ran or while the scheduler had switched away from it here,
+   exits instead of returning. */
 void interrupt_dispatch(INTERRUPT_FRAME *frame)
 {
     if (frame->vector < EXCEPTION_COUNT && (frame->cs & SELECTOR_RPL_MASK))
@@ -161,4 +166,6 @@ void interrupt_dispatch(INTERRUPT_FRAME *frame)
         else
             exception_halt(frame);
     }
+    if (frame->cs & SELECTOR_RPL_MASK)
+        process_user_return();
 }

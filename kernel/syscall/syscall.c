@@ -356,6 +356,22 @@ static STATUS thread_create_call(const UINT64 *arguments, UINT64 *results)
     return status;
 }
 
+/* thread_start(thread, entry, stack, argument 1, argument 2). */
+static STATUS thread_start_call(const UINT64 *arguments, UINT64 *results)
+{
+    OBJECT *thread;
+    STATUS status = handle_get(caller_handles(), (UINT32)arguments[0],
+                               TYPE_THREAD, THREAD_RIGHT_START, &thread);
+
+    (void)results;
+    if (status != OK)
+        return status;
+    status = process_thread_start((USER_THREAD *)thread, arguments[1],
+                                  arguments[2], arguments[3], arguments[4]);
+    object_release(thread);
+    return status;
+}
+
 static STATUS thread_exit_call(const UINT64 *arguments, UINT64 *results)
 {
     (void)arguments;
@@ -713,6 +729,7 @@ static const CALL_ENTRY calls[CALL_COUNT] = {
     [CALL_PROCESS_EXIT] = {process_exit_call, 1, 1},
     [CALL_PROCESS_INFO] = {process_info_call, 1, 1},
     [CALL_THREAD_CREATE] = {thread_create_call, 1, 0},
+    [CALL_THREAD_START] = {thread_start_call, 5, 0},
     [CALL_THREAD_EXIT] = {thread_exit_call, 0, 1},
     [CALL_SECTION_CREATE] = {section_create_call, 2, 0},
     [CALL_PROCESS_MAP] = {process_map_call, 6, 0},

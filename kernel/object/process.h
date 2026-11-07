@@ -26,6 +26,7 @@
      RIGHT_TRANSFER | RIGHT_WAIT)
 
 typedef struct PROCESS PROCESS;
+typedef struct USER_THREAD USER_THREAD;
 
 struct PROCESS {
     OBJECT object;
@@ -35,21 +36,24 @@ struct PROCESS {
     UINT64 space; /* the physical address of its top page table */
     HANDLE_TABLE *handles;
     UINT32 state; /* PROCESS_STATE_NEW, _RUNNING or _TERMINATED */
+    UINT32 terminating; /* from process_terminate's start on */
     UINT32 exit_code;
-    UINT32 threads; /* started and not yet exited */
+    UINT32 threads; /* started and not yet exited, on the list below */
+    USER_THREAD *running;
     UINT32 mapping_count;
     SECTION *mappings[PROCESS_MAX_MAPPINGS];
 };
 
 /* A user thread as an object: created for a process by thread_create
-   and run by process_start. */
-typedef struct {
+   and run by process_start or thread_start. */
+struct USER_THREAD {
     OBJECT object;
     THREAD thread;
     UINT8 *fpu;
     PROCESS *process; /* held for the thread object's life */
+    USER_THREAD *next_running;
     UINT32 started;
-} USER_THREAD;
+};
 
 /* A new process in job, with an empty address space and handle table,
    and its creator's handle. options are PROCESS_OPTION_ bits, which the
@@ -77,6 +81,14 @@ STATUS process_start(PROCESS *process, USER_THREAD *thread, UINT64 entry,
                      UINT64 stack, OBJECT *bootstrap, UINT32 rights,
                      UINT64 argument);
 
+/* thread_start: start thread, a further thread of a running process, at
+   entry with stack pointer stack and its two arguments (S8). Returns OK;
+   ERR_BAD_STATE if thread has been started, or its process was never
+   started or is terminating; ERR_INVALID_ARGS if entry or stack lies
+   outside what the process's mode allows; or ERR_NO_MEMORY. */
+STATUS process_thread_start(USER_THREAD *thread, UINT64 entry, UINT64 stack,
+                            UINT64 argument1, UINT64 argument2);
+
 /* The section rights a mapping with protection, MAP_ bits, needs (O5). */
 UINT32 process_map_rights(UINT32 protection);
 
@@ -94,11 +106,21 @@ UINT32 process_map_rights(UINT32 protection);
 STATUS process_map(PROCESS *process, SECTION *section, UINT64 offset,
                    UINT64 address, UINT64 size, UINT32 protection);
 
-/* End process with exit_code: close every handle in its table, remove
-   its mappings, record the code and assert PROCESS_TERMINATED (O10). A
-   process already terminated keeps its first code. The caller is the
-   process's last thread, which exits next, or the process has none. */
+/* End process with exit_code (O10). Its threads stop first: each
+   blocked one's wait ends with ERR_CANCELED, none blocks again, and each
+   exits at its next return to user mode instead of returning. Once the
+   last has exited, the kernel closes every handle in the process's
+   table, removes its mappings and asserts PROCESS_TERMINATED, so no
+   thread of the process runs, and none can add a handle, after its
+   handles close. A process with no thread left ends here and now. A
+   process already terminating keeps its first code. A caller that is a
+   thread of process calls process_thread_exit next. */
 void process_terminate(PROCESS *process, UINT32 exit_code);
+
+/* The running user thread is about to return to user mode, with
+   interrupts disabled until it does: if its process is terminating, it
+   exits here instead. */
+void process_user_return(void);
 
 /* What process_info reports. The exit code is 0 until the process has
    terminated. */

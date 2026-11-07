@@ -508,6 +508,11 @@ quota, or with no vector free, the call fails with `ERR_NO_RESOURCES`. `pin_rele
 together, so no other thread of the process can quarantine it between
 the two.
 
+`thread_start` starts a further thread of a process `process_start` has
+started; it fails with `ERR_BAD_STATE` if the thread has been started, or
+if its process was never started or has begun terminating
+([objects.md O10](objects.md#o10-object-lifetime)).
+
 A new thread, from `process_start` or `thread_start`, begins at `entry`
 with RCX and RDX holding its two arguments, every other general-purpose
 register zero, RFLAGS 0x202 (IF and bit 1), and RSP equal to `stack`.

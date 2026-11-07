@@ -191,7 +191,10 @@ void per_cpu_set_kernel_stack(UINT64 top)
 /* A stack argument's address wraps past the top of the address space
    only to below 0x28, which user_range_valid refuses. A failed call
    reports 0 in every result, except where syscall_reports_results says
-   otherwise (S7). R10 comes back zero (S4). */
+   otherwise (S7). R10 comes back zero (S4). Interrupts stay disabled
+   from the termination check to SYSRETQ, which syscall.S reaches with
+   them disabled, so a termination that begins later finds the thread in
+   user mode, and the return from the next interrupt stops it. */
 void syscall_dispatch(INTERRUPT_FRAME *frame)
 {
     UINT64 arguments[SYSCALL_ARGUMENTS_MAX];
@@ -220,6 +223,8 @@ void syscall_dispatch(INTERRUPT_FRAME *frame)
     frame->r8 = results[1];
     frame->r9 = results[2];
     frame->r10 = 0;
+    disable_interrupts();
+    process_user_return();
 }
 
 /* A 32-bit thread enters by INT (S11). Intel processors do not support

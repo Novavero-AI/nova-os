@@ -484,10 +484,15 @@ user signals, set and cleared with `object_signal`.
    as a message on the process's exception channel, if a holder of
    `TERMINATE` on the process or its job opened one with
    `task_exception_channel`; the receiver, a debugger or a supervisor,
-   resumes the thread or lets the process terminate. Termination stops its threads, closes every handle
-   in its table, removes its mappings, records the exit code and asserts
-   `TERMINATED`. The process object lives on while handles to it exist, so
-   its creator can read the code with `process_info`.
+   resumes the thread or lets the process terminate. Termination records
+   the exit code and stops every thread first: a blocked thread's wait
+   ends, no thread blocks again, and each exits when it would next return
+   to user mode, a call in progress finishing first. Once the last thread
+   has exited, the kernel closes every handle in the table, removes the
+   mappings and asserts `TERMINATED`, so no thread of the process runs,
+   and none can add a handle such as a pin ([ipc.md I8](ipc.md#i8-dma)),
+   after its handles close. The process object lives on while handles to
+   it exist, so its creator can read the code with `process_info`.
 4. Destroying an object can close handles to further objects (a channel
    carrying a message carrying a channel, as [Channel][zx-channel] notes).
    The kernel destroys from an explicit work list, never by recursion, so

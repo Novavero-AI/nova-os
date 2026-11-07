@@ -69,8 +69,9 @@ void waitable_cancel(WAITABLE *object, const void *handle_table,
 
 /* Wait until a signal of interest is active on any of count objects or
    the deadline passes. Returns OK; ERR_TIMED_OUT; ERR_CANCELED if a
-   handle waited through closed meanwhile; or ERR_OUT_OF_RANGE with
-   nothing done if count is above WAIT_MANY_MAX. With no objects it
+   handle waited through closed meanwhile, or if the thread is stopping
+   because its process terminates; or ERR_OUT_OF_RANGE with nothing done
+   if count is above WAIT_MANY_MAX. With no objects it
    sleeps until the deadline. A handle is checked by the caller, which
    keeps interrupts disabled from that check into this call, so that its
    close cannot fall between the two unseen. */
