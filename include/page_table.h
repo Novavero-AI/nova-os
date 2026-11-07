@@ -1,84 +1,105 @@
-/* x86-64 paging as nova-boot and the kernel use it: the control bits that
-   enable and modify it (SDM Vol. 3A 5.1) and the paging-structure entries
-   of 4-level and 5-level paging (SDM Vol. 3A 5.5.4, Tables 5-14 to 5-20).
-   Levels count up from the page table: 1 holds PTEs, 2 PDEs, 3 PDPTEs, 4
-   PML4Es and, with 5-level paging, 5 PML5Es. */
+/** @file
+    x86-64 paging as nova-boot and the kernel use it: the control bits that
+    enable and modify it (SDM Vol.\ 3A 5.1) and the paging-structure entries
+    of 4-level and 5-level paging (SDM Vol.\ 3A 5.5.4, Tables 5-14 to 5-20).
+    Levels count up from the page table: 1 holds PTEs, 2 PDEs, 3 PDPTEs, 4
+    PML4Es and, with 5-level paging, 5 PML5Es. */
 
 #ifndef NOVA_PAGE_TABLE_H
 #define NOVA_PAGE_TABLE_H
 
 #include "cpu.h"
 
-/* CR0.WP makes read-only pages bind supervisor writes too (SDM Vol. 3A
-   5.1.3); CR4.PGE enables global pages and CR4.LA57 5-level paging (SDM
-   Vol. 3A 5.1). */
-#define CR0_WRITE_PROTECT (1ULL << 16)
-#define CR4_GLOBAL_PAGES (1ULL << 7)
-#define CR4_FIVE_LEVELS (1ULL << 12)
+/** @name Control register bits
+    CR0.WP makes read-only pages bind supervisor writes too (SDM Vol. 3A
+    5.1.3); CR4.PGE enables global pages and CR4.LA57 5-level paging (SDM
+    Vol. 3A 5.1).
+    @{ */
+#define CR0_WRITE_PROTECT (1ULL << 16) /**< CR0.WP */
+#define CR4_GLOBAL_PAGES (1ULL << 7)   /**< CR4.PGE */
+#define CR4_FIVE_LEVELS (1ULL << 12)   /**< CR4.LA57 */
+/** @} */
 
-/* IA32_EFER, at C000_0080h (AMD APM Vol. 2 3.1.7), whose NXE bit makes
-   the XD bit of an entry forbid instruction fetches (SDM Vol. 3A 2.2.1,
-   Table 2-1, and 5.1.3). */
-#define IA32_EFER 0xc0000080u
-#define EFER_NO_EXECUTE (1ULL << 11)
+/** @name IA32_EFER
+    IA32_EFER, at C000_0080h (AMD APM Vol. 2 3.1.7), whose NXE bit makes
+    the XD bit of an entry forbid instruction fetches (SDM Vol. 3A 2.2.1,
+    Table 2-1, and 5.1.3).
+    @{ */
+#define IA32_EFER 0xc0000080u        /**< the MSR's address */
+#define EFER_NO_EXECUTE (1ULL << 11) /**< NXE */
+/** @} */
 
-#define PTE_PRESENT (1ULL << 0)
+#define PTE_PRESENT (1ULL << 0) /**< P: the entry is used */
+/** R/W: clear at any level, it forbids user writes through the
+    translation, and supervisor writes too while CR0.WP is set */
 #define PTE_WRITABLE (1ULL << 1)
-/* U/S: user-mode accesses are allowed only through a translation whose
-   entries at every level set it (SDM Vol. 3A 5.6.1). */
+/** U/S: user-mode accesses are allowed only through a translation whose
+    entries at every level set it (SDM Vol.\ 3A 5.6.1). */
 #define PTE_USER (1ULL << 2)
-#define PTE_WRITE_THROUGH (1ULL << 3) /* PWT */
-#define PTE_CACHE_DISABLE (1ULL << 4) /* PCD */
-/* PS: a level 2 or 3 entry with it set maps a 2 MiB or 1 GiB page. A
-   PTE's bit 7 is its PAT bit instead; an entry that maps a large page
-   has its PAT bit at 12. */
-#define PTE_LARGE (1ULL << 7)
-#define PTE_PAT (1ULL << 7)
-#define PTE_LARGE_PAT (1ULL << 12)
-/* A PTE's bits 10:9 are ignored by the processor (SDM Vol. 3A Table
-   5-20); the kernel marks with bit 9 a user page the address space
-   borrows from a section and does not free. */
+#define PTE_WRITE_THROUGH (1ULL << 3) /**< PWT */
+#define PTE_CACHE_DISABLE (1ULL << 4) /**< PCD */
+/** @name Page size and PAT bits
+    PS: a level 2 or 3 entry with it set maps a 2 MiB or 1 GiB page. A
+    PTE's bit 7 is its PAT bit instead; an entry that maps a large page
+    has its PAT bit at 12.
+    @{ */
+#define PTE_LARGE (1ULL << 7)      /**< PS, in a level 2 or 3 entry */
+#define PTE_PAT (1ULL << 7)        /**< a PTE's PAT bit */
+#define PTE_LARGE_PAT (1ULL << 12) /**< a large page's entry's PAT bit */
+/** @} */
+/** A PTE's bits 10:9 are ignored by the processor (SDM Vol.\ 3A Table
+    5-20); the kernel marks with bit 9 a user page the address space
+    borrows from a section and does not free. */
 #define PTE_BORROWED (1ULL << 9)
-/* XD: no instruction fetch through the entry. Reserved, and so a fault
-   if set, while IA32_EFER.NXE is clear. */
+/** XD: no instruction fetch through the entry. Reserved, and so a fault
+    if set, while IA32_EFER.NXE is clear. */
 #define PTE_NO_EXECUTE (1ULL << 63)
-/* Bits 51:12: the next table's address, or a 4 KiB page's. CR3 holds the
-   top table's address in the same bits (SDM Vol. 3A Table 5-12). */
+/** Bits 51:12: the next table's address, or a 4 KiB page's. CR3 holds the
+    top table's address in the same bits (SDM Vol. 3A Table 5-12). */
 #define PTE_ADDRESS 0x000FFFFFFFFFF000ULL
 
-/* IA32_PAT (SDM Vol. 3A 14.12.2): eight one-byte entries, each a memory
-   type in its low three bits (Table 14-10). The entry that maps a page
-   selects PAT entry 4 PAT + 2 PCD + PWT (Table 14-11), whose type the
-   MTRRs' type for the page combines with (Table 14-7). An entry that
-   points to a table selects with PCD and PWT alone, so tables are read
-   through entries 0 to 3 (5.9.2). Every processor with 4-level or
-   5-level paging has the PAT (5.9.1). */
-#define IA32_PAT 0x277u
-#define PAT_ENTRY_BITS 8
-#define PAT_INDEX_PWT 1
-#define PAT_INDEX_PCD 2
-#define PAT_INDEX_PAT 4
-#define PAT_UNCACHEABLE 0x0
-#define PAT_WRITE_COMBINING 0x1
-#define PAT_WRITE_THROUGH 0x4
-#define PAT_WRITE_BACK 0x6
-#define PAT_UNCACHED 0x7 /* UC-: UC, except that an MTRR of WC makes it WC */
+/** @name IA32_PAT
+    IA32_PAT (SDM Vol. 3A 14.12.2): eight one-byte entries, each a memory
+    type in its low three bits (Table 14-10). The entry that maps a page
+    selects PAT entry 4 PAT + 2 PCD + PWT (Table 14-11), whose type the
+    MTRRs' type for the page combines with (Table 14-7). An entry that
+    points to a table selects with PCD and PWT alone, so tables are read
+    through entries 0 to 3 (5.9.2). Every processor with 4-level or
+    5-level paging has the PAT (5.9.1).
+    @{ */
+#define IA32_PAT 0x277u         /**< the MSR's address */
+#define PAT_ENTRY_BITS 8        /**< the bits of one entry */
+#define PAT_INDEX_PWT 1         /**< what PWT adds to the entry selected */
+#define PAT_INDEX_PCD 2         /**< what PCD adds */
+#define PAT_INDEX_PAT 4         /**< what the PAT bit adds */
+#define PAT_UNCACHEABLE 0x0     /**< UC */
+#define PAT_WRITE_COMBINING 0x1 /**< WC */
+#define PAT_WRITE_THROUGH 0x4   /**< WT */
+#define PAT_WRITE_BACK 0x6      /**< WB */
+/** UC-: UC, except that an MTRR of WC makes it WC */
+#define PAT_UNCACHED 0x7
+/** @} */
 
-/* IA32_PAT's bits that put type in entry index. */
+/** IA32_PAT's bits that put type in entry index. */
 #define PAT_FIELD(index, type) ((UINT64)(type) << ((index) * PAT_ENTRY_BITS))
 
-/* The entry nova-boot sets to WC, and the bits of a PTE that select it:
-   PAT and PCD, without PWT. Its reset type, UC-, is entry 2's too, so no
-   type is lost, and an entry that drops the PAT bit, whose place differs
-   between a PTE and a large page's entry, falls back to entry 2, still
-   uncached, rather than to WB as entry 4 would. */
+/** @name Write combining
+    The entry nova-boot sets to WC, and the bits of a PTE that select it:
+    PAT and PCD, without PWT. Its reset type, UC-, is entry 2's too, so no
+    type is lost, and an entry that drops the PAT bit, whose place differs
+    between a PTE and a large page's entry, falls back to entry 2, still
+    uncached, rather than to WB as entry 4 would.
+    @{ */
+/** the PAT entry nova-boot sets to WC */
 #define PAT_WRITE_COMBINING_ENTRY (PAT_INDEX_PAT | PAT_INDEX_PCD)
+/** the bits of a PTE that select it */
 #define PTE_WRITE_COMBINING (PTE_PAT | PTE_CACHE_DISABLE)
+/** @} */
 
-/* IA32_PAT as nova-boot programs it, 0x0001040600070406: every entry's
-   reset type (Table 14-12) but WC in PAT_WRITE_COMBINING_ENTRY. Entries 0
-   to 3 keep their reset types, so PCD and PWT alone select what they
-   select on a processor without the PAT (14.12.5). */
+/** IA32_PAT as nova-boot programs it, 0x0001040600070406: every entry's
+    reset type (Table 14-12) but WC in PAT_WRITE_COMBINING_ENTRY. Entries 0
+    to 3 keep their reset types, so PCD and PWT alone select what they
+    select on a processor without the PAT (14.12.5). */
 #define NOVA_PAT                                                          \
     (PAT_FIELD(0, PAT_WRITE_BACK) | PAT_FIELD(1, PAT_WRITE_THROUGH) |     \
      PAT_FIELD(2, PAT_UNCACHED) | PAT_FIELD(3, PAT_UNCACHEABLE) |         \
@@ -86,38 +107,43 @@
      PAT_FIELD(PAT_WRITE_COMBINING_ENTRY, PAT_WRITE_COMBINING) |          \
      PAT_FIELD(7, PAT_UNCACHEABLE))
 
-#define PAGE_TABLE_ENTRIES 512
-#define PAGE_OFFSET_BITS 12
-#define PAGE_INDEX_BITS 9
+#define PAGE_TABLE_ENTRIES 512 /**< the entries of a table */
+#define PAGE_OFFSET_BITS 12    /**< the bits of an offset in a 4 KiB page */
+#define PAGE_INDEX_BITS 9      /**< the address bits each level indexes by */
 
-#define PAGE_TABLE_LEVEL 1
-#define PAGE_DIRECTORY_LEVEL 2
-#define PDPT_LEVEL 3
+/** @name Levels
+    @{ */
+#define PAGE_TABLE_LEVEL 1     /**< a page table's, of PTEs */
+#define PAGE_DIRECTORY_LEVEL 2 /**< a page directory's, of PDEs */
+#define PDPT_LEVEL 3           /**< a PDPT's, of PDPTEs */
+/** a PML4's, and 4-level paging's depth */
 #define FOUR_LEVELS 4
+/** a PML5's, and 5-level paging's depth */
 #define FIVE_LEVELS 5
+/** @} */
 
-/* The top table's entries below this index map the lower half. The
-   highest bit of the top table's index is the one canonical addresses
-   sign-extend: bit 47 with 4-level paging, 56 with 5-level (SDM Vol. 3A
-   5.1.1 and 5.5.4). */
+/** The top table's entries below this index map the lower half. The
+    highest bit of the top table's index is the one canonical addresses
+    sign-extend: bit 47 with 4-level paging, 56 with 5-level (SDM Vol. 3A
+    5.1.1 and 5.5.4). */
 #define LOWER_HALF_ENTRIES (PAGE_TABLE_ENTRIES / 2)
 
-/* The paging depth in use. CR4.LA57 cannot change while paging is on in
-   IA-32e mode (SDM Vol. 3A 5.1.2), so nova-boot's tables and the
-   kernel's have the depth the firmware chose. */
+/** The paging depth in use. CR4.LA57 cannot change while paging is on in
+    IA-32e mode (SDM Vol. 3A 5.1.2), so nova-boot's tables and the
+    kernel's have the depth the firmware chose. */
 static inline int paging_levels(void)
 {
     return (read_cr4() & CR4_FIVE_LEVELS) ? FIVE_LEVELS : FOUR_LEVELS;
 }
 
-/* The bytes one entry at level spans: 4 KiB at level 1, then 512 times
-   more per level. */
+/** The bytes one entry at level spans: 4 KiB at level 1, then 512 times
+    more per level. */
 static inline UINT64 level_span(int level)
 {
     return 1ULL << (PAGE_OFFSET_BITS + PAGE_INDEX_BITS * (level - 1));
 }
 
-/* The index of the entry at level that translates address. */
+/** The index of the entry at level that translates address. */
 static inline UINT64 table_index(UINT64 address, int level)
 {
     return (address >> (PAGE_OFFSET_BITS + PAGE_INDEX_BITS * (level - 1))) &

@@ -1,70 +1,82 @@
-/* The block protocol between a block driver and its one client, a file
-   system service, shaped as ipc.md I9 shapes I/O requests: every request
-   is a BLOCK_REQUEST, answered by one BLOCK_REPLY with the request's
-   transaction and a status of syscalls.md S7. Both are little-endian.
+/** @file
+    The block protocol between a block driver and its one client, a file
+    system service, shaped as ipc.md I9 shapes I/O requests: every request
+    is a BLOCK_REQUEST, answered by one BLOCK_REPLY with the request's
+    transaction and a status of syscalls.md S7. Both are little-endian.
 
-   The client's first request is BLOCK_ATTACH, with length the bytes of
-   the section it carries as its one handle, a multiple of PAGE_SIZE and
-   at most SECTION_MAX_SIZE, with SECTION_RIGHT_READ, _WRITE and _PIN.
-   The driver pins the whole section for its device to read and write
-   (ipc.md I8) and keeps the pin until it ends; the reply's information is
-   the device's capacity in BLOCK_SECTOR_SIZE sectors. Every later
-   request names a range of that section, so the bytes move by DMA
-   between the device and the client's pages, never through a message.
+    The client's first request is BLOCK_ATTACH, with length the bytes of
+    the section it carries as its one handle, a multiple of PAGE_SIZE and
+    at most SECTION_MAX_SIZE, with SECTION_RIGHT_READ, _WRITE and _PIN.
+    The driver pins the whole section for its device to read and write
+    (ipc.md I8) and keeps the pin until it ends; the reply's information is
+    the device's capacity in BLOCK_SECTOR_SIZE sectors. Every later
+    request names a range of that section, so the bytes move by DMA
+    between the device and the client's pages, never through a message.
 
-   BLOCK_READ and BLOCK_WRITE move length bytes, a multiple of
-   BLOCK_SECTOR_SIZE from one sector to BLOCK_TRANSFER_MAX, between the
-   sectors from sector on and the section from buffer on, a multiple of
-   BLOCK_SECTOR_SIZE. A range past the capacity or the section fails with
-   ERR_OUT_OF_RANGE; a write to a read-only device with
-   ERR_ACCESS_DENIED. A write is volatile when it is answered.
+    BLOCK_READ and BLOCK_WRITE move length bytes, a multiple of
+    BLOCK_SECTOR_SIZE from one sector to BLOCK_TRANSFER_MAX, between the
+    sectors from sector on and the section from buffer on, a multiple of
+    BLOCK_SECTOR_SIZE. A range past the capacity or the section fails with
+    ERR_OUT_OF_RANGE; a write to a read-only device with
+    ERR_ACCESS_DENIED. A write is volatile when it is answered.
 
-   BLOCK_FLUSH, with sector, length and buffer 0, answers once every
-   write answered before it was sent is stable: on the device's
-   persistent storage, so that a power cut keeps it (VIRTIO 1.4 5.2.6.2).
-   A device that cannot flush fails it with ERR_NOT_SUPPORTED, since its
-   writes may be lost in a crash however long ago they were answered.
+    BLOCK_FLUSH, with sector, length and buffer 0, answers once every
+    write answered before it was sent is stable: on the device's
+    persistent storage, so that a power cut keeps it (VIRTIO 1.4 5.2.6.2).
+    A device that cannot flush fails it with ERR_NOT_SUPPORTED, since its
+    writes may be lost in a crash however long ago they were answered.
 
-   The device's failure of a request is ERR_IO. A request before
-   BLOCK_ATTACH, or a second one, fails with ERR_BAD_STATE; a message of
-   another size, or one that carries a handle it should not, is answered
-   with ERR_INVALID_ARGS and its handles closed. Once the client closes
-   its end, the driver resets the device, releases its pins and ends. */
+    The device's failure of a request is ERR_IO. A request before
+    BLOCK_ATTACH, or a second one, fails with ERR_BAD_STATE; a message of
+    another size, or one that carries a handle it should not, is answered
+    with ERR_INVALID_ARGS and its handles closed. Once the client closes
+    its end, the driver resets the device, releases its pins and ends. */
 
 #ifndef NOVA_BLOCK_PROTOCOL_H
 #define NOVA_BLOCK_PROTOCOL_H
 
 #include "native_abi.h"
 
-#define BLOCK_ATTACH 1
-#define BLOCK_READ 2
-#define BLOCK_WRITE 3
+/** @name Operations
+    @{ */
+#define BLOCK_ATTACH 1 /**< attach the client's section: the first request */
+#define BLOCK_READ 2   /**< read sectors into the section */
+#define BLOCK_WRITE 3  /**< write sectors from the section */
+/** answer once every write answered before it is stable */
 #define BLOCK_FLUSH 4
+/** @} */
 
-#define BLOCK_SECTOR_SIZE 512
+#define BLOCK_SECTOR_SIZE 512 /**< the bytes of a sector */
+/** The most bytes one read or write moves. */
 #define BLOCK_TRANSFER_MAX (8 * PAGE_SIZE)
 
-/* The rights the client's endpoint carries: to send requests, read
-   replies and wait for them, and to travel to the client. */
+/** The rights the client's endpoint carries: to send requests, read
+    replies and wait for them, and to travel to the client. */
 #define BLOCK_CLIENT_RIGHTS                                              \
     (CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT | RIGHT_TRANSFER)
 
-/* The rights the attached section carries. */
+/** The rights the attached section carries. */
 #define BLOCK_SECTION_RIGHTS                                             \
     (SECTION_RIGHT_READ | SECTION_RIGHT_WRITE | SECTION_RIGHT_PIN |      \
      RIGHT_TRANSFER)
 
+/** A request. */
 typedef struct {
+    /** chosen by the client and carried by the reply (ipc.md I3) */
     UINT32 transaction;
-    UINT32 operation;
-    UINT64 sector;
+    UINT32 operation; /**< a BLOCK_ operation */
+    UINT64 sector;    /**< the first sector moved */
+    /** the bytes moved, or for BLOCK_ATTACH the section's */
     UINT32 length;
-    UINT32 buffer;
+    UINT32 buffer; /**< where in the section the bytes start */
 } BLOCK_REQUEST;
 
+/** A reply. */
 typedef struct {
-    UINT32 transaction;
-    UINT32 status;
+    UINT32 transaction; /**< the request's */
+    UINT32 status;      /**< a status of syscalls.md S7 */
+    /** the device's capacity in sectors, after a BLOCK_ATTACH that
+        succeeds; 0 otherwise */
     UINT64 information;
 } BLOCK_REPLY;
 
