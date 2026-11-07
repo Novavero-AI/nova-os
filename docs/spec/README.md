@@ -25,6 +25,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [shell.md](shell.md) | nova-script, the shell's language: its grammar, values, pipelines and errors, how a command is found and run from `/store`, the handles the shell grants a command, interactive behaviour, replay and settings |
 | [display.md](display.md) | Who holds the display from boot to the desktop, the compositor, windows and their buffers, composition, the pointer, routing input, the secure attention key, capture, the trusted interface, replay, the GPU path and the build plan |
 | [ui.md](ui.md) | The toolkit: the rasterizer's outlines, the font and its format, text layout, the interface as data and its renderer, widgets, layout, themes, accessibility, the HUD and the first programs |
+| [network.md](network.md) | The virtio network driver and its frame protocol, the network service's TCP/IP stack and the resolver, grants and sockets as channels, replay, the threat model and limits, and the order of work with its CI checks |
 
 ## Firmware and platform
 
@@ -292,7 +293,9 @@ RFC 7693, November 2015 (Independent Submission).
 - sha256: `c943754888364fe29bbd0bb3c71c6658ef392371497eaa4a9d9dde015b0721e5`
 - Used by: BLAKE2b (`accounts/blake2b.c`: 2 and 3), Argon2's H, and its
   check at start against BLAKE2b-512("abc") (Appendix A) and the
-  self-test's hash of hashes (Appendix E).
+  self-test's hash of hashes (Appendix E); keyed BLAKE2b (3.3) for the
+  network service's initial sequence numbers and ephemeral ports
+  ([network.md](network.md) N9).
 
 **Fast-key-erasure random-number generators**, D. J. Bernstein, the
 cr.yp.to blog, July 23, 2017.
@@ -472,7 +475,9 @@ April 8, 2026 (OASIS).
   [input.md](input.md)), for the input device (5.8);
   [storage.md](storage.md), for when a block write is stable (5.2.6.2);
   [display.md](display.md), for a pointing device's reports and its
-  axes' ranges (5.8.4, 5.8.6.2), and the GPU device in 2D (5.7).
+  axes' ranges (5.8.4, 5.8.6.2), and the GPU device in 2D (5.7);
+  [network.md](network.md), for the network device (5.1), message
+  framing (2.7.4) and the used ring (2.7.8).
 
 **Linux input subsystem**, tag `v7.3`, commit
 `c03c1a14507dfaf8b856c2608f9ac216021fc222`: the event codes header,
@@ -542,6 +547,48 @@ current revision of the 1.x line.
   (2.0) and `0b06318005c3e0c8b896f2a002c2a3c78426b5fdacac4ad1cc02ffec15835190`
   (1.2c)
 - Used by: a USB host-controller driver (QEMU's `qemu-xhci`).
+
+## Networking
+
+**Requests for Comments** (RFC Editor), each the plain-text copy at
+`https://www.rfc-editor.org/rfc/rfcN.txt`, fetched on November 7, 2026.
+
+| RFC | Title | Date | sha256 |
+|---|---|---|---|
+| 768 | User Datagram Protocol | August 1980 | `7dc8880e1ecef9c3f9da0db4b876a16e96bfa4f0953cc9d977d414f8f680c2f0` |
+| 791 | Internet Protocol | September 1981 | `6cfb387fcecfc1b72f2f69343c5b6951b5d263d708162e2b5c66ab8f394f6265` |
+| 792 | Internet Control Message Protocol | September 1981 | `58714393ded142bacf188d7e8977eef98f4110c4c87ac94595f750df5664c2c6` |
+| 826 | An Ethernet Address Resolution Protocol | November 1982 | `01bc62fe6a37e90f1246ac43e8e145f1322b4ed1474836145c3da93d2bd3c8a6` |
+| 894 | A Standard for the Transmission of IP Datagrams over Ethernet Networks | April 1984 | `be88b9301e53f986aca3a0e55e488d1d79bae3f88fe3f257640397bc089e7035` |
+| 1034 | Domain Names - Concepts and Facilities | November 1987 | `d6b10a71441df879cc2817d23f2dad120c8a5f87e74eba1e4ed4b743a76a891a` |
+| 1035 | Domain Names - Implementation and Specification | November 1987 | `d14ae809fc9b41bbcae26bb38c937c9515808b944f3252b00de9fe0e95f4fdfb` |
+| 1122 | Requirements for Internet Hosts -- Communication Layers | October 1989 | `9f526e6bebc868324fedb90aebbcf6e5b15c53fd373ca5d5ce1c2cdcd264e04f` |
+| 1123 | Requirements for Internet Hosts -- Application and Support | October 1989 | `3d019cc4777d1ead76c212711d56768bde9361312cd209846b62d2e41dd0301d` |
+| 2131 | Dynamic Host Configuration Protocol | March 1997 | `a043b705785b81762505ded4cf71d61392b2b1da2b4ce1e32c13bc984de5f4a5` |
+| 2132 | DHCP Options and BOOTP Vendor Extensions | March 1997 | `0cfbedab7cfe859624ae78c07a722bc51bf8ea123a7b43b099fc546ddcf00b90` |
+| 4443 | Internet Control Message Protocol (ICMPv6) for the Internet Protocol Version 6 (IPv6) Specification | March 2006 | `f20d1de8878e1142000bfeaa3ad1b0540fab7653a395cf7b07e81d2da2f650bf` |
+| 4861 | Neighbor Discovery for IP version 6 (IPv6) | September 2007 | `1a4309c117d765a7c0edfcb2297fc90c3c09f0fcae255f15e53b20748bcc09fb` |
+| 4862 | IPv6 Stateless Address Autoconfiguration | September 2007 | `6d3d2af5d2f6c9109b4ebd038ff7a6cec56771bbb0b5d8bd520357e03f097aa2` |
+| 4987 | TCP SYN Flooding Attacks and Common Mitigations | August 2007 | `cde4ce998a6c9e34580c27fa5cafdbc4f9b90017b07e0768217bab1b83273d61` |
+| 5452 | Measures for Making DNS More Resilient against Forged Answers | January 2009 | `53af0365af1c491204ae27b523699b7732f79cf606ce84fab3b032df7a966c6b` |
+| 5681 | TCP Congestion Control | September 2009 | `a2d99a2421d5c57b248394f26ba44fc364aa546680fbf10ff0aa7034dad8b87d` |
+| 5927 | ICMP Attacks against TCP | July 2010 | `b90bd4a3dbd1dcfb86bf4369a39cb0d50b08bca82d8ecadf0294a63c299c751d` |
+| 5961 | Improving TCP's Robustness to Blind In-Window Attacks | August 2010 | `bba04c91e91f6aa7bd49b491f127bfb3c1280dd22b52f15299d8123f62aab502` |
+| 6056 | Recommendations for Transport-Protocol Port Randomization | January 2011 | `2d899269f777944a49b7bcd5373a53284b4b6425a5e957bee90959e976ad26bb` |
+| 6298 | Computing TCP's Retransmission Timer | June 2011 | `f3a6d937c0a7653bd431fdbbdcd7920f4e9d9cdb6134fa9db7a74b90d215edf6` |
+| 6528 | Defending against Sequence Number Attacks | February 2012 | `1de02139d839860eb49ea553acf75e16b93a6326e4b0eda1ef0daa56433b89da` |
+| 6761 | Special-Use Domain Names | February 2013 | `549f6635f34eb0da627568657401f0115e8e33c2ba1ba7e37bf14ab27651339e` |
+| 7766 | DNS Transport over TCP - Implementation Requirements | March 2016 | `9fbf70d43e5c423c2464eafd724ef164490b4d8e341e5d9b5fe1023402bb404f` |
+| 8200 | Internet Protocol, Version 6 (IPv6) Specification | July 2017 | `371ae3f133d562db5d6385e6def4ca9914c4f831be228ea7779fd28799c2f490` |
+| 8305 | Happy Eyeballs Version 2: Better Connectivity Using Concurrency | December 2017 | `9bb65e288b32acae072d1bf403c609f71c32ea7a5087d0056ee9af3cedca47e1` |
+| 8504 | IPv6 Node Requirements | January 2019 | `11622564c8042970ea25dfb0f2a214d4a38c39d64d13395467b80e91bc379f19` |
+| 9293 | Transmission Control Protocol (TCP) | August 2022 | `6d9ac8be4b0286f8c3d337addf442b2eb6a9b14e1366594ea7fbc273f93dc2d9` |
+
+- Access: free.
+- Used by: [network.md](network.md), which cites each by section, or by
+  heading for RFC 768, 792, 826 and 894, which have no numbered
+  sections; RFC 4443, 4861, 4862, 8200, 8305 and 8504 for IPv6 only
+  (network.md N8).
 
 ## Graphics
 
@@ -1126,6 +1173,141 @@ updated December 10, 2025.
 - Document: <https://learn.microsoft.com/en-us/adaptive-cards/>
 - Access: free web page.
 - sha256: `ebd4af5fa95b0332b13f5ba7d6e1889ad08f24dceb90fe037375f6c852ea9c02`
+
+## Network design references
+
+Implementations [network.md](network.md) describes or compares nova-os
+with. Each was read at the commit given; a hash is of the file as
+fetched on November 7, 2026.
+
+**QEMU**, tag `v8.2.2`, commit `11aa0b1ff115b86160c4d37e7c37e6a6b13b77ea`,
+which Ubuntu 24.04 ships as `1:8.2.2+ds-0ubuntu1.18` and the CI's Boot
+job installs, and tag `v11.1.3`, commit
+`005c61c0ef6f6ae615283440b4bb7be51b2c6ddd`, Homebrew's.
+
+- Source: <https://gitlab.com/qemu-project/qemu/-/tree/v8.2.2>,
+  <https://gitlab.com/qemu-project/qemu/-/tree/v11.1.3>
+- Access: open source; "The QEMU emulator as a whole is released under
+  the GNU General Public License, version 2" (`LICENSE`, sha256
+  `139c64b7a9ae62858ff969aae622ecfcf4f1519655bd92d2e70a1a2fb615690e` at
+  v8.2.2). network.md quotes its documentation and describes behaviour
+  read in its source, and copies none of its code.
+
+| File | v8.2.2 sha256 | v11.1.3 sha256 |
+|---|---|---|
+| `qemu-options.hx` | `a5f306558007e5889536f582dc14c95b5c5550bd865b301af2657c1c9d761462` | `39be98e63d1b2d7b65bcec4bca0e704a2bb79cc4bb52a6f6d071babc189c6e63` |
+| `docs/system/devices/net.rst` | `bcaada5eb643bae311cd2fdabe5f4100d13367f37a823c790ab007fdb2f90d34` | `86f818ab71e6faa113c61f1458ad881e78a29d3c4ad5d8ce5c923f995be1d14b` |
+| `net/slirp.c` | `83860b9121637f7039d555aab01aa83ef194e110cf2771512f60996ec9fe7a7c` | `f1eb0ede4b4d8016679ef176e33dccfbf659afab1b007ba2a92050a0afbbe799` |
+| `hw/net/virtio-net.c` | `b2ed7a397329035c25ec1dcba70ea0ac87fc5e096d514210de31471a5084723a` | `14c4d68590a1c4c2e974b2f9374e5b84102c40e33dce4d4153503ea0b2ba01c6` |
+| `hw/virtio/virtio-pci.c` | `8d3da6766cfb2126511aa1af61c843552cd759cc325971c0f414a6ced48a926f` | `affd3c3257c3b77350f7eba692d1fbe2a155d180f5a78b2e500a0c2256f10739` |
+
+**libslirp**, QEMU's user network, tag `v4.7.0`, commit
+`3ad1710a96678fe79066b1469cead4058713a1d9`, which Ubuntu 24.04 ships as
+`libslirp0` `4.7.0-1ubuntu3.1`, and tag `v4.9.7`, commit
+`ce12dcddf710a71dc0de6450ec95edbadf8e9f66`, Homebrew's.
+
+- Source: <https://gitlab.freedesktop.org/slirp/libslirp/-/tree/v4.7.0>,
+  <https://gitlab.freedesktop.org/slirp/libslirp/-/tree/v4.9.7>
+- Access: open source; each file of `src/` is BSD-3-Clause or MIT by its
+  SPDX tag, under the 3-clause terms of `COPYRIGHT`.
+
+| File | v4.7.0 sha256 | v4.9.7 sha256 |
+|---|---|---|
+| `COPYRIGHT` | `b28aecf4796a6a22054167f0a976de13d9db335669d37afd2dc7ea4c335e1e13` | `5e81ad3841c9073bee91f65c8c74fdc4b67d1f6742cd35fbd22039bb1e920818` |
+| `src/bootp.c` | `9e981b131b4cbc7b97c3b903783145639d0ac84c1d2b60fa35d46c2a68716e52` | `107dccef9b66c1498353644c6fb53d6e1ea09ab1c4af7cc5be557749a4b77811` |
+| `src/udp.c` | `023ceb269a0bdb2357effb1187af74772b067b492f764ce8bf01c5a01ea58e20` | `932ce4920d9616d01313bf0e5108adbe598a4112fb2ff286d521e9dcc0ce4053` |
+| `src/tcp_input.c` | `1fc3d01106864553f72150f99f7bcac4a1f23f382a369b4c960294f531dc93fc` | `3b6837ed27996f9bd6e1fbdb0e8ab72f9076f0af827cdcf36bc956aaed712032` |
+| `src/ip_icmp.c` | `c8fd8bea729376520f244dedd8644b32ffaf80cd09a24af7478331ba48a53732` | `4fdcba07bec9db98f3444309877a33241981dc127af88a54c74dfc2d8fd02af4` |
+| `src/misc.c` | `b00204dd4f3a502ff540aada3fb31a1a68054af5431c46cfa9c2c920faf54ce1` | not read |
+| `src/socket.c` | `e85ae70d413fbae6682037e62072c9d7c2e90e24e212ca7a9b527dd8147fedea` | not read |
+
+**lwIP**, tag `STABLE-2_2_1_RELEASE`, commit
+`77dcd25a72509eb83f72b033d219b1d40cd8eb95`, February 5, 2025.
+
+- Source: <https://git.savannah.nongnu.org/cgit/lwip.git/tag/?h=STABLE-2_2_1_RELEASE>
+- Access: open source, BSD-3-Clause (`COPYING`).
+- sha256: `ef4aac92e05e87cd1cdc140870ed52206ba03d4a7fe46c1e11d7ffa6c87d252b`
+  (`COPYING`) and
+  `d750b825d4e399eca387bdeb98a78dc96267095eb8f15cdb39e4e88d23c14360`
+  (`src/include/lwip/opt.h`)
+
+**picoTCP**, tag `v1.7.0`, commit
+`13c00a067190f5ec62340ed932a2bb833c366d63`, February 8, 2017, and
+**picoTCP-NG**, tag `v2.1`, commit
+`dc9cfc0145151012cf1946774ef1795fe221079c`, December 10, 2020.
+
+- Source: <https://github.com/tass-belgium/picotcp/tree/v1.7.0>,
+  <https://github.com/virtualsquare/picotcp/tree/v2.1>
+- Access: open source, "the GNU General Public License, version 2, or
+  (at your option) version 3" (`COPYING`, the same in both). Read for
+  its licence and its size only.
+- sha256: `af5a2bc623f97a8707322a971e78067c8a1fd25c7493328b52a9baafee97e735`
+  (`COPYING`)
+
+**FreeBSD**, tag `release/15.1.0`, commit
+`96841ea08dcfa84b954a32dc5ae1a26c28966cf4`, June 11, 2026.
+
+- Source: <https://github.com/freebsd/freebsd-src/tree/release/15.1.0>
+- Access: open source; `sys/netinet` and `sys/netinet6` are
+  BSD-3-Clause and BSD-2-Clause by SPDX tag, and `in_cksum.c`
+  BSD-4-Clause.
+- sha256: `68723fbba7c3f7a62e7b96abca901cf084df26e7205cc1a05993ba541a950950`
+  (`sys/netinet/tcp_input.c`),
+  `206914254bb3f0c61e3f68946c86ad325c366b55f40ac5404c074277206e7ee5`
+  (`sys/netinet/ip_input.c`) and
+  `4baff024831f8652215163ef7e838076c055f5fee14773c36456840520ceb175`
+  (`sys/netinet/in_cksum.c`)
+
+**smoltcp**, tag `v0.14.0`, commit
+`cbfe05f835cfc75bf781addc1c0eb2e1a0df1ea3`, August 17, 2026.
+
+- Source: <https://github.com/smoltcp-rs/smoltcp/tree/v0.14.0>
+- Access: open source, 0BSD (`LICENSE-0BSD.txt`).
+- sha256: `beb2cad88fab8447f7975564e21f9506e733e14c344836f146fa02e811216694`
+  (`LICENSE-0BSD.txt`),
+  `d75bdf1a3e4cfb0dedb1a1d32b73940e5cd0a258ad8008511b5b6f3e813c5407`
+  (`README.md`) and
+  `b490b161e1ddc3fb44e2a9c8d765d3599f48c234560b1210d7a29bc93abc666e`
+  (`src/iface/interface/mod.rs`)
+
+**uIP 1.0**, Adam Dunkels's import of the original sources, tag
+`uip-1-0`, commit `a49def743f6e5c7d0c0f2d724f0b8e0c563a4a37`.
+
+- Source: <https://github.com/adamdunkels/uip/tree/uip-1-0>
+- Access: open source, BSD-3-Clause.
+- sha256: `0f616f0b27a0957e5173117cb073ea62f4f094c0f2ad7a9938c3ac05596ddff1`
+  (`uip/uip.c`)
+
+**MINIX 3**, commit `4db99f4012570a577414fe2a43697b2f239b699e`, its
+`master` as fetched, and the commit that added its lwIP service,
+`ef8d499e2d2af900e9b2ab297171d7b088652482`.
+
+- Source: <https://github.com/Stichting-MINIX-Research-Foundation/minix/tree/4db99f4012570a577414fe2a43697b2f239b699e/minix/net/lwip>
+- Access: open source, BSD-style (`LICENSE`).
+- sha256: `0e63e84fab1fa7a2d8fed9d96d87c36b20ed1c3003c06dc270ef995cc57fa832`
+  (`minix/net/lwip/lwip.c`) and
+  `90ce7da73c9427845dc86dbb9f88523980180f5c2356f7bc9c562ed9691d0c2c`
+  (`minix/lib/liblwip/lib/lwipopts.h`)
+
+**Fuchsia**, Netstack3 pages, with the date each shows as its last
+update.
+
+| Page | Updated | sha256 |
+|---|---|---|
+| [Netstack3 (2021 roadmap)](https://fuchsia.dev/fuchsia-src/contribute/roadmap/2021/netstack3) | 2025-02-28 | `2e8f17c2cf6940eb00633c70da86eaedbc63a4800e5c8307d74cbcb2acae31f2` |
+| [Contributing to Netstack3](https://fuchsia.dev/fuchsia-src/contribute/contributing-to-netstack/netstack3) | 2025-03-22 | `76afcf2c3a807f30f1456988c12374e76f06548989d83abc1aaaae6d21c82b65` |
+
+- Access: free web pages.
+
+**Vulnerability reports.**
+
+| Report | Page | Date | sha256 |
+|---|---|---|---|
+| AMNESIA:33 | [CERT/CC VU#815128](https://kb.cert.org/vuls/id/815128) | Released 2020-12-08, revised 2025-06-06 | `550073db1391cd5b3ff5aa0644ca0caf8de15e3c235cc9158261e4cd4c9480b0`, the page decompressed |
+| NAME:WRECK | [Forescout's disclosure](https://www.forescout.com/blog/forescout-and-jsof-disclose-new-dns-vulnerabilities-impacting-millions-of-enterprise-and-consumer-devices/) | April 12, 2021 | `f2772de25d80d8fa28ba3c3083b5915d7c7fef461c3194a1de38b72d0d6df9d9` |
+
+- Access: free web pages. CERT/CC has no note for NAME:WRECK that was
+  found, so Forescout's disclosure is the source.
 
 ## Not pinned
 
