@@ -47,7 +47,7 @@ a channel.
 | Event | Eight user-settable signal bits that threads wait on | Waiting across processes needs the scheduler | Decided |
 | Channel | A pair of endpoints carrying messages of bytes and handles | Moving handles between handle tables needs the kernel; DESIGN.md keeps messages between processes in the core | Decided |
 | Port | A queue of packets: user packets, signal packets from watched objects, interrupt packets | One thread must wait on many sources, including interrupts, which only the kernel can deliver | Decided |
-| Job | A node in a tree of processes and jobs that carries a kernel-memory quota and the authority to create processes | Kernel memory is allocated by the kernel, so only the kernel can enforce a limit on it | Decided |
+| Job | A node in a tree of processes and jobs that carries a quota of kernel memory and interrupt vectors, and the authority to create processes | The kernel allocates both, so only the kernel can enforce a limit on them | Decided |
 | Resource | Authority over a range of physical addresses, interrupt sources or I/O ports, or a named system privilege | Device access must not be ambient ([O6](#o6-no-ambient-authority)) | Decided |
 | Interrupt | One interrupt source, delivered as port packets | Interrupt delivery needs privilege | Decided |
 | Initiator | A device's authority to do DMA, used to pin sections for it | Pinning and IOMMU programming need privilege | Decided |
@@ -273,9 +273,13 @@ returns, so creating it confers no authority over anything that already
 exists. Its kernel memory is charged to the caller's job (**Decided**).
 
 A job's quota limits the handles, objects, queued message bytes and pages
-its processes hold. A job's limits are reserved from its parent's when the
-job is created, so a job can never be granted more than its parent has
-left, and charging is local to one job (**Decided**).
+its processes hold, and the message-signalled interrupt vectors
+([ipc.md I7](ipc.md#i7-interrupts)), of which a processor has a fixed
+few. A job's limits are reserved from its parent's when the job is
+created, so a job can never be granted more than its parent has left,
+and charging is local to one job (**Decided**). A call past a quota of
+memory fails with `ERR_NO_MEMORY`, and one past the quota of vectors
+with `ERR_NO_RESOURCES` ([syscalls.md S7](syscalls.md#s7-error-reporting)).
 
 - **Why:** principle 7 has a program's creator pass handles to exactly
   what its derivation declares; that bounds the program only if nothing

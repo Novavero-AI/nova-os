@@ -63,6 +63,12 @@ UINT32 channel_create(UINT32 capacity, UINT32 *first, UINT32 *second);
 UINT32 channel_write(UINT32 channel, const void *bytes, UINT32 byte_count,
                      const HANDLE_TRANSFER *handles, UINT32 handle_count);
 
+/* A new job, a child of parent, which needs JOB_RIGHT_CREATE_JOB, granted
+   limits out of what parent has left (ERR_NO_RESOURCES if it has too
+   few). Its handle carries JOB_RIGHT_WRITE_EXECUTE only if parent's
+   does. */
+UINT32 job_create(UINT32 parent, const JOB_LIMITS *limits, UINT32 *job);
+
 /* A new process in job, which needs JOB_RIGHT_CREATE_PROCESS, with
    PROCESS_OPTION_ bits; PROCESS_OPTION_WRITE_EXECUTE also needs
    JOB_RIGHT_WRITE_EXECUTE. */
@@ -114,7 +120,9 @@ UINT32 section_create_physical(UINT32 resource, UINT64 base, UINT64 size,
 
 /* An interrupt for source, which the IRQ resource covers; options must
    be 0. For a message-signalled source, address and data receive the
-   message the device is to write. Needs RESOURCE_RIGHT_USE. */
+   message the device is to write; its vector counts against the calling
+   process's job's quota until the interrupt's last handle closes
+   (ERR_NO_RESOURCES once the quota is used). Needs RESOURCE_RIGHT_USE. */
 UINT32 interrupt_create(UINT32 resource, UINT64 source, UINT32 options,
                         UINT32 *interrupt, UINT64 *address, UINT32 *data);
 

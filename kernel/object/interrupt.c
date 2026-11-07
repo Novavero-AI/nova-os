@@ -1,6 +1,7 @@
 /* Interrupt objects. Each message-signalled interrupt owns a vector from
-   MSI_VECTOR_FIRST on (x86_64.h) until its last handle goes; from then a
-   message to that vector finds no interrupt and is dropped after its EOI.
+   MSI_VECTOR_FIRST on (x86_64.h), charged to its creator's job, until its
+   last handle goes; from then a message to that vector finds no
+   interrupt and is dropped after its EOI.
    Without interrupt remapping a device can write any vector (ipc.md I7),
    so an old device's message can reach the vector's next owner; drivers
    treat such a packet as a spurious notification. */
@@ -9,7 +10,6 @@
 #include "cpu.h"
 #include "../mm/page.h"
 #include "../x86_64/clock.h"
-#include "../x86_64/serial.h"
 #include "../x86_64/x86_64.h"
 
 /* The interrupt on each message-signalled vector, or 0. */
@@ -20,12 +20,13 @@ static void last_handle(OBJECT *object)
     INTERRUPT *interrupt = (INTERRUPT *)object;
     UINT64 flags = save_and_disable_interrupts();
 
-    if (interrupt->vector)
-        vectors[interrupt->vector - MSI_VECTOR_FIRST] = 0;
+    vectors[interrupt->vector - MSI_VECTOR_FIRST] = 0;
     interrupt->vector = 0;
     if (interrupt->port)
         interrupt_unbind(interrupt);
+    job_uncharge_vector(interrupt->job);
     restore_interrupts(flags);
+    object_release(&interrupt->job->object);
 }
 
 static void destroy(OBJECT *object)
@@ -37,11 +38,12 @@ static const OBJECT_TYPE interrupt_type = {TYPE_INTERRUPT, last_handle,
                                            destroy, 0};
 
 STATUS interrupt_create(const RESOURCE *resource, UINT64 source,
-                        UINT32 options, INTERRUPT **out, UINT64 *address,
-                        UINT32 *data)
+                        UINT32 options, JOB *job, INTERRUPT **out,
+                        UINT64 *address, UINT32 *data)
 {
     INTERRUPT *interrupt;
     UINT64 flags;
+    STATUS status;
     UINT32 i;
 
     if (!resource_covers(resource, RESOURCE_IRQ, source, 1))
@@ -50,9 +52,14 @@ STATUS interrupt_create(const RESOURCE *resource, UINT64 source,
         return ERR_NOT_SUPPORTED;
     if (options != 0)
         return ERR_INVALID_ARGS;
+    status = job_charge_vector(job);
+    if (status != OK)
+        return status;
     interrupt = page_alloc_mapped();
-    if (!interrupt)
+    if (!interrupt) {
+        job_uncharge_vector(job);
         return ERR_NO_MEMORY;
+    }
     flags = save_and_disable_interrupts();
     for (i = 0; i < MSI_VECTOR_COUNT && vectors[i]; i++)
         ;
@@ -61,19 +68,16 @@ STATUS interrupt_create(const RESOURCE *resource, UINT64 source,
     restore_interrupts(flags);
     if (i == MSI_VECTOR_COUNT) {
         page_free_mapped(interrupt);
-        return ERR_NO_MEMORY;
+        job_uncharge_vector(job);
+        return ERR_NO_RESOURCES;
     }
     object_init(&interrupt->object, &interrupt_type);
+    object_retain(&job->object);
+    interrupt->job = job;
     interrupt->source = source;
     interrupt->vector = MSI_VECTOR_FIRST + i;
     interrupt->node.packet.type = PACKET_INTERRUPT;
     apic_msi_message(interrupt->vector, address, data);
-    serial_write("nova: interrupt: vector ");
-    serial_hex(interrupt->vector);
-    serial_write(" for requester ");
-    resource_log_requester(source - INTERRUPT_SOURCE_MSI);
-    serial_write(" unconfined: no interrupt remapping, the device can "
-                 "raise any vector\r\n");
     *out = interrupt;
     return OK;
 }

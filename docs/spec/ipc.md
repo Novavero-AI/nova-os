@@ -326,7 +326,9 @@ or exits.
 1. `interrupt_create(resource, source, options)` makes an interrupt object
    for an ACPI global system interrupt the IRQ resource covers, with its
    trigger mode and polarity in `options`, or for a message-signalled
-   interrupt. For an MSI the kernel allocates a vector and returns the
+   interrupt. For an MSI the kernel allocates a vector, charged to the
+   calling process's job until the interrupt's last handle closes
+   ([objects.md O6](objects.md#o6-no-ambient-authority)), and returns the
    message address and data, which the bus driver writes into the device's
    MSI capability (SDM 13.11).
 2. `interrupt_bind(interrupt, port, key)` delivers the interrupt to one
@@ -583,9 +585,10 @@ pages a device is still writing stay allocated because the pins hold them
 **Decided** that a failed driver is restarted instead of stopping the
 system (DESIGN.md, principle 2). **Decided:** how.
 
-A supervisor starts each driver in a job of its own and keeps the driver's
-resources, initiator and job handles. When the driver's process asserts
-`TERMINATED`:
+A supervisor starts each driver in a job of its own, whose limits grant
+the interrupt vectors the driver needs and no more, and keeps the
+driver's resources, initiator and job handles. When the driver's process
+asserts `TERMINATED`:
 
 1. The kernel has already closed the driver's handles: its interrupts are
    masked, its pins quarantined, its channels closed.

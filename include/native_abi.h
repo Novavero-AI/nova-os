@@ -26,6 +26,7 @@
 #define ERR_PEER_CLOSED 12
 #define ERR_BUFFER_TOO_SMALL 13
 #define ERR_BAD_STATE 14
+#define ERR_NO_RESOURCES 15
 
 /* The numbers of the calls this kernel implements (S8). Number 0 is
    reserved and names no call. */
@@ -39,6 +40,7 @@
 #define CALL_PORT_CREATE 14
 #define CALL_PORT_WAIT 16
 #define CALL_CLOCK_MONOTONIC 17
+#define CALL_JOB_CREATE 18
 #define CALL_PROCESS_CREATE 19
 #define CALL_PROCESS_START 20
 #define CALL_PROCESS_EXIT 21
@@ -244,6 +246,13 @@ typedef struct {
     UINT32 signals;
     UINT32 observed;
 } WAIT_ENTRY;
+
+/* What job_create grants a new job, reserved from what its parent has
+   left (O6): the message-signalled interrupt vectors that the processes
+   in it and its own child jobs may hold at once. */
+typedef struct {
+    UINT32 interrupt_vectors;
+} JOB_LIMITS;
 
 typedef struct {
     UINT64 size;

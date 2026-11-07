@@ -61,7 +61,8 @@ cc -o i386-win32-tcc -I cfg -I tinycc-$rev \
   kernel/object/section.c kernel/object/process.c kernel/object/image.c \
   kernel/object/port.c kernel/object/interrupt.c \
   kernel/object/initiator.c kernel/object/first_process.c \
-  kernel/syscall/syscall.c gfx/gfx.c gfx/limb.c gfx/background.c
+  kernel/object/object_test.c kernel/syscall/syscall.c gfx/gfx.c \
+  gfx/limb.c gfx/background.c
 ./x86_64-win32-tcc -nostdlib -nostdinc -I tinycc-$rev/include \
   -I include -I native -I lib -I drivers -I kernel/random \
   -Wl,-subsystem=native -Wl,-e=init_main -Wl,-section-alignment=1000 \
@@ -96,9 +97,9 @@ same bytes:
 | Image | Size | sha256 |
 |---|---|---|
 | `BOOTX64.EFI` | 28,160 | `28c8fd78bf515d63034962c0bbaa557e2d76dbc614293ff36349264335df2af8` |
-| `kernel.exe` | 118,784 | `db24dad250922a6e24e1e2404b26fa76e85b7a0bba81980d7bf6f4389a624681` |
-| `init.exe` | 31,744 | `0ccd4750ab391994b2db44e1d5ac6813b4c5c926cf6769037b377cdd8c93ee57` |
-| `virtblk.exe` | 14,336 | `f64c62232733bda9ef5e9497fdfd121ae5029f67b460d05ca2bf626939ebdc34` |
+| `kernel.exe` | 121,856 | `3af0886ba43d69b234e097c8a8fa529bf10d4ed1f7a490cd47b84dba547088f7` |
+| `init.exe` | 32,256 | `f57a52fb4b6059808d551e6c7e95e49894251758c214af64f4bc9046bc4272d8` |
+| `virtblk.exe` | 14,336 | `160cab88efa70800ab58f1d36b073b1bbfd816d3727df7758d8e66fbbc1b08df` |
 | `ntdll.dll` | 9,216 | `dcbe0870b27aefe05ef8c4bdf756b94c4f9c73b46667367282a0ade4aafe97b8` |
 
 ## Disk image
@@ -134,8 +135,8 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `3f4c9425b091c5dcdbd7d1a5894a7aed6a2bdd2aebbcbbc817459a6c198ef129` |
-| `disk.vhdx` | 71,303,168 | `c422f533f2eb8127c4ed68c0a3688ee891be808cf4ee1d3edd746a07529ad1dc` |
+| `disk.img` | 67,108,864 | `64bbf02f6ca48a98ce0cb6f89127074cdc3a42e16ae3e758ef86fa8357ede08c` |
+| `disk.vhdx` | 71,303,168 | `a0e9ade5274a8e5bb119acc0630f55c03ecfa062cf6b1567b1415fe4c99e36a6` |
 
 To boot either file in QEMU, replace the `fat:esp` drive in the command
 below with `-drive if=virtio,format=raw,file=disk.img` or

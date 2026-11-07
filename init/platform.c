@@ -30,6 +30,13 @@
 #define DRIVER_SELF_RIGHTS (PROCESS_RIGHT_MAP | RIGHT_TRANSFER)
 #define DRIVER_INITIATOR_RIGHTS (INITIATOR_RIGHT_PIN | RIGHT_TRANSFER)
 
+/* The interrupt vectors the driver's job may hold: the virtio block
+   driver takes one, for its request queue, and none for configuration
+   changes. */
+#define DRIVER_INTERRUPT_VECTORS 1
+
+static const JOB_LIMITS driver_limits = {DRIVER_INTERRUPT_VECTORS};
+
 typedef struct {
     UINT32 requester;
     UINT64 config;          /* physical */
@@ -277,16 +284,16 @@ static void say_grant(const FUNCTION *found,
     say(", its MSIs and an initiator with PIN\r\n");
 }
 
-/* Start the driver from file and wait for it to end. Returns its exit
-   code, or 0 if it did not start. */
-static UINT32 run_driver(const PLATFORM *platform, const BOOT_FILE_VIEW *file,
-                         const FUNCTION *found, PCI_DEVICE_BOOTSTRAP *device,
-                         UINT32 initiator)
+/* Start the driver from file in job and wait for it to end. Returns its
+   exit code, or 0 if it did not start. */
+static UINT32 run_in_job(const PLATFORM *platform, UINT32 job,
+                         const BOOT_FILE_VIEW *file, const FUNCTION *found,
+                         PCI_DEVICE_BOOTSTRAP *device, UINT32 initiator)
 {
     HANDLE_TRANSFER handles[PCI_HANDLES_MAX];
     PROGRAM program;
     UINT32 mine, theirs, count, observed, state, exit_code;
-    UINT32 status = loader_load(platform->job, file, &program);
+    UINT32 status = loader_load(job, file, &program);
 
     if (status != OK) {
         say("nova-init: cannot load the driver, status ");
@@ -326,6 +333,27 @@ static UINT32 run_driver(const PLATFORM *platform, const BOOT_FILE_VIEW *file,
     say("nova-init: virtio block driver ended, exit code ");
     say_number(exit_code);
     say("\r\n");
+    return exit_code;
+}
+
+/* Run the driver in a job of its own, a child of the root job that
+   grants it driver_limits, as I10 has a supervisor do. Returns its exit
+   code, or 0 if it did not start. */
+static UINT32 run_driver(const PLATFORM *platform, const BOOT_FILE_VIEW *file,
+                         const FUNCTION *found, PCI_DEVICE_BOOTSTRAP *device,
+                         UINT32 initiator)
+{
+    UINT32 job, exit_code;
+    UINT32 status = job_create(platform->job, &driver_limits, &job);
+
+    if (status != OK) {
+        say("nova-init: cannot create the driver's job, status ");
+        say_number(status);
+        say("\r\n");
+        return 0;
+    }
+    exit_code = run_in_job(platform, job, file, found, device, initiator);
+    handle_close(job);
     return exit_code;
 }
 

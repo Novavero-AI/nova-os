@@ -382,7 +382,7 @@ result registers are 0 except where its description says otherwise
 | 4 | `ERR_BAD_HANDLE` | The value names no handle in the caller's table |
 | 5 | `ERR_WRONG_TYPE` | The handle names an object of another type |
 | 6 | `ERR_ACCESS_DENIED` | The handle lacks a right the call needs, or the rights asked for are not a subset of the handle's |
-| 7 | `ERR_NO_MEMORY` | Kernel memory or the job's quota is exhausted |
+| 7 | `ERR_NO_MEMORY` | Kernel memory, or the job's quota of handles, objects, message bytes or pages, is exhausted |
 | 8 | `ERR_OUT_OF_RANGE` | A count past a fixed limit (`CHANNEL_MAX_BYTES`, `CHANNEL_MAX_HANDLES`, `WAIT_MANY_MAX`, `DEBUG_WRITE_MAX_BYTES`), or an offset past an object's size or a resource's range |
 | 9 | `ERR_SHOULD_WAIT` | The operation would block: a queue is empty or full |
 | 10 | `ERR_TIMED_OUT` | The deadline passed |
@@ -390,6 +390,7 @@ result registers are 0 except where its description says otherwise
 | 12 | `ERR_PEER_CLOSED` | The other end of a channel is closed |
 | 13 | `ERR_BUFFER_TOO_SMALL` | A receive buffer cannot hold the message |
 | 14 | `ERR_BAD_STATE` | The object's state forbids the call: a thread already started, an interrupt already bound, a process already terminated |
+| 15 | `ERR_NO_RESOURCES` | A resource other than memory is exhausted: the job's quota of interrupt vectors, or the vectors the kernel has for message-signalled interrupts |
 
 The same codes report the outcome of an I/O request in its completion
 message ([ipc.md I9](ipc.md#i9-asynchronous-io-requests)). A Win32-style
@@ -468,6 +469,16 @@ column marks an array the kernel fills in user memory.
 | 43 | `task_exception_channel` | process or job | handle | `TERMINATE` | Faults are raised by the processor and reach the kernel first ([objects.md O10](objects.md#o10-object-lifetime)) |
 | 44 | `thread_set_tls_base` | base | | | Without `WRFSBASE`, a 64-bit segment base is loaded with `WRMSR`, at CPL 0 only (S10) |
 
+`job_create`'s limits is the address of a `JOB_LIMITS` record in user
+memory: `interrupt_vectors`, the message-signalled vectors that the
+processes in the new job and its own child jobs may hold at once. The
+limits are reserved from what the parent job has left, and the call
+fails with `ERR_NO_RESOURCES` if it has too few; they return to the
+parent when the job is destroyed ([objects.md O6](objects.md#o6-no-ambient-authority)).
+The root job holds every vector the kernel has for message-signalled
+interrupts. The other quotas O6 lists join the record as the kernel
+enforces them.
+
 `process_create`'s options are `PROCESS_OPTION_32_BIT` (1), whose threads
 run 32-bit code (S11), and `PROCESS_OPTION_WRITE_EXECUTE` (2), whose
 mappings may be writable and executable at once
@@ -489,7 +500,9 @@ larger range takes several sections. `section_pin`'s options are
 for a message-signalled source, numbered as
 [ipc.md I6](ipc.md#i6-device-memory-and-io-ports) gives, and fails with
 `ERR_NOT_SUPPORTED` for a global system interrupt, which this kernel does
-not route yet. `pin_release` ends the pin and removes its handle
+not route yet. The vector it allocates is charged to the calling
+process's job until the interrupt's last handle closes; past the job's
+quota, or with no vector free, the call fails with `ERR_NO_RESOURCES`. `pin_release` ends the pin and removes its handle
 together, so no other thread of the process can quarantine it between
 the two.
 

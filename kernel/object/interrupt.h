@@ -6,6 +6,7 @@
 #ifndef NOVA_INTERRUPT_H
 #define NOVA_INTERRUPT_H
 
+#include "job.h"
 #include "port.h"
 #include "resource.h"
 
@@ -20,6 +21,7 @@ struct INTERRUPT {
     OBJECT object;
     UINT64 source;
     UINT32 vector;      /* 0 once the last handle has gone */
+    JOB *job;           /* charged for the vector, held while it is */
     PORT *port;         /* while bound, holding a reference */
     INTERRUPT *next_bound;
     PACKET_NODE node;   /* the one packet it queues */
@@ -29,13 +31,15 @@ struct INTERRUPT {
 
 /* interrupt_create: an interrupt for source, which resource, an IRQ
    resource, must cover, with options, which must be 0 for a
-   message-signalled source. Allocates a vector and reports the message
-   address and data the device is to write. Returns OK; ERR_OUT_OF_RANGE
-   if resource does not cover source; ERR_NOT_SUPPORTED for a global
-   system interrupt; ERR_INVALID_ARGS for options other than 0; or
-   ERR_NO_MEMORY if no vector or page is free. */
+   message-signalled source. Allocates a vector, charged to job, the
+   creating process's (docs/spec/objects.md O6), until the interrupt's
+   last handle goes, and reports the message address and data the device
+   is to write. Returns OK; ERR_OUT_OF_RANGE if resource does not cover
+   source; ERR_NOT_SUPPORTED for a global system interrupt;
+   ERR_INVALID_ARGS for options other than 0; ERR_NO_RESOURCES if job
+   holds its quota of vectors or no vector is free; or ERR_NO_MEMORY. */
 STATUS interrupt_create(const RESOURCE *resource, UINT64 source,
-                        UINT32 options, INTERRUPT **interrupt,
+                        UINT32 options, JOB *job, INTERRUPT **interrupt,
                         UINT64 *address, UINT32 *data);
 
 /* interrupt_bind: deliver interrupt's packets, carrying key, to port.

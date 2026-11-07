@@ -121,6 +121,12 @@ _Noreturn void process_fault(UINT32 vector);
    drop the scheduler's reference to its thread object. */
 void process_thread_reaped(THREAD *thread);
 
+/* The boot-time self-test of kernel objects (object_test.c), run before
+   the first process. It logs each result to the serial port, halts with
+   the reason at the first failure, and returns when every check
+   passes. */
+void object_self_test(void);
+
 /* The first process (docs/spec/ipc.md I6), as a kernel thread's entry
    whose argument is the BOOT_INFO: load the image nova-boot read from
    \nova\init.exe into a new process, pass it its bootstrap message, run

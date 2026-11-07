@@ -196,7 +196,7 @@ static void send_bootstrap(PROCESS *process, JOB *job, ENDPOINT *kernel_end,
     handles[1].object = &process->object;
     handles[1].rights = SELF_RIGHTS;
     handles[2].object = &job->object;
-    handles[2].rights = ROOT_JOB_RIGHTS;
+    handles[2].rights = JOB_RIGHTS;
     handles[BOOTSTRAP_ROOT_MMIO].object =
         root_resource(RESOURCE_MMIO, 0, 1ULL << paging_physical_bits());
     handles[BOOTSTRAP_ROOT_MMIO].rights = RESOURCE_RIGHTS;

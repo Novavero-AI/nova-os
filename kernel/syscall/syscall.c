@@ -224,6 +224,45 @@ static STATUS clock_monotonic_call(const UINT64 *arguments, UINT64 *results)
     return OK;
 }
 
+/* job_create(parent, limits): a handle, which carries WRITE_EXECUTE only
+   if the parent's handle does (O5, rule 1). The parent's rights are read
+   with its check, interrupts disabled across both, so no other thread
+   narrows them in between. */
+static STATUS job_create_call(const UINT64 *arguments, UINT64 *results)
+{
+    HANDLE_TABLE *table = caller_handles();
+    UINT32 value = (UINT32)arguments[0];
+    JOB_LIMITS limits;
+    OBJECT *parent, *same;
+    JOB *job;
+    UINT32 rights, index;
+    UINT64 flags = save_and_disable_interrupts();
+    STATUS status = handle_get(table, value, TYPE_JOB, JOB_RIGHT_CREATE_JOB,
+                               &parent);
+
+    if (status == OK)
+        handle_peek(table, value, &same, &rights);
+    restore_interrupts(flags);
+    if (status != OK)
+        return status;
+    status = copy_from_user(&limits, arguments[1], sizeof limits);
+    if (status == OK)
+        status = handle_reserve(table, &index);
+    if (status == OK) {
+        status = job_create((JOB *)parent, &limits, &job);
+        if (status == OK)
+            give(index, &job->object,
+                 (rights & JOB_RIGHT_WRITE_EXECUTE)
+                     ? JOB_RIGHTS
+                     : JOB_RIGHTS & ~JOB_RIGHT_WRITE_EXECUTE,
+                 &results[0]);
+        else
+            handle_unreserve(table, index);
+    }
+    object_release(parent);
+    return status;
+}
+
 /* process_create(job, options): a handle. PROCESS_OPTION_WRITE_EXECUTE
    is among the rights the call needs: the job handle's WRITE_EXECUTE
    (O5). */
@@ -457,8 +496,20 @@ static STATUS section_create_physical_call(const UINT64 *arguments,
     return status;
 }
 
+/* A device's interrupts are unconfined without interrupt remapping
+   (ipc.md I7), which this kernel does not drive. */
+static void log_unconfined(const INTERRUPT *interrupt)
+{
+    serial_write("nova: interrupt: vector ");
+    serial_hex(interrupt->vector);
+    serial_write(" for requester ");
+    resource_log_requester(interrupt->source - INTERRUPT_SOURCE_MSI);
+    serial_write(" unconfined: no interrupt remapping, the device can "
+                 "raise any vector\r\n");
+}
+
 /* interrupt_create(resource, source, options): a handle, the MSI address
-   and the MSI data. */
+   and the MSI data. The vector is charged to the caller's job. */
 static STATUS interrupt_create_call(const UINT64 *arguments, UINT64 *results)
 {
     HANDLE_TABLE *table = caller_handles();
@@ -474,9 +525,11 @@ static STATUS interrupt_create_call(const UINT64 *arguments, UINT64 *results)
     status = handle_reserve(table, &index);
     if (status == OK) {
         status = interrupt_create((RESOURCE *)resource, arguments[1],
-                                  (UINT32)arguments[2], &interrupt, &address,
-                                  &data);
+                                  (UINT32)arguments[2],
+                                  process_current()->job, &interrupt,
+                                  &address, &data);
         if (status == OK) {
+            log_unconfined(interrupt);
             give(index, &interrupt->object, INTERRUPT_RIGHTS, &results[0]);
             results[1] = address;
             results[2] = data;
@@ -681,6 +734,7 @@ static const CALL_ENTRY calls[CALL_COUNT] = {
     [CALL_PORT_CREATE] = {port_create_call, 1, 0},
     [CALL_PORT_WAIT] = {port_wait_call, 3, 0},
     [CALL_CLOCK_MONOTONIC] = {clock_monotonic_call, 0, 0},
+    [CALL_JOB_CREATE] = {job_create_call, 2, 0},
     [CALL_PROCESS_CREATE] = {process_create_call, 2, 0},
     [CALL_PROCESS_START] = {process_start_call, 6, 0},
     [CALL_PROCESS_EXIT] = {process_exit_call, 1, 1},

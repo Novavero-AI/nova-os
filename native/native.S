@@ -153,6 +153,17 @@ process_create:
     movl %edx, (%rcx)
     ret
 
+/* UINT32 job_create(UINT32 parent, const JOB_LIMITS *limits, UINT32 *job) */
+    .globl job_create
+job_create:
+    movq %r8, HOME_R8(%rsp)
+    movq %rcx, %r10
+    movl $CALL_JOB_CREATE, %eax
+    syscall
+    movq HOME_R8(%rsp), %rcx
+    movl %edx, (%rcx)
+    ret
+
 /* UINT32 process_start(UINT32 process, UINT32 thread, UINT64 entry,
                         UINT64 stack, UINT32 bootstrap, UINT64 argument) */
     .globl process_start
