@@ -47,6 +47,15 @@ void gfx_boot_screen(const SCREEN *screen, SPINNER *spinner);
 /* Draw the spinner's current frame and advance its head. */
 void gfx_spinner_step(const SCREEN *screen, SPINNER *spinner);
 
+/* Make a finished frame's stores visible. The kernel maps the framebuffer
+   write-combining (docs/spec/boot-protocol.md), and stores to WC memory
+   can wait in the processor's write-combining buffers until a serializing
+   event such as SFENCE, so software must empty them itself where the data
+   has to reach memory (SDM Vol. 3A 14.3 and 14.3.1). Every function here
+   that completes a frame calls it, and so does any caller that writes
+   pixels directly. */
+void gfx_flush(void);
+
 /* The part of the screen the boot screen draws on, clipped to the screen:
    every pixel outside it is black. */
 void gfx_boot_bounds(const SCREEN *screen, const SPINNER *spinner,

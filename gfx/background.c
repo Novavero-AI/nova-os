@@ -324,6 +324,7 @@ static void fade(const SCREEN *screen, const RECT *box, PIXEL_PAGE *image,
         timer_sleep_until(began + weight * FADE_TICKS / FADE_FRAMES);
         frame = rdtsc();
         fade_frame(screen, box, image, saved, weight);
+        gfx_flush();
         took = rdtsc() - frame;
         times->busy += took;
         if (took > times->busiest)
@@ -352,6 +353,7 @@ void background_fade_in(const BOOT_INFO *info)
         chain_free(image);
         start = rdtsc();
         draw_onscreen(screen, &limb);
+        gfx_flush();
         serial_write("nova: background drawn in ");
         serial_ms(rdtsc() - start, info->tsc_per_ms);
         serial_write(", with no memory to fade it in\r\n");

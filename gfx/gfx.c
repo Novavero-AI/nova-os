@@ -452,6 +452,12 @@ void gfx_spinner_step(const SCREEN *screen, SPINNER *sp)
             put(screen, x, y, brightness, coverage(&ring, 1, x, y));
         }
     sp->head = (sp->head + STEP) % TURN;
+    gfx_flush();
+}
+
+void gfx_flush(void)
+{
+    __asm__ volatile("sfence" : : : "memory");
 }
 
 /* ------------------------------------------------------------------------ */
