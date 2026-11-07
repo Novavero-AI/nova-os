@@ -78,7 +78,8 @@ mixed in turn.
 ## Rendering
 
 The prototypes need Python 3 and its standard library, and nova-os
-fonts, as `tools/mkfont.c` writes them:
+fonts, which README.md's Build section writes in `inter/` of its
+directory:
 
 ```sh
 python3 -I design/text/sheet.py design/text/sheet.txt FONTS sheet.ppm

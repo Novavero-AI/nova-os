@@ -148,6 +148,20 @@ jobs:
       - name: TinyCC gives no warning
         run: ci/tinycc-warnings.sh "$RUNNER_TEMP/warnings"
 
+      - name: lib/ draws its text and outlines as their prototype does
+        run: design/text/check-text.sh "$RUNNER_TEMP/reproduce/inter"
+
+      - name: Install FreeType
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libfreetype-dev
+          dpkg-query --show libfreetype-dev
+
+      - name: lib/'s text is within the bounds of FreeType's
+        if: runner.os == 'Linux'
+        run: design/text/compare-freetype.sh "$RUNNER_TEMP/reproduce/inter"
+
       - name: Upload the disk images
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

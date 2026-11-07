@@ -162,9 +162,29 @@ services=$(./mknar services nova-services dir bin \
   dir share link share/greeting /store/$greeting \
   link share/greeting-relative ../../$greeting \
   link share/greeting-windows C:/nix/store/$greeting
+curl -L -o Inter-4.1.zip \
+  https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
+unzip -o -j -d inter Inter-4.1.zip LICENSE.txt \
+  extras/ttf/Inter-Regular.ttf extras/ttf/Inter-Medium.ttf \
+  extras/ttf/Inter-SemiBold.ttf extras/ttf/InterDisplay-Light.ttf \
+  extras/ttf/InterDisplay-Regular.ttf extras/ttf/InterDisplay-SemiBold.ttf
+cc -o mkfont -I include tools/mkfont.c
+for face in Inter-Regular Inter-Medium Inter-SemiBold InterDisplay-Light \
+  InterDisplay-Regular InterDisplay-SemiBold; do
+  ./mkfont inter/$face.ttf inter/$face.nvf 20-7E A0-24F 370-3FF \
+    400-482 48A-4FF 2000-209F 20A0-20CF 2190-2193
+done
+fonts=$(./mknar fonts inter-4.1 dir share dir share/fonts \
+  file share/fonts/LICENSE.txt inter/LICENSE.txt \
+  file share/fonts/Inter-Regular.nvf inter/Inter-Regular.nvf \
+  file share/fonts/Inter-Medium.nvf inter/Inter-Medium.nvf \
+  file share/fonts/Inter-SemiBold.nvf inter/Inter-SemiBold.nvf \
+  file share/fonts/InterDisplay-Light.nvf inter/InterDisplay-Light.nvf \
+  file share/fonts/InterDisplay-Regular.nvf inter/InterDisplay-Regular.nvf \
+  file share/fonts/InterDisplay-SemiBold.nvf inter/InterDisplay-SemiBold.nvf)
 ./mkstore store.img $services greeting.narinfo greeting.nar \
   services.narinfo services.nar hello.narinfo hello.nar \
-  session.narinfo session.nar
+  session.narinfo session.nar fonts.narinfo fonts.nar
 ```
 
 `-shared` makes TinyCC write base relocations, which the firmware needs to
@@ -208,9 +228,10 @@ store paths: `nova-services`, holding the store service and the
 namespace server, which the image's header names as the programs the
 first process starts; `greeting`, a file; `hello`, holding the test
 program, which records the greeting's path and so refers to it, and
-links to the greeting; and `nova-session`, holding the accounts
-service, login and the shell. `tools/mknar.c` writes each path as nova-nix
-exports one, a NAR and a narinfo, and prints its base name;
+links to the greeting; `nova-session`, holding the accounts service,
+login and the shell; and `inter-4.1`, holding in `share/fonts` the
+interface's typeface and its licence. `tools/mknar.c` writes each path
+as nova-nix exports one, a NAR and a narinfo, and prints its base name;
 `tools/mkstore.c` checks each NAR against its narinfo and writes the
 image. nova-nix does not run in this build, so mknar stands in for its
 export: every path is content-addressed, named from its NAR hash and its
@@ -222,7 +243,24 @@ block above. Each build gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `store.img` | 180,224 | `406588b65df4919068c238e7fd25c9424623a0fb0f6505e072969b21c354b28d` |
+| `store.img` | 1,540,096 | `079065fac794800a284ebfe1103ec6be369de4181baf4f85caddeb59057ba530` |
+
+The typeface is Inter 4.1, fetched from its release. `tools/mkfont.c`
+converts the six static faces the interface's designs set type in into
+nova-os fonts ([docs/spec/font-format.md](docs/spec/font-format.md))
+holding the Unicode blocks [docs/spec/ui.md](docs/spec/ui.md) U3 names,
+and Inter's `LICENSE.txt`, the SIL Open Font License, goes beside
+them. The archive and the fonts written from it are:
+
+| File | Size | sha256 |
+|---|---|---|
+| `Inter-4.1.zip` | 33,707,794 | `9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e` |
+| `inter/Inter-Regular.nvf` | 221,460 | `e26ce9fb0a2b3d72978869d29d87ef0bc3c25fafb6ca1b48cdf355398258fcc4` |
+| `inter/Inter-Medium.nvf` | 223,690 | `f7a090de5bc897970ac916b33cc4556ad5934cba8ebaa6c2fe6c6c6e0ba58ef4` |
+| `inter/Inter-SemiBold.nvf` | 221,350 | `ba321bb8a0f80e3afeedbe199c9a781222d2ede9bd54aed28784f5bafdef323c` |
+| `inter/InterDisplay-Light.nvf` | 221,062 | `2dd1922dbcb9c542d81557d9ef08e6d97623cbe7ce43e4b3d752e83d7d92d2ff` |
+| `inter/InterDisplay-Regular.nvf` | 218,790 | `87960207a36403da4c52f6d63186e7991290b3876bf56ba6594a5a9faa0bde86` |
+| `inter/InterDisplay-SemiBold.nvf` | 220,944 | `113ec8001ed9eaedebf7c3ce54014580c4eb785b0aba4ca59e58943f23fa0e8f` |
 
 ## Disk image
 
@@ -328,10 +366,10 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `7f7656b9e9bb417d397254f9b8fee76f36dac73cb574f5ddf39819f77c20458d` |
-| `disk.vhdx` | 71,303,168 | `de07a7c368b3aae8402de4890732cea5cd2b921e008c424f407fb7ec4f2e9285` |
-| `chain.img` | 67,108,864 | `7c0550a19a933b13da0a58cb8ebc98e4f840792d9e02004fd7cac8a5c16e061a` |
-| `chain.vhdx` | 71,303,168 | `8691e498e27474967104b5ef89e57ecbed51cd6fd874b8ebd516b9f8086038f8` |
+| `disk.img` | 67,108,864 | `fb56f98f93a99ed6f8bd0278e84456f237d3abf7b3fe53e225a8bcbf13b51688` |
+| `disk.vhdx` | 71,303,168 | `3e468eec6d30f1539d70fc0dea1892cbd057acad49909e3157a1f5052030f66e` |
+| `chain.img` | 67,108,864 | `c928ec58f2e6ece84e50c8321fcc71c836f29bfe7109863d357d50f34b4869ff` |
+| `chain.vhdx` | 71,303,168 | `04e3e4aeb740d8203b417e70dc160ccf98d8c3ab1f42d5d04ee54430214235ad` |
 | `data.img` | 67,108,864 | `fc0e119b885b341b5385e351b1f334c4da7cb921ef2dfbd994e9e20917e27804` |
 
 ## Run
