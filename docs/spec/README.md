@@ -26,6 +26,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [display.md](display.md) | Who holds the display from boot to the desktop, the compositor, windows and their buffers, composition, the pointer, routing input, the secure attention key, capture, the trusted interface, replay, the GPU path and the build plan |
 | [ui.md](ui.md) | The toolkit: the rasterizer's outlines, the font and its format, text layout, the interface as data and its renderer, widgets, layout, themes, accessibility, the HUD and the first programs |
 | [network.md](network.md) | The virtio network driver and its frame protocol, the network service's TCP/IP stack and the resolver, grants and sockets as channels, replay, the threat model and limits, and the order of work with its CI checks |
+| [font-format.md](font-format.md) | The nova-os font: its header, character map, glyphs, outlines and kerning, and its conversion from TrueType |
 
 ## Firmware and platform
 
@@ -620,6 +621,12 @@ last update ("OpenType").
 | [cmap - Character To Glyph Index Mapping Table][ot-cmap] | 2024-05-29 | `6c99893737f661dc7c7d339e882e22a160eb1ee4d53f05c7a2e289afab4e838a` |
 | [hmtx - Horizontal metrics table][ot-hmtx] | 2023-01-10 | `667ced0913a7b8855b75af10ba40887f69967f156b3041a4123d166b0ae7c3aa` |
 | [OS/2 - OS/2 and Windows metrics table][ot-os2] | 2024-05-31 | `32085ba221973bc029e60f40c0c153b5003a45f3f60f9a8514df209865316281` |
+| [OpenType font file][ot-otff] | 2024-05-29 | `efda208b68f88620491834411e0459b2f1fa93cc4a199c1c732924928e3b625d` |
+| [head - Font header table][ot-head] | 2024-05-29 | `3533ad42b52667246f6c657d4b2d238f6c448a42bb9003b14c8772bc8784a370` |
+| [hhea - Horizontal header table][ot-hhea] | 2023-01-10 | `d5082b84f0e5df86ed1e3f3e8ce43d4dfbdb95751a0aea7def1ebf5ae3b53bb6` |
+| [maxp - Maximum profile table][ot-maxp] | 2021-10-26 | `1df9197a4c56aa664cd9cd7e2c54619dfbb06da15e2769b5a97bbd22c3e3f6cc` |
+| [loca - Index to location][ot-loca] | 2024-03-15 | `2de02d6928b4a5171ffd1f572f5ba93b2fde517b25b82723ac640bfc92fb6465` |
+| [GDEF - Glyph definition table][ot-gdef] | 2024-05-29 | `2cc0896d6b47675f1ce482a988b82cdfe3a8c232098cc90e54dabf868c146a7b` |
 
 [ot-ttch01]: https://learn.microsoft.com/en-us/typography/opentype/spec/ttch01
 [ot-glyf]: https://learn.microsoft.com/en-us/typography/opentype/spec/glyf
@@ -629,6 +636,12 @@ last update ("OpenType").
 [ot-cmap]: https://learn.microsoft.com/en-us/typography/opentype/spec/cmap
 [ot-hmtx]: https://learn.microsoft.com/en-us/typography/opentype/spec/hmtx
 [ot-os2]: https://learn.microsoft.com/en-us/typography/opentype/spec/os2
+[ot-otff]: https://learn.microsoft.com/en-us/typography/opentype/spec/otff
+[ot-head]: https://learn.microsoft.com/en-us/typography/opentype/spec/head
+[ot-hhea]: https://learn.microsoft.com/en-us/typography/opentype/spec/hhea
+[ot-maxp]: https://learn.microsoft.com/en-us/typography/opentype/spec/maxp
+[ot-loca]: https://learn.microsoft.com/en-us/typography/opentype/spec/loca
+[ot-gdef]: https://learn.microsoft.com/en-us/typography/opentype/spec/gdef
 
 - Access: free web pages.
 - Used by: [ui.md](ui.md): TrueType's quadratic outlines and nonzero
@@ -636,7 +649,10 @@ last update ("OpenType").
   outlines (`CFF2`), pair adjustment and mark attachment (`GPOS`), the
   order of lookups (common table formats), glyph 0 for a missing
   character (`cmap`), advances (`hmtx`), line metrics (`OS/2`), and the
-  converter (`tools/mkfont.c`).
+  converter (`tools/mkfont.c`); [font-format.md](font-format.md) and
+  the converter: the table directory (OpenType font file), `head`,
+  `hhea`, `maxp`, `loca` and `glyf` for the outlines, `GDEF`'s glyph
+  classes, and the tables above.
 
 **TrueType Reference Manual** (Apple Developer), which shows no version
 or date ("Apple TrueType"), fetched on November 7, 2026.
@@ -704,7 +720,8 @@ last updated October 23, 2022 (the FreeType project) ("FreeType").
   and `eae85382a238278ed2a1002a049f09d3f59b59c4e9d112e908221506c92c44bc`
 - Used by: [ui.md](ui.md): blending coverage in linear light, the
   thinning it causes and stem darkening; vertical-only snapping;
-  implied on-curve points (Glyph Conventions, 1.a).
+  implied on-curve points (Glyph Conventions, 1.a), as
+  [font-format.md](font-format.md) and `lib/typeface.c` read them.
 
 **Unicode Standard Annex #9: Unicode Bidirectional Algorithm**,
 revision 52, for Unicode 18.0.0, September 1, 2026 ("UAX #9").
