@@ -1,11 +1,14 @@
 /* COM1 as the firmware left it configured. */
 
 #include "serial.h"
+#include "clock.h"
 #include "cpu.h"
 
 #define COM1 0x3f8
 #define LINE_STATUS 5
 #define TRANSMIT_EMPTY 0x20
+
+#define TENTHS_PER_MS 10
 
 static void put(UINT8 byte)
 {
@@ -49,6 +52,16 @@ void serial_number(UINT64 n)
         n /= 10;
     } while (n);
     serial_write(digits + i);
+}
+
+void serial_ms(UINT64 ns)
+{
+    UINT64 tenths = ns * TENTHS_PER_MS / NS_PER_MS;
+
+    serial_number(tenths / TENTHS_PER_MS);
+    serial_write(".");
+    serial_number(tenths % TENTHS_PER_MS);
+    serial_write(" ms");
 }
 
 #define HEX_DIGITS_MAX 16

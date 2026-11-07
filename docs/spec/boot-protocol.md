@@ -212,11 +212,11 @@ alignments of 4096 and 512 bytes, without `-shared`.
 ### Startup done
 
 The kernel keeps the boot screen's spinner turning until the first
-process reports that its startup is done, then stops it, fades the
-boot screen into the desktop background (`kernel/main.c`) and releases
-the display. The first process does not end there: it stays as the
-supervisor of the drivers it started
-([ipc.md I10](ipc.md#i10-driver-failure-and-restart)).
+process reports that its startup is done and the kernel has drawn the
+desktop background offscreen, then stops it, fades the boot screen into
+the background (`kernel/main.c`) and releases the display. The first
+process does not end there: it stays as the supervisor of the drivers
+it started ([ipc.md I10](ipc.md#i10-driver-failure-and-restart)).
 
 The report is one message on the first process's bootstrap channel:
 `BOOTSTRAP_DONE_SIZE` (4) bytes, a transaction ID of 0, and no handles
