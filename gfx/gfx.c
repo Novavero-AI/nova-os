@@ -1,14 +1,20 @@
 /* The boot screen: on black, the wordmark "nova" in anti-aliased strokes
    and a thin ring whose bright head sweeps clockwise over a faint track.
    Geometry is in eighths of a pixel, and a pixel's coverage is how many of
-   16 sample points fall inside a stroke; inside tests compare squared
-   distances, so no square root is taken. */
+   16 sample points fall inside a stroke; only pixels near a stroke's edge
+   are sampled. Inside tests compare squared distances, so no
+   square root is taken. */
 
 #include "gfx.h"
 
 #define SUBPIXEL 8
 #define SAMPLES 4
 #define COVERAGE_MAX (SAMPLES * SAMPLES)
+
+/* How far a sample point can lie from its pixel's centre, in eighths,
+   rounded up: the samples sit 1, 3, 5 and 7 eighths into the pixel on
+   each axis, at most 3 from the centre's 4, so 3 * sqrt(2) ~ 4.24 away. */
+#define SAMPLE_REACH 5
 
 typedef struct {
     INT64 r, g, b;
@@ -51,29 +57,37 @@ typedef struct {
     INT64 ax, ay, bx, by, r;
 } SHAPE;
 
-static int inside(const SHAPE *s, INT64 px, INT64 py)
+/* Whether (px, py) lies inside s with its radius r, and an ARCH's cut,
+   moved outward by grow eighths, or inward where grow is negative. For a
+   distance d, a point within d of the shape lies inside it grown by d,
+   and a point within d of one inside it shrunk by d lies inside the
+   shape: r bounds the distance to a segment or a circle, which changes no
+   more than the point moves, and the cut bounds y alone. */
+static int inside(const SHAPE *s, INT64 px, INT64 py, INT64 grow)
 {
-    INT64 qx = px - s->ax, qy = py - s->ay;
+    INT64 qx = px - s->ax, qy = py - s->ay, r = s->r + grow;
 
+    if (r < 0)
+        return 0;
     if (s->kind == CAPSULE) {
         INT64 dx = s->bx - s->ax, dy = s->by - s->ay;
         INT64 dot = qx * dx + qy * dy, len2 = dx * dx + dy * dy;
         INT64 cross;
 
         if (dot <= 0)
-            return qx * qx + qy * qy <= s->r * s->r;
+            return qx * qx + qy * qy <= r * r;
         if (dot >= len2) {
             INT64 ex = px - s->bx, ey = py - s->by;
-            return ex * ex + ey * ey <= s->r * s->r;
+            return ex * ex + ey * ey <= r * r;
         }
         /* The squared distance to the line is cross^2 / len2. */
         cross = qx * dy - qy * dx;
-        return cross * cross <= s->r * s->r * len2;
+        return cross * cross <= r * r * len2;
     } else {
         INT64 d2 = qx * qx + qy * qy;
-        INT64 lo = s->bx - s->r, hi = s->bx + s->r;
+        INT64 lo = s->bx - r, hi = s->bx + r;
 
-        if (s->kind == ARCH && py > s->ay)
+        if (s->kind == ARCH && py > s->ay + grow)
             return 0;
         if (lo < 0)
             lo = 0;
@@ -81,18 +95,32 @@ static int inside(const SHAPE *s, INT64 px, INT64 py)
     }
 }
 
+/* How many of pixel (x, y)'s sample points lie inside any of the shapes.
+   Every sample lies within SAMPLE_REACH of the pixel's centre, so a centre
+   inside a shape shrunk by SAMPLE_REACH means all of them do, and a centre
+   outside every shape grown by SAMPLE_REACH means none does; only the
+   pixels between are sampled. */
 static INT64 coverage(const SHAPE *shapes, int count, INT64 x, INT64 y)
 {
+    INT64 cx = x * SUBPIXEL + SUBPIXEL / 2, cy = y * SUBPIXEL + SUBPIXEL / 2;
     INT64 sx, sy, hits = 0;
-    int i;
+    int i, near = 0;
 
+    for (i = 0; i < count; i++) {
+        if (inside(&shapes[i], cx, cy, -SAMPLE_REACH))
+            return COVERAGE_MAX;
+        if (inside(&shapes[i], cx, cy, SAMPLE_REACH))
+            near = 1;
+    }
+    if (!near)
+        return 0;
     for (sy = 0; sy < SAMPLES; sy++)
         for (sx = 0; sx < SAMPLES; sx++) {
             INT64 px = x * SUBPIXEL + sx * (SUBPIXEL / SAMPLES) + 1;
             INT64 py = y * SUBPIXEL + sy * (SUBPIXEL / SAMPLES) + 1;
 
             for (i = 0; i < count; i++)
-                if (inside(&shapes[i], px, py)) {
+                if (inside(&shapes[i], px, py, 0)) {
                     hits++;
                     break;
                 }

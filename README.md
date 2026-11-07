@@ -49,8 +49,8 @@ gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `BOOTX64.EFI` | 21,504 | `50c723d73886d96f27428de3f1878baf644858b015d104d44a754b15d673d8a1` |
-| `kernel.exe` | 22,016 | `26b53a7ffe1752a6dc2f7e03fd85bc5f7f924f6197dca3021624ec075916ea6c` |
+| `BOOTX64.EFI` | 21,504 | `e131892cfef3d8ff077820d8bce599b61386cec7a442b0a1db61392805bc046b` |
+| `kernel.exe` | 22,016 | `ac1996c1af7970de0ffb522246811e859179d15243d2ef70786c665bc3d3899f` |
 
 ## Disk image
 
@@ -70,8 +70,8 @@ From the images above, each run gives the same bytes:
 
 | Image | Size | sha256 |
 |---|---|---|
-| `disk.img` | 67,108,864 | `b8d28f3bcba32f5ebbb21b12bf0d1e108daf25c59ae5a586b4e771abd3182124` |
-| `disk.vhdx` | 71,303,168 | `6afc2a1e87dc486e1e790e90a70f4592bd4ba5e95b216eb990fe3c1dbac469fe` |
+| `disk.img` | 67,108,864 | `068501e78d09c900a129fc7f7f7ff11405219a764e0cbf47b67a3b3993411292` |
+| `disk.vhdx` | 71,303,168 | `329f2ada610a5609f2937bb5059550777c9d1484b370840488fe6a81f085f189` |
 
 To boot either file in QEMU, replace the `fat:esp` drive in the command
 below with `-drive if=virtio,format=raw,file=disk.img` or
