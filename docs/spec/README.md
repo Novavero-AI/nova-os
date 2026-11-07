@@ -21,6 +21,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [console.md](console.md) | The console: how it takes the display from the kernel, how the first process starts it, its keys, the session protocol programs write text and read lines with, and its panel and font |
 | [store-image.md](store-image.md) | The store image the first milestone boots from: its header, registrations, nodes, blobs and their hash trees |
 | [pool-format.md](pool-format.md) | A data disk's pool: its partition, superblock rings, block pointers, node table and directories, and its commit |
+| [accounts.md](accounts.md) | Users' accounts and records, password hashing, login, the session a login opens, the shell and the first boot |
 
 ## Firmware and platform
 
@@ -264,6 +265,27 @@ May 2011 (IETF).
   (RFC 6234, 8.5); the checksums and digests of
   [storage.md](storage.md), [store-image.md](store-image.md) and
   [pool-format.md](pool-format.md).
+
+**Argon2 Memory-Hard Function for Password Hashing and Proof-of-Work
+Applications**, RFC 9106, September 2021 (IRTF).
+
+- Document: <https://www.rfc-editor.org/rfc/rfc9106.txt>
+- Access: free.
+- sha256: `855c06f060379e34285e83a217e9069b5c72e161a1e54df9af5cd88dbb231f31`
+- Used by: the accounts service's Argon2id (`accounts/argon2.c`: H_0,
+  H', indexing, G and P, 3.2 to 3.6), its parameters (section 4) and
+  its check at start against the Argon2id test vector (5.3)
+  ([accounts.md](accounts.md) A4).
+
+**The BLAKE2 Cryptographic Hash and Message Authentication Code (MAC)**,
+RFC 7693, November 2015 (Independent Submission).
+
+- Document: <https://www.rfc-editor.org/rfc/rfc7693.txt>
+- Access: free.
+- sha256: `c943754888364fe29bbd0bb3c71c6658ef392371497eaa4a9d9dde015b0721e5`
+- Used by: BLAKE2b (`accounts/blake2b.c`: 2 and 3), Argon2's H, and its
+  check at start against BLAKE2b-512("abc") (Appendix A) and the
+  self-test's hash of hashes (Appendix E).
 
 **Fast-key-erasure random-number generators**, D. J. Bernstein, the
 cr.yp.to blog, July 23, 2017.
