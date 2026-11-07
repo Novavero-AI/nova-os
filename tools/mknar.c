@@ -111,14 +111,28 @@ static void read_file(const char *path, struct buffer *out)
     fclose(f);
 }
 
-/* The parent directory of path, written to out, or "." for a top-level
-   path; and its last component. */
+/* stem then suffix, written to out, which holds size bytes. Not
+   snprintf: msvcrt.dll, the C library TinyCC links on Windows, has
+   none. */
+static void file_name(char *out, size_t size, const char *stem,
+                      const char *suffix)
+{
+    size_t stem_size = strlen(stem), suffix_size = strlen(suffix);
+
+    if (stem_size + suffix_size >= size)
+        die("name too long", stem);
+    memcpy(out, stem, stem_size);
+    memcpy(out + stem_size, suffix, suffix_size + 1);
+}
+
+/* The parent directory of path, written to parent, or "." for a
+   top-level path; and its last component. */
 static const char *split(const char *path, char *parent, size_t size)
 {
     const char *slash = strrchr(path, '/');
 
     if (!slash) {
-        snprintf(parent, size, ".");
+        strcpy(parent, ".");
         return path;
     }
     if ((size_t)(slash - path) >= size)
@@ -348,8 +362,8 @@ int main(int argc, char **argv)
     append(&type, "", 1);
     store_path_hash((const char *)type.bytes, nar_hash, name, hash);
 
-    snprintf(nar_name, sizeof nar_name, "%s.nar", argv[1]);
-    snprintf(info_name, sizeof info_name, "%s.narinfo", argv[1]);
+    file_name(nar_name, sizeof nar_name, argv[1], ".nar");
+    file_name(info_name, sizeof info_name, argv[1], ".narinfo");
     f = fopen(nar_name, "wb");
     if (!f || fwrite(nar.bytes, 1, nar.size, f) != nar.size || fclose(f))
         die(nar_name, strerror(errno));
