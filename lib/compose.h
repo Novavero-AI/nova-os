@@ -1,0 +1,261 @@
+/** @file
+    The compositor's composer: what it computes without a system call
+    (docs/spec/display.md D7 rule 2, D8 and D10 rule 7, and D19's phase 3
+    arrangement, rules 1, 4 and 7).
+
+    A material is three tables of codes made from a tint and an amount. A
+    band of the screen is composed from the wallpaper and the windows,
+    bottom to top, as 0x00RRGGBB: a window's pixel is its colour mixed
+    over its material by its cover, and a window's corners mix it over
+    what is composed beneath, by the coverage of its rounded rectangle.
+    A finished band is written to the
+    framebuffer in the screen's order, row by row, in whole 64-byte
+    blocks. The pointer's image is drawn over a band from the theme's
+    outlines at the screen's scale, by lib/outline.c.
+
+    Integer arithmetic only, with no machine dependence, so a host build
+    composes the pixels nova-os does (tools/check-compose.c), and every
+    mix is gfx/raster.c's, in linear light. */
+
+#ifndef NOVA_COMPOSE_H
+#define NOVA_COMPOSE_H
+
+#include "gfx.h"
+#include "outline.h"
+#include "types.h"
+
+/** The colour channels of a pixel: red, green and blue, in that order
+    in a band and in a window's buffer, red in the highest byte. */
+#define COMPOSE_CHANNELS 3
+
+/** The codes of one channel: sRGB codes, 0 to 255. */
+#define COMPOSE_CODES 256
+
+/** A cover, and a corner's coverage, when the colour holds the whole
+    pixel: a cover is a byte (display.md D6). */
+#define COMPOSE_COVER_MAX 255
+
+/** The bit where a window's pixel holds its cover, above the 24 bits of
+    its colour (display.md D6). */
+#define COMPOSE_COVER_SHIFT 24
+
+/** A window's pixel without its cover: the colour, as 0x00RRGGBB. */
+#define COMPOSE_COLOUR_MASK 0x00FFFFFFu
+
+/** What a material's amount and a pointer's edge opacity are percent
+    of. */
+#define COMPOSE_PERCENT 100
+
+/** The bytes in one write-combining buffer, the unit the processor
+    writes to a write-combining framebuffer in bursts (Intel 64 and
+    IA-32 Architectures Software Developer's Manual, Volume 3A, 14.3.1,
+    for the processors nova-os runs on). */
+#define COMPOSE_BLOCK_BYTES 64
+
+/** The scale is held in quarters: this many to a scale of 1
+    (display.md D7, rule 5). */
+#define COMPOSE_QUARTERS 4
+
+/** The most pixels a window's corner can reach, which is the radius
+    rounded up to a whole pixel: 16 points, the greatest radius the theme
+    gives a surface (docs/spec/look.md V6), at a scale of 5.5, the
+    largest screen's (display.md D7 rule 5). The corners' plane is held
+    in memory of twice that on each side. */
+#define COMPOSE_REACH_MAX 88
+
+/** The greatest magnitude of a coordinate given here, a window's place,
+    a band's rectangle or a pointer's hotspot, in pixels: far past a
+    screen, which is 7680 across at most, and low enough that no sum or
+    difference of two coordinates overflows. */
+#define COMPOSE_COORDINATE_MAX ((INT64)1 << 30)
+
+/** A point of a shape that lies on its curve. */
+#define COMPOSE_POINT_ON_CURVE 1
+
+/** A point of a shape that is a quadratic Bezier curve's control point,
+    between two points on the curve. */
+#define COMPOSE_POINT_QUADRATIC 0
+
+/** A point of a shape that is one of a cubic Bezier curve's two control
+    points, between two points on the curve. */
+#define COMPOSE_POINT_CUBIC 2
+
+/** A material: for each channel and each code of the wallpaper beneath,
+    the code the wallpaper becomes under the material's tint, mixed in
+    linear light. */
+typedef struct {
+    UINT8 code[COMPOSE_CHANNELS][COMPOSE_CODES]; /**< the three tables */
+} COMPOSE_MATERIAL;
+
+/** The wallpaper: an image the width of the screen, as the kernel hands
+    one over or as the compositor computes it. */
+typedef struct {
+    const UINT32 *pixels; /**< the top-left pixel */
+    INT64 stride;         /**< pixels from a row's start to the next's */
+    UINT32 format;        /**< PIXEL_RGB or PIXEL_BGR, gfx.h; each
+                               pixel's unused byte is ignored */
+} COMPOSE_WALLPAPER;
+
+/** The coverage of a window's corners at one radius, made by
+    compose_corners and shared by every window of that radius. It holds
+    the coverage of a square 2 x reach pixels on a side whose rounded
+    rectangle has the radius, so that each of its four quadrants is a
+    corner of any window at least that big, byte for byte. */
+typedef struct {
+    INT64 reach;  /**< the pixels a corner reaches along each edge: the
+                       radius rounded up, 0 for square corners */
+    UINT8 plane[4 * COMPOSE_REACH_MAX * COMPOSE_REACH_MAX]; /**< the square's
+                       coverage, 2 x reach by 2 x reach, a row after the
+                       row above it */
+} COMPOSE_CORNERS;
+
+/** A window, as the compositor shows it. Its buffer holds its pixels:
+    the colour as 0x00RRGGBB and in the top byte its cover. The buffer
+    holds rows rows of stride pixels, the first columns of each in use,
+    and columns is at most stride. Where the buffer is smaller than the
+    place the window shows the window's material there, as a pixel of
+    cover 0; where it is larger, the place cuts it (display.md D7 rule
+    4). A window at least twice its corners' reach across and high has at
+    each corner the coverage of its rounded rectangle; compose_corner
+    says what a smaller one has. */
+typedef struct {
+    const UINT32 *pixels;            /**< the buffer's top-left pixel */
+    INT64 stride;                    /**< pixels from a row to the next */
+    INT64 columns;                   /**< pixels in use in each row */
+    INT64 rows;                      /**< rows in use */
+    RECT place;                      /**< where the window is on the
+                                          screen, which may reach past
+                                          its edges */
+    const COMPOSE_MATERIAL *material; /**< its surface's material */
+    const COMPOSE_CORNERS *corners;  /**< its corners at its theme's
+                                          radius, or 0 for square
+                                          ones */
+} COMPOSE_WINDOW;
+
+/** A band: memory holding the composed pixels of a rectangle of the
+    screen, as 0x00RRGGBB. */
+typedef struct {
+    UINT32 *pixels; /**< the rectangle's top-left pixel */
+    INT64 stride;   /**< pixels from a row's start to the next's */
+    RECT rect;      /**< the rectangle of the screen it holds */
+} COMPOSE_BAND;
+
+/** A shape the theme holds, in the form the interface description
+    language's generator writes for an outline setting
+    (docs/spec/interface.md P12): contours of points in 256ths of a
+    point, x right and y down from the shape's origin. A contour's first
+    point lies on the curve and its last is joined to its first by a
+    line. */
+typedef struct {
+    const INT32 *points;  /**< x and y of each point */
+    const UINT8 *flags;   /**< each point's COMPOSE_POINT_* */
+    const UINT32 *ends;   /**< each contour's end: the index of the
+                               point after its last */
+    UINT32 point_count;   /**< the points in all */
+    UINT32 contours;      /**< the contours in all */
+} COMPOSE_SHAPE;
+
+/** The pointer's image as the theme gives it (docs/spec/look.md V15):
+    the edge is filled first, then the body over it, both by
+    lib/outline.c's exact area and mixed in linear light. */
+typedef struct {
+    COMPOSE_SHAPE body; /**< the arrow, its hotspot at the origin */
+    COMPOSE_SHAPE edge; /**< the arrow grown all round */
+    UINT32 body_ink;    /**< the body's colour, 0x00RRGGBB */
+    UINT32 edge_ink;    /**< the edge's colour, 0x00RRGGBB */
+    UINT32 edge_percent; /**< how much of the edge's ink is mixed over
+                              what lies beneath, 0 to COMPOSE_PERCENT */
+} COMPOSE_POINTER;
+
+/** Make the corners of radius, in OUTLINE_ONE units, 256ths of a pixel,
+    as outline_rounded_rect takes it, so the console panel's radius at
+    an 18 pixel cell, 22 pixels, is 5632: the coverage of a square of
+    twice the radius rounded up on each side, from outline_coverage.
+    Made once for a radius, whatever the windows that use it. work is
+    the memory filling takes, which outline.h says is large. Returns 1;
+    or 0 with corners unchanged if radius is negative or its pixels
+    rounded up are past COMPOSE_REACH_MAX. A radius of 0 makes square
+    corners. */
+int compose_corners(OUTLINE *work, COMPOSE_CORNERS *corners, INT64 radius);
+
+/** The coverage, 0 to COMPOSE_COVER_MAX, that the corners leave of the
+    pixel at column dx and row dy of a window width pixels across and
+    height high: COMPOSE_COVER_MAX anywhere but within the corners' reach
+    of two edges, 0 outside the shape. For a window at least twice the
+    reach across and high it is the pixel of outline_coverage of the
+    window's rounded rectangle. For a smaller one the corners overlap
+    and no rounded rectangle has their pixels: a pixel is one of the
+    plane's, the left or top corner's where both reach it, and none
+    lies outside the plane. The pixel lies in the window, and corners
+    may be 0 for square ones. */
+UINT32 compose_corner(const COMPOSE_CORNERS *corners, INT64 width,
+                      INT64 height, INT64 dx, INT64 dy);
+
+/** Make material from tint, 0xRRGGBB in sRGB codes, and amount, the
+    percent of the tint mixed over the wallpaper, as the console mixes
+    its panel: for each channel and code, gfx_cross_fade of the code
+    toward the tint's. Returns 1; or 0 with material unchanged if amount
+    is past COMPOSE_PERCENT. */
+int compose_material(COMPOSE_MATERIAL *material, UINT32 tint,
+                     UINT32 amount);
+
+/** Compose the rectangle band holds, row by row: the wallpaper, then
+    each of the count windows from the first, the lowest, to the last. A
+    pixel of cover COMPOSE_COVER_MAX is the window's colour, copied. One
+    of cover 0 is the window's material of the wallpaper beneath, three
+    lookups. One between is the colour mixed over that material in
+    linear light by its cover. A pixel in a window's corner is the
+    window's pixel so made mixed over what is composed beneath by the
+    corner's coverage (compose_corner). Whatever lies between a window
+    and the wallpaper is not seen through it. The rectangle lies within
+    the wallpaper, every material is set and every window's coordinates
+    are within COMPOSE_COORDINATE_MAX. */
+void compose_band(const COMPOSE_BAND *band, const COMPOSE_WALLPAPER *wallpaper,
+                  const COMPOSE_WINDOW *windows, UINT32 count);
+
+/** The rectangle to compose so that compose_write writes whole blocks
+    of screen's framebuffer for rect: rect cut to the screen and
+    widened, in each row, from the start of the block holding its left
+    edge to the end of the block holding its last column, which are
+    blocks of COMPOSE_BLOCK_BYTES at addresses that are multiples of it, and
+    clipped to the screen's row. It holds the widening of every row, so
+    it is wider than a row's where the rows' blocks do not line up, as
+    when a row is not a whole number of blocks long. */
+RECT compose_blocks(const SCREEN *screen, const RECT *rect);
+
+/** Write rect of band to the screen, row by row, as each pixel's
+    screen order gfx_pixel gives, its unused byte 0: each row from the
+    start of the block holding rect's left edge to the end of the block
+    holding its last column, cut to the screen's row and to the band's
+    rectangle. The band holds compose_blocks of rect, or the writes are
+    cut where it ends. Makes no stores visible: the caller calls
+    gfx_flush when its frame is written. */
+void compose_write(const COMPOSE_BAND *band, const SCREEN *screen,
+                   const RECT *rect);
+
+/** Draw the pointer's image over band: the edge, then the body, each
+    mixed in linear light by lib/outline.c's exact area, at a screen of
+    scale quarters / COMPOSE_QUARTERS. The hotspot lies on the top left
+    corner of pixel (x, y) of the screen, so the arrow covers the same
+    pixels wherever it is. A shape's coordinates are scaled and rounded
+    once, to the nearest 256th of a pixel, halves up. Pixels outside the
+    band are not drawn. work is the memory filling takes, which
+    outline.h says is large. Returns 1; or 0 with nothing drawn if a
+    shape is malformed, holds more lines than OUTLINE_EDGES_MAX once its
+    curves are cut, or reaches past OUTLINE_COORDINATE_MAX, if quarters
+    is 0, edge_percent is past COMPOSE_PERCENT, the hotspot lies past
+    COMPOSE_COORDINATE_MAX, or the band is wider than OUTLINE_WIDTH_MAX. */
+int compose_pointer(OUTLINE *work, const COMPOSE_POINTER *pointer,
+                    const COMPOSE_BAND *band, INT64 x, INT64 y,
+                    UINT32 quarters);
+
+/** Set *box to the pixels the pointer's image can change with its
+    hotspot at the top left corner of pixel (x, y), at a scale of
+    quarters / COMPOSE_QUARTERS: the smallest rectangle holding every
+    pixel any of its outlines touches. Returns 1; or 0 with *box
+    unchanged if compose_pointer would refuse the shapes, the scale, the
+    opacity or the hotspot. */
+int compose_pointer_box(OUTLINE *work, const COMPOSE_POINTER *pointer,
+                        INT64 x, INT64 y, UINT32 quarters, RECT *box);
+
+#endif

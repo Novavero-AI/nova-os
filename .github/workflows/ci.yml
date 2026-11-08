@@ -106,6 +106,15 @@ jobs:
             lib/outline.c gfx/raster.c
           "$RUNNER_TEMP/check-outline"
 
+      - name: The composer's frames, output and pointer are as display.md D8 and look.md V15 give them
+        run: |
+          cc -std=c11 -Wall -Wextra -pedantic -Werror -I include -I lib \
+            -I gfx -I console -o "$RUNNER_TEMP/check-compose" \
+            tools/check-compose.c lib/compose.c lib/outline.c \
+            console/panel.c console/text.c gfx/gfx.c gfx/font.c \
+            gfx/raster.c gfx/limb.c -lm
+          "$RUNNER_TEMP/check-compose" interfaces/display.desc
+
       - name: gfx/limb.c draws Limb as its prototype does
         run: design/backgrounds/check-limb.sh
 

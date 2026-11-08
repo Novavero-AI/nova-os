@@ -170,7 +170,7 @@ drawn on, measured where Limb shows brightest through it:
 
 1. The tertiary ink is `#8C95A8` below 32 points: 6.42:1 against the
    sky beside the horizon's glow, `#060E1C`, under login's key hints,
-   and at least 4.57:1 on every surface, the least where the horizon's
+   and at least 4.63:1 on every surface, the least where the horizon's
    peak shows through a raised surface. `#717A8C` is 4.47:1 there, and
    is kept for text of 32 points and up, which is large-scale (4.78:1).
 2. A fill behind text is at most white at 2.5 percent: white at 6
@@ -181,8 +181,8 @@ drawn on, measured where Limb shows brightest through it:
    strength in a primary button: at 86 percent the dark ink on the
    accent mixes to `#32456A`, 4.03:1; at full, 7.87:1.
 4. An unfocused window's label and title are the tertiary ink at full
-   strength, 4.96:1 where the horizon's peak shows through a window. At
-   80 percent the title would be 4.18:1 there.
+   strength, 4.97:1 where the horizon's peak shows through a window. At
+   80 percent the title would be 4.19:1 there.
 
 - **Why:** roles, so a theme changes a colour in one place
   ([ui.md U9](ui.md#u9-theming-from-tokens)). The accent is Limb's band
@@ -208,16 +208,16 @@ whatever window lies between.
 
 | Surface | Tint | Weight | Over the sky | Over the horizon's peak |
 |---|---|---|---|---|
-| Window, `WINDOW` | `#151A24` | 0.99 | `#151A24` | `#24272F` |
-| Raised, `RAISED`: the HUD, a notification, a system box | `#1B2130` | 0.99 | `#1B2130` | `#292D39` |
+| Window, `WINDOW` | `#151A24` | 0.99 | `#151A24` | `#24272E` |
+| Raised, `RAISED`: the HUD, a notification, a system box | `#1B2130` | 0.99 | `#1B2130` | `#282C38` |
 | Panel, `PANEL`: the console's panel in a window ([console.md C5](console.md#c5-the-panel)) | `#121620` | 0.68 | | |
 
 The names in capitals are the surfaces a window asks for
 ([display.md D6](display.md#d6-windows-and-buffers)). The panel is the
 console's own, its tint and weight `console/panel.c`'s, so a console in
 a window looks as it does on the screen alone. Its corners' radius is
-five quarters of the console's cell, as `panel_layout` gives, and it
-has no edge, sheen or shadow.
+five quarters of the console's cell, rounded down to whole pixels as
+`panel_layout` gives, and it has no edge, sheen or shadow.
 
 Over a surface, mixed in linear light:
 
@@ -255,9 +255,11 @@ tiles 16 over half their size.
 - **Why:** a surface that samples the wallpaper alone costs three
   lookups a pixel whatever lies beneath, as D8 gives. 0.99 is the
   lowest weight at which every text ink passes WCAG where Limb's arc
-  shows through, at the arc's brightest pixel: 0.96 gives `#3E4045`
-  (the tertiary ink 3.45:1), 0.98 `#2F3237` (4.28:1) and 0.99 `#25282F`
-  (4.90:1); a raised surface there is `#292D39` (4.57:1). The horizon
+  shows through, at the arc's brightest pixel, which is white at 1280 x
+  800, 2560 x 1600, 2880 x 1800 and 7680 x 4320: 0.96 gives `#3D3F43`
+  (the tertiary ink 3.51:1), 0.98
+  `#2E3036` (4.38:1) and 0.99 `#24272E` (4.97:1); a raised surface there
+  is `#282C38` (4.63:1). The horizon
   still shows through a window as a faint line. Over Limb's sky a
   shadow changes little; it separates windows that overlap.
 - **Cost:** a surface shows the wallpaper and not the window beneath
