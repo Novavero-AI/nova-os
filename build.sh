@@ -23,6 +23,10 @@ readonly TINYCC_REV=cb41cbfe717e4c00d7bb70035cda5ee5f0ff9341
 readonly TINYCC_VERSION=0.9.28
 readonly TINYCC_ARCHIVE=https://github.com/TinyCC/tinycc/archive/$TINYCC_REV.tar.gz
 
+# The optimization the host's C compiler builds TinyCC and the host's
+# tools with, which changes how fast they run but not what they write.
+readonly HOST_OPTIMIZATION=-O2
+
 # For the native subsystem TinyCC aligns sections to 32 bytes but writes
 # 4096 and 512 byte alignments into the header, so every native link
 # sets those alignments, in hexadecimal, to make its layout match.
@@ -74,9 +78,9 @@ tcc_dir=$out/tinycc-$TINYCC_REV
 # writes; configure does not run here, so an empty one stands in and
 # the -D flags give what the build needs.
 cross_compiler() {
-  cc -o "$1-win32-tcc" -I cfg -I "tinycc-$TINYCC_REV" -D "TCC_TARGET_$2" \
-    -D TCC_TARGET_PE -D ONE_SOURCE=1 -D "TCC_VERSION=\"$TINYCC_VERSION\"" \
-    "tinycc-$TINYCC_REV/tcc.c"
+  cc "$HOST_OPTIMIZATION" -o "$1-win32-tcc" -I cfg -I "tinycc-$TINYCC_REV" \
+    -D "TCC_TARGET_$2" -D TCC_TARGET_PE -D ONE_SOURCE=1 \
+    -D "TCC_VERSION=\"$TINYCC_VERSION\"" "tinycc-$TINYCC_REV/tcc.c"
 }
 
 cd -- "$out"
@@ -94,14 +98,14 @@ cross_compiler i386 I386
 # a VHDX file (docs/spec/disk-layout.md), mkdata a data disk holding an
 # empty pool (docs/spec/pool-format.md).
 cd -- "$src"
-cc -o "$out/mknar" -I include -I kernel/random tools/mknar.c \
-  tools/store_path.c kernel/random/sha256.c
-cc -o "$out/mkstore" -I include -I kernel/random tools/mkstore.c \
-  tools/store_path.c kernel/random/sha256.c
-cc -o "$out/mkfont" -I include tools/mkfont.c
-cc -o "$out/mkimage" tools/mkimage.c
-cc -o "$out/mkdata" -I include -I kernel/random -I fs tools/mkdata.c \
-  fs/pool.c kernel/random/sha256.c
+cc "$HOST_OPTIMIZATION" -o "$out/mknar" -I include -I kernel/random \
+  tools/mknar.c tools/store_path.c kernel/random/sha256.c
+cc "$HOST_OPTIMIZATION" -o "$out/mkstore" -I include -I kernel/random \
+  tools/mkstore.c tools/store_path.c kernel/random/sha256.c
+cc "$HOST_OPTIMIZATION" -o "$out/mkfont" -I include tools/mkfont.c
+cc "$HOST_OPTIMIZATION" -o "$out/mkimage" tools/mkimage.c
+cc "$HOST_OPTIMIZATION" -o "$out/mkdata" -I include -I kernel/random -I fs \
+  tools/mkdata.c fs/pool.c kernel/random/sha256.c
 
 # The store paths the test program and the type specimen record, so
 # they are written before either is linked: greeting, a file, and
