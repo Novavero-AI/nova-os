@@ -1,8 +1,11 @@
-/* evdev key codes to a US keyboard's characters. The codes are the
-   Linux input header's (docs/spec/README.md, Devices), which names each
-   key by its unshifted US label. */
+/* evdev key codes to a US keyboard's characters, and the modifiers held
+   (docs/spec/console.md C3, docs/spec/display.md D11, rule 2). The
+   codes are the Linux input header's (docs/spec/README.md, Devices),
+   which names each key by its unshifted US label. A modifier key's
+   event updates the modifiers held, and a character key gives its
+   table's character under them. */
 
-#include "keys.h"
+#include "keymap.h"
 #include "input_protocol.h"
 
 /* Key codes this file reads, as the evdev header numbers them. */
@@ -90,6 +93,7 @@ static UINT32 modifier(UINT32 code)
     }
 }
 
+/* The edit an editing key makes, or EDIT_NONE for any other code. */
 static UINT32 edit_key(UINT32 code)
 {
     switch (code) {

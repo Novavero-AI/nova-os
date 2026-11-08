@@ -11,7 +11,7 @@
    each failure and a count, and exits nonzero if any check fails.
 
    cc -std=c11 -Wall -Wextra -pedantic -I include -I gfx -I console \
-     -o check-backdrop tools/check-backdrop.c console/panel.c \
+     -I lib -o check-backdrop tools/check-backdrop.c console/panel.c \
      console/text.c gfx/gfx.c gfx/font.c gfx/raster.c gfx/limb.c \
      && ./check-backdrop */
 

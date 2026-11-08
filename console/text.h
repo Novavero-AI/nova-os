@@ -55,7 +55,7 @@ const UINT8 *text_line(const TEXT *text, UINT64 line);
    the output position, shown as typed if echo is nonzero. */
 void editor_start(EDITOR *editor, TEXT *text, UINT32 limit, UINT32 echo);
 
-/* Apply an edit of keys.h, with its character for EDIT_INSERT. Returns 1
+/* Apply an edit of keymap.h, with its character for EDIT_INSERT. Returns 1
    once EDIT_ENTER ends the line, which moves a shown line's output to
    the next line; 0 otherwise. */
 int editor_key(EDITOR *editor, TEXT *text, UINT32 edit, UINT8 character);

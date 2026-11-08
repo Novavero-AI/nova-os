@@ -87,14 +87,14 @@ jobs:
       - name: The console's text, keys and view behave as console.md C3 to C5 give
         run: |
           cc -std=c11 -Wall -Wextra -pedantic -Werror -I include -I console \
-            -o "$RUNNER_TEMP/check-text" tools/check-text.c console/text.c \
-            console/keys.c console/view.c
+            -I lib -o "$RUNNER_TEMP/check-text" tools/check-text.c \
+            console/text.c lib/keymap.c console/view.c
           "$RUNNER_TEMP/check-text"
 
       - name: The console's panel from the kernel's background is the one it computes
         run: |
           cc -std=c11 -Wall -Wextra -pedantic -Werror -I include -I gfx \
-            -I console -o "$RUNNER_TEMP/check-backdrop" \
+            -I console -I lib -o "$RUNNER_TEMP/check-backdrop" \
             tools/check-backdrop.c console/panel.c console/text.c gfx/gfx.c \
             gfx/font.c gfx/raster.c gfx/limb.c
           "$RUNNER_TEMP/check-backdrop"

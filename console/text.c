@@ -4,7 +4,7 @@
    most CONSOLE_LINE_MAX bytes, a few lines. */
 
 #include "text.h"
-#include "keys.h"
+#include "keymap.h"
 
 #define PRINTABLE_FIRST 0x20
 #define PRINTABLE_LAST 0x7E

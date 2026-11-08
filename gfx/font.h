@@ -25,9 +25,27 @@
 
 /* The narrowest and widest cells font_render draws, in pixels: below
    the least a stroke is under half a pixel wide, and the most is the
-   height of the tallest screen Limb draws (limb.h) over 100. */
+   height of the tallest screen Limb draws (limb.h) over
+   CELLS_PER_HEIGHT. */
 #define FONT_WIDTH_MIN 4
 #define FONT_WIDTH_MAX 164
+
+/* A cell is a hundredth of the screen's height wide, so the console's 30
+   lines take three fifths of the height: 8 x 16 pixels at 1280 x 800,
+   16 x 32 at 2560 x 1600 (console.md C5). */
+#define CELLS_PER_HEIGHT 100
+
+/* The width in pixels of a cell on a screen height pixels tall: the
+   height over CELLS_PER_HEIGHT, within FONT_WIDTH_MIN and
+   FONT_WIDTH_MAX. */
+static inline INT64 font_cell_width(INT64 height)
+{
+    INT64 width = height / CELLS_PER_HEIGHT;
+
+    if (width < FONT_WIDTH_MIN)
+        return FONT_WIDTH_MIN;
+    return width > FONT_WIDTH_MAX ? FONT_WIDTH_MAX : width;
+}
 
 /* The height in pixels of a cell width pixels wide. */
 INT64 font_height(INT64 width);
