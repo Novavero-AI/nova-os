@@ -435,7 +435,10 @@ window opened while another of its connection's is shown goes one
 title bar's depth ([look.md V11](look.md#v11-windows)) right of and
 below the last one placed, and back to the first place when it would
 cross the area's right or bottom edge. A window is at most the area's
-size in each dimension, and no move or resize takes it into the strip
+size in each dimension and at least twice its corners' radius, rounded
+up, so that no two of its corners reach the same pixel column or row;
+the compositor gives a window asked to be outside those bounds the
+nearest size inside them. No move or resize takes it into the strip
 ([D8](#d8-composition)). The 40 percent is the console's panel's
 ([console.md C5](console.md#c5-the-panel)), so a console in a window
 stands where it stands on its own.
@@ -506,6 +509,11 @@ screen's order, `PIXEL_RGB` or `PIXEL_BGR`, as it writes.
   pages one page of the kernel's page list holds (`native_abi.h`), and
   mapped one after another the bands are one buffer to both sides, with
   no change to sections.
+- **Why a least size:** a window's corners are the coverage of its own
+  rounded rectangle ([D8](#d8-composition)), and a corner made once for
+  every window of its radius is exact only where no other corner's arc
+  reaches the same pixels, which a window at least twice its radius,
+  rounded up, across and high guarantees.
 - **Cost:** a buffer at 2880 x 1800 is ten handles to send and ten
   mappings on each side; a window's memory is the client's even while
   the compositor reads it. The compositor holds a channel end for each
@@ -514,13 +522,17 @@ screen's order, `PIXEL_RGB` or `PIXEL_BGR`, as it writes.
   process's handles and mappings are bounded by its job's quota alone
   ([objects.md O3](objects.md#o3-handles) and
   [O6](objects.md#o6-no-ambient-authority)), not by a fixed table, which phase 5
-  needs ([D19](#d19-the-build-plan)).
+  needs ([D19](#d19-the-build-plan)). A window cannot be made smaller
+  than twice its radius across or high: 44 pixels at the console's
+  22 pixel radius at 2880 x 1800.
 - **Not taken:** buffers the compositor allocates and lends to clients.
   Its cost is the compositor's memory, and its job's quota, filled by
   whichever client asks for the most windows. `section_create` raised
   past 2 MiB, with a page list of more than one page. Its cost is a
   kernel change for what bands already give, where the protocol takes
-  several sections a buffer either way.
+  several sections a buffer either way. A window smaller than its
+  corners, which are cut to its size. Its cost is corner pixels that
+  part from the coverage of the window's own rounded rectangle.
 
 ## D7. Presenting and pacing
 
@@ -645,10 +657,10 @@ both read only the compositor's band, never the framebuffer.
 
 **Output.** Each finished band is written to the framebuffer row by
 row, from the start of the 64-byte block holding the rectangle's left
-edge to the end of the block holding its right, so that the processor
-writes whole write-combining buffers in bursts rather than partial
-writes (SDM 14.3.1), and the frame ends with `SFENCE`, as `gfx_flush`
-does.
+edge to the end of the block holding its last column, so that the
+processor writes whole write-combining buffers in bursts rather than
+partial writes (SDM 14.3.1), and the frame ends with `SFENCE`, as
+`gfx_flush` does.
 
 - **Why translucency over the wallpaper only:** the wallpaper does not
   change while the session runs, so what a translucent window shows
@@ -683,12 +695,17 @@ does.
   hold the focus, so a frame there would identify nothing a program
   could fake. macOS, Windows and GNOME likewise draw their system
   surfaces without window frames.
+- **Why the last column:** a rectangle's right edge is the first pixel
+  it does not hold, so where its last column is a block's last pixel
+  the block holding the edge is the next one, and writing it is a
+  burst for no pixel of the rectangle.
 - **Cost:** a translucent panel over another window shows the
   wallpaper, not the window, which a user may read as the window not
   being there; a program cannot draw its own title bar; a window's
   shape is a rounded rectangle and no other; the strip's band is on
   every screen, and no window, a game's included, covers the whole
-  screen.
+  screen; a rectangle one pixel wide is written as a whole block, 16
+  pixels.
 - **Not taken:** a scene of every window blended with what lies beneath
   it, as compositors with a GPU do. Its cost on the CPU is
   [D9](#d9-budgets)'s full-screen figure on every change under a
@@ -702,7 +719,10 @@ does.
   only a label; their cost is a focus mark the program draws, which can
   claim a focus it lacks, and windows that each move and close their
   own way. Frames on every window; their cost is a title bar on the
-  system's own surfaces naming what the strip already proves.
+  system's own surfaces naming what the strip already proves. The
+  block holding the pixel just past the last column; its cost is a block
+  no pixel of the rectangle lies in, composed and written whenever the
+  rectangle ends on a block's last pixel.
 
 ## D9. Budgets
 
@@ -822,8 +842,14 @@ change.
    when the focus leaves.
 7. **The image.** The compositor draws the pointer's image last, from
    the theme's outlines at the screen's scale, the shape the window
-   under it asks for with `WINDOW_CURSOR` from the theme's set. A
-   motion damages the image's old and new places. With a GPU the
+   under it asks for with `WINDOW_CURSOR` from the theme's set. Each
+   point is the theme's value times the scale, held in quarters,
+   rounded once, from that value, to the nearest 256th of a pixel, a
+   half going up, as `lib/outline.c` rounds a point it computes
+   ([ui.md U2](ui.md#u2-the-rasterizer), rule 2). The edge's opacity,
+   a percent, is that share of `OUTLINE_OPACITY_ONE` (65,536) rounded to
+   the nearest: 55,706 for [look.md V15](look.md#v15-the-pointer)'s 85.
+   A motion damages the image's old and new places. With a GPU the
    device draws it ([D18](#d18-the-gpu-path)).
 8. **Before the compositor.** In direct mode the console is the
    pointer's client: it draws no pointer, and the wheel scrolls its
@@ -850,11 +876,24 @@ change.
   QEMU's virtio mouse does; the driver passes the deltas on as the
   device gives them, so the policy that turns them into the pointer's
   motion can come with the compositor without a change of protocol.
+- **Why a point rounded once, from the theme's value:** a scale in
+  quarters puts a point's exact place between 256ths, and rounding from
+  the value the theme holds gives the nearest 256th to the exact
+  geometry, with no point's place depending on another's. A half goes
+  up because every rounding in `lib/outline.c` does, so the pointer has
+  one rule. 85 percent of 65,536 is 55,705.6, and 55,706 is the nearest
+  whole opacity.
 - **Cost:** two message formats on one kind of endpoint; a driver per
-  input function.
+  input function; a point at a scale between whole ones lies up to half
+  a 256th of a pixel from the exact geometry, and the edge's opacity is
+  0.0006 of a percentage point over 85.
 - **Not taken:** the pointer's events one message each, as keys are.
   Its cost is the half-moved pointer above, and twice the messages for
-  every motion.
+  every motion. Points rounded down; its cost is a bias of half a 256th
+  of a pixel, on average, toward the top left in every point. A half
+  rounded away from zero; its cost is a second rule beside
+  `lib/outline.c`'s, under which a half left of or above the hotspot, a
+  negative one, rounds down where one right of or below it rounds up.
 
 ## D11. Routing input
 
@@ -1523,7 +1562,8 @@ login's session as it does on its own
    ([look.md V4](look.md#v4-surfaces-edges-and-shadows)), of its
    panel's box's size, which D6's placement puts where the panel stands
    in direct mode. Its corners' radius is five quarters of the cell
-   `gfx/font.h`'s rule gives for the screen, and a corner pixel's cover
+   `gfx/font.h`'s rule gives for the screen, rounded down to whole
+   pixels as `panel_layout` gives, and a corner pixel's cover
    is the coverage of the window's rounded rectangle
    (`outline_rounded_rect`) that [ui.md U2](ui.md#u2-the-rasterizer),
    rule 6, gives. Its pixels are those
