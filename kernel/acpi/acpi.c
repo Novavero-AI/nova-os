@@ -121,6 +121,10 @@ static RANGE kept[KEPT_RANGES_MAX];
 static UINT32 kept_count;
 static int kept_incomplete;
 
+/* The line for tables that leave the registers the kernel keeps unknown,
+   for which no section may cover device memory. */
+#define INCOMPLETE "nova: acpi incomplete device_memory=refused\r\n"
+
 static UINT32 read16(const UINT8 *p) { return p[0] | p[1] << 8; }
 
 static UINT32 read32(const UINT8 *p)
@@ -200,6 +204,20 @@ static void keep(UINT64 base, UINT64 size)
 /* ------------------------------------------------------------------------
    The tables. */
 
+/* An MCFG range at first that is left out: event names whether the
+   range was refused or the kernel failed to take it. */
+static void say_ecam_left_out(UINT64 first, const char *event,
+                              const char *reason)
+{
+    serial_write("nova: ");
+    serial_write(event);
+    serial_write(" base=");
+    serial_hex(first);
+    serial_write(" reason=");
+    serial_value(reason);
+    serial_write("\r\n");
+}
+
 /* A range is kept only if it is page aligned, as the direct map and
    sections need, if it overlaps no memory the map gives RAM or
    firmware, other than the reservation that firmware makes for it, and
@@ -222,25 +240,19 @@ static void read_mcfg(const UINT8 *table, UINT32 length)
         first = base + ((UINT64)start << ECAM_BUS_SHIFT);
         size = (UINT64)(end - start + 1) << ECAM_BUS_SHIFT;
         if (first % PAGE_SIZE != 0) {
-            serial_write("nova: acpi: mcfg range at ");
-            serial_hex(first);
-            serial_write(" is not page aligned, left out\r\n");
+            say_ecam_left_out(first, "acpi ecam refused", "not page aligned");
             continue;
         }
         if (first < base || first + size < first ||
             memory_map_overlaps_other(first, size, ECAM_TYPES)) {
-            serial_write("nova: acpi: mcfg range at ");
-            serial_hex(first);
-            serial_write(" overlaps memory, left out\r\n");
+            say_ecam_left_out(first, "acpi ecam refused", "overlaps memory");
             continue;
         }
         if (ecam_count == BOOTSTRAP_ECAM_RANGES_MAX)
             break;
         if (!paging_unmap_direct_range(first, size)) {
-            serial_write("nova: acpi: mcfg range at ");
-            serial_hex(first);
-            serial_write(" left out: no memory to unmap it from the direct "
-                         "map\r\n");
+            say_ecam_left_out(first, "acpi ecam failed",
+                              "no memory to unmap it from the direct map");
             continue;
         }
         ecam[ecam_count].base = first;
@@ -249,13 +261,13 @@ static void read_mcfg(const UINT8 *table, UINT32 length)
         ecam[ecam_count].end_bus = (UINT8)end;
         ecam[ecam_count].reserved = 0;
         ecam_count++;
-        serial_write("nova: acpi: pci express configuration space, segment ");
+        serial_write("nova: acpi ecam segment=");
         serial_number(read16(entry + MCFG_SEGMENT));
-        serial_write(" buses ");
+        serial_write(" buses=");
         serial_number(start);
-        serial_write(" to ");
+        serial_write("..");
         serial_number(end);
-        serial_write(", at ");
+        serial_write(" base=");
         serial_hex(first);
         serial_write("\r\n");
     }
@@ -340,22 +352,22 @@ static UINT64 xsdt_address(UINT64 rsdp_physical)
 
     if (!rsdp || !same_bytes(rsdp, RSDP_SIGNATURE, RSDP_SIGNATURE_SIZE) ||
         !sums_to_zero(rsdp, RSDP_V1_SIZE)) {
-        serial_write("nova: acpi: no valid rsdp at ");
+        serial_write("nova: acpi rsdp refused address=");
         serial_hex(rsdp_physical);
-        serial_write(", tables not read\r\n");
+        serial_write(" reason=\"no valid rsdp\"\r\n");
         return 0;
     }
     if (rsdp[RSDP_REVISION] < RSDP_XSDT_REVISION) {
-        serial_write("nova: acpi: rsdp revision ");
+        serial_write("nova: acpi rsdp refused revision=");
         serial_number(rsdp[RSDP_REVISION]);
-        serial_write(" has no xsdt, tables not read\r\n");
+        serial_write(" reason=\"no xsdt\"\r\n");
         return 0;
     }
     length = read32(rsdp + RSDP_LENGTH);
     if (length < RSDP_V2_SIZE || !firmware_bytes(rsdp_physical, length) ||
         !sums_to_zero(rsdp, length)) {
-        serial_write("nova: acpi: rsdp extended checksum fails, tables not "
-                     "read\r\n");
+        serial_write("nova: acpi rsdp refused "
+                     "reason=\"extended checksum\"\r\n");
         return 0;
     }
     return read64(rsdp + RSDP_XSDT);
@@ -375,10 +387,10 @@ static void read_tables(const UINT8 *xsdt, UINT32 length)
         address = read64(xsdt + at);
         table = table_at(address, &table_length);
         if (!table) {
-            serial_write("nova: acpi: the table at ");
+            serial_write("nova: acpi table refused address=");
             serial_hex(address);
-            serial_write(" lies outside firmware memory or fails its "
-                         "checksum\r\n");
+            serial_write(" reason=\"outside firmware memory or "
+                         "checksum\"\r\n");
             kept_incomplete = 1;
         } else if (same_bytes(table, "MCFG", SIGNATURE_SIZE)) {
             read_mcfg(table, table_length);
@@ -393,12 +405,11 @@ static void read_tables(const UINT8 *xsdt, UINT32 length)
     }
     if (!madts)
         kept_incomplete = 1;
-    serial_write("nova: acpi: i/o apics ");
+    serial_write("nova: acpi devices ioapics=");
     serial_number(io_apics);
-    serial_write(", iommus ");
+    serial_write(" iommus=");
     serial_number(iommus);
-    serial_write("; the kernel drives no iommu, so device dma and msi are "
-                 "unconfined\r\n");
+    serial_write(" dma=unconfined msi=unconfined\r\n");
 }
 
 void acpi_init(const BOOT_INFO *info)
@@ -408,33 +419,29 @@ void acpi_init(const BOOT_INFO *info)
     UINT32 length = 0;
 
     if (!info->acpi_rsdp) {
-        serial_write("nova: acpi: no rsdp from the firmware, tables not "
-                     "read\r\n");
+        serial_write("nova: acpi rsdp absent\r\n");
     } else if ((address = xsdt_address(info->acpi_rsdp)) != 0) {
         xsdt = table_at(address, &length);
         if (!xsdt || !same_bytes(xsdt, "XSDT", SIGNATURE_SIZE)) {
-            serial_write("nova: acpi: no valid xsdt at ");
+            serial_write("nova: acpi xsdt refused address=");
             serial_hex(address);
-            serial_write(", tables not read\r\n");
+            serial_write("\r\n");
             xsdt = 0;
         }
     }
     if (!xsdt) {
         kept_incomplete = 1;
-        serial_write("nova: acpi: the registers the kernel keeps are "
-                     "unknown; no section covers device memory\r\n");
+        serial_write(INCOMPLETE);
         return;
     }
-    serial_write("nova: acpi: rsdp at ");
+    serial_write("nova: acpi xsdt rsdp=");
     serial_hex(info->acpi_rsdp);
-    serial_write(", xsdt lists ");
+    serial_write(" tables=");
     serial_number((length - HEADER_SIZE) / XSDT_ENTRY_SIZE);
-    serial_write(" tables\r\n");
+    serial_write("\r\n");
     read_tables(xsdt, length);
     if (kept_incomplete)
-        serial_write("nova: acpi: the tables name registers the kernel "
-                     "could not record; no section covers device "
-                     "memory\r\n");
+        serial_write(INCOMPLETE);
 }
 
 UINT32 acpi_ecam_count(void)

@@ -482,7 +482,7 @@ column marks an array the kernel fills in user memory.
 | 38 | `section_pin` | initiator, section, offset, size, options, addresses | handle | `PIN` on both; `READ` or `WRITE` on the section | Page lifetime, IOMMU; writes device addresses |
 | 39 | `pin_release` | pin | | | Same |
 | 40 | `initiator_release_quarantine` | initiator | | `RELEASE` | Same |
-| 41 | `debug_write` | resource, bytes, byte count | | `USE` on the debug-log resource | The kernel's serial console |
+| 41 | `debug_write` | resource, bytes, byte count | | `USE` on the debug-log resource | The kernel's serial console, whose lines have the form [log.md T1](log.md#t1-lines) gives |
 | 42 | `random_read` | bytes, byte count | | | The kernel's own generator, which it needs before any server runs; results are recorded for replay ([replay.md](replay.md)), as with Zircon's `zx_cprng_draw` ([cprng_draw][zx-cprng]) |
 | 43 | `task_exception_channel` | process or job | handle | `TERMINATE` | Faults are raised by the processor and reach the kernel first ([objects.md O10](objects.md#o10-object-lifetime)) |
 | 44 | `thread_set_tls_base` | base | | | Without `WRFSBASE`, a 64-bit segment base is loaded with `WRMSR`, at CPL 0 only (S10) |

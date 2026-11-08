@@ -30,15 +30,6 @@
 static UINT32 control = HANDLE_INVALID;
 static int released;
 
-static void say_status(const char *what, UINT32 status)
-{
-    say("nova-init: ");
-    say(what);
-    say(", status ");
-    say_number(status);
-    say("\r\n");
-}
-
 static void close_handles(HANDLE_TRANSFER *handles, UINT32 count)
 {
     UINT32 i;
@@ -73,7 +64,6 @@ UINT32 display_message(const PLATFORM *platform,
    pages to the console. */
 static void send_display(const PLATFORM *platform)
 {
-    const BOOTSTRAP_DISPLAY *d = &platform->boot->display;
     CONSOLE_SETUP_DISPLAY_MESSAGE message;
     HANDLE_TRANSFER framebuffer;
     UINT32 status = display_message(platform, &message, &framebuffer);
@@ -83,14 +73,8 @@ static void send_display(const PLATFORM *platform)
                                &framebuffer, 1);
     if (status != OK) {
         close_handles(&framebuffer, 1);
-        say_status("the display did not reach the console", status);
-        return;
+        say_status("display send failed", status);
     }
-    say("nova-init: the display, ");
-    say_number(d->width);
-    say("x");
-    say_number(d->height);
-    say(", sent to the console\r\n");
 }
 
 UINT32 console_session(void)
@@ -113,7 +97,7 @@ UINT32 console_session(void)
     close_handles(&end, 1);
     if (client != HANDLE_INVALID)
         handle_close(client);
-    say_status("no session on the console", status);
+    say_status("console session failed", status);
     return HANDLE_INVALID;
 }
 
@@ -169,10 +153,9 @@ int display_released(UINT32 bootstrap)
 
     handle_close(bootstrap);
     if (status != OK) {
-        say_status("cannot wait for the display's release", status);
+        say_status("display release wait failed", status);
         return 0;
     }
-    say("nova-init: the kernel released the display\r\n");
     return 1;
 }
 
@@ -182,7 +165,7 @@ void console_start(const PLATFORM *platform, UINT32 bootstrap)
         return;
     released = 1;
     if (control == HANDLE_INVALID) {
-        say("nova-init: no console to draw on it\r\n");
+        say("nova-init: display unused reason=\"no console\"\r\n");
         return;
     }
     send_display(platform);

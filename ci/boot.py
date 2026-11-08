@@ -1,8 +1,8 @@
 """Boot a nova-os disk under QEMU and check what it reports.
 
 Usage: python3 -I ci/boot.py --code CODE.fd --vars VARS.fd --log LOG
-                             [--timeout SECONDS] [--expect TEXT ...]
-                             [--data DATA [--corrupt-gpt KIND]]
+                             [--timeout SECONDS] [--expect LINE ...]
+                             [--tests] [--data DATA [--corrupt-gpt KIND]]
                              [--fonts FONTS [--screen SCREEN.ppm]]
                              {system,persist,chain,specimen} DISK
                              [-- QEMU_ARG ...]
@@ -13,65 +13,77 @@ copy of DATA as the data disk after it, and the QEMU arguments given
 after --. The guest's serial port is echoed with the time since QEMU
 started and written to LOG.
 
-In system mode, the boot of disk.img must report each kernel self-test
-passing, the store service serving, the test program from /store
-passing its checks, the virtio block driver reading the GPT, init's
-checks passing, startup done, the background drawn, the console drawn,
-and the console taking the description of each of the keyboard, the
-mouse and the tablet, the tablet's with its axes' range. Then, sent
-through QMP, QEMU's monitor protocol, the tablet moves, each of three
-buttons is clicked, the wheel turns up and down and the mouse moves,
-and the console must report each; no position sent may appear in a line
-of the console or an input driver. With a data disk whose GPT is whole,
-the accounts service must report no account and login must start; then,
-typed through QMP, the first account is created, the shell starts, and
-the shell must report running whoami for it; the password, typed at the
-shell's prompt too, must appear nowhere in the log. The session then
-makes a directory in its home, writes a file in it twice, shows it,
-moves it, writes and removes an empty file, and is refused a directory
-under /store and a file in another user's home. The shell must log each
-command's status, and then the data disk, read on the host as
-docs/spec/pool-format.md lays it out, must hold the account's home
-alone in /users and the command's change in the home, and nothing else
-there; no word of a name or line typed for the commands may appear in
-the log. In system mode the session then writes a file of
+Every line nova-os writes has the form docs/spec/log.md T1 gives,
+component: event key=value ..., and the boot is checked by the lines
+it waits for, each matched by its component, its event and the keys
+the check names, never by the rest of its text. With --tests, DISK is
+a test disk (docs/spec/disk-layout.md), and the boot must also write a
+whole test report in KTAP version 1 (log.md T2): the check prints the
+report's plan, each test's result, and every test not ok with its
+diagnostics, and fails on a missing version line or plan, a result out
+of order, a count short of its plan, any test not ok, or a test the
+boot must run missing or skipped: the kernel's self-tests, the first
+process's checks of its calls, the test program from /store and the
+boot disk's read, the data disk's check with a data disk whose GPT is
+whole, and in chain mode the chain, each of its steps and each pinned
+link. Without --tests, a report anywhere in the log fails the boot, and
+the kernel must report its random number generator's self-test
+passing. chain and specimen take only a test disk.
+
+In system mode, the boot must report the store service serving, startup
+done, the background drawn, the console drawn, and the console taking
+the description of each of the keyboard, the mouse and the tablet, the
+tablet's with its axes' range. Then, sent through QMP, QEMU's monitor
+protocol, the tablet moves, each of three buttons is clicked, the wheel
+turns up and down and the mouse moves, and the console must report
+each; no position sent may appear in a line of the console or an input
+driver. With a data disk whose GPT is whole, the accounts service must
+report its self-test passing and no account, and login must start;
+then, typed through QMP, the first account is created, the shell
+starts, and the shell must report running whoami for it; the password,
+typed at the shell's prompt too, must appear nowhere in the log. The
+session then makes a directory in its home, writes a file in it twice,
+shows it, moves it, writes and removes an empty file, and is refused a
+directory under /store and a file in another user's home. The shell
+must log each command's status, and then the data disk, read on the
+host as docs/spec/pool-format.md lays it out, must hold the account's
+home alone in /users and the command's change in the home, and nothing
+else there; no word of a name or line typed for the commands may
+appear in the log. In system mode the session then writes a file of
 one-character lines, which fill the console's panel past a screen, and
 once the screen shows the shell's prompt after them the wheel turns
 back and forward through QMP. Before the turns and after each, QMP's
 screendump must come to equal, within SCREEN_TIMEOUT, the screen
 ci/screens.c draws from the same lines, prompt and turns, with the
 caret in either phase of its blink, built with the host's C compiler,
-CC if set. In persist mode the same copy of the data disk
-is booted twice: the first boot is system mode's but for the wheel,
-and the second must report the account the first made and, typed
-again, log in with it, run whoami and show the file, which the disk
-must still hold. In chain mode, the boot of
-chain.img must report each of the bootstrap chain's steps, each pinned
-link and init's checks passing. In specimen mode, the boot of
-specimen.img must report init's checks passing, the display sent to
-the type specimen from /store and the specimen drawn; then QMP's
-screendump, kept at SCREEN.ppm if given, must equal pixel for pixel
-the screen design/text/specimen.py draws at its size with the nova-os
-fonts in FONTS. In every mode but chain, the kernel must also report
-the frames the boot screen's spinner started while it prepared the
-background: at least one, unless the preparation ended within the
-longest a turning spinner goes between frames.
-Each --expect TEXT adds a line the boot must report. With a data disk,
-the boot must also report the file system service opening its pool,
-/data and /users published, and the data disk's check passing. With
---corrupt-gpt, the copy's two GPT tables are changed first: header or
-entries change a byte of each header's CRC or of each entry array;
-extent moves the pool's entry to start at LBA 0, below the first usable
-LBA; usable moves the entry and the first usable LBA both to LBA 1, the
-header's; overlap adds a second entry over the pool's blocks; the last
-three with every CRC made to match. The boot must then report the service
-refusing the disk, /data and /users not published, and the accounts
-service and login not started.
+CC if set. In persist mode the same copy of the data disk is booted
+twice: the first boot is system mode's but for the wheel, and the
+second must report the account the first made and, typed again, log in
+with it, run whoami and show the file, which the disk must still hold.
+In chain mode, the boot of chain.img must report the chain's steps
+passing in its test report. In specimen mode, the boot of specimen.img
+must report the display given to the type specimen from /store and the
+specimen drawn; then QMP's screendump, kept at SCREEN.ppm if given,
+must equal pixel for pixel the screen design/text/specimen.py draws at
+its size with the nova-os fonts in FONTS. In every mode but chain, the
+kernel must also report the frames the boot screen's spinner started
+while it prepared the background: at least one, unless the preparation
+ended within the longest a turning spinner goes between frames.
+Each --expect LINE, in T1's form, adds a line the boot must report,
+with the keys LINE gives. With a data disk, the boot must also report
+the file system service opening its pool and /data and /users
+published. With --corrupt-gpt, the copy's two GPT tables are changed
+first: header or entries change a byte of each header's CRC or of each
+entry array; extent moves the pool's entry to start at LBA 0, below the
+first usable LBA; usable moves the entry and the first usable LBA both
+to LBA 1, the header's; overlap adds a second entry over the pool's
+blocks; the last three with every CRC made to match. The boot must then
+report the service refusing the disk for that check, /data and /users
+not published, and the accounts service and login not started.
 
 The check fails at once on a line from nova-os that reports a failure,
-a halt, a fault or a supervised process restarted or given up, or if
-QEMU ends, which it does on a reset, and otherwise when the timeout
-passes with a line not yet reported.
+as T1's table gives them, or if QEMU ends, which it does on a reset,
+and otherwise when the timeout passes with a line not yet reported.
 """
 
 import argparse
@@ -106,10 +118,64 @@ DEVICES = ["-net", "none", "-device", "virtio-rng-pci",
            "-device", "virtio-keyboard-pci", "-device", "virtio-mouse-pci",
            "-device", "virtio-tablet-pci", "-no-reboot"]
 
-SELF_TESTS = ["nova: %s self-test passed" % name
-              for name in ("page allocator", "random", "object", "thread")]
-INIT_PASSED = "nova-init: checks passed"
-STARTUP_DONE = "nova: first process reports startup done"
+# A line of nova-os's log (docs/spec/log.md T1): its component, the
+# event's words, and its keys, each value bare or in double quotes. A
+# line can follow other output on the serial port, so it is found where
+# its component starts.
+COMPONENT = r"nova(?:-[a-z0-9-]+)?"
+EVENT_LINE = re.compile(r"(%s): ([a-z0-9-]+(?: [a-z0-9-]+)*)"
+                        r"((?: [a-z][a-z0-9_]*=(?:\"[^\"]*\"|[^ \"]+))*)$"
+                        % COMPONENT)
+LINE_START = re.compile(r"%s: " % COMPONENT)
+KEY = re.compile(r' ([a-z][a-z0-9_]*)=(?:"([^"]*)"|([^ "]+))')
+
+
+def parse_line(text):
+    """The component, event and keys of the nova-os line in text, or
+    None."""
+    for start in LINE_START.finditer(text):
+        match = EVENT_LINE.match(text, start.start())
+        if match:
+            return (match.group(1), match.group(2),
+                    {k.group(1): k.group(2) if k.group(2) is not None
+                     else k.group(3) for k in KEY.finditer(match.group(3))})
+    return None
+
+
+class Event:
+    """A line the boot must report: its component and event, with keys,
+    each a value it must have, or a pattern it must match whole, and
+    keys it must not have."""
+
+    def __init__(self, line, absent=(), **patterns):
+        self.text = line
+        self.component, self.event, self.keys = parse_line(line)
+        self.keys.update(patterns)
+        self.absent = absent
+
+    def matches(self, parsed):
+        if not parsed or parsed[:2] != (self.component, self.event):
+            return False
+        keys = parsed[2]
+        for key, wanted in self.keys.items():
+            if key not in keys:
+                return False
+            if isinstance(wanted, re.Pattern):
+                if not wanted.fullmatch(keys[key]):
+                    return False
+            elif keys[key] != wanted:
+                return False
+        return not any(key in keys for key in self.absent)
+
+    def __str__(self):
+        return self.text + "".join(" no %s" % key for key in self.absent)
+
+
+# A key's value that may be anything, for a key the line must have.
+ANY_VALUE = re.compile(r".+")
+
+RANDOM_PASSED = Event("nova: selftest passed name=random")
+STARTUP_DONE = Event("nova: startup done")
 
 # The console's line for each endpoint's description
 # (include/input_protocol.h): QEMU's keyboard, its mouse, which has no
@@ -117,26 +183,25 @@ STARTUP_DONE = "nova: first process reports startup done"
 # (include/ui/input.h, INPUT_EVENT_ABS_MAX).
 TABLET_MAX = 0x7FFF
 INPUT_LINES = [
-    "nova-console: input from a keyboard",
-    "nova-console: input from a pointer with no absolute axis",
-    "nova-console: input from a pointer, x from 0 to %d, y from 0 to %d"
-    % (TABLET_MAX, TABLET_MAX),
+    Event("nova-console: input kind=keyboard"),
+    Event("nova-console: input kind=pointer", absent=("x", "y")),
+    Event("nova-console: input kind=pointer x=0..%d y=0..%d"
+          % (TABLET_MAX, TABLET_MAX)),
 ]
 
 # The kernel draws the background offscreen while the boot screen's
 # spinner turns, and logs the frames the spinner started meanwhile and
-# how long the preparation took, in tenths of a millisecond rounded
-# down. A turning spinner starts a frame at least every SPINNER_GAP_MS,
-# the sum of its parts below; another thread ready meanwhile delays the
-# spinner by a slice and the drawing as long. The bound takes the ticks
-# to come on time, which under TCG they need not, but there the
-# preparation takes over ten times as long. A preparation that may have
+# how long the preparation took, in milliseconds to the tenth, rounded
+# down, as keys of its background line. A turning spinner starts a
+# frame at least every SPINNER_GAP_MS, the sum of its parts below;
+# another thread ready meanwhile delays the spinner by a slice and the
+# drawing as long. The bound takes the ticks to come on time, which under
+# TCG they need not, but there the preparation takes over ten times as
+# long. A preparation that may have
 # lasted longer than the bound must show MIN_SPINNER_FRAMES; one that
 # ended within it may show none.
-SPINNER_STARTED = "nova: the spinner started "
-SPINNER_FRAMES = re.compile(re.escape(SPINNER_STARTED)
-                            + r"(\d+) frames? while the background was "
-                            r"prepared, in (\d+)\.(\d) ms")
+BACKGROUND = Event("nova: background", prepare_ms=re.compile(r"\d+\.\d"),
+                   spinner_frames=re.compile(r"\d+"))
 MIN_SPINNER_FRAMES = 1
 TENTHS_PER_MS = 10
 # The bound's parts, each the kernel's: the spinner's next frame falls
@@ -151,50 +216,51 @@ TICK_MS = 1
 TIME_SLICE_MS = 10
 SPINNER_GAP_MS = FRAME_MS + TICK_MS + TIME_SLICE_MS + TICK_MS
 
-SYSTEM_LINES = SELF_TESTS + [
-    "nova-store: serving ",
-    "nova-hello: checks passed",
-    "nova-init: the bootstrap check is not on this disk",
-    'nova-virtio-blk: lba 1: GPT header, signature "EFI PART"',
-    INIT_PASSED,
+SYSTEM_LINES = [
+    Event("nova-store: serving"),
     STARTUP_DONE,
-    SPINNER_STARTED,
-    "nova: background drawn in ",
-    "nova-console: drawing on the ",
+    BACKGROUND,
+    Event("nova-console: display", screen=ANY_VALUE),
 ] + INPUT_LINES
 
-# init prints a link's line before comparing it with its pin, and stops
-# with "the chain failed" on a mismatch, so the line naming every link
-# is the one that shows each matched.
-CHAIN_STEPS = 20
-CHAIN_LINKS = ["hex0", "hex1", "hex2", "catm", "M0", "cc_x86", "M2", "M1"]
-CHAIN_LINES = (
-    SELF_TESTS
-    + ["nova-init: step %d of %d: " % (step, CHAIN_STEPS)
-       for step in range(1, CHAIN_STEPS + 1)]
-    + [", nova-nix's %s" % link for link in CHAIN_LINKS]
-    + ["nova-init: the chain built nova-nix's "
-       + ", ".join(CHAIN_LINKS[:-1]) + " and " + CHAIN_LINKS[-1],
-       INIT_PASSED, STARTUP_DONE])
+CHAIN_LINES = [STARTUP_DONE]
 
 # The specimen's boot reports what a system boot does up to the
 # display's release, and then the specimen drawing in the console's
 # place.
-SPECIMEN_LINES = SELF_TESTS + [
-    "nova-store: serving ",
-    "nova-hello: checks passed",
-    INIT_PASSED,
+SPECIMEN_LINES = [
+    Event("nova-store: serving"),
     STARTUP_DONE,
-    SPINNER_STARTED,
-    "nova: background drawn in ",
-    "nova-init: the display sent to /store/",
-    "nova-specimen: drawn on the ",
+    BACKGROUND,
+    Event("nova-init: display given",
+          path=re.compile(r"/store/[^/]+-specimen/bin/specimen\.exe")),
+    Event("nova-specimen: drawn", screen=ANY_VALUE),
 ]
+
 SPECIMEN_PROTOTYPE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                   "..", "design", "text", "specimen.py")
 SCREEN_COPY = "screen.ppm"
 PROTOTYPE_COPY = "prototype.ppm"
 EXPECTED_COPY = "expected.ppm"
+
+# The tests a test disk's report must hold, passed and not skipped, by
+# their names from the report's top (docs/spec/log.md T2): the kernel's
+# self-tests, the first process's, with the data disk's check only with
+# a data disk whose GPT is whole and the chain only from chain.img, and
+# in the chain, each step, named by the file it writes, the links among
+# them those nova-nix pins.
+KERNEL_TESTS = ["kernel"] + ["kernel/" + name
+                             for name in ("page", "random", "object",
+                                          "thread")]
+INIT_TESTS = ["init", "init/calls", "init/hello", "init/boot-disk"]
+FSTEST = "init/fstest"
+CHAIN = "init/chain"
+CHAIN_STEPS = 20
+CHAIN_LINKS = ["hex0", "hex1", "hex2", "catm", "M0", "cc_x86", "M2", "M1"]
+# A link's passing result carries "pinned" and its name, which shows its
+# pin was checked.
+CHAIN_LINK_DATA = {"%s/%s.exe" % (CHAIN, link): "pinned " + link
+                   for link in CHAIN_LINKS}
 
 # ci/screens.c, which draws the screens a boot must show on the host with
 # the guest's own drawing code, built as its header gives with the
@@ -223,9 +289,8 @@ DEFAULT_TIMEOUTS = {"system": 300, "persist": 300, "chain": 2700,
                     "specimen": 300}
 
 DATA_LINES = [
-    "nova-fs: pool at lba ",
-    "nova-init: /data and /users published from the data disk",
-    "nova-fstest: checks passed",
+    Event("nova-fs: pool opened", lba=ANY_VALUE),
+    Event("nova-init: data published"),
 ]
 
 # What --corrupt-gpt changes in the data disk (UEFI 2.11 5.3), in the
@@ -258,19 +323,15 @@ ENTRY_LAST = 40
 ENTRY_NAME = 56
 GUID_SIZE = 16
 LINUX_FILESYSTEM = bytes.fromhex("af3dc60f838472478e793d69d8477de4")
-EXTENT_REFUSED = ("nova-fs: the disk's pool entry lies outside the usable "
-                  "LBAs or overlaps another")
 GPT_REFUSED = {
-    "header": "nova-fs: the disk's GPT header fails its check",
-    "entries": "nova-fs: the disk's GPT entry array fails its check",
-    "extent": EXTENT_REFUSED,
-    "usable": ("nova-fs: the disk's GPT header places its tables or its "
-               "usable LBAs where they overlap"),
-    "overlap": EXTENT_REFUSED,
+    "header": Event("nova-fs: gpt refused check=header"),
+    "entries": Event("nova-fs: gpt refused check=entries"),
+    "extent": Event("nova-fs: gpt refused check=extent"),
+    "usable": Event("nova-fs: gpt refused check=layout"),
+    "overlap": Event("nova-fs: gpt refused check=extent"),
 }
-DATA_REFUSED = "nova-init: /data and /users are not published"
-LOGIN_ABSENT = ("nova-init: no /data and /users; the accounts service and "
-                "login do not start")
+DATA_REFUSED = Event("nova-init: data unpublished")
+LOGIN_ABSENT = Event('nova-init: login unavailable reason="no /users"')
 
 # The pool format, version 1, as include/pool_format.h numbers it: the
 # pool partition's type GUID in GPT's byte order; a superblock's fields;
@@ -329,17 +390,24 @@ HOME = USERS + (ACCOUNT_NAME,)
 
 # What login and the accounts service report before login reads its
 # first line, and then on the first boot and on a later one.
-FIRST_BOOT_READY = ["nova-accounts: 0 accounts", "nova-login: on the console"]
-LATER_BOOT_READY = ["nova-accounts: 1 account", "nova-login: on the console"]
-CREATED = ["nova-accounts: created %s, id 1, an administrator" % ACCOUNT_NAME,
-           "nova-shell: a session for %s, with the administrator handle"
-           % ACCOUNT_NAME]
-LOGGED_IN = ["nova-accounts: %s logged in" % ACCOUNT_NAME,
-             "nova-shell: a session for %s, with the administrator handle"
-             % ACCOUNT_NAME]
+# The accounts service's self-test of BLAKE2b and Argon2id
+# (docs/spec/log.md T3) is reported before its count.
+ACCOUNTS_PASSED = Event("nova-accounts: selftest passed name=argon2id")
+LOGIN_READY = Event("nova-login: ready session=console")
+FIRST_BOOT_READY = [ACCOUNTS_PASSED, Event("nova-accounts: ready accounts=0"),
+                    LOGIN_READY]
+LATER_BOOT_READY = [ACCOUNTS_PASSED, Event("nova-accounts: ready accounts=1"),
+                    LOGIN_READY]
+SESSION = Event("nova-shell: session name=%s role=administrator"
+                % ACCOUNT_NAME)
+CREATED = [Event("nova-accounts: account created name=%s id=1 "
+                 "role=administrator" % ACCOUNT_NAME), SESSION]
+LOGGED_IN = [Event("nova-accounts: login accepted name=%s" % ACCOUNT_NAME),
+             SESSION]
 WHOAMI = "whoami"
-WHOAMI_RAN = "nova-shell: whoami: %s, id 1, an administrator" % ACCOUNT_NAME
-NO_COMMAND = "nova-shell: %s runs no command" % ACCOUNT_NAME
+WHOAMI_RAN = Event("nova-shell: whoami name=%s id=1 role=administrator"
+                   % ACCOUNT_NAME)
+NO_COMMAND = Event("nova-shell: command unknown user=%s" % ACCOUNT_NAME)
 
 # The file commands the first boot's session runs in its home, each as
 # the lines typed for it, the status the shell must log for it, in a
@@ -353,7 +421,8 @@ NO_COMMAND = "nova-shell: %s runs no command" % ACCOUNT_NAME
 # again. Each command's own flush is what puts its change on the disk:
 # the shell logs the status once the flush is answered, and nothing
 # else writes the volume while the session runs.
-STATUS_RAN = "nova-shell: %s: %%s gives status %%d" % ACCOUNT_NAME
+STATUS_RAN = "nova-shell: command ended user=%s name=%%s status=%%d" % (
+    ACCOUNT_NAME)
 OK = 0
 ERR_ACCESS_DENIED = 6
 ERR_NOT_FOUND = 16
@@ -445,13 +514,15 @@ POINTER_EVENTS = ([move("abs", POINTER_AT)]
                      for name in BUTTONS + ["wheel-up", "wheel-down"]
                      for down in (True, False)]
                   + [move("rel", {"x": 7, "y": -3})])
-POINTER_LINES = (["nova-console: pointer moved, absolute x and y"]
-                 + ["nova-console: pointer %s button %s" % (name, change)
+POINTER_LINES = ([Event("nova-console: pointer move mode=absolute axes=xy")]
+                 + [Event("nova-console: pointer %s button=%s"
+                          % (change, name))
                     for name in BUTTONS
-                    for change in ("pressed", "released")]
-                 + ["nova-console: pointer wheel turned up",
-                    "nova-console: pointer wheel turned down",
-                    "nova-console: pointer moved, relative x and y"])
+                    for change in ("press", "release")]
+                 + [Event("nova-console: pointer wheel direction=up"),
+                    Event("nova-console: pointer wheel direction=down"),
+                    Event("nova-console: pointer move mode=relative "
+                          "axes=xy")])
 
 # What no line of the log may hold: the password, each word of the names
 # and lines typed for the file commands, words no other line of the log
@@ -460,8 +531,8 @@ POINTER_LINES = (["nova-console: pointer moved, absolute x and y"]
 # console or an input driver, the only processes that see it, the
 # pointer's position as sent, which the driver passes on as it is, as a
 # whole number. Other lines hold numbers that change from run to run,
-# such as the thread self-test's loop counts and times, which can hold
-# a position's digits.
+# such as the kernel's timings and the generator's first bytes, which
+# can hold a position's digits.
 def literal(word):
     return re.compile(re.escape(word.encode("ascii")))
 
@@ -488,13 +559,245 @@ UNLOGGED = ([(literal(ACCOUNT_PASSWORD), "the account's password")]
 HASH_TIMEOUT = 300
 KEY_TIMEOUT = 60
 
-# What a nova-os line says when something went wrong: a check failed, a
-# kernel or user fault, the first process ended, or init's supervisor
-# restarted a driver or gave one up.
-NOVA = "nova"
-FAILURES = ["failed", "halted", "NOT SEEDED", "nova: exception",
-            "nova: user exception", "nova: first process ended",
-            "nova-init: restarting the ", " is given up"]
+# The lines that report a failure (docs/spec/log.md T1): an event that
+# ends with FAILED, and these.
+FAILED = "failed"
+FAILURES = {("nova", "halted"), ("nova", "exception"),
+            ("nova", "user exception"), ("nova", "first process ended"),
+            ("nova", "random unseeded"), ("nova-init", "child restarted"),
+            ("nova-init", "child given up")}
+
+
+def reports_failure(parsed):
+    component, event, _ = parsed
+    return (event.split()[-1] == FAILED
+            or (component, event) in FAILURES)
+
+# A test report in KTAP version 1 (docs/spec/log.md T2, as
+# docs/spec/README.md pins it): a version line, a plan, then a result
+# for each test, a failure's diagnostics before it, and a test's own
+# tests, a whole report of their own one KTAP_INDENT further in, just
+# before its result. A line that is none of these is an unknown line,
+# which KTAP allows anywhere.
+KTAP_VERSION = "KTAP version 1"
+KTAP_INDENT = "  "
+KTAP_PLAN = re.compile(r"1\.\.(\d+)")
+KTAP_RESULT = re.compile(r"(ok|not ok) (\d+)(?: ([^#]*?))?(?: # (.*))?")
+KTAP_DIAGNOSTIC = "#"
+KTAP_SKIP = re.compile(r"SKIP(?: (.*))?")
+
+
+class KtapList:
+    """The tests at one depth of a report: the plan, once read, and each
+    test's result as it comes."""
+
+    def __init__(self, depth):
+        self.depth = depth
+        self.plan = None
+        self.tests = []
+
+
+class KtapTest:
+    """A test's result: its name, whether it passed, the reason it was
+    skipped, or None if it ran, the data after its hash sign if it ran,
+    the diagnostics written at its depth since the result before it, the
+    list of its own tests, or None, and whether its result line came, or
+    the test stands for a list whose result never did."""
+
+    def __init__(self, name, passed, skipped, data, diagnostics, tests,
+                 reported=True):
+        self.name = name
+        self.passed = passed
+        self.skipped = skipped
+        self.data = data
+        self.diagnostics = diagnostics
+        self.tests = tests
+        self.reported = reported
+
+
+def reported(tests):
+    """How many of tests' results came."""
+    return sum(1 for test in tests.tests if test.reported)
+
+
+class Ktap:
+    """A boot's test report, read a line at a time. done once the top
+    plan's last result has come; errors notes each line out of place."""
+
+    def __init__(self):
+        self.lists = []
+        self.top = None
+        self.diagnostics = {}
+        self.errors = []
+        self.done = False
+
+    def feed(self, line):
+        text = line.rstrip()
+        indent = len(text) - len(text.lstrip(" "))
+        text = text.strip()
+        if self.done or not text or indent % len(KTAP_INDENT):
+            return
+        depth = indent // len(KTAP_INDENT)
+        if text == KTAP_VERSION:
+            self.version(depth)
+            return
+        plan = KTAP_PLAN.fullmatch(text)
+        result = KTAP_RESULT.fullmatch(text)
+        if depth >= len(self.lists):
+            if self.top is not None and (plan or result):
+                self.errors.append("a %s at depth %d with no version line "
+                                   "before it" % ("plan" if plan
+                                                  else "result", depth))
+            return
+        if plan and depth == len(self.lists) - 1:
+            self.set_plan(self.lists[depth], int(plan.group(1)))
+        elif result:
+            self.result(depth, result)
+        elif text.startswith(KTAP_DIAGNOSTIC):
+            self.diagnostics.setdefault(depth, []).append(
+                text[len(KTAP_DIAGNOSTIC):].strip())
+
+    def version(self, depth):
+        if depth == 0 and self.top is None:
+            self.top = KtapList(0)
+            self.lists = [self.top]
+        elif depth == len(self.lists) and depth > 0:
+            self.lists.append(KtapList(depth))
+        else:
+            self.errors.append("a version line at depth %d out of place"
+                               % depth)
+
+    def set_plan(self, tests, count):
+        if tests.plan is not None or tests.tests:
+            self.errors.append("a plan at depth %d after its first"
+                               % tests.depth)
+        else:
+            tests.plan = count
+
+    def close(self, tests, name):
+        """Check that tests, the list of the test name, holds its plan."""
+        if tests.plan is None:
+            self.errors.append("%s: no plan" % name)
+        elif len(tests.tests) != tests.plan:
+            self.errors.append("%s: %d results for its plan of 1..%d"
+                               % (name, len(tests.tests), tests.plan))
+
+    def result(self, depth, match):
+        """A result at depth, which ends a deeper list if one is open:
+        that list is this test's own."""
+        number, name = int(match.group(2)), (match.group(3) or "").strip()
+        own = None
+        while len(self.lists) > depth + 1:
+            deeper = self.lists.pop()
+            if len(self.lists) == depth + 1:
+                own = deeper
+            else:
+                self.close(deeper, "a list at depth %d" % deeper.depth)
+        if own:
+            self.close(own, name)
+        tests = self.lists[depth]
+        if tests.plan is None:
+            self.errors.append("%s: a result at depth %d before a plan"
+                               % (name, depth))
+        if number != len(tests.tests) + 1:
+            self.errors.append("%s: numbered %d, not %d"
+                               % (name, number, len(tests.tests) + 1))
+        data = match.group(4)
+        skip = KTAP_SKIP.fullmatch(data or "")
+        tests.tests.append(KtapTest(
+            name, match.group(1) == "ok",
+            (skip.group(1) or "") if skip else None,
+            None if skip else data, self.diagnostics.pop(depth, []), own))
+        for deeper in [d for d in self.diagnostics if d > depth]:
+            del self.diagnostics[deeper]
+        if depth == 0 and tests.plan == len(tests.tests):
+            self.done = True
+
+    def finish(self):
+        """Check every list still open, once no more lines will come. An
+        open list below the top is the list of a test whose result never
+        came, which is added to the list above it as not ok, so that its
+        tests are reported."""
+        unfinished = []
+        for depth in range(len(self.lists) - 1, -1, -1):
+            tests = self.lists[depth]
+            if depth == 0:
+                self.close(tests, "the report")
+                continue
+            above = self.lists[depth - 1]
+            name = "<test %d, no result>" % (len(above.tests) + 1)
+            self.close(tests, name)
+            unfinished.append((above, name, tests))
+        for above, name, tests in reversed(unfinished):
+            above.tests.append(KtapTest(name, False, None, None, [], tests,
+                                        reported=False))
+        self.lists = []
+
+    def walk(self, tests=None, prefix=""):
+        """Each test, below tests or the top, with its path of names."""
+        for test in (tests or self.top).tests:
+            path = prefix + test.name
+            yield path, test
+            if test.tests:
+                yield from self.walk(test.tests, path + "/")
+
+    def problems(self, required, plans, skipped, data):
+        """What fails the report: no version line, a line out of place, a
+        test not ok, a test of required missing, failed or skipped, a
+        list of plans' paths whose plan is not the count given, a test of
+        skipped that ran, or a test of data's paths whose result does not
+        carry the data given. A report that stopped short names no
+        missing test: its count does."""
+        if self.top is None:
+            return ["no test report: no %r line" % KTAP_VERSION]
+        found = dict(self.walk())
+        problems = list(self.errors)
+        problems += ["%s: not ok" % path for path, test in found.items()
+                     if not test.passed]
+        for path in required:
+            test = found.get(path)
+            if test is None:
+                if self.done:
+                    problems.append("%s: not reported" % path)
+            elif test.skipped is not None:
+                problems.append("%s: skipped, %s" % (path, test.skipped))
+        for path, count in plans.items():
+            test = found.get(path)
+            if test and test.skipped is None and (
+                    not test.tests or test.tests.plan != count):
+                problems.append("%s: not %d tests" % (path, count))
+        for path in skipped:
+            test = found.get(path)
+            if test and test.skipped is None:
+                problems.append("%s: ran, where it must be skipped" % path)
+        for path, wanted in data.items():
+            test = found.get(path)
+            if test and test.passed and test.data != wanted:
+                problems.append("%s: carries %r, not %r"
+                                % (path, test.data, wanted))
+        return problems
+
+    def summary(self):
+        """The report as the check prints it: the plan, each test with its
+        own plan, and every test not ok or skipped with its
+        diagnostics or reason."""
+        if self.top is None:
+            return ["ktap: no report"]
+        lines = ["ktap: plan 1..%s, %d reported"
+                 % (self.top.plan, reported(self.top))]
+        for path, test in self.walk():
+            plan = (" (1..%s, %d reported)"
+                    % (test.tests.plan, reported(test.tests))
+                    if test.tests else "")
+            if not test.passed:
+                lines.append("ktap: not ok %s%s" % (path, plan))
+                lines += ["ktap:   # " + line for line in test.diagnostics]
+            elif test.skipped is not None:
+                lines.append("ktap: skipped %s: %s" % (path, test.skipped))
+            elif test.tests:
+                lines.append("ktap: ok %s%s" % (path, plan))
+        return lines
+
 
 QMP_TIMEOUT = 30
 QUIT_TIMEOUT = 30
@@ -507,18 +810,19 @@ class BootFailed(Exception):
     pass
 
 
-def check_spinner(report):
-    """Fail if report, the kernel's line on the spinner's frames, shows
-    fewer than MIN_SPINNER_FRAMES over a preparation that may have lasted
-    longer than SPINNER_GAP_MS; say so if it shows fewer over one that
+def check_spinner(keys, line):
+    """Fail if keys, those of the kernel's background line, show fewer
+    than MIN_SPINNER_FRAMES over a preparation that may have lasted
+    longer than SPINNER_GAP_MS; say so if they show fewer over one that
     ended within it. The logged time is rounded down, so the preparation
     ended within the bound only if a tenth of a millisecond more does."""
-    frames, whole, tenth = (int(group) for group in report.groups())
+    frames = int(keys["spinner_frames"])
+    whole, tenth = (int(part) for part in keys["prepare_ms"].split("."))
     if frames >= MIN_SPINNER_FRAMES:
         return
     if (whole * TENTHS_PER_MS + tenth + 1
             > SPINNER_GAP_MS * TENTHS_PER_MS):
-        raise BootFailed("the spinner stood still: " + report.group(0))
+        raise BootFailed("the spinner stood still: " + line)
     print("          the background was prepared within the %d ms a "
           "turning spinner can go between frames" % SPINNER_GAP_MS,
           flush=True)
@@ -526,12 +830,15 @@ def check_spinner(report):
 
 class Serial:
     """The guest's serial lines, read from QEMU's standard output. What
-    a line holds of UNLOGGED is noted in leaked."""
+    a line holds of UNLOGGED is noted in leaked. With report, a Ktap,
+    every line is read into it; without, a report's version line fails
+    the boot."""
 
-    def __init__(self, stream, log):
+    def __init__(self, stream, log, report):
         self.lines = queue.Queue()
         self.start = time.monotonic()
         self.leaked = set()
+        self.report = report
         self.reader = threading.Thread(target=self.read, args=(stream, log))
         self.reader.start()
 
@@ -545,30 +852,48 @@ class Serial:
             self.lines.put(text.decode("ascii", "replace"))
         self.lines.put(None)
 
-    def wait_for(self, wanted, deadline):
-        """Read lines until each text in wanted has appeared in one."""
+    def wait_for(self, wanted, deadline, report_done=False):
+        """Read lines until each Event in wanted has matched one, and with
+        report_done, until the test report has ended."""
         missing = list(wanted)
-        while missing:
+        while missing or (report_done and not self.report.done):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise BootFailed("timed out; not reported:\n  "
-                                 + "\n  ".join(missing))
+                                 + self.unreported(missing, report_done))
             try:
                 line = self.lines.get(timeout=remaining)
             except queue.Empty:
                 continue
             if line is None:
                 raise BootFailed("QEMU ended; not reported:\n  "
-                                 + "\n  ".join(missing))
+                                 + self.unreported(missing, report_done))
             print("%8.1f  %s" % (time.monotonic() - self.start, line),
                   flush=True)
-            at = line.find(NOVA)
-            if at >= 0 and any(word in line[at:] for word in FAILURES):
-                raise BootFailed("reported a failure: " + line[at:])
-            report = SPINNER_FRAMES.search(line)
-            if report:
-                check_spinner(report)
-            missing = [text for text in missing if text not in line]
+            if self.report:
+                self.report.feed(line)
+            elif line.strip() == KTAP_VERSION:
+                raise BootFailed("a test report from a disk that is not a "
+                                 "test disk: " + line)
+            parsed = parse_line(line)
+            if not parsed:
+                if LINE_START.search(line):
+                    raise BootFailed("a line not in the log's form "
+                                     "(docs/spec/log.md T1): " + line)
+                continue
+            if reports_failure(parsed):
+                raise BootFailed("reported a failure: "
+                                 + line[LINE_START.search(line).start():])
+            if BACKGROUND.matches(parsed):
+                check_spinner(parsed[2], line)
+            missing = [event for event in missing
+                       if not event.matches(parsed)]
+
+    def unreported(self, missing, report_done):
+        return "\n  ".join([str(event) for event in missing]
+                           + (["the end of the test report"]
+                              if report_done and not self.report.done
+                              else []))
 
 
 class Qmp:
@@ -626,7 +951,7 @@ def run_commands(serial, qmp, commands, data):
     for lines, command, status, wanted in commands:
         for text in lines:
             type_line(qmp, text)
-        serial.wait_for([STATUS_RAN % (command, status)],
+        serial.wait_for([Event(STATUS_RAN % (command, status))],
                         time.monotonic() + KEY_TIMEOUT)
         check_home(data, wanted)
         print("          the data disk holds the home %s left" % command,
@@ -1052,12 +1377,43 @@ def data_disk(args, scratch):
     return ["-drive", "if=virtio,format=raw,file=" + copy], lines
 
 
+def required_tests(args):
+    """What a test disk's report must hold, as Ktap.problems takes it: the
+    tests that must pass, the lists of tests whose plan must be a given
+    count, the tests that must be skipped, and the data results must
+    carry. The chain runs only from chain.img and is skipped elsewhere."""
+    required = KERNEL_TESTS + INIT_TESTS
+    plans, skipped, data = {}, [], {}
+    if args.data and not args.corrupt_gpt:
+        required.append(FSTEST)
+    if args.mode == "chain":
+        required += [CHAIN] + list(CHAIN_LINK_DATA)
+        plans[CHAIN] = CHAIN_STEPS
+        data = CHAIN_LINK_DATA
+    else:
+        skipped.append(CHAIN)
+    return required, plans, skipped, data
+
+
+def report_problems(report, args):
+    """Print the test report, once no more of it will come, and what
+    fails it (Ktap.problems)."""
+    report.finish()
+    for line in report.summary():
+        print(line, flush=True)
+    problems = report.problems(*required_tests(args))
+    for problem in problems:
+        print("ktap: " + problem, flush=True)
+    return problems
+
+
 def boot(args, scratch, log, data_drive, data_lines, first):
     """Boot once with data_drive, the data disk's arguments, and check
-    the boot's lines; for the specimen, check its screen; in system and
-    persist modes, send the pointer's events, and with a data disk whose
-    GPT is whole create the account if first or log in with it, and run
-    whoami and the file commands."""
+    the boot's lines, and with --tests its test report; for the
+    specimen, check its screen; in system and persist modes, send the
+    pointer's events, and with a data disk whose GPT is whole create the
+    account if first or log in with it, and run whoami and the file
+    commands."""
     vars_copy = os.path.join(scratch, "vars.fd")
     shutil.copyfile(args.vars, vars_copy)
     qmp_path = os.path.join(scratch, "qmp.sock")
@@ -1083,12 +1439,23 @@ def boot(args, scratch, log, data_drive, data_lines, first):
     qemu = subprocess.Popen(command, stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE)
     serial = None
+    report = Ktap() if args.tests else None
     try:
-        serial = Serial(qemu.stdout, log)
+        serial = Serial(qemu.stdout, log, report)
         lines = {"chain": CHAIN_LINES,
                  "specimen": SPECIMEN_LINES}.get(args.mode, SYSTEM_LINES)
-        serial.wait_for(lines + data_lines + ready + args.expect,
-                        serial.start + args.timeout)
+        if not args.tests:
+            lines = [RANDOM_PASSED] + lines
+        try:
+            serial.wait_for(lines + data_lines + ready + args.expect,
+                            serial.start + args.timeout,
+                            report_done=bool(report))
+        except BootFailed:
+            if report:
+                report_problems(report, args)
+            raise
+        if report and report_problems(report, args):
+            raise BootFailed("the test report fails")
         if args.mode == "specimen":
             check_specimen(qmp_path, scratch, args.fonts, args.screen)
         if args.mode in ("system", "persist"):
@@ -1104,6 +1471,15 @@ def boot(args, scratch, log, data_drive, data_lines, first):
                          + "; ".join(sorted(serial.leaked)))
 
 
+def expected_line(text):
+    """--expect's LINE as an Event."""
+    if not parse_line(text):
+        raise argparse.ArgumentTypeError(
+            "not a line of the form component: event key=value ...: %r"
+            % text)
+    return Event(text)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Boot a nova-os disk under QEMU and check its serial log.")
@@ -1116,7 +1492,12 @@ def main():
     parser.add_argument("--timeout", type=float,
                         help="seconds the boot may take")
     parser.add_argument("--expect", action="append", default=[],
-                        metavar="TEXT", help="a line the boot must report")
+                        type=expected_line, metavar="LINE",
+                        help="a line the boot must report, in the log's "
+                        "form, with the keys it gives")
+    parser.add_argument("--tests", action="store_true",
+                        help="the disk is a test disk, whose boot must "
+                        "report its tests, all passing")
     parser.add_argument("--data",
                         help="the data disk, attached as a writable copy")
     parser.add_argument("--corrupt-gpt", choices=sorted(GPT_REFUSED),
@@ -1134,6 +1515,8 @@ def main():
         parser.error("--corrupt-gpt needs --data")
     if args.mode == "persist" and (not args.data or args.corrupt_gpt):
         parser.error("persist needs --data, whole")
+    if args.mode in ("chain", "specimen") and not args.tests:
+        parser.error("%s takes only a test disk, with --tests" % args.mode)
     if (args.mode == "specimen") != bool(args.fonts):
         parser.error("specimen needs --fonts, and only specimen takes it")
     if args.screen and args.mode != "specimen":

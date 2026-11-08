@@ -1,5 +1,6 @@
-/* The program the first process runs to check the data disk (fstest.c,
-   init/data.c): its file, its view, its modes and its exit codes. */
+/* The program the first process runs on a test disk to check the data
+   disk (fstest.c, init/data.c): its file, its view, its modes and its
+   exit codes. */
 
 #ifndef NOVA_FSTEST_H
 #define NOVA_FSTEST_H

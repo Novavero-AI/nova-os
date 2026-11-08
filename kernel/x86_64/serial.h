@@ -1,9 +1,10 @@
-/* The kernel's log, written to the first serial port. A line is
-   written in pieces, and once threads run, a thread can be preempted
-   between two pieces and another write to the port in between; a line
-   that can be written while another thread writes is therefore written
-   between serial_lock and serial_unlock, as debug_write writes a user
-   process's bytes. */
+/* The kernel's log, written to the first serial port, a line for each
+   event in the form docs/spec/log.md T1 gives. A line is written in
+   pieces, and once threads run, a thread can be preempted between two
+   pieces and another write to the port in between; a line that can be
+   written while another thread writes is therefore written between
+   serial_lock and serial_unlock, as debug_write writes a user process's
+   bytes. */
 
 #ifndef NOVA_SERIAL_H
 #define NOVA_SERIAL_H
@@ -26,9 +27,14 @@ void serial_write_bytes(const UINT8 *bytes, UINT64 count);
 /* n in decimal. */
 void serial_number(UINT64 n);
 
-/* ns nanoseconds in milliseconds to the tenth, rounded down, and the
-   unit: "12.3 ms". */
+/* ns nanoseconds in milliseconds to the tenth, rounded down: "12.3".
+   The key it follows names the unit. */
 void serial_ms(UINT64 ns);
+
+/* text as a value: bare if it is printable ASCII with no space or
+   double quote, else in double quotes with each byte that is not
+   printable ASCII, and each double quote, written as a dot. */
+void serial_value(const char *text);
 
 /* n in hexadecimal, with a 0x prefix. */
 void serial_hex(UINT64 n);
@@ -36,5 +42,9 @@ void serial_hex(UINT64 n);
 /* n in hexadecimal, zero-padded to at least width digits, with no
    prefix. */
 void serial_hex_width(UINT64 n, UINT32 width);
+
+/* Write nova: halted, which ends the kernel's log, and halt forever.
+   The line before it says why. */
+_Noreturn void serial_halt(void);
 
 #endif

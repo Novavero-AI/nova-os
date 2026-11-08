@@ -9,6 +9,10 @@
 #define TRANSMIT_EMPTY 0x20
 
 #define TENTHS_PER_MS 10
+#define PRINTABLE_FIRST 0x20
+#define PRINTABLE_LAST 0x7e
+#define QUOTE '"'
+#define UNPRINTABLE '.'
 
 static void put(UINT8 byte)
 {
@@ -61,7 +65,28 @@ void serial_ms(UINT64 ns)
     serial_number(tenths / TENTHS_PER_MS);
     serial_write(".");
     serial_number(tenths % TENTHS_PER_MS);
-    serial_write(" ms");
+}
+
+static int printable(char c)
+{
+    return c >= PRINTABLE_FIRST && c <= PRINTABLE_LAST;
+}
+
+void serial_value(const char *text)
+{
+    const char *c;
+    int bare = *text != 0;
+
+    for (c = text; *c && bare; c++)
+        bare = printable(*c) && *c != ' ' && *c != QUOTE;
+    if (bare) {
+        serial_write(text);
+        return;
+    }
+    put(QUOTE);
+    for (c = text; *c; c++)
+        put(printable(*c) && *c != QUOTE ? (UINT8)*c : UNPRINTABLE);
+    put(QUOTE);
 }
 
 #define HEX_DIGITS_MAX 16
@@ -89,4 +114,10 @@ void serial_hex(UINT64 n)
 void serial_hex_width(UINT64 n, UINT32 width)
 {
     hex_digits(n, width);
+}
+
+_Noreturn void serial_halt(void)
+{
+    serial_write("nova: halted\r\n");
+    halt_forever();
 }

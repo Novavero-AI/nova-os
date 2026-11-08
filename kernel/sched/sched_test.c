@@ -4,15 +4,15 @@
    exits free their stacks; that sleepers wake no earlier than their
    deadlines and within the bound test_deadlines states; and that waits follow
    docs/spec/objects.md O9, a wait on several events waking for the one
-   signalled. */
+   signalled. It runs on a test disk, and reports through selftest.h. */
 
 #include "thread.h"
 #include "cpu.h"
 #include "memory_layout.h"
 #include "../mm/page.h"
+#include "../selftest.h"
 #include "../x86_64/arch.h"
 #include "../x86_64/clock.h"
-#include "../x86_64/serial.h"
 
 /* Every thread the test starts ends well within this; one that does not
    has hung. */
@@ -56,7 +56,7 @@ typedef struct {
 typedef struct {
     THREAD thread;
     UINT64 start, period;
-    UINT64 early, max_late, total_late;
+    UINT64 early, max_late;
 } SLEEPER;
 
 static BUSY busy[BUSY_THREADS];
@@ -73,12 +73,9 @@ static THREAD waiter;
 /* ------------------------------------------------------------------------
    Helpers. */
 
-static void fail(const char *reason)
+_Noreturn static void fail(const char *reason)
 {
-    serial_write("nova: thread self-test failed: ");
-    serial_write(reason);
-    serial_write(", halted\r\n");
-    halt_forever();
+    selftest_halt(SELFTEST_THREAD, reason);
 }
 
 static void create(THREAD *thread, THREAD_ENTRY entry, void *argument)
@@ -105,12 +102,6 @@ static void join(THREAD *thread)
 static void sleep_ms(UINT64 ms)
 {
     sleep_until(clock_monotonic() + ms * NS_PER_MS);
-}
-
-static void log_list_item(UINT64 i, UINT64 value)
-{
-    serial_write(i ? ", " : "");
-    serial_number(value);
 }
 
 /* ------------------------------------------------------------------------
@@ -157,27 +148,11 @@ static void test_preemption(THREAD *spinner)
             fail("a busy thread was not preempted and resumed");
     if (spinner_switches < MIN_SWITCHES)
         fail("the spinner stopped while busy threads ran");
-    serial_write("nova: threads: ");
-    serial_number(BUSY_THREADS);
-    serial_write(" busy threads over ");
-    serial_number(BUSY_MS);
-    serial_write(" ms switched in ");
-    for (i = 0; i < BUSY_THREADS; i++)
-        log_list_item(i, busy[i].thread.switches);
-    serial_write(" times, ran ");
-    for (i = 0; i < BUSY_THREADS; i++)
-        log_list_item(i, busy[i].loops);
-    serial_write(" loops; spinner switched in ");
-    serial_number(spinner_switches);
-    serial_write(" times\r\n");
 
     if (page_free_count() != free_with_stacks + BUSY_THREADS * THREAD_STACK_RUN)
         fail("exited threads did not free their stacks");
     for (i = 0; i < BUSY_THREADS; i++)
         touch_guard(busy[i].thread.stack);
-    serial_write("nova: threads: exits freed ");
-    serial_number(BUSY_THREADS * THREAD_STACK_RUN);
-    serial_write(" pages of stack and guard\r\n");
 }
 
 /* ------------------------------------------------------------------------
@@ -199,7 +174,6 @@ static void sleeper_main(void *argument)
             continue;
         }
         late = woke - deadline;
-        s->total_late += late;
         if (late > s->max_late)
             s->max_late = late;
     }
@@ -209,7 +183,7 @@ static void sleeper_main(void *argument)
    so that creating them takes none of their first sleep. */
 static void test_deadlines(void)
 {
-    UINT64 i, now, longest_tick, limit, max_late = 0, total_late = 0;
+    UINT64 i, now, longest_tick, limit, max_late = 0;
 
     for (i = 0; i < SLEEPERS; i++) {
         SLEEPER *s = &sleepers[i];
@@ -217,7 +191,6 @@ static void test_deadlines(void)
         s->period = sleep_periods_ms[i] * NS_PER_MS;
         s->early = 0;
         s->max_late = 0;
-        s->total_late = 0;
         create(&s->thread, sleeper_main, s);
     }
     sched_take_longest_tick();
@@ -236,21 +209,9 @@ static void test_deadlines(void)
             fail("a sleeper woke before its deadline");
         if (sleepers[i].max_late > max_late)
             max_late = sleepers[i].max_late;
-        total_late += sleepers[i].total_late;
     }
     if (max_late > limit)
         fail("a sleeper woke later than the limit");
-    serial_write("nova: threads: ");
-    serial_number(SLEEPERS * SLEEP_ROUNDS);
-    serial_write(" sleeps woke after their deadlines by ");
-    serial_number(total_late / (SLEEPERS * SLEEP_ROUNDS) / NS_PER_US);
-    serial_write(" us on average, ");
-    serial_number(max_late / NS_PER_US);
-    serial_write(" us at most; ticks came at most ");
-    serial_number(longest_tick / NS_PER_US);
-    serial_write(" us apart, for a limit of ");
-    serial_number(limit / NS_PER_US);
-    serial_write(" us\r\n");
 }
 
 /* ------------------------------------------------------------------------
@@ -333,9 +294,6 @@ static void test_wait_many(void)
     if (waited[0].observed != USER_SIGNAL(WAIT_EVENTS) ||
         waited[1].observed != USER_SIGNAL(1) || waited[2].observed != 0)
         fail("the wait-many observed the wrong signals");
-    serial_write("nova: threads: a wait on ");
-    serial_number(WAIT_EVENTS);
-    serial_write(" events woke for the second, signalled\r\n");
 }
 
 void sched_self_test(void *spinner)
@@ -343,5 +301,5 @@ void sched_self_test(void *spinner)
     test_preemption(spinner);
     test_deadlines();
     test_wait_many();
-    serial_write("nova: thread self-test passed\r\n");
+    selftest_passed(SELFTEST_THREAD);
 }

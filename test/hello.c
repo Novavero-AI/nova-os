@@ -4,20 +4,24 @@
    follows the links its store path holds, takes a section of its own
    image, and checks that nothing outside the view answers: a store path
    outside its closure, which its launcher names as its one argument, a
-   path that climbs with "..", and a write. It logs what it finds and
-   exits with HELLO_EXIT_PASSED once every check passes, or
-   HELLO_EXIT_FAILED at the first that does not.
+   path that climbs with "..", and a write. Each group of checks is a
+   case of the hello test, reported in KTAP at depth 2
+   (docs/spec/log.md T2); it exits with HELLO_EXIT_PASSED once every case
+   passes, or HELLO_EXIT_FAILED at the first check that does not, after
+   reporting that check as the case's diagnostic.
 
    GREETING_PATH, the path of its greeting in /store, is defined when it
    is built, so the program records the path, which makes the greeting's
    store path a reference of its own (storage.md, fact 5). */
 
 #include "hello.h"
+#include "ktap.h"
 #include "launch.h"
 #include "log.h"
 #include "native.h"
 #include "path.h"
 #include "store_image.h"
+#include "test_report.h"
 
 /* Where the section of its own image is mapped. */
 #define SECTION_VIEW 0x0000000100000000ULL
@@ -32,6 +36,14 @@
 #define PATH_BUFFER (LAUNCH_PREFIX_MAX + STORE_BASE_NAME_MAX + 64)
 #define STORE_DIRECTORY "/store/"
 
+/* The cases, in the order they run; the one running is the next to
+   report. A failure ends the program, which reports the cases after it
+   skipped. */
+static const char *const case_names[] = {"launch", "view", "greeting",
+                                         "section", "outside"};
+#define CASES (sizeof case_names / sizeof case_names[0])
+#define UNREACHED "an earlier case failed"
+
 static const char greeting_path[] = GREETING_PATH;
 static UINT8 launch[CHANNEL_MAX_BYTES];
 static VIEW view;
@@ -43,14 +55,40 @@ static char own[STORE_BASE_NAME_MAX + 1];
 static UINT32 store_entries;
 static int greeting_listed;
 
+/* The cases' results. */
+static KTAP_PLAN cases;
+
+/* Report the case running failed, after what as its diagnostic, and the
+   cases after it skipped, and end. */
+_Noreturn static void fail(const char *what)
+{
+    ktap_diagnostic(&cases, what);
+    ktap_result(&cases, KTAP_FAILED, case_names[cases.written], 0);
+    ktap_skip_rest(&cases, case_names, CASES, UNREACHED);
+    process_exit(HELLO_EXIT_FAILED);
+}
+
 static void check(int passed, const char *what)
 {
-    if (passed)
+    if (!passed)
+        fail(what);
+}
+
+/* As check, with the status the call gave in the diagnostic. */
+static void check_status(UINT32 status, UINT32 expected, const char *what)
+{
+    if (status == expected)
         return;
-    say("nova-hello: check failed: ");
-    say(what);
+    ktap_diagnostic_start(&cases);
+    say("status ");
+    say_number(status);
     say("\r\n");
-    process_exit(HELLO_EXIT_FAILED);
+    fail(what);
+}
+
+static void pass_case(void)
+{
+    ktap_result(&cases, KTAP_PASSED, case_names[cases.written], 0);
 }
 
 static UINT32 length_of(const char *text)
@@ -93,7 +131,8 @@ static void join(char *out, const char *a, const char *b, const char *c)
 }
 
 /* The launch message: the debug log, the process itself, the view, and
-   the one argument. */
+   the one argument. Once the log is open the cases' plan is written and
+   the launch case begins. */
 static void read_launch(UINT32 bootstrap)
 {
     RECEIVED_HANDLE handles[LAUNCH_FIRST_DIRECTORY + LAUNCH_VIEW_MAX];
@@ -111,6 +150,7 @@ static void read_launch(UINT32 bootstrap)
         process_exit(HELLO_EXIT_FAILED);
     handle_close(bootstrap);
     say_open(handles[LAUNCH_DEBUG_LOG].handle);
+    ktap_plan(&cases, KTAP_CASE_DEPTH, CASES);
     self = handles[LAUNCH_SELF].handle;
     check(bytes >= sizeof *header && header->view_count <= LAUNCH_VIEW_MAX &&
               count == LAUNCH_FIRST_DIRECTORY + header->view_count &&
@@ -138,21 +178,11 @@ static void read_launch(UINT32 bootstrap)
 /* ------------------------------------------------------------------------
    Listings. */
 
-static void say_entry(void *context, const UINT8 *name, UINT32 length,
-                      UINT32 kind)
-{
-    (void)context;
-    say(" ");
-    say_printable(name, length);
-    say(kind == IO_KIND_DIRECTORY ? "/" : kind == IO_KIND_LINK ? "@" : "");
-}
-
 static void count_root(void *context, const UINT8 *name, UINT32 length,
                        UINT32 kind)
 {
     UINT32 *count = context;
 
-    say_entry(0, name, length, kind);
     check(length == length_of("store") &&
               same(name, (const UINT8 *)"store", length) &&
               kind == IO_KIND_DIRECTORY,
@@ -169,7 +199,7 @@ static void note_store(void *context, const UINT8 *name, UINT32 length,
     UINT32 i;
 
     (void)context;
-    say_entry(0, name, length, kind);
+    (void)kind;
     store_entries++;
     if (length == length_of(greeting) &&
         same(name, (const UINT8 *)greeting, length)) {
@@ -190,12 +220,9 @@ static void list_view(void)
 {
     UINT32 count = 0;
 
-    say("nova-hello: / holds");
     check(view_list(&view, "/", count_root, &count) == OK && count == 1,
           "/ lists");
-    say("\r\nnova-hello: /store holds");
     check(view_list(&view, "/store", note_store, 0) == OK, "/store lists");
-    say("\r\n");
     check(store_entries == 2 && greeting_listed && own[0],
           "/store lists the greeting and its own path only");
 }
@@ -232,20 +259,12 @@ static void read_greeting(void)
 
     check(read_whole(greeting_path, greeting, &length) == OK && length > 0,
           "the greeting reads");
-    say("nova-hello: ");
-    say(greeting_path);
-    say(" says: ");
-    say_printable(greeting, length - (greeting[length - 1] == '\n'));
-    say("\r\n");
     for (i = 0; i < sizeof links / sizeof links[0]; i++) {
         join(path, STORE_DIRECTORY, own, "/");
         join(path, path, links[i], "");
         check(read_whole(path, through, &through_length) == OK &&
                   through_length == length && same(through, greeting, length),
               "a link in its path reaches the greeting");
-        say("nova-hello: ");
-        say(path);
-        say(" leads to the greeting, resolved in its own view\r\n");
     }
 }
 
@@ -285,9 +304,6 @@ static void take_section(void)
     check(view_open(&view, path, IO_RIGHT_WRITE, &channel, &attributes) ==
               ERR_ACCESS_DENIED,
           "its image does not open for writing");
-    say("nova-hello: ");
-    say(path);
-    say(" maps as a section it can read and cannot write\r\n");
 }
 
 /* Nothing outside the view answers. */
@@ -299,32 +315,27 @@ static void check_outside(void)
     UINT32 channel, status;
 
     status = view_open(&view, outside, IO_RIGHT_READ, &channel, &attributes);
-    say("nova-hello: ");
-    say(outside);
-    say(", outside its closure, gives status ");
-    say_number(status);
-    say("\r\n");
-    check(status == ERR_NOT_FOUND, "a path outside its closure is not found");
+    check_status(status, ERR_NOT_FOUND,
+                 "a path outside its closure is not found");
     join(path, STORE_DIRECTORY, own, "/bin/../../../../store/");
     join(path, path, base, "");
     status = view_open(&view, path, IO_RIGHT_READ, &channel, &attributes);
-    say("nova-hello: ");
-    say(path);
-    say(" gives status ");
-    say_number(status);
-    say("\r\n");
-    check(status == ERR_NOT_FOUND, ".. reaches no path outside its closure");
+    check_status(status, ERR_NOT_FOUND,
+                 ".. reaches no path outside its closure");
 }
 
 _Noreturn void hello_main(UINT32 bootstrap, UINT64 argument)
 {
     (void)argument;
     read_launch(bootstrap);
-    say("nova-hello: running from /store, with a view of its closure\r\n");
+    pass_case();
     list_view();
+    pass_case();
     read_greeting();
+    pass_case();
     take_section();
+    pass_case();
     check_outside();
-    say("nova-hello: checks passed\r\n");
+    pass_case();
     process_exit(HELLO_EXIT_PASSED);
 }

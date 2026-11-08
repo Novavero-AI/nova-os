@@ -276,26 +276,30 @@ static void fade_frame(const SCREEN *screen, const RECT *box,
    QEMU's TCG while the processor is busy, and a schedule counted in them
    would fall behind with them. */
 
-/* How long each part took, in nanoseconds, and the frames drawn. */
+/* How long the fade took and its frames' drawing, in nanoseconds, and
+   the frames drawn. */
 typedef struct {
-    UINT64 drawn, faded, busy, busiest, frames;
+    UINT64 faded, busy, busiest, frames;
 } TIMES;
 
-static void report(const TIMES *times)
+static void report(UINT64 prepared, UINT64 spinner_frames,
+                   const TIMES *times)
 {
     UINT64 flags = serial_lock();
 
-    serial_write("nova: background drawn in ");
-    serial_ms(times->drawn);
-    serial_write(", faded in over ");
+    serial_write("nova: background prepare_ms=");
+    serial_ms(prepared);
+    serial_write(" spinner_frames=");
+    serial_number(spinner_frames);
+    serial_write(" fade_frames=");
     serial_number(times->frames);
-    serial_write(" frames in ");
+    serial_write(" fade_ms=");
     serial_ms(times->faded);
-    serial_write(" (");
+    serial_write(" frame_avg_ms=");
     serial_ms(times->busy / times->frames);
-    serial_write(" a frame on average, ");
+    serial_write(" frame_max_ms=");
     serial_ms(times->busiest);
-    serial_write(" at most)\r\n");
+    serial_write("\r\n");
     serial_unlock(flags);
 }
 
@@ -335,7 +339,6 @@ void background_prepare(const BOOT_INFO *info, BACKGROUND *background)
 {
     const SCREEN *screen = &info->screen;
     const RECT *box = &background->box;
-    UINT64 start;
 
     if (!limb_init(&background->limb, screen->width, screen->height)) {
         background->state = BACKGROUND_NO_SIZE;
@@ -351,23 +354,21 @@ void background_prepare(const BOOT_INFO *info, BACKGROUND *background)
         background->state = BACKGROUND_NO_MEMORY;
         return;
     }
-    start = clock_monotonic();
     draw_offscreen(screen, &background->limb, background->image);
-    background->drawn = clock_monotonic() - start;
     background->state = BACKGROUND_READY;
 }
 
-static void fade_in(const SCREEN *screen, BACKGROUND *background)
+static void fade_in(const SCREEN *screen, BACKGROUND *background,
+                    UINT64 prepared, UINT64 spinner_frames)
 {
     TIMES times;
 
-    times.drawn = background->drawn;
     save(screen, &background->box, background->saved);
     fade(screen, &background->box, background->image, background->saved,
          &times);
     chain_free(background->image);
     chain_free(background->saved);
-    report(&times);
+    report(prepared, spinner_frames, &times);
 }
 
 static void draw_unfaded(const SCREEN *screen, const LIMB *limb)
@@ -377,26 +378,27 @@ static void draw_unfaded(const SCREEN *screen, const LIMB *limb)
     draw_onscreen(screen, limb);
     gfx_flush();
     flags = serial_lock();
-    serial_write("nova: background drawn in ");
+    serial_write("nova: background unfaded reason=\"no memory\" draw_ms=");
     serial_ms(clock_monotonic() - start);
-    serial_write(", with no memory to fade it in\r\n");
+    serial_write("\r\n");
     serial_unlock(flags);
 }
 
-void background_show(const BOOT_INFO *info, BACKGROUND *background)
+void background_show(const BOOT_INFO *info, BACKGROUND *background,
+                     UINT64 prepared, UINT64 spinner_frames)
 {
     UINT64 flags;
 
     switch (background->state) {
     case BACKGROUND_READY:
-        fade_in(&info->screen, background);
+        fade_in(&info->screen, background, prepared, spinner_frames);
         break;
     case BACKGROUND_NO_MEMORY:
         draw_unfaded(&info->screen, &background->limb);
         break;
     case BACKGROUND_NO_SIZE:
         flags = serial_lock();
-        serial_write("nova: no background for a screen this size\r\n");
+        serial_write("nova: background absent reason=\"no size\"\r\n");
         serial_unlock(flags);
         break;
     }

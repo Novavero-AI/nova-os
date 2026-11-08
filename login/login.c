@@ -156,11 +156,12 @@ static void forget(SECRET *secret)
     wipe(secret, sizeof *secret);
 }
 
-static void say_status(const char *what, UINT32 status)
+/* A line for event, which ends in failed or refused, with status. */
+static void say_status(const char *event, UINT32 status)
 {
     say("nova-login: ");
-    say(what);
-    say(", status ");
+    say(event);
+    say(" status=");
     say_number(status);
     say("\r\n");
 }
@@ -197,7 +198,7 @@ static int take_setup(int wait)
     if (status == ERR_SHOULD_WAIT && !wait)
         return 0;
     if (status != OK) {
-        say_status("the first process's channel failed", status);
+        say_status("setup read failed", status);
         process_exit(EXIT_FAILED);
     }
     slot = setup.kind == LOGIN_SETUP_CONSOLE    ? &console
@@ -207,7 +208,7 @@ static int take_setup(int wait)
         handle.type != TYPE_CHANNEL || !slot) {
         if (count)
             handle_close(handle.handle);
-        say("nova-login: a malformed setup from the first process\r\n");
+        say("nova-login: setup refused reason=malformed\r\n");
         return 1;
     }
     if (*slot != HANDLE_INVALID)
@@ -264,7 +265,6 @@ static int ask(const char *prompt, CONSOLE_ECHO_MODE echo, UINT8 *line,
     show(prompt);
     if (console == HANDLE_INVALID ||
         console_read_line(console, echo, line, capacity, length) != OK) {
-        say("nova-login: the console session ended; waiting for another\r\n");
         lose(&console);
         return 0;
     }
@@ -573,11 +573,11 @@ static int serve_launcher(UINT32 launcher)
         status == OK)
         handle_close(process);
     if (status == OK) {
-        say("nova-login: started ");
-        say_printable(path, run->path_length);
-        say(" for the session\r\n");
+        say("nova-login: program started path=");
+        say_value_bytes(path, run->path_length);
+        say("\r\n");
     } else {
-        say_status("a program the session named did not start", status);
+        say_status("program start failed", status);
     }
     return 1;
 }
@@ -695,10 +695,10 @@ static UINT32 start_shell(const ACCOUNTS_USER *user, UINT32 home,
         handle_close(*session);
         *launcher = HANDLE_INVALID;
         *session = HANDLE_INVALID;
-        say_status("the shell did not start", status);
+        say_status("shell start failed", status);
         return HANDLE_INVALID;
     }
-    say_status("the shell did not start", status);
+    say_status("shell start failed", status);
     for (i = 0; i < SESSION_HANDLES_MAX; i++)
         if (handles[i].handle != HANDLE_INVALID)
             handle_close(handles[i].handle);
@@ -774,9 +774,9 @@ static void run_session(UINT32 reply_length, UINT32 count)
         show("The shell did not start.\n");
         return;
     }
-    say("nova-login: a session for ");
-    say_printable(user.name, user.name_length);
-    say(" started its shell\r\n");
+    say("nova-login: session started name=");
+    say_value_bytes(user.name, user.name_length);
+    say("\r\n");
     for (;;) {
         items[WAIT_SHELL].handle = shell;
         items[WAIT_SHELL].signals = PROCESS_TERMINATED;
@@ -814,9 +814,9 @@ static void run_session(UINT32 reply_length, UINT32 count)
         if (served[i].handle != HANDLE_INVALID)
             handle_close(served[i].handle);
     handle_close(shell);
-    say("nova-login: the session for ");
-    say_printable(user.name, user.name_length);
-    say(" ended\r\n");
+    say("nova-login: session ended name=");
+    say_value_bytes(user.name, user.name_length);
+    say("\r\n");
     show("Logged out.\n\n");
 }
 
@@ -868,12 +868,14 @@ static void first_boot(void)
             show("The accounts service restarted. Try again.\n");
             return;
         }
-        if (status == ERR_INVALID_ARGS)
+        if (status == ERR_INVALID_ARGS) {
             show("A name is 1 to 32 lowercase letters, digits and '-', "
                  "starting with a letter. Try again.\n");
-        else
+            say_status("account create refused", status);
+        } else {
             show("The account was not created. Try again.\n");
-        say_status("the first account was not created", status);
+            say_status("account create failed", status);
+        }
     }
 }
 
@@ -902,11 +904,15 @@ static void attempt(void)
             return;
         }
         show("Login incorrect.\n");
-        if (status != ERR_ACCESS_DENIED)
-            say_status("a login was not checked", status);
+        if (status == ERR_INVALID_ARGS)
+            say_status("login refused", status);
+        else if (status != ERR_ACCESS_DENIED)
+            say_status("login check failed", status);
     }
     show("Three refused logins. This attempt has ended.\n\n");
-    say("nova-login: three refused logins ended an attempt\r\n");
+    say("nova-login: attempt ended refusals=");
+    say_number(ATTEMPT_FAILURES_MAX);
+    say("\r\n");
 }
 
 /* ------------------------------------------------------------------------
@@ -954,8 +960,8 @@ _Noreturn void login_main(UINT32 bootstrap, UINT64 argument)
 
     (void)argument;
     read_bootstrap(bootstrap);
-    say("nova-login: on the console, the shell at ");
-    say(shell_path);
+    say("nova-login: ready session=console shell=");
+    say_value(shell_path);
     say("\r\n");
     for (;;) {
         take_setups();
@@ -963,8 +969,7 @@ _Noreturn void login_main(UINT32 bootstrap, UINT64 argument)
         if (status == ERR_PEER_CLOSED)
             continue;
         if (status != OK) {
-            say_status("the accounts service cannot count its accounts",
-                       status);
+            say_status("account count failed", status);
             show("The accounts service cannot count its accounts; trying "
                  "again.\n");
             pause_before_retry();

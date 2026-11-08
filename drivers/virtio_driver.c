@@ -21,22 +21,22 @@
 #define NOTIFY_WIDTH 2
 
 _Noreturn void virtio_driver_fail(const VIRTIO_DRIVER *driver,
-                                  const char *what, UINT32 status)
+                                  const char *event, UINT32 status)
 {
     say(driver->name);
     say(": ");
-    say(what);
-    say(", status ");
+    say(event);
+    say(" failed status=");
     say_number(status);
     say("\r\n");
     process_exit(driver->exit_failed);
 }
 
 void virtio_driver_check(const VIRTIO_DRIVER *driver, UINT32 status,
-                         const char *what)
+                         const char *event)
 {
     if (status != OK)
-        virtio_driver_fail(driver, what, status);
+        virtio_driver_fail(driver, event, status);
 }
 
 /* ------------------------------------------------------------------------
@@ -66,22 +66,23 @@ static void read_bootstrap(VIRTIO_DRIVER *driver, UINT32 channel)
 }
 
 volatile UINT8 *virtio_driver_map(VIRTIO_DRIVER *driver, UINT32 section,
-                                  UINT64 size, const char *what)
+                                  UINT64 size, const char *event)
 {
     UINT64 address = driver->next_map;
 
     virtio_driver_check(driver,
                         process_map(driver->self, section, 0, address, size,
                                     MAP_READ | MAP_WRITE),
-                        what);
+                        event);
     driver->next_map += size;
     return (volatile UINT8 *)address;
 }
 
 /* Map size bytes of device memory at base, covered by resource, uncached
-   into the driver, and return where. */
+   into the driver, and return where; event names the step in the line
+   a failure logs. */
 static volatile UINT8 *map_device(VIRTIO_DRIVER *driver, UINT32 resource,
-                                  UINT64 base, UINT64 size, const char *what)
+                                  UINT64 base, UINT64 size, const char *event)
 {
     volatile UINT8 *address;
     UINT32 section;
@@ -89,8 +90,8 @@ static volatile UINT8 *map_device(VIRTIO_DRIVER *driver, UINT32 resource,
     virtio_driver_check(driver,
                         section_create_physical(resource, base, size,
                                                 CACHE_UNCACHED, &section),
-                        what);
-    address = virtio_driver_map(driver, section, size, what);
+                        event);
+    address = virtio_driver_map(driver, section, size, event);
     handle_close(section);
     return address;
 }
@@ -100,14 +101,12 @@ static volatile UINT8 *bar(VIRTIO_DRIVER *driver, UINT32 index)
     const PCI_DEVICE_BOOTSTRAP *device = &driver->device;
 
     if (index >= PCI_BARS || !device->bar_size[index])
-        virtio_driver_fail(driver,
-                           "a virtio structure names a BAR with no memory",
-                           ERR_NOT_SUPPORTED);
+        virtio_driver_fail(driver, "structure bar", ERR_NOT_SUPPORTED);
     if (!driver->bars[index])
         driver->bars[index] =
             map_device(driver, driver->bar_resource[index],
                        device->bar_base[index], device->bar_size[index],
-                       "cannot map a BAR");
+                       "bar map");
     return driver->bars[index];
 }
 
@@ -125,8 +124,7 @@ static volatile UINT8 *structure(VIRTIO_DRIVER *driver, UINT32 cap,
     if (at > length || size > length - at || index >= PCI_BARS ||
         offset + at > device->bar_size[index] ||
         size > device->bar_size[index] - offset - at)
-        virtio_driver_fail(driver, "a virtio structure lies outside its BAR",
-                           ERR_OUT_OF_RANGE);
+        virtio_driver_fail(driver, "structure range", ERR_OUT_OF_RANGE);
     return bar(driver, index) + offset + at;
 }
 
@@ -143,18 +141,16 @@ void virtio_driver_open(VIRTIO_DRIVER *driver, const char *name,
     read_bootstrap(driver, channel);
     driver->config = map_device(driver, driver->config_resource,
                                 driver->device.config, PCI_CONFIG_SIZE,
-                                "cannot map the configuration space");
+                                "config map");
     command = driver->config + PCI_COMMAND;
     mmio_write16(command, (UINT16)(mmio_read16(command) | PCI_COMMAND_MEMORY |
                                    PCI_COMMAND_INTX_DISABLE));
     if (!(mmio_read16(driver->config + PCI_STATUS) & PCI_STATUS_CAPABILITIES))
-        virtio_driver_fail(driver, "the function has no capability list",
-                           ERR_NOT_SUPPORTED);
+        virtio_driver_fail(driver, "capability list", ERR_NOT_SUPPORTED);
     virtio_pci_capabilities(driver->config, structures, &driver->msix);
     if (!structures[VIRTIO_CAP_COMMON] || !structures[VIRTIO_CAP_NOTIFY] ||
         !structures[VIRTIO_CAP_DEVICE])
-        virtio_driver_fail(driver, "a virtio structure capability is missing",
-                           ERR_NOT_SUPPORTED);
+        virtio_driver_fail(driver, "structure capability", ERR_NOT_SUPPORTED);
     driver->common =
         structure(driver, structures[VIRTIO_CAP_COMMON], 0, VIRTIO_COMMON_SIZE);
     driver->device_config = structure(driver, structures[VIRTIO_CAP_DEVICE],
@@ -177,8 +173,7 @@ void virtio_driver_set_status(VIRTIO_DRIVER *driver, UINT8 bits)
 void virtio_driver_reset(VIRTIO_DRIVER *driver)
 {
     if (!virtio_pci_reset(driver->common))
-        virtio_driver_fail(driver, "the device did not finish its reset",
-                           ERR_TIMED_OUT);
+        virtio_driver_fail(driver, "reset", ERR_TIMED_OUT);
 }
 
 UINT8 virtio_driver_generation(const VIRTIO_DRIVER *driver)
@@ -218,16 +213,14 @@ UINT64 virtio_driver_negotiate(VIRTIO_DRIVER *driver, UINT64 accepted)
     virtio_driver_set_status(driver, VIRTIO_STATUS_DRIVER);
     offered = device_features(driver);
     if (!(offered & 1ULL << VIRTIO_F_VERSION_1))
-        virtio_driver_fail(driver, "the device offers no VERSION_1",
-                           ERR_NOT_SUPPORTED);
+        virtio_driver_fail(driver, "version", ERR_NOT_SUPPORTED);
     accepted &= offered;
     accept_features(driver, accepted);
     virtio_driver_set_status(driver, VIRTIO_STATUS_FEATURES_OK);
     if (!(mmio_read8(driver->common + VIRTIO_COMMON_DEVICE_STATUS) &
           VIRTIO_STATUS_FEATURES_OK)) {
         virtio_driver_set_status(driver, VIRTIO_STATUS_FAILED);
-        virtio_driver_fail(driver, "the device refused the features",
-                           ERR_NOT_SUPPORTED);
+        virtio_driver_fail(driver, "feature negotiation", ERR_NOT_SUPPORTED);
     }
     return accepted;
 }
@@ -250,8 +243,7 @@ static void enable_msix(VIRTIO_DRIVER *driver, UINT64 address, UINT32 data)
     if (index >= PCI_BARS || offset > device->bar_size[index] ||
         (VIRTIO_QUEUE_VECTOR + 1) * MSIX_ENTRY_SIZE >
             device->bar_size[index] - offset)
-        virtio_driver_fail(driver, "the MSI-X table lies outside its BAR",
-                           ERR_OUT_OF_RANGE);
+        virtio_driver_fail(driver, "msix table", ERR_OUT_OF_RANGE);
     entry =
         bar(driver, index) + offset + VIRTIO_QUEUE_VECTOR * MSIX_ENTRY_SIZE;
     mmio_write16(control, (UINT16)(mmio_read16(control) |
@@ -270,19 +262,18 @@ void virtio_driver_interrupt(VIRTIO_DRIVER *driver, UINT64 key)
     UINT32 data;
 
     if (!driver->msix)
-        virtio_driver_fail(driver, "the function has no MSI-X capability",
-                           ERR_NOT_SUPPORTED);
+        virtio_driver_fail(driver, "msix capability", ERR_NOT_SUPPORTED);
     virtio_driver_check(driver, port_create(PORT_CAPACITY, &driver->port),
-                        "port_create");
+                        "port create");
     virtio_driver_check(
         driver,
         interrupt_create(driver->irq,
                          INTERRUPT_SOURCE_MSI + driver->device.requester, 0,
                          &driver->interrupt, &address, &data),
-        "interrupt_create");
+        "interrupt create");
     virtio_driver_check(driver,
                         interrupt_bind(driver->interrupt, driver->port, key),
-                        "interrupt_bind");
+                        "interrupt bind");
     enable_msix(driver, address, data);
 }
 
@@ -294,15 +285,15 @@ volatile UINT8 *virtio_driver_dma(VIRTIO_DRIVER *driver, UINT32 pages,
 
     virtio_driver_check(driver,
                         section_create((UINT64)pages * PAGE_SIZE, 0, &section),
-                        "section_create");
+                        "section create");
     mapped = virtio_driver_map(driver, section, (UINT64)pages * PAGE_SIZE,
-                               "mapping the DMA pages");
+                               "dma map");
     virtio_driver_check(driver,
                         section_pin(driver->initiator, section, 0,
                                     (UINT64)pages * PAGE_SIZE,
                                     PIN_DEVICE_READ | PIN_DEVICE_WRITE,
                                     addresses, pin),
-                        "section_pin");
+                        "section pin");
     handle_close(section);
     return mapped;
 }
@@ -322,8 +313,7 @@ volatile UINT8 *virtio_driver_queue(VIRTIO_DRIVER *driver, UINT16 index,
     mmio_write16(common + VIRTIO_COMMON_QUEUE_SELECT, index);
     maximum = mmio_read16(common + VIRTIO_COMMON_QUEUE_SIZE);
     if (maximum < size)
-        virtio_driver_fail(driver, "a queue is smaller than the driver needs",
-                           maximum);
+        virtio_driver_fail(driver, "queue size", ERR_NOT_SUPPORTED);
     mmio_write16(common + VIRTIO_COMMON_QUEUE_SIZE, size);
     mmio_write64(common + VIRTIO_COMMON_QUEUE_DESC, descriptors);
     mmio_write64(common + VIRTIO_COMMON_QUEUE_DRIVER, available);
@@ -332,8 +322,7 @@ volatile UINT8 *virtio_driver_queue(VIRTIO_DRIVER *driver, UINT16 index,
                  VIRTIO_QUEUE_VECTOR);
     if (mmio_read16(common + VIRTIO_COMMON_QUEUE_MSIX_VECTOR) !=
         VIRTIO_QUEUE_VECTOR)
-        virtio_driver_fail(driver, "the device refused the queue's MSI-X entry",
-                           ERR_NOT_SUPPORTED);
+        virtio_driver_fail(driver, "queue vector", ERR_NOT_SUPPORTED);
     mmio_write16(common + VIRTIO_COMMON_CONFIG_MSIX_VECTOR, NO_VECTOR);
     notify_off = mmio_read16(common + VIRTIO_COMMON_QUEUE_NOTIFY_OFF);
     notify = structure(driver, notify_cap, (UINT64)notify_off * multiplier,

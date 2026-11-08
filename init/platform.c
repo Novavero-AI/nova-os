@@ -8,10 +8,12 @@
    interrupts and an initiator for its requester ID, with PIN alone.
    init keeps the initiator's RELEASE.
 
-   The first virtio block function goes to \nova\virtblk.exe, which reads
-   the boot disk and ends. The walk notes the second as the data disk,
-   whose driver and file system service data.c starts, with this file's
-   BAR sizing and driver handles. Each virtio input function, up to
+   On a test disk the first virtio block function goes to
+   \nova\virtblk.exe, which reads the boot disk and ends, and init
+   reports its end as the boot-disk test (tests.h); on any other disk it
+   gets no driver. The walk notes the second as the data disk, whose
+   driver and file system service data.c starts, with this file's BAR
+   sizing and driver handles. Each virtio input function, up to
    INPUT_DEVICES_MAX, goes to a \nova\virtinp.exe of its own, which runs
    on: once its device is live it reports with an endpoint, which init
    hands to their client, the console, \nova\console.exe, whose bootstrap
@@ -34,6 +36,7 @@
 #include "platform.h"
 #include "console.h"
 #include "init.h"
+#include "tests.h"
 #include "input_protocol.h"
 #include "mmio.h"
 #include "pci.h"
@@ -48,6 +51,10 @@
 #define BLOCK_FILE "virtblk.exe"
 #define INPUT_FILE "virtinp.exe"
 #define CLIENT_FILE "console.exe"
+#define INPUT_NAME "virtio-input"
+
+/* The hexadecimal digits of a PCI vendor or device ID. */
+#define PCI_ID_DIGITS 4
 
 /* The rights the driver's handles carry: its own process with MAP, to
    map its sections, and the initiator with PIN, so that releasing the
@@ -141,7 +148,7 @@ typedef struct {
 
 static SEGMENT segment;
 
-/* A program init supervises: what its log lines call it, its file, what
+/* A program init supervises: the name its log lines give it, its file, what
    it does once started, its function if it is a driver, and how it
    stands. While it runs, init holds its process, its job if it is a
    driver, and its end of the program's bootstrap channel, which init
@@ -183,7 +190,7 @@ _Static_assert(CHILDREN <= KEY_FIELD_MASK + 1,
 
 static FOUND found_functions;
 static CHILD children[CHILDREN] = {
-    [CHILD_BLOCK] = {.name = "virtio block driver",
+    [CHILD_BLOCK] = {.name = "virtio-blk",
                      .file = BLOCK_FILE,
                      .kind = KIND_FINISHES,
                      .function = &found_functions.block},
@@ -210,36 +217,41 @@ static volatile UINT8 *map_device(const PLATFORM *platform, UINT64 physical,
 
 static void say_function(UINT32 requester, UINT32 vendor, UINT32 id)
 {
-    say("nova-init: pci ");
+    say("nova-init: function pci=");
     pci_say_function(requester);
-    say(" ");
-    say_hex_width(vendor, 4);
+    say(" id=");
+    say_hex_width(vendor, PCI_ID_DIGITS);
     say(":");
-    say_hex_width(id, 4);
+    say_hex_width(id, PCI_ID_DIGITS);
     say("\r\n");
 }
 
-/* A line about child: before, its name, and a driver's function, if the
-   walk found one, so that the input drivers are told apart; after ends
-   it. */
-static void say_child(const char *before, const CHILD *child,
-                      const char *after)
+/* The start of a line about child: event, its name, and a driver's
+   function, if the walk found one, so that the input drivers are told
+   apart. The caller writes any other keys and ends the line. */
+static void say_child(const char *event, const CHILD *child)
 {
     say("nova-init: ");
-    say(before);
+    say(event);
+    say(" name=");
     say(child->name);
     if (child->function && child->function->config) {
-        say(" at ");
+        say(" pci=");
         pci_say_function(child->function->requester);
     }
-    say(after);
 }
 
-static void say_status(const char *before, const CHILD *child,
-                       const char *after, UINT32 status)
+static void say_child_line(const char *event, const CHILD *child)
 {
-    say_child(before, child, after);
-    say(", status ");
+    say_child(event, child);
+    say("\r\n");
+}
+
+static void say_child_status(const char *event, const CHILD *child,
+                             UINT32 status)
+{
+    say_child(event, child);
+    say(" status=");
     say_number(status);
     say("\r\n");
 }
@@ -267,9 +279,9 @@ static void note_input(FOUND *found, UINT32 requester, UINT64 config,
         if (found->input[i].requester == requester)
             return;
     if (found->inputs == INPUT_DEVICES_MAX) {
-        say("nova-init: no input driver for ");
+        say("nova-init: child refused name=" INPUT_NAME " pci=");
         pci_say_function(requester);
-        say(", past the first ");
+        say(" max=");
         say_number(INPUT_DEVICES_MAX);
         say("\r\n");
         return;
@@ -311,7 +323,9 @@ static void scan_bus(const PLATFORM *platform, UINT32 bus, FOUND *found)
         return;
     window = map_device(platform, physical, BUS_SIZE);
     if (!window) {
-        say("nova-init: cannot map a bus's configuration space\r\n");
+        say("nova-init: pci map failed bus=");
+        say_number(bus);
+        say("\r\n");
         return;
     }
     segment.buses[bus - range->start_bus] = window;
@@ -443,7 +457,7 @@ static int prepare(const PLATFORM *platform, CHILD *child)
     if (initiator_create(platform->dma, child->function->requester,
                          &child->initiator) == OK)
         return 1;
-    say_child("cannot create the initiator for the ", child, "\r\n");
+    say_child_line("initiator create failed", child);
     return 0;
 }
 
@@ -501,28 +515,6 @@ UINT32 platform_driver_handles(const PLATFORM *platform,
     return count;
 }
 
-/* Log what the driver's resources cover, before it starts, so that the
-   line comes whole ahead of the driver's own. */
-static void say_start(const CHILD *child)
-{
-    const PCI_DEVICE_BOOTSTRAP *device = &child->device;
-    UINT32 i;
-
-    say_child("starting the ", child, ", with its configuration space at ");
-    say_hex(child->function->config);
-    for (i = 0; i < PCI_BARS; i++)
-        if (device->bar_size[i]) {
-            say(", BAR ");
-            say_number(i);
-            say(" at ");
-            say_hex(device->bar_base[i]);
-            say(" (");
-            say_number(device->bar_size[i]);
-            say(" bytes)");
-        }
-    say(", its MSIs and an initiator with PIN\r\n");
-}
-
 /* The function's virtio common configuration structure (VIRTIO 1.4
    4.1.4.3), mapped uncached into init from the BAR its capability names,
    or 0 if it has none or the capability places it outside the BAR. */
@@ -560,40 +552,43 @@ static volatile UINT8 *map_common(const PLATFORM *platform,
    in use any more (3.3.1); and then release what the initiator holds in
    quarantine (ipc.md I8). Returns 1 if the function was stopped and the
    quarantine released; 0 if not, and the quarantine then stays. */
+static void say_stop_failed(const FUNCTION *function, const char *reason)
+{
+    say("nova-init: function stop failed pci=");
+    pci_say_function(function->requester);
+    say(" reason=");
+    say_value(reason);
+    say("\r\n");
+}
+
 static int stop_function(const PLATFORM *platform, FUNCTION *function,
                          const PCI_DEVICE_BOOTSTRAP *device,
                          UINT32 initiator)
 {
     UINT16 command = mmio_read16(function->mapped + PCI_COMMAND);
-    UINT8 status;
 
     mmio_write16(function->mapped + PCI_COMMAND,
                  (UINT16)((command | PCI_COMMAND_MEMORY) &
                           ~PCI_COMMAND_BUS_MASTER));
     if (mmio_read16(function->mapped + PCI_COMMAND) &
         PCI_COMMAND_BUS_MASTER) {
-        say("nova-init: bus mastering stays on; the initiator's quarantine "
-            "stays\r\n");
+        say_stop_failed(function, "bus mastering stays on");
         return 0;
     }
     if (!function->common)
         function->common = map_common(platform, function, device);
     if (!function->common) {
-        say("nova-init: no virtio common configuration to reset the device "
-            "through; the initiator's quarantine stays\r\n");
+        say_stop_failed(function, "no virtio common configuration");
         return 0;
     }
-    status = mmio_read8(function->common + VIRTIO_COMMON_DEVICE_STATUS);
     if (!virtio_pci_reset(function->common)) {
-        say("nova-init: the device did not finish its reset; the "
-            "initiator's quarantine stays\r\n");
+        say_stop_failed(function, "the device did not finish its reset");
         return 0;
     }
-    if (initiator_release_quarantine(initiator) != OK)
+    if (initiator_release_quarantine(initiator) != OK) {
+        say_stop_failed(function, "the quarantine was not released");
         return 0;
-    say("nova-init: bus mastering off, device reset from status ");
-    say_hex(status);
-    say(", initiator's quarantine released\r\n");
+    }
     return 1;
 }
 
@@ -602,10 +597,9 @@ static int have_file(const CHILD *child)
 {
     if (boot_file(child->file))
         return 1;
-    say("nova-init: no \\nova\\");
-    say(child->file);
-    say(", the ");
-    say(child->name);
+    say_child("child absent", child);
+    say(" file=");
+    say_value(child->file);
     say("\r\n");
     return 0;
 }
@@ -640,7 +634,7 @@ static UINT32 watch(const CHILD *child, UINT32 handle, UINT32 signals,
         object_wait_async(handle, supervisor_port, key, signals);
 
     if (status != OK)
-        say_status("cannot watch the ", child, "", status);
+        say_child_status("child watch failed", child, status);
     return status;
 }
 
@@ -651,9 +645,7 @@ UINT32 platform_driver_job(const PLATFORM *platform)
 
     if (status == OK)
         return job;
-    say("nova-init: cannot create a driver's job, status ");
-    say_number(status);
-    say("\r\n");
+    say_status("driver job create failed", status);
     return HANDLE_INVALID;
 }
 
@@ -680,11 +672,9 @@ static int start_driver(const PLATFORM *platform, CHILD *child)
         status = count ? channel_create(CHANNEL_CAPACITY, &mine, &theirs)
                        : ERR_NO_MEMORY;
     }
-    if (status == OK) {
-        say_start(child);
+    if (status == OK)
         status = channel_write(mine, &child->device, sizeof child->device,
                                handles, count);
-    }
     if (status != OK)
         close_handles(handles, count);
     if (status == OK && child->kind == KIND_REPORTS)
@@ -695,7 +685,7 @@ static int start_driver(const PLATFORM *platform, CHILD *child)
     if (status == OK)
         status = program_start(&program, theirs);
     if (status != OK) {
-        say_status("cannot start the ", child, "", status);
+        say_child_status("child start failed", child, status);
         close_if_open(&theirs);
         close_if_open(&mine);
         close_if_open(&program.thread);
@@ -734,7 +724,7 @@ static int start_client(const PLATFORM *platform, CHILD *child)
     if (status == OK)
         status = program_start(&program, theirs);
     if (status != OK) {
-        say_status("cannot start the ", child, "", status);
+        say_child_status("child start failed", child, status);
         close_if_open(&theirs);
         close_if_open(&mine);
         close_if_open(&program.thread);
@@ -757,7 +747,6 @@ static int start_program(const PLATFORM *platform, CHILD *child)
     UINT32 status = child->load(platform, &program, &bootstrap);
 
     if (status == OK) {
-        say_child("starting the ", child, "\r\n");
         status = watch(child, program.process, PROCESS_TERMINATED,
                        EVENT_ENDED);
         if (status == OK)
@@ -769,7 +758,7 @@ static int start_program(const PLATFORM *platform, CHILD *child)
         }
     }
     if (status != OK) {
-        say_status("cannot start the ", child, "", status);
+        say_child_status("child start failed", child, status);
         return 0;
     }
     child->process = program.process;
@@ -794,9 +783,9 @@ static int restart_allowed(CHILD *child)
 }
 
 /* Leave child down for good, with its initiator closed: a driver's
-   function is stopped already or keeps its quarantine (ipc.md I10). A
-   driver that finishes is one of init's checks, which fails without
-   it; the system runs on without any other. */
+   function is stopped already or keeps its quarantine (ipc.md I10). The
+   system runs on without it; a driver that finishes, the boot disk's
+   reader, then fails the boot-disk test. */
 static void give_up(CHILD *child, const char *why)
 {
     child->state = STATE_GIVEN_UP;
@@ -804,10 +793,10 @@ static void give_up(CHILD *child, const char *why)
         handle_close(child->initiator);
         child->initiator = HANDLE_INVALID;
     }
-    say_child("the ", child, " is given up: ");
-    say(why);
-    say(child->kind == KIND_FINISHES ? "\r\n"
-                                     : "; the system runs on without it\r\n");
+    say_child("child given up", child);
+    say(" reason=");
+    say_value(why);
+    say("\r\n");
 }
 
 /* Stop child's function, if it is a driver, once its process has ended
@@ -828,13 +817,10 @@ static int stopped(const PLATFORM *platform, CHILD *child)
 static int restarting(CHILD *child)
 {
     if (!restart_allowed(child)) {
-        say_child("the ", child, " is down again within ");
-        say_number(RESTART_PERIOD_SECONDS);
-        say(" s of its restart\r\n");
-        give_up(child, "a restart does not keep it up");
+        give_up(child, "down again within the restart period");
         return 0;
     }
-    say_child("restarting the ", child, "\r\n");
+    say_child_line("child restarted", child);
     return 1;
 }
 
@@ -848,6 +834,7 @@ static void launch(const PLATFORM *platform, CHILD *child)
     for (;;) {
         child->starts++;
         child->client_start = 0;
+        say_child_line("child start", child);
         if (child->kind == KIND_CLIENT)
             started = start_client(platform, child);
         else if (child->kind == KIND_PROGRAM)
@@ -876,10 +863,11 @@ static UINT32 exit_code_of(const CHILD *child)
     UINT32 status = process_info(child->process, &state, &exit_code);
 
     if (status != OK) {
-        say_status("cannot read the end of the ", child, "", status);
+        say_child_status("child end read failed", child, status);
         return 0;
     }
-    say_child("the ", child, " ended, exit code ");
+    say_child("child ended", child);
+    say(" exit=");
     say_number(exit_code);
     say("\r\n");
     return exit_code;
@@ -921,7 +909,8 @@ static void ended(const PLATFORM *platform, CHILD *child)
     if (child->kind == KIND_REPORTS && exit_code == VIRTIO_INPUT_EXIT_DONE &&
         child->client_start &&
         child->client_start != children[CHILD_CLIENT].starts) {
-        say_child("restarting the ", child, " for its restarted client\r\n");
+        say_child("child restarted", child);
+        say(" reason=\"its client restarted\"\r\n");
         launch(platform, child);
     } else if (restarting(child)) {
         launch(platform, child);
@@ -946,7 +935,7 @@ static UINT32 take_report(const CHILD *driver)
         return handle.handle;
     if (status == OK && handle_count)
         handle_close(handle.handle);
-    say_status("the report of the ", driver, " is malformed", status);
+    say_child_status("report refused", driver, status);
     return HANDLE_INVALID;
 }
 
@@ -970,7 +959,7 @@ static void hand_endpoint(CHILD *driver, UINT32 endpoint)
         return;
     }
     handle_close(endpoint);
-    say_status("the endpoint reached no ", client, "", status);
+    say_child_status("endpoint send failed", client, status);
 }
 
 /* child, an input driver, has reported: its endpoint goes to the
@@ -984,15 +973,8 @@ static void reported(const PLATFORM *platform, CHILD *child)
     child->state = STATE_RUNNING;
     if (endpoint == HANDLE_INVALID)
         return;
-    if (client->state == STATE_STOPPED) {
-        say_child("the ", child, " reported; starting its client, \\nova\\");
-        say(client->file);
-        say("\r\n");
+    if (client->state == STATE_STOPPED)
         launch(platform, client);
-    } else if (client->state == STATE_RUNNING) {
-        say_child("the ", child, " reported; its client takes the new "
-                  "endpoint\r\n");
-    }
     hand_endpoint(child, endpoint);
 }
 
@@ -1006,7 +988,7 @@ static void handle_packet(const PLATFORM *platform,
     CHILD *child;
 
     if (packet->type != PACKET_SIGNAL || index >= CHILDREN) {
-        say("nova-init: an unexpected packet on the supervisor's port\r\n");
+        say("nova-init: packet refused\r\n");
         return;
     }
     child = &children[index];
@@ -1039,7 +1021,8 @@ static UINT32 supervise_start(const PLATFORM *platform, const CHILD *child)
 static UINT32 start_up(const PLATFORM *platform, CHILD *child)
 {
     if (!child->function->config) {
-        say_child("no function for the ", child, "\r\n");
+        say_child("child absent", child);
+        say(" reason=\"no function\"\r\n");
         return OK;
     }
     if (!have_file(child))
@@ -1059,11 +1042,25 @@ static CHILD *input_child(UINT32 index)
 {
     CHILD *child = &children[CHILD_FIRST_INPUT + index];
 
-    child->name = "virtio input driver";
+    child->name = INPUT_NAME;
     child->file = INPUT_FILE;
     child->kind = KIND_REPORTS;
     child->function = &found_functions.input[index];
     return child;
+}
+
+/* The boot-disk test: the block driver read the boot disk and ended
+   with VIRTIO_BLK_EXIT_DONE, or it never ran. */
+static void report_boot_disk(const CHILD *block)
+{
+    if (block->state == STATE_DONE)
+        tests_report(INIT_TEST_BOOT_DISK, KTAP_PASSED, 0);
+    else if (!block->function->config)
+        tests_report(INIT_TEST_BOOT_DISK, KTAP_SKIPPED,
+                     "no virtio block function");
+    else
+        tests_report(INIT_TEST_BOOT_DISK, KTAP_FAILED,
+                     "the driver did not finish its read");
 }
 
 int platform_start(const PLATFORM *platform)
@@ -1073,19 +1070,19 @@ int platform_start(const PLATFORM *platform)
     UINT32 i;
 
     scan(platform, &found_functions);
-    if (status == OK)
+    if (status == OK && tests_enabled()) {
         status = start_up(platform, block);
-    if (status == OK && block->state == STATE_GIVEN_UP)
-        return 0;
+        if (status == OK)
+            report_boot_disk(block);
+    }
     if (status == OK && !found_functions.inputs)
-        say("nova-init: no function for the virtio input driver\r\n");
+        say("nova-init: child absent name=" INPUT_NAME
+            " reason=\"no function\"\r\n");
     for (i = 0; status == OK && i < found_functions.inputs; i++)
         status = start_up(platform, input_child(i));
     if (status == OK)
         return 1;
-    say("nova-init: cannot supervise, status ");
-    say_number(status);
-    say("\r\n");
+    say_status("supervision failed", status);
     return 0;
 }
 
@@ -1099,9 +1096,9 @@ int platform_keep(const PLATFORM *platform, const char *name,
         if (!children[i].name)
             child = &children[i];
     if (!child) {
-        say("nova-init: no room to keep the ");
+        say("nova-init: child refused name=");
         say(name);
-        say(" running\r\n");
+        say(" reason=\"no room\"\r\n");
         return 0;
     }
     child->name = name;
@@ -1114,11 +1111,8 @@ int platform_keep(const PLATFORM *platform, const char *name,
 UINT32 platform_supervise(const PLATFORM *platform)
 {
     PORT_PACKET packet;
-    UINT32 status, i;
+    UINT32 status;
 
-    for (i = 0; i < CHILDREN; i++)
-        if (children[i].state == STATE_RUNNING)
-            say_child("supervising the ", &children[i], "\r\n");
     for (;;) {
         status = port_wait(supervisor_port, DEADLINE_INFINITE, &packet);
         if (status != OK)

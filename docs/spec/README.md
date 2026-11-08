@@ -15,6 +15,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [syscalls.md](syscalls.md) | The x86-64 system-call entry, its register convention, error codes and the first calls |
 | [speculation.md](speculation.md) | The speculative-execution mitigations on entry from and exit to user mode and at a process switch, and how the kernel detects which apply |
 | [replay.md](replay.md) | Every nondeterministic input a process can receive, and how a recording captures or excludes it |
+| [log.md](log.md) | The debug log: the form of its lines, how tests report on it in KTAP, and which self-tests run on which boot |
 | [compat.md](compat.md) | How a 32-bit Windows program runs: its process, ntdll, paths and the stand-in file protocol |
 | [storage.md](storage.md) | The directory protocol and per-process views, the native file system, the store at `/store`, its builds and garbage collection, and the first milestone |
 | [input.md](input.md) | The virtio input driver, the description, key events and pointer reports it sends a client, its report to the platform driver and how that supervises it |
@@ -408,7 +409,7 @@ the commits it records for them: **M2libc**
 `ee0bf91eb02390c2d40bd85379113e524f0c752b` and **mescc-tools**
 `578ac99623d291e2b9eacf03cacc390cfe512661` (all GPL-3.0). The seed,
 `bootstrap-seeds/PE32/i386/hex0-seed.exe`, and the files its chain reads
-up to M1 are test inputs, fetched by hash for the test disk
+up to M1 are test inputs, fetched by hash for the chain disk
 ([build.sh](../../build.sh)); the sources were read only to
 learn which routines, fields and values the chain's programs use, and
 nothing of them is copied ([compat.md](compat.md)).
@@ -805,6 +806,22 @@ The MCFG's allocation structures and the MSI-X capability's layout (its
 ID, message control and table offset) are in none of these; the kernel's
 MCFG reader (`kernel/acpi/acpi.c`) and `drivers/pci.h` follow the layout
 QEMU's firmware and devices were observed to use.
+
+## Test reports
+
+**The Kernel Test Anything Protocol (KTAP), version 1**, Linux, tag
+`v7.3`, commit `c03c1a14507dfaf8b856c2608f9ac216021fc222`:
+`Documentation/dev-tools/ktap.rst`, which
+<https://docs.kernel.org/dev-tools/ktap.html> renders.
+
+- Document: <https://raw.githubusercontent.com/torvalds/linux/v7.3/Documentation/dev-tools/ktap.rst>
+- Access: free. The document is GPL-2.0; [log.md](log.md) cites it and
+  copies none of its text.
+- sha256: `b26fa893201bff9b1e20565192ba636f983d9b79e47d957979830fc78a745b39`
+- Used by: [log.md](log.md) T2, for the version line, plans, result
+  lines and the `SKIP` directive, diagnostic lines, unknown lines and
+  nested tests indented two spaces a level; `ci/boot.py`, which reads
+  the report.
 
 ## Design references
 

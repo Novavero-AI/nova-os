@@ -98,23 +98,22 @@ void fpu_init(UINT64 max_size)
         area_size = b;
     }
     if (area_size > max_size) {
-        serial_write("nova: user vector state needs ");
+        serial_write("nova: fpu refused bytes=");
         serial_number(area_size);
-        serial_write(" bytes, more than the ");
+        serial_write(" max_bytes=");
         serial_number(max_size);
-        serial_write(" a thread keeps, halted\r\n");
-        halt_forever();
+        serial_write("\r\n");
+        serial_halt();
     }
-    serial_write("nova: user vector state: ");
-    if (xsave_components) {
-        serial_write(xsave_components & XCR0_AVX ? "x87, sse and avx"
-                                                 : "x87 and sse");
-        serial_write(" by xsave, ");
-    } else {
-        serial_write("x87 and sse by fxsave, ");
-    }
+    serial_write("nova: fpu save=");
+    if (xsave_components)
+        serial_write(xsave_components & XCR0_AVX ? "xsave state=x87,sse,avx"
+                                                 : "xsave state=x87,sse");
+    else
+        serial_write("fxsave state=x87,sse");
+    serial_write(" bytes=");
     serial_number(area_size);
-    serial_write(" bytes\r\n");
+    serial_write("\r\n");
 }
 
 UINT64 fpu_area_size(void)

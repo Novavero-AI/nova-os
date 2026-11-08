@@ -101,15 +101,6 @@ static int same(const UINT8 *a, const UINT8 *b, UINT32 count)
     return 1;
 }
 
-static void say_status(const char *what, UINT32 status)
-{
-    say("nova-init: ");
-    say(what);
-    say(", status ");
-    say_number(status);
-    say("\r\n");
-}
-
 static void close_open(UINT32 *handle)
 {
     if (*handle != HANDLE_INVALID)
@@ -171,7 +162,7 @@ static void hand_over(UINT32 channel, const void *setup, UINT32 size,
     status = channel_write(channel, setup, size, &transfer, 1);
     if (status != OK) {
         handle_close(handle);
-        say_status("a setup reached no program", status);
+        say_status("setup send failed", status);
     }
 }
 
@@ -393,6 +384,16 @@ static UINT32 load_login(const PLATFORM *platform, PROGRAM *program,
 /* ------------------------------------------------------------------------
    Starting. */
 
+/* The accounts service and login do not start, for reason. */
+static void say_unavailable(const char *reason, UINT32 status)
+{
+    say("nova-init: login unavailable reason=");
+    say_value(reason);
+    say(" status=");
+    say_number(status);
+    say("\r\n");
+}
+
 int login_start(const PLATFORM *platform, const STORE_SERVICES *services)
 {
     IO_ATTRIBUTES attributes;
@@ -409,19 +410,15 @@ int login_start(const PLATFORM *platform, const STORE_SERVICES *services)
     if (status == OK && !session_base_length)
         status = ERR_NOT_FOUND;
     if (status != OK) {
-        say_status("no " SESSION_NAME " path in /store; the accounts service "
-                   "and login do not start",
-                   status);
+        say_unavailable("no " SESSION_NAME " path", status);
         return 0;
     }
     status = view_open(&names, USERS_PATH, IO_RIGHT_LIST, &users, &attributes);
     if (status != OK) {
-        say_status("no /data and /users; the accounts service and login do "
-                   "not start",
-                   status);
+        say_unavailable("no /users", status);
         return 0;
     }
     handle_close(users);
-    return platform_keep(platform, "accounts service", load_accounts) &&
+    return platform_keep(platform, "accounts", load_accounts) &&
            platform_keep(platform, "login", load_login);
 }

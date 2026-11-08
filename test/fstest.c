@@ -20,21 +20,26 @@
      rename into it;
    - a crash state: files whose contents name one generation, each
      generation committed by one flush, which it checks is whole before
-     it commits the next. With FSTEST_LOOP it then commits generations
-     until the machine stops, logging each as it starts, as it flushes
-     and once its flush has answered, so a crash test that kills the
-     machine finds at the next boot the generation last logged committed
-     or the one after.
+     it commits the next, logging the generation it finds. With
+     FSTEST_LOOP it then commits generations until the machine stops,
+     logging each as it starts, as it flushes and once its flush has
+     answered, so a crash test that kills the machine finds at the next
+     boot the generation last logged committed or the one after.
 
-   It logs what it finds and exits with FSTEST_EXIT_PASSED once every
-   check passes, or FSTEST_EXIT_FAILED once all have run and one has
-   not. */
+   Each item is a case of the fstest test, after a case for its launch
+   message, reported in KTAP at depth 2 (docs/spec/log.md T2), with each
+   check that fails as a diagnostic of its case. It exits with
+   FSTEST_EXIT_PASSED once every check passes, or FSTEST_EXIT_FAILED once
+   all have run and one has not, or at once when a failure leaves
+   nothing after it to run. */
 
 #include "fstest.h"
+#include "ktap.h"
 #include "launch.h"
 #include "log.h"
 #include "native.h"
 #include "path.h"
+#include "test_report.h"
 
 #define PATH_BUFFER 512
 
@@ -64,7 +69,6 @@
 #define GENERATION_SIZE 8
 #define CRASH_UNIT 4500
 #define CRASH_UNITS 5
-#define CRASH_SIZE_MAX (GENERATION_SIZE + CRASH_UNIT * CRASH_UNITS)
 
 /* xorshift64 (Marsaglia, 2003): a byte stream reproducible from its seed
    alone, which is all the checks need of it. */
@@ -75,6 +79,15 @@
 
 #define BITS_PER_BYTE 8
 
+/* The cases, in the order they run: the launch message's, then one for
+   each item above. The one running is the next to report; one that a
+   stop leaves unreached is skipped. */
+static const char *const case_names[] = {"launch", "boots",   "persist",
+                                         "sparse", "rights",  "changes",
+                                         "full",   "crash"};
+#define CASES (sizeof case_names / sizeof case_names[0])
+#define UNREACHED "an earlier case stopped the check"
+
 static UINT8 launch[CHANNEL_MAX_BYTES];
 static UINT8 buffer[IO_TRANSFER_MAX];
 static UINT8 expected[IO_TRANSFER_MAX];
@@ -82,6 +95,11 @@ static char path[PATH_BUFFER];
 static VIEW view;
 static const char *mode;
 static int failed;
+
+/* The cases' results, and whether a check of the case running, the
+   next to report, has failed. */
+static KTAP_PLAN cases;
+static int running_failed;
 
 static UINT32 length_of(const char *text)
 {
@@ -102,26 +120,37 @@ static int same(const UINT8 *a, const UINT8 *b, UINT32 count)
     return 1;
 }
 
-/* A check that fails is logged and remembered; the program runs on. */
+/* A check that fails is a diagnostic of the case running, which then
+   fails; the program runs on. */
 static int check(int passed, const char *what)
 {
     if (!passed) {
-        say("nova-fstest: check failed: ");
-        say(what);
-        say("\r\n");
+        ktap_diagnostic(&cases, what);
+        running_failed = 1;
         failed = 1;
     }
     return passed;
 }
 
-/* Stop at once: a check whose failure leaves nothing after it to run. */
+static void end_case(void)
+{
+    ktap_result(&cases, running_failed ? KTAP_FAILED : KTAP_PASSED,
+                case_names[cases.written], 0);
+    running_failed = 0;
+}
+
+/* Stop at once: a check whose failure leaves nothing after it to run
+   fails the case running, and the cases after it are skipped. */
 _Noreturn static void give_up(const char *what, UINT32 status)
 {
-    say("nova-fstest: check failed: ");
+    ktap_diagnostic_start(&cases);
     say(what);
     say(", status ");
     say_number(status);
     say("\r\n");
+    running_failed = 1;
+    end_case();
+    ktap_skip_rest(&cases, case_names, CASES, UNREACHED);
     process_exit(FSTEST_EXIT_FAILED);
 }
 
@@ -201,6 +230,7 @@ static void read_launch(UINT32 bootstrap)
         process_exit(FSTEST_EXIT_FAILED);
     handle_close(bootstrap);
     say_open(handles[LAUNCH_DEBUG_LOG].handle);
+    ktap_plan(&cases, KTAP_CASE_DEPTH, CASES);
     handle_close(handles[LAUNCH_SELF].handle);
     if (bytes < sizeof *header ||
         header->view_count != FSTEST_VIEW_ENTRIES ||
@@ -343,10 +373,18 @@ static void write_around_damage(UINT32 channel)
                   (read_status == OK || read_status == ERR_DATA_INTEGRITY),
               "a write into a block in part fails as its read does");
     }
-    say("nova-fstest: ");
+    ktap_diagnostic_start(&cases);
     say_number(damaged);
-    say(" blocks of /data/fstest/persist fail their check; a write into "
-        "one in part fails the same way, and the others take writes\r\n");
+    say(" blocks of /data/fstest/persist fail their check\r\n");
+}
+
+/* A status the case running met, as its diagnostic. */
+static void say_status(UINT32 status)
+{
+    ktap_diagnostic_start(&cases);
+    say("status ");
+    say_number(status);
+    say("\r\n");
 }
 
 static void count_boots(void)
@@ -366,9 +404,6 @@ static void count_boots(void)
     check(write_all(channel, 0, expected, GENERATION_SIZE) == OK,
           "the boot count is written");
     handle_close(channel);
-    say("nova-fstest: boot ");
-    say_number(boots + 1);
-    say(" of this data disk\r\n");
 }
 
 static void persist(void)
@@ -387,30 +422,17 @@ static void persist(void)
             status = io_flush(channel);
         if (status == OK)
             status = matches(channel, PERSIST_SEED, 0, PERSIST_SIZE);
-        say("nova-fstest: /data/fstest/persist written, ");
-        say_number(PERSIST_SIZE);
-        say(" bytes, flushed and read back, status ");
-        say_number(status);
-        say("\r\n");
+        if (status != OK)
+            say_status(status);
         check(status == OK, "a file written and flushed reads back");
     } else {
         status = size == PERSIST_SIZE
                      ? matches(channel, PERSIST_SEED, 0, PERSIST_SIZE)
                      : ERR_BAD_STATE;
-        say("nova-fstest: /data/fstest/persist from an earlier boot, ");
-        say_number(size);
-        say(" bytes, ");
-        if (status == OK)
-            say("reads back byte for byte\r\n");
-        else if (status == ERR_DATA_INTEGRITY) {
-            say("reports an integrity error, status 18\r\n");
+        if (status != OK)
+            say_status(status);
+        if (status == ERR_DATA_INTEGRITY)
             write_around_damage(channel);
-        }
-        else {
-            say("does not read back, status ");
-            say_number(status);
-            say("\r\n");
-        }
         check(status == OK, "a file from an earlier boot reads back");
     }
     handle_close(channel);
@@ -442,9 +464,6 @@ static void sparse(void)
         zero &= buffer[i] == 0;
     check(status == OK && zero, "a file extended by truncate reads zeros");
     handle_close(channel);
-    say("nova-fstest: /data/fstest/sparse, ");
-    say_number(SPARSE_SIZE);
-    say(" bytes from truncate alone, reads zeros\r\n");
 }
 
 /* The name of entry n of the full directory, NUL-terminated, into out. */
@@ -509,9 +528,6 @@ static void directory_full(void)
     handle_close(full);
     check(remove_name(parent, "full") == OK, "the emptied directory goes");
     handle_close(parent);
-    say("nova-fstest: a directory full at ");
-    say_number(count);
-    say(" entries refuses a create and a rename into it, and empties\r\n");
 }
 
 static void rights(void)
@@ -569,8 +585,6 @@ static void rights(void)
                       IO_OPEN_DIRECTORY, &channel,
                       &attributes) == ERR_INVALID_ARGS,
           "the directory flag without the create flag is refused");
-    say("nova-fstest: what is opened without WRITE is not written, created, "
-        "truncated, flushed, renamed or removed\r\n");
 }
 
 /* ------------------------------------------------------------------------
@@ -665,8 +679,26 @@ static void changes(void)
     handle_close(kept);
     check(io_flush(directory) == OK, "the directory flushes");
     handle_close(directory);
-    say("nova-fstest: creates, writes, truncates, renames and removes "
-        "behave\r\n");
+}
+
+/* Whether the mode commits generations until the machine stops. */
+static int looping(void)
+{
+    return same((const UINT8 *)mode, (const UINT8 *)FSTEST_LOOP,
+                sizeof FSTEST_LOOP);
+}
+
+/* With FSTEST_LOOP, log generation's step for the crash test, which reads
+   the log across the machine's stop: writing, flushing or committed. */
+static void say_generation(const char *step, UINT64 generation)
+{
+    if (!looping())
+        return;
+    say("nova-fstest: generation ");
+    say(step);
+    say(" number=");
+    say_number(generation);
+    say("\r\n");
 }
 
 /* ------------------------------------------------------------------------
@@ -748,9 +780,7 @@ static UINT32 crash_commit(UINT32 directory, UINT64 generation)
     if (status == OK)
         status = rename_name(directory, "next", "current", IO_RENAME_REPLACE);
     if (status == OK) {
-        say("nova-fstest: generation ");
-        say_number(generation);
-        say(" flushing\r\n");
+        say_generation("flushing", generation);
         status = io_flush(directory);
     }
     return status;
@@ -770,7 +800,6 @@ static UINT64 crash_check(UINT32 directory)
         status = crash_commit(directory, 0);
         if (status != OK)
             give_up("the crash state is made", status);
-        say("nova-fstest: crash state made at generation 0\r\n");
         return 0;
     }
     if (status == OK && size != GENERATION_SIZE)
@@ -795,11 +824,11 @@ static UINT64 crash_check(UINT32 directory)
         open_file(at(FSTEST_DATA, CRASH "/next"), IO_RIGHT_READ, 0, &channel,
                   &size) != ERR_NOT_FOUND)
         status = ERR_BAD_STATE;
-    say("nova-fstest: crash state at generation ");
-    say_number(generation);
-    say(status == OK ? ", whole\r\n" : ", MIXED\r\n");
     if (status != OK)
         give_up("the crash state is one generation's", status);
+    say("nova-fstest: crash state found generation=");
+    say_number(generation);
+    say("\r\n");
     return generation;
 }
 
@@ -815,43 +844,45 @@ static void crash_state(void)
     generation = crash_check(directory);
     do {
         generation++;
-        say("nova-fstest: generation ");
-        say_number(generation);
-        say(" writing\r\n");
+        say_generation("writing", generation);
         status = crash_commit(directory, generation);
         if (status != OK)
             give_up("a generation commits", status);
-        say("nova-fstest: generation ");
-        say_number(generation);
-        say(" committed\r\n");
-    } while (same((const UINT8 *)mode, (const UINT8 *)FSTEST_LOOP,
-                  sizeof FSTEST_LOOP));
+        say_generation("committed", generation);
+    } while (looping());
     handle_close(directory);
 }
 
-_Noreturn void fstest_main(UINT32 bootstrap, UINT64 argument)
+/* The directory the checks work in, made at the first boot. */
+static void boots(void)
 {
     UINT32 directory;
 
-    (void)argument;
-    read_launch(bootstrap);
-    say("nova-fstest: running with /data, read-write and read-only, ");
-    say(mode);
-    say("\r\n");
     if (open_directory(at(FSTEST_DATA, "/fstest"),
                        IO_RIGHT_READ | IO_RIGHT_WRITE | IO_RIGHT_LIST,
                        &directory) != OK)
         give_up("/data/fstest is made", ERR_BAD_STATE);
     handle_close(directory);
     count_boots();
-    persist();
-    sparse();
-    rights();
-    changes();
-    directory_full();
-    crash_state();
-    if (failed)
-        process_exit(FSTEST_EXIT_FAILED);
-    say("nova-fstest: checks passed\r\n");
-    process_exit(FSTEST_EXIT_PASSED);
+}
+
+/* The cases after the launch message's, in case_names' order. */
+static void (*const case_bodies[])(void) = {
+    boots, persist, sparse, rights, changes, directory_full, crash_state};
+
+_Static_assert(sizeof case_bodies / sizeof case_bodies[0] == CASES - 1,
+               "a body for each case after the launch message's");
+
+_Noreturn void fstest_main(UINT32 bootstrap, UINT64 argument)
+{
+    UINT32 i;
+
+    (void)argument;
+    read_launch(bootstrap);
+    end_case();
+    for (i = 0; i < CASES - 1; i++) {
+        case_bodies[i]();
+        end_case();
+    }
+    process_exit(failed ? FSTEST_EXIT_FAILED : FSTEST_EXIT_PASSED);
 }

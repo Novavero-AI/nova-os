@@ -5,15 +5,16 @@
    checks its blob and starts it with the image, a control channel and
    the store's root directory. It opens the namespace server's image in
    that path through the store service and starts it, and publishes the
-   store's root in the namespace as /store, its only name. Through the
-   namespace it finds the test program by path, asks the store service
-   for the program's closure directory, and starts the program with a
-   view of that directory under /store and nothing else (F5), and with
-   one argument, a store path outside the closure, and reads the
-   program's exit code. Both services run on, for the life of the
-   system, and init keeps its channels to them (STORE_SERVICES): login
-   and its sessions reach /store, /data and /users through them. The
-   data disk's /data and /users are published beside /store and checked
+   store's root in the namespace as /store, its only name. On a test
+   disk, through the namespace it finds the test program by path, asks
+   the store service for the program's closure directory, starts the
+   program with a view of that directory under /store and nothing else
+   (F5), and with one argument, a store path outside the closure, and
+   reports the program's exit code as the hello test (tests.h). Both
+   services run on, for the life of the system, and init keeps its
+   channels to them (STORE_SERVICES): login and its sessions reach
+   /store, /data and /users through them. The data disk's /data and
+   /users are published beside /store, and on a test disk checked
    (data.c). */
 
 #include "init.h"
@@ -24,6 +25,7 @@
 #include "path.h"
 #include "reader.h"
 #include "services.h"
+#include "tests.h"
 
 #define STORE_PROGRAM "bin/store.exe"
 #define NAMESPACE_PROGRAM "bin/namespace.exe"
@@ -97,15 +99,6 @@ static int join(char *out, UINT32 size, const char *a, const UINT8 *b,
     return 1;
 }
 
-static void say_status(const char *what, UINT32 status)
-{
-    say("nova-init: ");
-    say(what);
-    say(", status ");
-    say_number(status);
-    say("\r\n");
-}
-
 static void close_transfers(const HANDLE_TRANSFER *handles, UINT32 count)
 {
     UINT32 i;
@@ -138,7 +131,7 @@ static UINT32 start(PROGRAM *program, const void *bytes, UINT32 byte_count,
     if (status != OK) {
         if (!written)
             close_transfers(handles, count);
-        say_status("a program from /store did not start", status);
+        say_status("store program start failed", status);
         if (program->thread != HANDLE_INVALID)
             handle_close(program->thread);
         handle_close(program->process);
@@ -165,9 +158,9 @@ int launch_handles(UINT32 debug_log, const PROGRAM *program,
     return 1;
 }
 
-/* Wait for process to end and report its exit code, 0 if it is not
+/* Wait for process to end and return its exit code, 0 if it is not
    seen to end. */
-static UINT32 end_of(UINT32 process, const char *name)
+static UINT32 end_of(UINT32 process)
 {
     UINT32 observed, state = 0, exit_code = 0;
 
@@ -177,11 +170,6 @@ static UINT32 end_of(UINT32 process, const char *name)
         state != PROCESS_STATE_TERMINATED)
         exit_code = 0;
     handle_close(process);
-    say("nova-init: ");
-    say(name);
-    say(" ended, exit code ");
-    say_number(exit_code);
-    say("\r\n");
     return exit_code;
 }
 
@@ -238,23 +226,15 @@ static UINT32 start_store(UINT32 job, UINT32 debug_log,
     *control = HANDLE_INVALID;
     *root = HANDLE_INVALID;
     if (status != OK) {
-        say_status("the store image does not open", status);
+        say_status("store image open failed", status);
         return HANDLE_INVALID;
     }
-    say("nova-init: store image of ");
-    say_number(file->size);
-    say(" bytes, ");
-    say_number(image->registration_count);
-    say(" paths; the store service is ");
-    say(STORE_DIRECTORY);
-    say_printable(image->boot_name, image->boot_name_length);
-    say("/" STORE_PROGRAM "\r\n");
     status = boot_program(image, STORE_PROGRAM, &blob);
     if (status == OK)
         status = program_load(init_layout(), job, blob.data, blob.length,
                               &program);
     if (status != OK) {
-        say_status("the store service does not load", status);
+        say_status("store service load failed", status);
         return HANDLE_INVALID;
     }
     for (i = 0; i < STORE_BOOTSTRAP_HANDLES; i++) {
@@ -335,7 +315,7 @@ static UINT32 start_namespace(UINT32 job, UINT32 debug_log, UINT32 store_root,
     if (status == OK)
         status = load_from_store(job, &store_view, path, &program);
     if (status != OK) {
-        say_status("the namespace server does not load", status);
+        say_status("namespace load failed", status);
         return HANDLE_INVALID;
     }
     handles[NAMESPACE_BOOTSTRAP_DEBUG_LOG].handle = HANDLE_INVALID;
@@ -391,16 +371,7 @@ static UINT32 publish(UINT32 root, const char *name, UINT32 *directory)
 }
 
 /* ------------------------------------------------------------------------
-   Listings. */
-
-static void say_entry(void *context, const UINT8 *name, UINT32 length,
-                      UINT32 kind)
-{
-    (void)context;
-    say(" ");
-    say_printable(name, length);
-    say(kind == IO_KIND_DIRECTORY ? "/" : kind == IO_KIND_LINK ? "@" : "");
-}
+   The test program. */
 
 /* Note the test program's path, the one whose name is HELLO_NAME. */
 static void find_hello(void *context, const UINT8 *name, UINT32 length,
@@ -408,7 +379,8 @@ static void find_hello(void *context, const UINT8 *name, UINT32 length,
 {
     UINT32 name_length = length_of(HELLO_NAME);
 
-    say_entry(context, name, length, kind);
+    (void)context;
+    (void)kind;
     if (length == STORE_HASH_CHARS + 1 + name_length &&
         same(name + STORE_HASH_CHARS + 1, (const UINT8 *)HELLO_NAME,
              name_length)) {
@@ -416,22 +388,6 @@ static void find_hello(void *context, const UINT8 *name, UINT32 length,
         hello_base_length = length;
     }
 }
-
-static UINT32 list(const VIEW *view, const char *path,
-                   void (*each)(void *, const UINT8 *, UINT32, UINT32))
-{
-    UINT32 status;
-
-    say("nova-init: ");
-    say(path);
-    say(" holds");
-    status = view_list(view, path, each, 0);
-    say("\r\n");
-    return status;
-}
-
-/* ------------------------------------------------------------------------
-   The test program. */
 
 /* Start the test program, its file at path in view, with its closure,
    whose directory moves into it, as its view's /store, and outside as
@@ -451,7 +407,7 @@ static UINT32 start_hello(UINT32 job, UINT32 debug_log, const VIEW *view,
     status = load_from_store(job, view, path, &program);
     if (status != OK) {
         handle_close(closure);
-        say_status("the test program does not load", status);
+        say_status("hello load failed", status);
         return HANDLE_INVALID;
     }
     if (!launch_handles(debug_log, &program, handles)) {
@@ -474,18 +430,56 @@ static UINT32 start_hello(UINT32 job, UINT32 debug_log, const VIEW *view,
                  LAUNCH_FIRST_DIRECTORY + 1);
 }
 
+/* Run the test program from /store, found through the namespace's root,
+   with its closure from the store service's control channel and outside
+   as its argument, and report the hello test. */
+static void run_hello(UINT32 job, UINT32 debug_log, UINT32 root,
+                      UINT32 control, const char *outside)
+{
+    IO_ATTRIBUTES attributes;
+    UINT32 closure, hello, status;
+
+    namespace_view.count = 0;
+    hello_base_length = 0;
+    status = view_add(&namespace_view, "/", root);
+    if (status == OK)
+        status = view_list(&namespace_view, "/store", find_hello, 0);
+    if (status == OK && !hello_base_length)
+        status = ERR_NOT_FOUND;
+    if (status == OK)
+        status = io_open(control, STORE_OPEN_CLOSURE, hello_base,
+                         hello_base_length, CLOSURE_RIGHTS, &closure,
+                         &attributes);
+    if (status == OK &&
+        !join(hello_path, sizeof hello_path, STORE_DIRECTORY, hello_base,
+              hello_base_length, "/" HELLO_FILE)) {
+        handle_close(closure);
+        status = ERR_OUT_OF_RANGE;
+    }
+    if (status != OK) {
+        say_status("hello start failed", status);
+        tests_report(INIT_TEST_HELLO, KTAP_FAILED, "it did not start");
+        return;
+    }
+    hello = start_hello(job, debug_log, &namespace_view, hello_path, closure,
+                        outside);
+    if (hello == HANDLE_INVALID) {
+        tests_report(INIT_TEST_HELLO, KTAP_FAILED, "it did not start");
+        return;
+    }
+    tests_report_exit(INIT_TEST_HELLO, end_of(hello), HELLO_EXIT_PASSED);
+}
+
 int store_run(UINT32 job, UINT32 debug_log, const BOOT_FILE_VIEW *image,
               STORE_SERVICES *services)
 {
     STORE_IMAGE store_image;
-    IO_ATTRIBUTES attributes;
     char outside[LAUNCH_PREFIX_MAX + STORE_BASE_NAME_MAX];
-    UINT32 control, store_root, root = HANDLE_INVALID, closure, hello;
-    UINT32 store, names = HANDLE_INVALID, status = OK, hello_exit = 0;
+    UINT32 control, store_root, root = HANDLE_INVALID;
+    UINT32 store, names, status = OK;
 
     services->names = HANDLE_INVALID;
     services->control = HANDLE_INVALID;
-    namespace_view.count = 0;
     store =
         start_store(job, debug_log, image, &store_image, &control, &store_root);
     if (store == HANDLE_INVALID)
@@ -507,46 +501,18 @@ int store_run(UINT32 job, UINT32 debug_log, const BOOT_FILE_VIEW *image,
     }
     if (status == OK)
         status = publish(root, STORE_NAME, &store_root);
-    if (status == OK)
-        data_mount(job, debug_log, root);
-    if (status == OK)
-        status = view_add(&namespace_view, "/", root);
-    if (status == OK)
-        status = list(&namespace_view, "/", say_entry);
-    if (status == OK)
-        status = list(&namespace_view, "/store", find_hello);
-    if (status == OK && !hello_base_length)
-        status = ERR_NOT_FOUND;
-    if (status == OK)
-        status = io_open(control, STORE_OPEN_CLOSURE, hello_base,
-                         hello_base_length, CLOSURE_RIGHTS, &closure,
-                         &attributes);
-    if (status == OK &&
-        !join(hello_path, sizeof hello_path, STORE_DIRECTORY, hello_base,
-              hello_base_length, "/" HELLO_FILE)) {
-        handle_close(closure);
-        status = ERR_OUT_OF_RANGE;
-    }
-    if (status == OK) {
-        hello = start_hello(job, debug_log, &namespace_view, hello_path,
-                            closure, outside);
-        if (hello != HANDLE_INVALID) {
-            say("nova-init: started ");
-            say(hello_path);
-            say(" with a view of its closure under /store\r\n");
-            hello_exit = end_of(hello, hello_path);
-        }
-    } else {
-        say_status("the test program did not start from /store", status);
-    }
     if (store_root != HANDLE_INVALID)
         handle_close(store_root);
-    if (hello_exit != HELLO_EXIT_PASSED) {
+    if (status != OK) {
+        say_status("store publish failed", status);
         if (root != HANDLE_INVALID)
             handle_close(root);
         handle_close(control);
         return 0;
     }
+    data_mount(job, debug_log, root);
+    if (tests_enabled())
+        run_hello(job, debug_log, root, control, outside);
     services->names = root;
     services->control = control;
     return 1;

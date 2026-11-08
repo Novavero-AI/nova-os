@@ -46,8 +46,9 @@ and on Windows with a TinyCC built from stage0-pe32's seed.
   ([speculation.md](docs/spec/speculation.md)).
 - A random number generator seeded from the firmware, RDSEED or RDRAND,
   and the timer.
-- Self-tests of the page allocator, the random number generator, objects
-  and threads on every boot.
+- A self-test of the random number generator's ChaCha20 and SHA-256
+  on every boot, and self-tests of the page allocator, objects and
+  threads on the test disk ([log.md](docs/spec/log.md)).
 
 **Services and drivers, each a user-mode process**
 
@@ -89,14 +90,14 @@ and on Windows with a TinyCC built from stage0-pe32's seed.
 **Windows programs**
 
 - nova-os's ntdll gives 32-bit Windows programs the routines
-  stage0-pe32's bootstrap chain calls. From the test disk the chain runs
+  stage0-pe32's bootstrap chain calls. From the chain disk the chain runs
   from its hex0 seed to M1, and each link must match the one nova-nix
   builds on Windows ([compat.md](docs/spec/compat.md)).
 
 ## Build
 
 [build.sh](build.sh) needs a C compiler as `cc`, `curl`, `tar` and
-`unzip`. It fetches TinyCC's source, Inter's release and the test disk's
+`unzip`. It fetches TinyCC's source, Inter's release and the chain disk's
 inputs, and writes every image into the directory it is given:
 
 ```sh
@@ -155,21 +156,26 @@ qemu-system-x86_64 -machine q35 -m 256M \
 ```
 
 The kernel and every program log to the terminal through the serial
-port. Once the boot screen fades, login runs in the console's panel; on
-a fresh data disk it creates the administrator's account and starts the
-shell. Booted again, `data-run.img` keeps the account and its files, and
-login asks for a name and a password.
+port, a line for each event ([log.md](docs/spec/log.md)). Once the
+boot screen fades, login runs in the console's panel; on a fresh data
+disk it creates the administrator's account and starts the shell.
+Booted again, `data-run.img` keeps the account and its files, and login
+asks for a name and a password.
 
 The virtio-rng device seeds the kernel's random number generator, which
 creating an account needs, since QEMU's default processor has neither
 RDRAND nor RDSEED. The virtio tablet gives the console a pointer and,
 once its driver runs, keeps QEMU from capturing the mouse.
 
-- `out/specimen.img` in place of `out/disk.img` shows the type specimen
-  over Limb; the console runs but draws nothing.
-- `out/chain.img` in place of `out/disk.img` runs the bootstrap check
-  from the test disk; under emulation it takes minutes.
-- With `format=vhdx`, the same drive boots `disk.vhdx` or `chain.vhdx`.
+- `out/test.img` in place of `out/disk.img` boots the system and runs
+  its tests, which report on the serial port in KTAP; they write their
+  files in the data disk's `/data/fstest`.
+- `out/specimen.img` in place of `out/disk.img` runs the tests and shows
+  the type specimen over Limb; the console runs but draws nothing.
+- `out/chain.img` in place of `out/disk.img` runs the tests and the
+  bootstrap check; under emulation it takes minutes.
+- With `format=vhdx`, the same drive boots `disk.vhdx`, `test.vhdx` or
+  `chain.vhdx`.
 - nova-boot draws in the display's native mode, which
   `-vga none -device VGA,edid=on,xres=2560,yres=1600` sets to
   2560 x 1600. For 3840 x 2160, add `refresh_rate=50000,vgamem_mb=32`

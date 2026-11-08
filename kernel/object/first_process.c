@@ -98,14 +98,14 @@ _Static_assert(offsetof(BOOTSTRAP_BYTES, files) ==
 static PROCESS *first;
 static ENDPOINT *bootstrap;
 
-static void fail(const char *what, STATUS status)
+_Noreturn static void fail(const char *what, STATUS status)
 {
-    serial_write("nova: first process: ");
-    serial_write(what);
-    serial_write(", status ");
+    serial_write("nova: first process failed reason=");
+    serial_value(what);
+    serial_write(" status=");
     serial_number(status);
-    serial_write(", halted\r\n");
-    halt_forever();
+    serial_write("\r\n");
+    serial_halt();
 }
 
 static void check(STATUS status, const char *what)
@@ -128,14 +128,13 @@ static int same_name(const char *a, const char *b)
     return lower(*a) == lower(*b);
 }
 
-static const BOOT_FILE *find_init(const BOOT_INFO *info)
+const BOOT_FILE *boot_file_find(const BOOT_INFO *info, const char *name)
 {
     UINT64 i;
 
     for (i = 0; i < info->file_count; i++)
-        if (same_name(info->files[i].name, INIT_NAME))
+        if (same_name(info->files[i].name, name))
             return &info->files[i];
-    fail("no \\nova\\init.exe among the boot files", ERR_INVALID_ARGS);
     return 0;
 }
 
@@ -194,9 +193,6 @@ static SECTION *store_image_section(const BOOT_FILE *image,
                                 image->size, &section),
           "the store image is not in pages nova-boot loaded");
     describe_file(image, entry);
-    serial_write("nova: store image of ");
-    serial_number(image->size);
-    serial_write(" bytes passed as a read-only section over its pages\r\n");
     return section;
 }
 
@@ -284,13 +280,13 @@ static void say_started(const IMAGE *image, UINT64 stack)
 {
     UINT64 flags = serial_lock();
 
-    serial_write("nova: first process started: image ");
+    serial_write("nova: first process started image=");
     serial_hex(image->base);
-    serial_write(" to ");
+    serial_write("..");
     serial_hex(image->end);
-    serial_write(", entry ");
+    serial_write(" entry=");
     serial_hex(image->entry);
-    serial_write(", stack ");
+    serial_write(" stack=");
     serial_hex(stack);
     serial_write("\r\n");
     serial_unlock(flags);
@@ -307,8 +303,8 @@ static void say_line(const char *line)
 int first_process_start(void *boot_info)
 {
     const BOOT_INFO *info = boot_info;
-    const BOOT_FILE *init = find_init(info);
-    JOB *job = job_create_root();
+    const BOOT_FILE *init = boot_file_find(info, INIT_NAME);
+    JOB *job;
     PROCESS *process;
     USER_THREAD *thread;
     ENDPOINT *kernel_end, *process_end;
@@ -316,6 +312,9 @@ int first_process_start(void *boot_info)
     UINT64 stack;
     UINT32 observed;
 
+    if (!init)
+        fail("no \\nova\\init.exe among the boot files", ERR_INVALID_ARGS);
+    job = job_create_root();
     if (!job)
         fail("no memory for the root job", ERR_NO_MEMORY);
     check(process_create(job, 0, &process), "no memory for the process");
@@ -338,12 +337,11 @@ int first_process_start(void *boot_info)
              DEADLINE_INFINITE, &observed);
     if (observed & CHANNEL_READABLE) {
         bootstrap = kernel_end;
-        say_line("nova: first process reports startup done\r\n");
+        say_line("nova: startup done\r\n");
         return 1;
     }
     object_close(&kernel_end->object);
-    say_line("nova: first process closed its bootstrap channel without "
-             "reporting startup done\r\n");
+    say_line("nova: startup failed reason=\"no report\"\r\n");
     return 0;
 }
 
@@ -353,7 +351,7 @@ void first_process_release_display(void)
         return;
     object_close(&bootstrap->object);
     bootstrap = 0;
-    say_line("nova: display released to the first process\r\n");
+    say_line("nova: display released\r\n");
 }
 
 void first_process_wait(void)
@@ -365,9 +363,9 @@ void first_process_wait(void)
              &observed);
     process_info(first, &state, &exit_code);
     flags = serial_lock();
-    serial_write("nova: first process ended: process_info reports state ");
+    serial_write("nova: first process ended state=");
     serial_number(state);
-    serial_write(", exit code ");
+    serial_write(" exit=");
     serial_number(exit_code);
     serial_write("\r\n");
     serial_unlock(flags);

@@ -145,7 +145,7 @@ converted.
 
 **The source.** Inter 4.1, the release at tag `v4.1` (commit
 `e3a3d4c57d5ecc01453a575621882a384c1995a3`), fetched by its SHA-256 as
-the test disk's seed files are. Its static TrueType fonts,
+the chain disk's seed files are. Its static TrueType fonts,
 `extras/ttf/`, have quadratic outlines in `glyf`, 2,048 units to the em
 and 2,937 glyphs; the regular weight maps 2,852 code points and is
 411,640 bytes, hinted with ttfautohint (Inter's `Makefile`).
