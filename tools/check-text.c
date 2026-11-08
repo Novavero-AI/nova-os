@@ -1,5 +1,5 @@
 /* Checks the console's text model, key map and view (console/text.c,
-   console/keys.c, console/view.c, docs/spec/console.md C3 to C5) on the
+   lib/keymap.c, console/view.c, docs/spec/console.md C3 to C5) on the
    host: writing and wrapping, the line editor, the lines kept for
    scrolling back once an edit has wrapped and been taken back, the US
    layout with Shift and Caps Lock, and how far the view scrolls, by
@@ -7,15 +7,15 @@
    Prints each failure and a count, and exits nonzero if any check
    fails.
 
-   cc -std=c11 -Wall -Wextra -pedantic -I include -I console -o check-text \
-     tools/check-text.c console/text.c console/keys.c console/view.c &&
-     ./check-text */
+   cc -std=c11 -Wall -Wextra -pedantic -I include -I console -I lib \
+     -o check-text tools/check-text.c console/text.c lib/keymap.c \
+     console/view.c && ./check-text */
 
 #include <stdio.h>
 #include <string.h>
 
 #include "input_protocol.h"
-#include "keys.h"
+#include "keymap.h"
 #include "text.h"
 #include "view.h"
 

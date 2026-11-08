@@ -8,11 +8,6 @@
 #include "font.h"
 #include "limb.h"
 
-/* A cell is a hundredth of the screen's height wide, so the panel's 30
-   lines take three fifths of the height: 8 x 16 pixels at 1280 x 800,
-   16 x 32 at 2560 x 1600 (console.md C5). */
-#define CELLS_PER_HEIGHT 100
-
 /* The padding around the text, and the corners' radius, in quarters of
    a cell's width: the side padding is wider by the strokes' bearing, so
    that the text's edges stand as far from the panel's on every side. */
@@ -46,8 +41,7 @@ static INT64 larger(INT64 a, INT64 b) { return a > b ? a : b; }
 
 int panel_layout(LAYOUT *layout, INT64 width, INT64 height)
 {
-    INT64 cell = larger(FONT_WIDTH_MIN, smaller(FONT_WIDTH_MAX,
-                                                height / CELLS_PER_HEIGHT));
+    INT64 cell = font_cell_width(height);
     INT64 side = cell * SIDE_PADDING / QUARTER;
     INT64 end = cell * END_PADDING / QUARTER;
     INT64 line = font_height(cell);

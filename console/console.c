@@ -18,7 +18,7 @@
 #include "console_protocol.h"
 #include "font.h"
 #include "input_protocol.h"
-#include "keys.h"
+#include "keymap.h"
 #include "log.h"
 #include "mapping.h"
 #include "native.h"

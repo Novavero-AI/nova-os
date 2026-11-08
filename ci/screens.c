@@ -23,7 +23,7 @@
             blank, so it matches only where its view holds none of it.
 
    cc -std=c11 -O2 -Wall -Wextra -pedantic -I include -I gfx -I console \
-     -o screens ci/screens.c console/text.c console/view.c \
+     -I lib -o screens ci/screens.c console/text.c console/view.c \
      console/panel.c gfx/gfx.c gfx/font.c gfx/raster.c gfx/limb.c */
 
 #include <errno.h>
@@ -32,7 +32,7 @@
 #include <string.h>
 
 #include "font.h"
-#include "keys.h"
+#include "keymap.h"
 #include "limb.h"
 #include "panel.h"
 #include "view.h"

@@ -292,7 +292,7 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 SCREENS_SOURCES = ["ci/screens.c", "console/text.c", "console/view.c",
                    "console/panel.c", "gfx/gfx.c", "gfx/font.c",
                    "gfx/raster.c", "gfx/limb.c"]
-SCREENS_INCLUDES = ["include", "gfx", "console"]
+SCREENS_INCLUDES = ["include", "gfx", "console", "lib"]
 SCREENS_FLAGS = ["-std=c11", "-O2", "-Wall", "-Wextra", "-pedantic",
                  "-Werror"]
 SCREENS_PROGRAM = "screens"

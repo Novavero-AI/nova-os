@@ -266,9 +266,9 @@ program virtinp.exe virtio_input_main -I native -I lib -I drivers \
   drivers/virtio_input.c drivers/pointer.c drivers/virtio_driver.c \
   drivers/virtio_pci.c drivers/pci.c lib/log.c native/native.S
 program console.exe console_main -I native -I lib -I gfx -I kernel/random \
-  console/console.c console/text.c console/keys.c console/view.c \
-  console/panel.c gfx/gfx.c gfx/flush.c gfx/raster.c gfx/font.c \
-  gfx/limb.c lib/mapping.c lib/log.c native/native.S
+  console/console.c console/text.c console/view.c console/panel.c \
+  gfx/gfx.c gfx/flush.c gfx/raster.c gfx/font.c gfx/limb.c \
+  lib/keymap.c lib/mapping.c lib/log.c native/native.S
 program store.exe store_main -I native -I lib -I kernel/random \
   store/store.c store/reader.c lib/name.c lib/log.c native/native.S \
   kernel/random/sha256.c
