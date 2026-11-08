@@ -41,9 +41,15 @@ _Static_assert(sizeof(BOOTSTRAP_BACKGROUND) == 16, "one layout on every target")
 /** The bytes of the answer to CONSOLE_SETUP_BACKGROUND. */
 #define CONSOLE_PREPARED_SIZE 4
 
-/** The messages the control channel queues: the background, the display
-    and a session for each the console serves. */
-#define CONSOLE_CONTROL_CAPACITY (CONSOLE_SESSIONS + 2)
+/** The messages the control channel queues: the options, the background,
+    the display and a session for each the console serves. */
+#define CONSOLE_CONTROL_CAPACITY (CONSOLE_SESSIONS + 3)
+
+/** ui.reduce-motion: the caret does not blink. */
+#define CONSOLE_OPTION_REDUCE_MOTION 0x1
+
+/** Every option. */
+#define CONSOLE_OPTIONS CONSOLE_OPTION_REDUCE_MOTION
 
 /** A client's end of a session: it writes requests and reads replies,
     and the end may move to the program that is to use it. */
@@ -77,8 +83,8 @@ _Static_assert(offsetof(CONSOLE_REPLY, length) == 4, "one layout on every target
 /** A message on the control channel. */
 typedef struct {
     UINT32 transaction; /**< 0 */
-    /** CONSOLE_SETUP_DISPLAY, CONSOLE_SETUP_SESSION or
-        CONSOLE_SETUP_BACKGROUND */
+    /** CONSOLE_SETUP_DISPLAY, CONSOLE_SETUP_SESSION,
+        CONSOLE_SETUP_BACKGROUND or CONSOLE_SETUP_OPTIONS */
     UINT32 kind;
 } CONSOLE_SETUP;
 
@@ -113,6 +119,17 @@ _Static_assert(sizeof(CONSOLE_SETUP_BACKGROUND_MESSAGE) == 48, "one layout on ev
 _Static_assert(offsetof(CONSOLE_SETUP_BACKGROUND_MESSAGE, setup) == 0, "one layout on every target");
 _Static_assert(offsetof(CONSOLE_SETUP_BACKGROUND_MESSAGE, display) == 8, "one layout on every target");
 _Static_assert(offsetof(CONSOLE_SETUP_BACKGROUND_MESSAGE, background) == 32, "one layout on every target");
+
+/** The setup that gives the console its options, before the background
+    and the display. */
+typedef struct {
+    CONSOLE_SETUP setup; /**< CONSOLE_SETUP_OPTIONS */
+    UINT32 options;      /**< CONSOLE_OPTION_ bits */
+} CONSOLE_SETUP_OPTIONS_MESSAGE;
+
+_Static_assert(sizeof(CONSOLE_SETUP_OPTIONS_MESSAGE) == 12, "one layout on every target");
+_Static_assert(offsetof(CONSOLE_SETUP_OPTIONS_MESSAGE, setup) == 0, "one layout on every target");
+_Static_assert(offsetof(CONSOLE_SETUP_OPTIONS_MESSAGE, options) == 8, "one layout on every target");
 
 /** @name bootstrap
     The channel the platform driver keeps to the input drivers' client
@@ -287,6 +304,8 @@ static inline UINT32 console_bootstrap_endpoint_encode(UINT32 transaction,
 #define CONSOLE_SETUP_SESSION 2
 /** The kernel's background, before the display. */
 #define CONSOLE_SETUP_BACKGROUND 3
+/** The options, once, before the background and the display. */
+#define CONSOLE_SETUP_OPTIONS 6
 /** A dispatcher's `which` for a message too short to hold the
     selector. */
 #define CONSOLE_CONTROL_UNNAMED 0xFFFFFFFF
@@ -551,6 +570,65 @@ static inline UINT32 console_control_prepared_encode(UINT32 transaction,
     return OK;
 }
 
+/** Check a message received on the channel: returns OK, or
+    ERR_INVALID_ARGS at the first rule of its description it breaks
+    (docs/spec/interface.md P10).
+    The options, once, before the background and the display. */
+static inline UINT32 console_control_options_check(const void *bytes,
+                                                   UINT32 byte_count,
+                                                   const RECEIVED_HANDLE *handles,
+                                                   UINT32 handle_count)
+{
+    const CONSOLE_SETUP_OPTIONS_MESSAGE *body = (const CONSOLE_SETUP_OPTIONS_MESSAGE *)bytes;
+
+    (void)handles;
+
+    if ((UINT64)byte_count < 12)
+        return ERR_INVALID_ARGS;
+    if ((UINT64)body->setup.kind != (UINT64)(CONSOLE_SETUP_OPTIONS))
+        return ERR_INVALID_ARGS;
+    if ((UINT64)body->setup.transaction != (UINT64)0)
+        return ERR_INVALID_ARGS;
+    if (((UINT64)body->options & ~(UINT64)(CONSOLE_OPTIONS)) != 0)
+        return ERR_INVALID_ARGS;
+    if ((UINT64)byte_count != 12)
+        return ERR_INVALID_ARGS;
+    if ((UINT64)handle_count != 0)
+        return ERR_INVALID_ARGS;
+    return OK;
+}
+
+/** Lay the message out in bytes, which is aligned to 8 bytes and
+    holds at least the direction's BYTES_MAX: returns OK with the
+    message's size in *byte_count, or ERR_INVALID_ARGS with 0 there
+    if it breaks the description (docs/spec/interface.md P14).
+    The options, once, before the background and the display. */
+static inline UINT32 console_control_options_encode(const CONSOLE_SETUP_OPTIONS_MESSAGE *body,
+                                                    void *bytes,
+                                                    UINT32 *byte_count)
+{
+    CONSOLE_SETUP_OPTIONS_MESSAGE *out = (CONSOLE_SETUP_OPTIONS_MESSAGE *)bytes;
+    UINT8 *p = (UINT8 *)bytes;
+    UINT64 i;
+
+    *byte_count = 0;
+    for (i = 0; i < 12; i++)
+        p[i] = ((const UINT8 *)body)[i];
+    out->setup.kind = (UINT32)CONSOLE_SETUP_OPTIONS;
+    {
+        const UINT64 total = 12;
+
+        if ((UINT64)out->setup.transaction != (UINT64)0)
+            return ERR_INVALID_ARGS;
+        if (((UINT64)out->options & ~(UINT64)(CONSOLE_OPTIONS)) != 0)
+            return ERR_INVALID_ARGS;
+        if (total != 12)
+            return ERR_INVALID_ARGS;
+    }
+    *byte_count = (UINT32)12;
+    return OK;
+}
+
 /** Check a request received on the channel as its description gives:
     writes the selector's value, or the channel's UNNAMED where the
     bytes are too short to hold it, to *which, and returns
@@ -578,6 +656,8 @@ static inline UINT32 console_control_request_check(const void *bytes,
         return console_control_session_check(bytes, byte_count, handles, handle_count);
     if (selector == (UINT64)CONSOLE_SETUP_BACKGROUND)
         return console_control_background_check(bytes, byte_count, handles, handle_count);
+    if (selector == (UINT64)CONSOLE_SETUP_OPTIONS)
+        return console_control_options_check(bytes, byte_count, handles, handle_count);
     return ERR_NOT_SUPPORTED;
 }
 

@@ -33,8 +33,15 @@ _Static_assert(CONSOLE_BOOTSTRAP_DEBUG_LOG == 0 && CONSOLE_BOOTSTRAP_SELF == 1 &
                "C2: the bootstrap message's handles in this order");
 _Static_assert(CONSOLE_WRITE == 1 && CONSOLE_READ == 2 &&
                    CONSOLE_SETUP_DISPLAY == 1 && CONSOLE_SETUP_SESSION == 2 &&
-                   CONSOLE_SETUP_BACKGROUND == 3,
+                   CONSOLE_SETUP_BACKGROUND == 3 && CONSOLE_SETUP_OPTIONS == 6,
                "C2 and C4: the operations and the kinds");
+_Static_assert(CONSOLE_OPTION_REDUCE_MOTION == 0x1 &&
+                   CONSOLE_OPTIONS == CONSOLE_OPTION_REDUCE_MOTION,
+               "C2: the options' one bit");
+_Static_assert(CONSOLE_CONTROL_CAPACITY == CONSOLE_SESSIONS + 3,
+               "C2: the control channel queues the options, the background "
+               "or a connection, the display, and a session for each the "
+               "console serves");
 
 #define DISPLAY_RECORD_BYTES 24
 #define BACKGROUND_LABEL_BYTES 16
@@ -270,6 +277,7 @@ static void check_control_messages(void)
 {
     CONSOLE_SETUP_DISPLAY_MESSAGE display;
     CONSOLE_SETUP_BACKGROUND_MESSAGE background;
+    CONSOLE_SETUP_OPTIONS_MESSAGE options;
     CONSOLE_SETUP setup;
     HANDLE_TRANSFER transfers[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
     UINT32 values[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
@@ -360,6 +368,50 @@ static void check_control_messages(void)
                                         &which) == ERR_INVALID_ARGS &&
               which == CONSOLE_CONTROL_UNNAMED,
           "a setup too short to hold its kind is unnamed");
+
+    /* The options: a setup of kind 6 and the option bits, with no
+       handle. */
+    options.setup.transaction = 0;
+    options.setup.kind = 0;
+    options.options = CONSOLE_OPTION_REDUCE_MOTION;
+    status = console_control_options_encode(&options, buffer.bytes, &size);
+    memset(want, 0, sizeof want);
+    set32(want + 4, CONSOLE_SETUP_OPTIONS);
+    set32(want + 8, CONSOLE_OPTION_REDUCE_MOTION);
+    check(status == OK && size == 12 && same(buffer.bytes, want, 12),
+          "an options setup is a setup and the option bits");
+    check(console_control_request_check(buffer.bytes, 12, none, 0, &which) ==
+                  OK &&
+              which == CONSOLE_SETUP_OPTIONS,
+          "an options setup passes the dispatcher and is named the options");
+    check(console_control_request_check(buffer.bytes, 12, received, 1,
+                                        &which) == ERR_INVALID_ARGS,
+          "an options setup that carries a handle is refused");
+    check(console_control_request_check(buffer.bytes, 11, none, 0, &which) ==
+              ERR_INVALID_ARGS,
+          "an options setup of eleven bytes is refused");
+    check(console_control_request_check(buffer.bytes, 13, none, 0, &which) ==
+              ERR_INVALID_ARGS,
+          "an options setup with a byte more is refused");
+    set32(want + 8, 2);
+    check(console_control_request_check(want, 12, none, 0, &which) ==
+              ERR_INVALID_ARGS,
+          "an options setup with a bit no option has is refused");
+    set32(want + 8, 0);
+    check(console_control_request_check(want, 12, none, 0, &which) == OK,
+          "an options setup of no bits passes");
+    set32(want, 1);
+    check(console_control_request_check(want, 12, none, 0, &which) ==
+              ERR_INVALID_ARGS,
+          "an options setup whose transaction is not 0 is refused");
+    options.options = 0;
+    status = console_control_options_encode(&options, buffer.bytes, &size);
+    check(status == OK && size == 12,
+          "an options setup of no bits is encoded");
+    options.options = CONSOLE_OPTIONS + 1;
+    status = console_control_options_encode(&options, buffer.bytes, &size);
+    check(status == ERR_INVALID_ARGS && size == 0,
+          "an options setup with a bit no option has is not encoded");
 
     /* The background: a setup of kind 3, the display it is to be given,
        the label, and the kernel's sections with READ. */

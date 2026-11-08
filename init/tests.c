@@ -35,6 +35,11 @@ int tests_enabled(void)
     return disk == DISK_TEST;
 }
 
+int tests_flag(const char *name)
+{
+    return disk == DISK_TEST && boot_file(name) != 0;
+}
+
 static void report_unrun(UINT32 before)
 {
     while (plan.written + 1 < before) {

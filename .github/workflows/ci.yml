@@ -264,7 +264,9 @@ jobs:
   # processor, so each CPU model gives the kernel the features it names:
   # Skylake-Client is an Intel model that needs page-table isolation, and
   # max offers every feature TCG has. The KVM boot runs on the runner's
-  # own processor. The default and bad-GPT boots boot disk.img, the
+  # own processor, and two more KVM boots set the display to 2560 x 1600
+  # and 2880 x 1800, which boot.py also checks the console's display
+  # line against. The default and bad-GPT boots boot disk.img, the
   # system disk, which runs no tests; the Skylake, max, KVM and
   # persistence boots boot test.img, the test disk, and with tests set
   # boot.py also reads its test report (docs/spec/log.md T2), so the
@@ -279,11 +281,13 @@ jobs:
   # default, Skylake, max and KVM boots the session then writes a file
   # whose lines fill the console's panel, the wheel turns through QMP,
   # and each screen checked must equal the one ci/screens.c draws, which
-  # boot.py builds with the runner's compiler. The five bad-GPT boots
-  # change its GPT, a CRC's byte, the entry array's, the pool's entry
-  # moved below the usable LBAs, or with them, over the table, or a
-  # second entry over it, and check that the file system service
-  # refuses the disk and that login does not start without it.
+  # boot.py builds with the runner's compiler, with the caret in either
+  # phase of its blink on the system disk and, on the test disk, whose
+  # NOMOTION makes the caret hold still, lit and unchanging. The five
+  # bad-GPT boots change its GPT, a CRC's byte, the entry array's, the
+  # pool's entry moved below the usable LBAs, or with them, over the
+  # table, or a second entry over it, and check that the file system
+  # service refuses the disk and that login does not start without it.
   # The chain and specimen disks are test disks too. The specimen boot
   # takes QMP's screendump once the type specimen has drawn, keeps it as
   # an artifact, and checks it against the specimen's prototype,
@@ -323,6 +327,22 @@ jobs:
             tests: true
             accel: kvm
             cpu: host
+            minutes: 15
+          - name: Boot (KVM 2560x1600)
+            mode: system
+            disk: test.img
+            tests: true
+            accel: kvm
+            cpu: host
+            size: 2560x1600
+            minutes: 15
+          - name: Boot (KVM 2880x1800)
+            mode: system
+            disk: test.img
+            tests: true
+            accel: kvm
+            cpu: host
+            size: 2880x1800
             minutes: 15
           - name: Boot (persistence)
             mode: persist
@@ -410,11 +430,12 @@ jobs:
           EXPECT: ${{ matrix.expect }}
           TESTS: ${{ matrix.tests }}
           CORRUPT: ${{ matrix.corrupt }}
+          SIZE: ${{ matrix.size }}
           FONTS: ${{ matrix.fonts }}
         run: |
           python3 -I ci/boot.py --code "$OVMF_CODE" --vars "$OVMF_VARS" \
             --log "$RUNNER_TEMP/serial.log" ${EXPECT:+--expect "$EXPECT"} \
-            ${TESTS:+--tests} \
+            ${TESTS:+--tests} ${SIZE:+--size "$SIZE"} \
             --data disk-images/data.img ${CORRUPT:+--corrupt-gpt "$CORRUPT"} \
             ${FONTS:+--fonts "$FONTS" --screen "$RUNNER_TEMP/screen.ppm"} \
             "$MODE" "$DISK" -- -accel "$ACCEL" ${CPU:+-cpu "$CPU"}
