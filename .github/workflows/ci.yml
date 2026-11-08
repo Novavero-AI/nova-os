@@ -37,6 +37,7 @@ jobs:
     env:
       ACTIONLINT_VERSION: 1.7.12
       ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      DECTEST_SHA256: b70a224cd52e82b7a8150aedac5efa2d0cb3941696fd829bdbe674f9f65c3926
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -134,6 +135,29 @@ jobs:
             -o "$RUNNER_TEMP/check-display-protocol" \
             tools/check-display-protocol.c
           "$RUNNER_TEMP/check-display-protocol"
+
+      # The test cases are Cowlishaw's, all rights reserved, so they are
+      # fetched and checked here and kept nowhere in the tree
+      # (docs/spec/README.md pins them).
+      - name: nvo's decimal gives the General Decimal Arithmetic test results
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/dectest.zip" \
+            https://speleotrove.com/decimal/dectest.zip
+          echo "$DECTEST_SHA256  $RUNNER_TEMP/dectest.zip" | sha256sum --check --strict
+          unzip -q "$RUNNER_TEMP/dectest.zip" -d "$RUNNER_TEMP/dectest"
+          cc -std=c99 -Wall -Wextra -pedantic -Werror \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -I include -I lib -o "$RUNNER_TEMP/check-decimal" \
+            tools/check-decimal.c lib/nvo_decimal.c
+          "$RUNNER_TEMP/check-decimal" "$RUNNER_TEMP/dectest"
+
+      - name: nvo's source text and values behave as shell.md L1 to L3 give
+        run: |
+          cc -std=c99 -Wall -Wextra -pedantic -Werror \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -I include -I lib -o "$RUNNER_TEMP/check-nvo" tools/check-nvo.c \
+            lib/nvo_decimal.c lib/nvo_syntax.c lib/nvo_value.c
+          "$RUNNER_TEMP/check-nvo" docs/spec/shell.md
 
       - name: The workflows pass actionlint
         run: |

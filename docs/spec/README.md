@@ -1067,6 +1067,17 @@ Jonathan Anderson, Ben Laurie and Kris Kennaway, USENIX Security 2010
 - Access: free download, "Reproduced with permission from IBM".
 - sha256: `d279ab7ce8b3533188e81eb7db560df1b28c3de623170d8533b9d370ca4d76f0`
 
+**General Decimal Arithmetic testcases** ("decTest"), Mike Cowlishaw and
+IBM: the archive of test files for the operations of Decimal, whose
+`dq` files are its 34-digit format's, at version 2.62.
+
+- Archive: <https://speleotrove.com/decimal/dectest.zip>
+- Access: free download. Each file's header says "All rights reserved"
+  and gives no licence, so the files are not copied into the tree: CI
+  downloads the archive, checks its sha256 and runs
+  `tools/check-decimal.c` on it.
+- sha256: `b70a224cd52e82b7a8150aedac5efa2d0cb3941696fd829bdbe674f9f65c3926`
+
 **Concise Binary Object Representation (CBOR)**, RFC 8949, STD 94,
 December 2020 (IETF) ("CBOR").
 

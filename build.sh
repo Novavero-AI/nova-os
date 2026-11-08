@@ -327,6 +327,14 @@ program driver.exe driver_main -I native -I lib -I test \
   -D "VICTIM_PATH=\"/store/$victim/bin/victim.exe\"" test/driver.c \
   lib/path.c lib/log.c native/native.S
 
+# nvo's library, lib/nvo_*.c, is in no program yet. Linking it alone,
+# with --werror's -Wall -Werror, checks that it builds for the guest with
+# TinyCC and leaves no symbol undefined; no program is built from it and
+# the result is not kept.
+program nvo-library.exe nvo_parse -I lib lib/nvo_decimal.c lib/nvo_syntax.c \
+  lib/nvo_value.c
+rm -f -- "$out/nvo-library.exe"
+
 # The store image's paths: nova-services, the programs the image's
 # header names for the first process to start; greeting; hello, the
 # test program, which refers to the greeting and links to it;

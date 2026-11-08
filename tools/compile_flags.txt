@@ -3,6 +3,7 @@
 -Wextra
 -pedantic
 -I../include
+-I../lib
 -I../kernel/random
 -I../console
 -I../lib
