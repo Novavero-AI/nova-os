@@ -18,8 +18,8 @@
    gave material. Interrupt timing is never enough alone: where the APIC
    timer and the timestamp counter both run from the core crystal clock
    (SDM Vol. 3A 13.5.4, Vol. 3B 20.17.4), the counter's value at each tick
-   is close to predictable. An unseeded generator says so on the serial
-   port and refuses every read; where the processor has RDSEED or RDRAND
+   is close to predictable. An unseeded generator says so in the log and
+   refuses every read; where the processor has RDSEED or RDRAND
    but its words failed at boot, the reseed below can still seed it.
 
    Threads share one generator. Each piece of a read runs with interrupts
@@ -38,6 +38,7 @@
 #include "wipe.h"
 #include "cpu.h"
 #include "efi.h"
+#include "../selftest.h"
 #include "../x86_64/arch.h"
 #include "../x86_64/entropy.h"
 #include "../x86_64/serial.h"
@@ -92,39 +93,32 @@ static void wipe_stack(void)
 
 /* Up to BOOT_RANDOM_SEEDS seeds; nova-boot asks no more instances than
    that, and a count beyond it is not trusted to index the array. Every
-   seed is wiped from BOOT_INFO, used or not. Returns the seeds used. */
-static UINT64 add_firmware_seeds(SHA256_CONTEXT *pool, BOOT_INFO *info)
+   seed is wiped from BOOT_INFO, used or not. Returns the seeds used, and
+   in *count the instances that were asked. */
+static UINT64 add_firmware_seeds(SHA256_CONTEXT *pool, BOOT_INFO *info,
+                                 UINT64 *count)
 {
-    UINT64 count = info->random_seed_count < BOOT_RANDOM_SEEDS
-                       ? info->random_seed_count
-                       : BOOT_RANDOM_SEEDS;
     UINT64 i, used = 0;
 
-    for (i = 0; i < count; i++) {
+    *count = info->random_seed_count < BOOT_RANDOM_SEEDS
+                 ? info->random_seed_count
+                 : BOOT_RANDOM_SEEDS;
+
+    for (i = 0; i < *count; i++) {
         const BOOT_RANDOM_SEED *seed = &info->random_seeds[i];
 
         if (seed->status == EFI_SUCCESS) {
             sha256_update(pool, seed->bytes, sizeof(seed->bytes));
             used++;
         } else {
-            serial_write("nova: random: EFI_RNG_PROTOCOL instance ");
+            serial_write("nova: random firmware seed unavailable instance=");
             serial_number(i);
-            serial_write(" gave no seed, status ");
+            serial_write(" status=");
             serial_hex(seed->status);
             serial_write("\r\n");
         }
     }
     wipe(info->random_seeds, sizeof(info->random_seeds));
-    if (count == 0) {
-        serial_write("nova: random: no EFI_RNG_PROTOCOL instance, no "
-                     "firmware seed\r\n");
-        return 0;
-    }
-    serial_write("nova: random: firmware seeds from ");
-    serial_number(used);
-    serial_write(" of ");
-    serial_number(count);
-    serial_write(" EFI_RNG_PROTOCOL instances\r\n");
     return used;
 }
 
@@ -147,15 +141,16 @@ static int draw_from(CPU_RANDOM instruction, UINT64 *words)
     const char *problem = 0;
 
     if (!cpu_random_read(instruction, words, CPU_WORDS))
-        problem = " gave no value within its retries";
+        problem = "no value within its retries";
     else if (repeats(words, CPU_WORDS))
-        problem = " repeated a value";
+        problem = "a value repeated";
     if (!problem)
         return 1;
-    serial_write("nova: random: ");
+    serial_write("nova: random cpu source rejected instruction=");
     serial_write(cpu_random_name(instruction));
-    serial_write(problem);
-    serial_write(", not used\r\n");
+    serial_write(" reason=");
+    serial_value(problem);
+    serial_write("\r\n");
     return 0;
 }
 
@@ -168,20 +163,6 @@ static CPU_RANDOM draw_cpu(UINT64 *words)
     if (has_rdrand && draw_from(CPU_RANDOM_RDRAND, words))
         return CPU_RANDOM_RDRAND;
     return CPU_RANDOM_NONE;
-}
-
-static void report_instructions(void)
-{
-    serial_write("nova: random: processor has ");
-    if (has_rdseed && has_rdrand)
-        serial_write("RDSEED and RDRAND");
-    else if (has_rdseed)
-        serial_write("RDSEED, no RDRAND");
-    else if (has_rdrand)
-        serial_write("RDRAND, no RDSEED");
-    else
-        serial_write("neither RDSEED nor RDRAND");
-    serial_write("\r\n");
 }
 
 /* The counter just after each of TIMING_SAMPLES timer interrupts. */
@@ -227,39 +208,14 @@ static void reseed(void)
     wipe(digest, sizeof(digest));
     if (!seeded) {
         seeded = 1;
-        serial_write("nova: random: seeded late from ");
+        serial_write("nova: random seeded late cpu=");
         serial_write(cpu_random_name(cpu));
         serial_write("\r\n");
     }
 }
 
-static void report_seeding(UINT64 firmware, CPU_RANDOM cpu)
-{
-    if (!seeded) {
-        serial_write("nova: random: NOT SEEDED: no firmware seed and no "
-                     "words from RDSEED or RDRAND; interrupt timing alone "
-                     "is not enough, so random_read refuses ");
-        serial_write(has_rdseed || has_rdrand
-                         ? "until the processor gives words, tried each "
-                           "minute\r\n"
-                         : "every request\r\n");
-        return;
-    }
-    serial_write("nova: random: seeded from ");
-    if (firmware) {
-        serial_write("the firmware (");
-        serial_number(firmware);
-        serial_write(firmware == 1 ? " seed), " : " seeds), ");
-    }
-    if (cpu != CPU_RANDOM_NONE) {
-        serial_write(cpu_random_name(cpu));
-        serial_write(", ");
-    }
-    serial_number(TIMING_SAMPLES);
-    serial_write(" interrupt timings\r\n");
-}
-
-/* Drawn for the log and never used, so that two boots can be compared;
+/* The generator's first SHOWN_BYTES, as a key of the seeding line:
+   drawn for the log and never used, so that two boots can be compared;
    output reveals nothing of the key, and these bytes leave the buffer
    like any others. */
 static void show_first_bytes(void)
@@ -275,36 +231,52 @@ static void show_first_bytes(void)
         text[2 * i + 1] = hex[bytes[i] & 0xf];
     }
     text[2 * SHOWN_BYTES] = 0;
-    serial_write("nova: random: first ");
-    serial_number(SHOWN_BYTES);
-    serial_write(" bytes ");
+    serial_write(" first=");
     serial_write(text);
+}
+
+/* The sources the boot drew from: the firmware's seeds used and the
+   instances asked, the processor's instruction, and the interrupt
+   timings; then, if they seeded the generator, its first bytes, else
+   whether a reseed from the processor can still seed it. */
+static void report_seeding(UINT64 firmware, UINT64 instances,
+                           CPU_RANDOM cpu)
+{
+    serial_write(seeded ? "nova: random seeded firmware="
+                        : "nova: random unseeded firmware=");
+    serial_number(firmware);
+    serial_write(" instances=");
+    serial_number(instances);
+    serial_write(" cpu=");
+    serial_write(cpu != CPU_RANDOM_NONE ? cpu_random_name(cpu) : "none");
+    serial_write(" timings=");
+    serial_number(TIMING_SAMPLES);
+    if (seeded)
+        show_first_bytes();
+    else
+        serial_write(has_rdseed || has_rdrand ? " retry=minute"
+                                              : " retry=none");
     serial_write("\r\n");
 }
 
 void random_init(BOOT_INFO *info)
 {
     SHA256_CONTEXT pool;
-    UINT64 words[CPU_WORDS], firmware;
+    UINT64 words[CPU_WORDS], firmware, instances;
     UINT8 digest[SHA256_DIGEST_SIZE];
     CPU_RANDOM cpu;
     const char *failure = random_self_test();
 
-    if (failure) {
-        serial_write("nova: random self-test failed: ");
-        serial_write(failure);
-        serial_write(", halted\r\n");
-        halt_forever();
-    }
-    serial_write("nova: random self-test passed\r\n");
+    if (failure)
+        selftest_halt(SELFTEST_RANDOM, failure);
+    selftest_passed(SELFTEST_RANDOM);
 
     has_rdseed = cpu_random_supported(CPU_RANDOM_RDSEED);
     has_rdrand = cpu_random_supported(CPU_RANDOM_RDRAND);
-    report_instructions();
 
     generator_init(&generator);
     sha256_init(&pool);
-    firmware = add_firmware_seeds(&pool, info);
+    firmware = add_firmware_seeds(&pool, info, &instances);
     cpu = draw_cpu(words);
     if (cpu != CPU_RANDOM_NONE)
         sha256_update(&pool, words, sizeof(words));
@@ -316,9 +288,7 @@ void random_init(BOOT_INFO *info)
     wipe_stack();
     seeded_tick = timer_ticks();
     seeded = firmware > 0 || cpu != CPU_RANDOM_NONE;
-    report_seeding(firmware, cpu);
-    if (seeded)
-        show_first_bytes();
+    report_seeding(firmware, instances, cpu);
 }
 
 /* ------------------------------------------------------------------------

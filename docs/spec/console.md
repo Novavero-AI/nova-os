@@ -305,18 +305,20 @@ tall as it is wide, and its width is the screen's height divided by
 
 The console takes the description that opens each endpoint
 ([input.md K3](input.md#k3-the-report-and-the-client)) and logs it,
-`nova-console: input from a keyboard`, or `input from a pointer` with
-each absolute axis's range, which is the device's and not the user's.
-It then takes a keyboard's key events (C3) or a pointer's reports
+in the form [log.md T1](log.md#t1-lines) gives:
+`nova-console: input kind=keyboard`, or `input kind=pointer` with each
+absolute axis's range, such as `x=0..32767 y=0..32767`, which is the
+device's and not the user's. It then takes a keyboard's key events (C3)
+or a pointer's reports
 ([input.md K2](input.md#k2-key-events-and-pointer-reports)), and logs
 what each report does, a line for each:
 
 | Report | Line |
 |---|---|
-| Sets `x` or `y` | `nova-console: pointer moved, absolute x and y`, naming the axes it sets |
-| Moves `dx` or `dy` | `nova-console: pointer moved, relative x and y`, naming the axes it moves |
-| Presses or releases a button | `nova-console: pointer left button pressed`, or `released`, by evdev's name from `BTN_LEFT` to `BTN_TASK`, `left`, `right`, `middle`, `side`, `extra`, `forward`, `back` and `task`; another button, `BTN_MISC` (256) or above, as `button` and its code; a keyboard's key, below it, as `key`, with no code |
-| Turns the wheel | `nova-console: pointer wheel turned up`, or `down` |
+| Sets `x` or `y` | `nova-console: pointer move mode=absolute axes=xy`, `axes` naming the axes it sets, `x`, `y` or `xy` |
+| Moves `dx` or `dy` | `nova-console: pointer move mode=relative axes=xy`, naming the axes it moves |
+| Presses or releases a button | `nova-console: pointer press button=left`, or `release`, `button` by evdev's name from `BTN_LEFT` to `BTN_TASK`, `left`, `right`, `middle`, `side`, `extra`, `forward`, `back` and `task`; another button, `BTN_MISC` (256) or above, by its code; a keyboard's key, below it, as `key`, with no code |
+| Turns the wheel | `nova-console: pointer wheel direction=up`, or `down` |
 
 A positive `wheel` is a turn up, as QEMU sends a turn of its wheel up
 (QEMU, `virtio-input-hid.c`). Each line is built whole and written with

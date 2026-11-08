@@ -5,8 +5,9 @@
    handle ends the waits made through it (O9), that a watch queues its
    one packet and ends as ipc.md I4 has it, that a device page takes one
    memory type (docs/spec/ipc.md I6), and that process_unmap removes whole
-   mappings only (docs/spec/syscalls.md S8); it logs each result to the
-   serial port and halts with the reason at the first failure. */
+   mappings only (docs/spec/syscalls.md S8). It runs on a test disk,
+   reports through selftest.h, and halts with the reason at the first
+   failure. */
 
 #include "boot_info.h"
 #include "channel.h"
@@ -15,8 +16,8 @@
 #include "cpu.h"
 #include "../acpi/acpi.h"
 #include "../mm/page.h"
+#include "../selftest.h"
 #include "../x86_64/clock.h"
-#include "../x86_64/serial.h"
 #include "../x86_64/user.h"
 
 /* The quota of the test's job, and the requester ID its interrupts are
@@ -67,12 +68,8 @@ static WAITER port_waiter, channel_waiter;
 
 static void check(int passed, const char *reason)
 {
-    if (passed)
-        return;
-    serial_write("nova: object self-test failed: ");
-    serial_write(reason);
-    serial_write(", halted\r\n");
-    halt_forever();
+    if (!passed)
+        selftest_halt(SELFTEST_OBJECT, reason);
 }
 
 static STATUS make_interrupt(const RESOURCE *irq, JOB *job,
@@ -123,11 +120,6 @@ static void test_vector_quota(void)
           "a destroyed job's quota did not return to its parent");
     object_close(&root->object);
     object_close(&irq->object);
-    serial_write("nova: objects: a job granted ");
-    serial_number(TEST_VECTORS);
-    serial_write(" vectors got ERR_NO_RESOURCES for one more, a freed "
-                 "vector back, and its parent the quota once it was "
-                 "destroyed\r\n");
 }
 
 static void port_waiter_main(void *argument)
@@ -215,9 +207,6 @@ static void test_canceled_waits(void)
           "HANDLE_CLOSED when its handle closed");
     object_close(&peer->object);
     handle_table_destroy(table);
-    serial_write("nova: objects: threads blocked in port_wait and "
-                 "object_wait_one with no deadline ended with ERR_CANCELED "
-                 "when their handles closed\r\n");
 }
 
 /* Place object's handle, which the caller holds, in table with rights,
@@ -297,10 +286,6 @@ static void test_watches(void)
     handle_table_destroy(table);
     check(page_free_count() == free_pages,
           "a watch, or what it held, was not freed");
-    serial_write("nova: objects: watches queued one packet each, at once "
-                 "for a signal already active, none once their handle or "
-                 "port closed, no more than a port's bound, and left no "
-                 "page behind\r\n");
 }
 
 /* The framebuffer's page, which the direct map maps write-combining for
@@ -323,8 +308,8 @@ static void test_memory_types(const BOOT_INFO *info)
     status = section_create_device(mmio, screen, PAGE_SIZE,
                                    CACHE_WRITE_COMBINING, &combining);
     if (status == ERR_ACCESS_DENIED) {
-        serial_write("nova: objects: the framebuffer lies in memory the map "
-                     "describes; its memory-type check is skipped\r\n");
+        selftest_note("the framebuffer lies in memory the map describes; "
+                      "its memory-type check is skipped");
     } else {
         check(status == OK,
               "a write-combining section over the framebuffer was refused");
@@ -335,8 +320,8 @@ static void test_memory_types(const BOOT_INFO *info)
               "draws write-combining, was not refused");
     }
     if (acpi_ecam_count() == 0) {
-        serial_write("nova: objects: no pci configuration space; its "
-                     "memory-type check is skipped\r\n");
+        selftest_note("no pci configuration space; its memory-type check "
+                      "is skipped");
     } else {
         UINT64 config = acpi_ecam(0)->base;
 
@@ -355,9 +340,6 @@ static void test_memory_types(const BOOT_INFO *info)
         object_close(&combining->object);
     }
     object_close(&mmio->object);
-    serial_write("nova: objects: device pages took one memory type: the "
-                 "framebuffer only write-combining, configuration space "
-                 "only its live section's type\r\n");
 }
 
 static int test_pages_mapped(const PROCESS *process, UINT32 pages)
@@ -434,10 +416,6 @@ static void test_unmap(void)
     object_close(&section->object);
     object_close(&process->object);
     object_close(&job->object);
-    serial_write("nova: objects: process_unmap refused part of a mapping, "
-                 "a range past one and a range with a hole, then removed "
-                 "two whole mappings, released their section and freed "
-                 "their tables\r\n");
 }
 
 void object_self_test(void *boot_info)
@@ -447,5 +425,5 @@ void object_self_test(void *boot_info)
     test_watches();
     test_memory_types(boot_info);
     test_unmap();
-    serial_write("nova: object self-test passed\r\n");
+    selftest_passed(SELFTEST_OBJECT);
 }

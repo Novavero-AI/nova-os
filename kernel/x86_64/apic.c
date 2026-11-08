@@ -85,7 +85,6 @@ static void pic_mask_all(void)
 {
     outb(PIC_MASTER_MASK, PIC_MASK_ALL);
     outb(PIC_SLAVE_MASK, PIC_MASK_ALL);
-    serial_write("nova: 8259 pics masked\r\n");
 }
 
 /* The registers are memory-mapped only in xAPIC mode: globally enabled,
@@ -96,26 +95,25 @@ static void apic_enable(void)
     UINT64 msr = rdmsr(IA32_APIC_BASE);
 
     if ((msr & (APIC_BASE_ENABLE | APIC_BASE_X2APIC)) != APIC_BASE_ENABLE) {
-        serial_write("nova: local apic not in xapic mode, IA32_APIC_BASE ");
+        serial_write("nova: apic refused reason=\"not in xapic mode\" "
+                     "base_msr=");
         serial_hex(msr);
-        serial_write(", halted\r\n");
-        halt_forever();
+        serial_write("\r\n");
+        serial_halt();
     }
     apic_base = paging_map_uncached(msr & APIC_BASE_ADDRESS);
     if (!apic_base) {
-        serial_write("nova: cannot map the local apic uncached, halted\r\n");
-        halt_forever();
+        serial_write("nova: apic map failed reason=\"no memory\"\r\n");
+        serial_halt();
     }
     /* Task priority 0 holds back no vector the APIC can deliver (SDM
        Vol. 3A 13.8.3.1). */
     apic_write(APIC_TPR, 0);
     apic_write(APIC_SVR, (apic_read(APIC_SVR) & ~SVR_VECTOR) |
                              SVR_SOFTWARE_ENABLE | SPURIOUS_VECTOR);
-    serial_write("nova: local apic at ");
+    serial_write("nova: apic base=");
     serial_hex(msr & APIC_BASE_ADDRESS);
-    serial_write(" mapped uncached at ");
-    serial_hex(apic_base);
-    serial_write(", enabled\r\n");
+    serial_write("\r\n");
 }
 
 /* The timer's rate at TIMER_DIVIDE_BY_1, from a masked one-shot count
@@ -145,11 +143,11 @@ void apic_timer_start(UINT64 tsc_per_ms)
     apic_write(APIC_LVT_TIMER, LVT_TIMER_PERIODIC | TIMER_VECTOR);
     apic_write(APIC_TIMER_INITIAL,
                (UINT32)(per_ms * MS_PER_SECOND / TIMER_HZ));
-    serial_write("nova: apic timer ");
+    serial_write("nova: timer source=apic ticks_per_ms=");
     serial_number(per_ms);
-    serial_write(" ticks per ms, ");
+    serial_write(" hz=");
     serial_number(TIMER_HZ);
-    serial_write(" Hz\r\n");
+    serial_write("\r\n");
 }
 
 void apic_timer_interrupt(void)

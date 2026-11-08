@@ -1174,8 +1174,10 @@ among their clients, so that no client can take what another holds.
    ([F4](#f4-publishing-file-systems)). The namespace server's root
    carries `WRITE`, so that a writable directory published there opens
    writable through it; what is opened gets at most the published
-   directory's rights. A program then checks `/data` through a view that
-   holds it read-write and read-only ([F5](#f5-per-process-views)).
+   directory's rights. On a test disk a program then checks `/data`
+   through a view that holds it read-write and read-only
+   ([F5](#f5-per-process-views)), and the first process reports it as the
+   `fstest` test ([log.md T2](log.md#t2-test-reports)).
 
 Done when:
 

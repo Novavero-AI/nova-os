@@ -1,6 +1,6 @@
-/* The test program the first process starts from /store (hello.c,
-   init/store.c): the name of its store path, its file in that path, and
-   the exit codes it ends with. */
+/* The test program the first process starts from /store on a test disk
+   (hello.c, init/store.c): the name of its store path, its file in that
+   path, and the exit codes it ends with. */
 
 #ifndef NOVA_HELLO_H
 #define NOVA_HELLO_H

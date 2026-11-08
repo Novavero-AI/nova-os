@@ -31,6 +31,7 @@
 #define PIXEL_BYTES 4
 #define PATH_BUFFER 512
 #define NS_PER_MS 1000000ULL
+#define TIMES_TEN_PER_MS 10
 #define CHANNEL_BITS 8
 #define CHANNEL_MASK 0xFFu
 
@@ -47,8 +48,8 @@ static void check(int passed, const char *what)
 {
     if (passed)
         return;
-    say("nova-specimen: check failed: ");
-    say(what);
+    say("nova-specimen: check failed reason=");
+    say_value(what);
     say("\r\n");
     process_exit(SPECIMEN_EXIT_FAILED);
 }
@@ -191,7 +192,7 @@ static void draw(void)
 
 _Noreturn void specimen_main(UINT32 bootstrap, UINT64 argument)
 {
-    UINT64 started;
+    UINT64 started, tenths;
     int face;
 
     (void)argument;
@@ -201,12 +202,15 @@ _Noreturn void specimen_main(UINT32 bootstrap, UINT64 argument)
     for (face = 0; face < SPECIMEN_FACES; face++)
         load_face(face);
     draw();
-    say("nova-specimen: drawn on the ");
+    tenths = (now() - started) * TIMES_TEN_PER_MS / NS_PER_MS;
+    say("nova-specimen: drawn screen=");
     say_number((UINT64)screen.width);
     say("x");
     say_number((UINT64)screen.height);
-    say(" screen in ");
-    say_number((now() - started) / NS_PER_MS);
-    say(" ms\r\n");
+    say(" draw_ms=");
+    say_number(tenths / TIMES_TEN_PER_MS);
+    say(".");
+    say_number(tenths % TIMES_TEN_PER_MS);
+    say("\r\n");
     process_exit(SPECIMEN_EXIT_PASSED);
 }

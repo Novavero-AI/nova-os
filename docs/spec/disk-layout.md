@@ -1,9 +1,9 @@
 # Disk layout
 
-The boot disks nova-os's image tool writes, the system's and the test
-disk: what the firmware needs to find and start nova-boot, and what
-nova-boot needs to find the kernel and the first process. The two differ
-only in the files of `\NOVA\`.
+The boot disks nova-os's image tool writes, the system disk and the
+disks that test it: what the firmware needs to find and start
+nova-boot, and what nova-boot needs to find the kernel and the first
+process. They differ only in the files of `\NOVA\`.
 Specifications are cited by the versions in [README.md](README.md):
 "UEFI 5.3.2" is section 5.3.2 of UEFI 2.11, "FAT" the FAT32 File System
 Specification 1.03.
@@ -76,7 +76,7 @@ The partition holds a FAT32 file system (UEFI 13.3; FAT):
 
 ## Files
 
-Both disks hold:
+The system disk, `disk.img`, holds:
 
 ```
 \EFI\BOOT\BOOTX64.EFI    nova-boot
@@ -88,11 +88,27 @@ Both disks hold:
 \NOVA\CONSOLE.EXE        the console, the input drivers' client
 \NOVA\STORE.IMG          the store image
 \NOVA\FS.EXE             the file system service, for a data disk
-\NOVA\FSTEST.EXE         the data disk's check
 ```
 
-The test disk adds the inputs of the bootstrap check, the chain the first
-process runs from the seed:
+The test disk, `test.img`, holds the system disk's files and two more:
+
+```
+\NOVA\FSTEST.EXE         the data disk's check
+\NOVA\TESTS              an empty file, which makes the disk a test disk
+```
+
+A disk whose `\NOVA\` holds a file named `TESTS`, whatever it holds, is
+a test disk: the kernel and the first process run their tests on it and
+report them in KTAP ([log.md T2](log.md#t2-test-reports)), and the boot
+then goes on as the system's does. Two more disks hold the test disk's
+files and add their own:
+
+| Disk | Adds | Its boot |
+|---|---|---|
+| The specimen disk, `specimen.img` | `\NOVA\SPECIMEN`, an empty file | The first process gives the display to the type specimen from `/store` in the console's place ([console.md C1](console.md#c1-the-display-handoff)) |
+| The chain disk, `chain.img` | The inputs of the bootstrap check, the chain the first process runs from the seed | The first process runs the chain ([compat.md C4](compat.md#c4-files)) |
+
+The chain disk's inputs:
 
 ```
 \NOVA\HEX0SEED.EXE       stage0-pe32's seed, hex0-seed.exe
@@ -140,6 +156,7 @@ a directory takes as many clusters as its entries fill:
 | `\NOVA\STORE.IMG` | `STORE   IMG` |
 | `\NOVA\FS.EXE` | `FS      EXE` |
 | `\NOVA\FSTEST.EXE` | `FSTEST  EXE` |
+| `\NOVA\TESTS` | `TESTS` followed by 6 spaces |
 | `\NOVA\HEX0SEED.EXE` | `HEX0SEEDEXE` |
 | `\NOVA\` *name*`.`*ext* | *name* padded to 8 bytes with spaces, then *ext* padded to 3 |
 

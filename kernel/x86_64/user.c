@@ -105,10 +105,10 @@ static void require(int present, const char *what)
 {
     if (present)
         return;
-    serial_write("nova: the processor lacks ");
-    serial_write(what);
-    serial_write(", which user mode needs, halted\r\n");
-    halt_forever();
+    serial_write("nova: user mode refused missing=");
+    serial_value(what);
+    serial_write("\r\n");
+    serial_halt();
 }
 
 /* Without the execute-disable bit every page is executable (SDM Vol. 3A
@@ -144,11 +144,6 @@ static void protect_kernel(void)
         }
     }
     write_cr4(cr4);
-    serial_write("nova: user mode: smep ");
-    serial_write(cr4 & CR4_SMEP ? "on" : "absent");
-    serial_write(", smap ");
-    serial_write(smap_enabled ? "on" : "absent");
-    serial_write(", rdtsc and rdpmc kernel only\r\n");
 }
 
 /* A thread's vector state is kept in a page of its own (process.c). GS
@@ -171,9 +166,13 @@ void user_mode_init(void)
     wrmsr(IA32_CSTAR, (UINT64)syscall_compat_entry);
     wrmsr(IA32_FMASK, SYSCALL_CLEARED_FLAGS);
     wrmsr(IA32_EFER, rdmsr(IA32_EFER) | EFER_SYSCALL);
-    serial_write("nova: user mode: syscall entry ready, user memory ");
+    serial_write("nova: user mode smep=");
+    serial_write(read_cr4() & CR4_SMEP ? "on" : "absent");
+    serial_write(" smap=");
+    serial_write(smap_enabled ? "on" : "absent");
+    serial_write(" memory=");
     serial_hex(USER_BASE);
-    serial_write(" to ");
+    serial_write("..");
     serial_hex(user_top);
     serial_write("\r\n");
 }
@@ -228,7 +227,7 @@ _Noreturn void syscall_compat(void)
 {
     UINT64 flags = serial_lock();
 
-    serial_write("nova: syscall from compatibility mode, process ended\r\n");
+    serial_write("nova: user syscall refused mode=compatibility\r\n");
     serial_unlock(flags);
     process_fault(INVALID_OPCODE_VECTOR);
 }
@@ -252,7 +251,7 @@ void compat_syscall_dispatch(INTERRUPT_FRAME *frame)
     UINT32 i;
 
     if (!process_is_32_bit(process_current())) {
-        serial_write("nova: 32-bit gate entered by a 64-bit process, ended\r\n");
+        serial_write("nova: user gate refused mode=64-bit\r\n");
         process_fault(GENERAL_PROTECTION_VECTOR);
     }
     enable_interrupts();
@@ -283,16 +282,16 @@ _Noreturn void user_exception(const INTERRUPT_FRAME *frame)
 {
     UINT64 flags = serial_lock();
 
-    serial_write("nova: user exception ");
+    serial_write("nova: user exception vector=");
     serial_number(frame->vector);
-    serial_write(" at rip ");
+    serial_write(" rip=");
     serial_hex(frame->rip);
     if (has_error_code(frame->vector)) {
-        serial_write(", error code ");
+        serial_write(" error=");
         serial_hex(frame->error_code);
     }
     if (frame->vector == PAGE_FAULT_VECTOR) {
-        serial_write(", cr2 ");
+        serial_write(" cr2=");
         serial_hex(read_cr2());
     }
     serial_write("\r\n");
@@ -303,9 +302,9 @@ _Noreturn void user_exception(const INTERRUPT_FRAME *frame)
 /* S5: the return the exit path refused would have raised #GP. */
 _Noreturn void user_bad_return(const INTERRUPT_FRAME *frame)
 {
-    serial_write("nova: return to user rip ");
+    serial_write("nova: user return refused rip=");
     serial_hex(frame->rip);
-    serial_write(" above user memory refused\r\n");
+    serial_write("\r\n");
     process_fault(GENERAL_PROTECTION_VECTOR);
 }
 

@@ -437,7 +437,7 @@ static void read_bootstrap(UINT32 bootstrap)
     say_open(handles[NAMESPACE_BOOTSTRAP_DEBUG_LOG].handle);
     add_client(handles[NAMESPACE_BOOTSTRAP_ROOT].handle, ROOT_RIGHTS,
                OPENS_START_CLIENTS);
-    say("nova-namespace: serving the root directory\r\n");
+    say("nova-namespace: serving\r\n");
 }
 
 /* As the store service's loop (store.c): channels served from the last,
@@ -471,6 +471,6 @@ _Noreturn void namespace_main(UINT32 bootstrap, UINT64 argument)
     }
     for (i = 0; i < publication_count; i++)
         handle_close(publications[i].directory);
-    say("nova-namespace: no channel left open, ending\r\n");
+    say("nova-namespace: stopped\r\n");
     process_exit(SERVICE_EXIT_DONE);
 }

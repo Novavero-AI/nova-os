@@ -4,7 +4,7 @@ How nova-os runs a 32-bit Windows program: the process a launcher builds
 for it, the ntdll it calls, how its DOS paths reach its view of storage,
 and the stand-in file protocol behind them. The programs are
 stage0-pe32's seed, `hex0-seed.exe`, and the links of its chain up to
-M1, which the first process runs when it boots from the test disk
+M1, which the first process runs when it boots from the chain disk
 (`init/chain.c`). The kernel's side, the 32-bit lane, is
 [syscalls.md S11](syscalls.md#s11-the-32-bit-lane).
 
@@ -174,18 +174,21 @@ own started once the one before has ended (`init/chain.c`). A step's
 view holds the files its command line names, read-only, each a file of
 the boot volume under the name its tree gives it or an earlier step's
 output, and the one file the step writes, which its first open creates.
-When a step ends, the first process logs its output's size and sha256
-and checks each link, hex0, hex1, hex2, catm, M0, cc_x86, M2 and M1,
-against the sha256 nova-nix's Stage0 (Windows) CI job pins for it;
-hex0's is the seed's own, since `hex0_x86.hex0` assembles into the
-seed.
+When a step ends, the first process checks each link, hex0, hex1,
+hex2, catm, M0, cc_x86, M2 and M1, against the sha256 nova-nix's Stage0
+(Windows) CI job pins for it; hex0's is the seed's own, since
+`hex0_x86.hex0` assembles into the seed. It reports the chain as the
+`chain` test of the boot's test report, each step a case named by the
+file it writes ([log.md T2](log.md#t2-test-reports)); a link that is not
+nova-nix's fails its step with the sha256 it has.
 
-The chain, the bootstrap check, runs when the boot volume holds all 26
-of its inputs, as the test disk does
-([disk-layout.md](disk-layout.md#files)). On a volume that holds none,
-the system's disk, the first process logs that the check is not on this
-disk and goes on to its other checks. A volume that holds some but not
-all fails the check, with the inputs it lacks named.
+The chain, the bootstrap check, runs on a test disk whose boot volume
+holds all 26 of its inputs, as the chain disk's does
+([disk-layout.md](disk-layout.md#files)). On a test disk that holds
+none, the first process reports the test skipped and goes on to its
+other tests; on the system's disk, which runs no tests, it does
+nothing. A volume that holds some but not all fails the test, with the
+inputs it lacks named.
 
 The outputs lie one after another in a region of the first process's
 memory, which grows by sections as the step writing the last output
@@ -199,8 +202,9 @@ largest, `M2-0-0.M1`, is 1.7 MB.
   and M1 is pinned, so M2's own run is checked too.
 - **Why:** the boot volume is the one storage nova-os reads today, and
   the outputs need nowhere to persist for the checks.
-- **Why only from the test disk:** the chain takes minutes under QEMU's
-  emulation, and a boot of the system does not wait for it.
+- **Why only from the chain disk:** the chain takes minutes under QEMU's
+  emulation, and a boot of the system, or of the test disk, does not
+  wait for it.
 - **Why not the directory protocol yet:** each step writes its output,
   and the one server of that protocol so far, the store service, serves
   the store read only ([storage.md F16](storage.md#f16-the-first-milestone)).
@@ -208,8 +212,8 @@ largest, `M2-0-0.M1`, is 1.7 MB.
   their outputs need a writable directory, a build's scratch directory
   or staging ([F12](storage.md#f12-builds-and-substitution)), whose
   server is the one that replaces this one.
-- **Why some of the inputs fail:** such a volume is a test disk with
-  inputs missing, and passing it would report the checks passed with the
+- **Why some of the inputs fail:** such a volume is a chain disk with
+  inputs missing, and passing it would report the test passed with the
   chain unrun.
 - **Cost:** the views are fixed in the first process, and the outputs
   stay in its memory until it ends.

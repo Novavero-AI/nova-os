@@ -1326,16 +1326,19 @@ it ([N21](#n21-the-ci-test-plan)).
 **1. A link and a ping.** The driver ([N2](#n2-the-virtio-network-driver)
 to [N4](#n4-the-frame-protocol)), its supervision
 ([N5](#n5-supervision)), and the service with Ethernet, ARP, IPv4, ICMP
-and DHCP; grants with `connect icmp` rules and echo sockets. The first
-process starts a test program, `nettest.exe`, with a grant of `connect
-icmp 10.0.2.2`.
+and DHCP; grants with `connect icmp` rules and echo sockets. On a test
+disk ([disk-layout.md](disk-layout.md#files)) the first process starts
+a test program, `nettest.exe`, with a grant of `connect icmp 10.0.2.2`,
+and reports it as a test of its own
+([log.md T2](log.md#t2-test-reports)).
 
 Done when:
 
 - the service logs the address and prefix DHCP gave it, with the router
   and name servers where the server gave them (QEMU's, isolated as the
   CI isolates it, gives neither, [N21](#n21-the-ci-test-plan));
-- `nettest` sends Echo Requests to 10.0.2.2 and logs each reply;
+- `nettest` sends Echo Requests to 10.0.2.2 and reports each reply as
+  a case;
 - an echo to a host its grant does not cover, 10.0.2.3, fails with
   `ERR_ACCESS_DENIED` and sends nothing.
 
@@ -1419,23 +1422,23 @@ read the same in every file the README pins at both versions.
 | Isolation | "the guest will be isolated, i.e. it will not be able to contact the host and no guest IP packets will be routed over the host to the outside. This option does not affect any explicitly set forwarding rules": libslirp resets any other TCP connection and drops any UDP datagram but DHCP's and TFTP's | `qemu-options.hx`, `restrict`; libslirp `src/tcp_input.c`, `src/udp.c` |
 | The peer | The guest's TCP ends in libslirp's, which relays to sockets on the runner; its `tcp_input.c` descends from 4.4BSD's, `@(#)tcp_input.c 8.5 (Berkeley) 4/10/94` | libslirp `src/tcp_input.c` |
 
-For each boot of `disk.img`, boot.py:
+For each boot of `test.img`, boot.py:
 
 1. waits, beside the lines it waits for now, for the driver running, the
-   service's `10.0.2.15/24`, `nettest`'s Echo Replies from 10.0.2.2 and
-   its refused echo to 10.0.2.3, and its listener on port 7;
+   service's address, `10.0.2.15/24`, and `nettest`'s cases for its Echo
+   Replies from 10.0.2.2, its refused echo to 10.0.2.3 and its listener
+   on port 7;
 2. connects to 127.0.0.1:`PORT`, sends `NETTEST_BYTES` (1 MiB) of
    random bytes, and reads until they have all come back or the boot's
    deadline passes; a short, different or late echo fails the boot;
-3. waits for `nettest`'s outbound and loopback echoes, its connect
-   refused by its grant, and `nova-nettest: checks passed`.
+3. waits for `nettest`'s cases for its outbound and loopback echoes and
+   its connect refused by its grant, and for its test to pass.
 
-boot.py fails a boot on any line from nova-os that holds one of its
-failure words (`ci/boot.py`, `FAILURES`), `failed` and
-`nova-init: restarting the ` among them, so a restart of the driver,
-the service or the resolver in the middle of a test fails it, and the
-lines that report an expected refusal, `nettest`'s and the service's,
-say `refused`, never `failed`.
+boot.py fails a boot on any line from nova-os that reports a failure
+([log.md T1](log.md#t1-lines)), `nova-init: child restarted` among
+them, so a restart of the driver, the service or the resolver in the
+middle of a test fails it, and the lines that report an expected
+refusal, `nettest`'s and the service's, say `refused`, never `failed`.
 
 The Lint job builds the service's protocol code and the resolver's
 parser for the runner, where they run with no kernel, since only the

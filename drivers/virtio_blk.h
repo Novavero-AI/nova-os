@@ -14,10 +14,10 @@
 #define VIRTIO_BLK_PCI_DEVICE 0x1042
 #define VIRTIO_BLK_PCI_TRANSITIONAL 0x1001
 
-/* The argument the driver starts with: VIRTIO_BLK_INSPECT reads and logs
-   the boot disk's partition table and boot sector, then ends;
-   VIRTIO_BLK_SERVE serves one client the block protocol
-   (block_protocol.h) until the client closes its end. */
+/* The argument the driver starts with: VIRTIO_BLK_INSPECT checks the
+   boot disk's partition table and boot sector, logging only a check
+   they fail, then ends; VIRTIO_BLK_SERVE serves one client the block
+   protocol (block_protocol.h) until the client closes its end. */
 #define VIRTIO_BLK_INSPECT 0
 #define VIRTIO_BLK_SERVE 1
 
@@ -28,9 +28,10 @@
 #define VIRTIO_BLK_REPORT_SIZE 4
 
 /* The driver ends with VIRTIO_BLK_EXIT_DONE once it has done its mode's
-   work, read and logged the sectors or served a client that has closed
-   its end, and reset the device; else with VIRTIO_BLK_EXIT_FAILED. Both
-   lie above the exception vectors a faulting process ends with
+   work, found the boot disk's sectors as its check expects or served a
+   client that has closed its end, and reset the device; else, the
+   check failed or a step did, with VIRTIO_BLK_EXIT_FAILED. Both lie
+   above the exception vectors a faulting process ends with
    (docs/spec/objects.md O10). */
 #define VIRTIO_BLK_EXIT_DONE 100
 #define VIRTIO_BLK_EXIT_FAILED 101

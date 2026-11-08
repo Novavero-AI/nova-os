@@ -6,6 +6,7 @@
 #ifndef NOVA_PROCESS_H
 #define NOVA_PROCESS_H
 
+#include "boot_info.h"
 #include "job.h"
 #include "section.h"
 #include "../sched/thread.h"
@@ -168,6 +169,10 @@ void process_thread_reaped(THREAD *thread);
    serial port, halts with the reason at the first failure, and returns
    when every check passes. */
 void object_self_test(void *boot_info);
+
+/* The boot file nova-boot read from \nova\ under name, matched without
+   regard to case, as FAT matches names; 0 if there is none. */
+const BOOT_FILE *boot_file_find(const BOOT_INFO *info, const char *name);
 
 /* The first process (docs/spec/ipc.md I6), with the BOOT_INFO: load the
    image nova-boot read from \nova\init.exe into a new process, pass it

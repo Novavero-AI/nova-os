@@ -116,19 +116,29 @@ typedef struct {
     UINT64 sent;            /* key events or pointer reports */
 } DEVICE;
 
+/* What the driver's running line gives of the device's configuration
+   (docs/spec/input.md K1): its name, its event types as a mask by type,
+   and how many key codes it has. */
+typedef struct {
+    UINT8 name[CONFIG_DATA_SIZE];
+    UINT32 name_length;
+    UINT32 types;
+    UINT32 keys;
+} IDENTITY;
+
 static DEVICE device;
 
 /* channel_write needs a valid array even for no handles. */
 static const HANDLE_TRANSFER no_handles[1];
 
-_Noreturn static void fail(const char *what, UINT32 status)
+_Noreturn static void fail(const char *event, UINT32 status)
 {
-    virtio_driver_fail(&device.virtio, what, status);
+    virtio_driver_fail(&device.virtio, event, status);
 }
 
-static void check(UINT32 status, const char *what)
+static void check(UINT32 status, const char *event)
 {
-    virtio_driver_check(&device.virtio, status, what);
+    virtio_driver_check(&device.virtio, status, event);
 }
 
 /* A two's complement le32, as evdev's signed values are written. */
@@ -166,7 +176,7 @@ static UINT32 query(UINT8 select, UINT8 subsel, UINT8 *data,
         if (virtio_driver_generation(&device.virtio) == before)
             return size;
     }
-    fail("the device's configuration kept changing", ERR_TIMED_OUT);
+    fail("config read", ERR_TIMED_OUT);
 }
 
 /* How many of the codes from first up to end bitmap has. */
@@ -196,29 +206,30 @@ static int range(const UINT8 *abs, UINT32 code, INPUT_RANGE *r)
     return 1;
 }
 
-/* Read the name, the event types and the key codes, and for a pointer,
-   a device that has EV_ABS or EV_REL, its EV_REL bitmap and the ranges
-   of ABS_X and ABS_Y, into the description; then log them, so that no
-   configuration read comes between the line's pieces for another
-   process's line to land among them. A device with no key codes has
-   nothing for the driver to send. A string has no NUL terminator
-   (5.8.4), but QEMU 11.1's devices were observed to count one in the
-   name's size, so the name ends at its first NUL. */
-static void describe(void)
+/* Read the name, the event types and the key codes into id, and for a
+   pointer, a device that has EV_ABS or EV_REL, its EV_REL bitmap and
+   the ranges of ABS_X and ABS_Y, into the description. A device with no
+   key codes has nothing for the driver to send, and is refused. A
+   string has no NUL terminator (5.8.4), but QEMU 11.1's devices were
+   observed to count one in the name's size, so the name ends at its
+   first NUL. */
+static void describe(IDENTITY *id)
 {
     INPUT_DEVICE *d = &device.description;
     POINTER *p = &device.pointer;
-    UINT8 name[CONFIG_DATA_SIZE], abs[CONFIG_DATA_SIZE];
-    UINT32 type, size, length, keys, types = 0;
+    UINT8 abs[CONFIG_DATA_SIZE];
+    UINT32 type, size, length, types = 0;
 
-    size = query(CFG_ID_NAME, 0, name, sizeof name);
-    for (length = 0; length < size && name[length]; length++)
+    size = query(CFG_ID_NAME, 0, id->name, sizeof id->name);
+    for (length = 0; length < size && id->name[length]; length++)
         ;
+    id->name_length = length;
     for (type = 0; type < EVENT_TYPES; type++)
-        if (query(CFG_EV_BITS, (UINT8)type, name, 0))
+        if (query(CFG_EV_BITS, (UINT8)type, id->name, 0))
             types |= 1u << type;
+    id->types = types;
     query(CFG_EV_BITS, INPUT_TYPE_KEY, p->keys, sizeof p->keys);
-    keys = count(p->keys, 0, BITMAP_CODES);
+    id->keys = count(p->keys, 0, BITMAP_CODES);
     d->type = INPUT_TYPE_DEVICE;
     d->kind = INPUT_DEVICE_KEYBOARD;
     if (types & (1u << POINTER_EV_ABS | 1u << POINTER_EV_REL)) {
@@ -232,17 +243,10 @@ static void describe(void)
         p->absolute = d->absolute;
         pointer_start(p);
     }
-    say("nova-virtio-input: ");
-    pci_say_function(device.virtio.device.requester);
-    say(" is \"");
-    say_printable(name, length);
-    say("\", event types ");
-    say_hex(types);
-    say(", ");
-    say_number(keys);
-    say(" key codes\r\n");
-    if (!keys)
-        fail("the device has no keys", ERR_NOT_SUPPORTED);
+    if (!id->keys) {
+        say("nova-virtio-input: device refused reason=\"no keys\"\r\n");
+        process_exit(VIRTIO_INPUT_EXIT_FAILED);
+    }
 }
 
 /* ------------------------------------------------------------------------
@@ -302,23 +306,30 @@ static void set_up_queue(void)
 static void start_device(UINT32 bootstrap)
 {
     VIRTIO_DRIVER *virtio = &device.virtio;
+    IDENTITY id;
     UINT64 accepted;
 
     virtio_driver_open(virtio, "nova-virtio-input", VIRTIO_INPUT_EXIT_FAILED,
                        bootstrap, CONFIG_STRUCT_SIZE);
     virtio_driver_interrupt(virtio, QUEUE_KEY);
     accepted = virtio_driver_negotiate(virtio, FEATURES_ACCEPTED);
-    describe();
+    describe(&id);
     set_up_queue();
     virtio_driver_set_status(virtio, VIRTIO_STATUS_DRIVER_OK);
     publish();
-    say("nova-virtio-input: ");
+    say("nova-virtio-input: running pci=");
     pci_say_function(virtio->device.requester);
-    say(" running: features ");
+    say(" name=");
+    say_value_bytes(id.name, id.name_length);
+    say(" types=");
+    say_hex(id.types);
+    say(" keys=");
+    say_number(id.keys);
+    say(" features=");
     say_hex(accepted);
-    say(", an event queue of ");
+    say(" queue=");
     say_number(QUEUE_SIZE);
-    say(" on MSI-X\r\n");
+    say("\r\n");
 }
 
 /* Give the platform driver the client's endpoint, and close the
@@ -332,7 +343,7 @@ static void report(UINT32 bootstrap, UINT32 client)
     transfer.rights = VIRTIO_INPUT_CLIENT_RIGHTS;
     check(channel_write(bootstrap, &transaction, VIRTIO_INPUT_REPORT_SIZE,
                         &transfer, 1),
-          "cannot report to the platform driver");
+          "report");
     handle_close(bootstrap);
 }
 
@@ -345,12 +356,12 @@ static void report(UINT32 bootstrap, UINT32 client)
 _Noreturn static void stop(void)
 {
     virtio_driver_reset(&device.virtio);
-    check(pin_release(device.pin), "pin_release");
-    say("nova-virtio-input: the client closed its endpoint after ");
+    check(pin_release(device.pin), "pin release");
+    say(device.description.kind == INPUT_DEVICE_KEYBOARD
+            ? "nova-virtio-input: stopped events="
+            : "nova-virtio-input: stopped reports=");
     say_number(device.sent);
-    say(device.description.kind == INPUT_DEVICE_KEYBOARD ? " key events"
-                                                          : " pointer reports");
-    say("; device reset, pin released\r\n");
+    say("\r\n");
     process_exit(VIRTIO_INPUT_EXIT_DONE);
 }
 
@@ -368,11 +379,11 @@ static void send(const void *message, UINT32 size)
         if (status == ERR_PEER_CLOSED)
             stop();
         if (status != ERR_SHOULD_WAIT)
-            fail("cannot send to the client", status);
+            fail("send", status);
         check(object_wait_one(device.events,
                               CHANNEL_WRITABLE | CHANNEL_PEER_CLOSED,
                               DEADLINE_INFINITE, &observed),
-              "waiting for the client");
+              "client wait");
     }
 }
 
@@ -385,7 +396,7 @@ static void send_key(UINT16 code, UINT32 value)
     event.code = code;
     event.value = value;
     event.reserved = 0;
-    check(clock_monotonic(&event.time), "clock_monotonic");
+    check(clock_monotonic(&event.time), "clock");
     send(&event, sizeof event);
     device.sent++;
 }
@@ -406,7 +417,7 @@ static void take_event(UINT32 id)
 
     if (device.description.kind == INPUT_DEVICE_POINTER) {
         if (pointer_take(&device.pointer, type, code, value, &report)) {
-            check(clock_monotonic(&report.time), "clock_monotonic");
+            check(clock_monotonic(&report.time), "clock");
             send(&report, sizeof report);
             device.sent++;
         }
@@ -434,8 +445,7 @@ static void take_used(void)
     if (index == device.used_seen)
         return;
     if ((UINT16)(index - device.used_seen) > QUEUE_SIZE)
-        fail("the device returned more buffers than it holds",
-             (UINT16)(index - device.used_seen));
+        fail("used ring", ERR_BAD_STATE);
     load_fence();
     while (device.used_seen != index) {
         element = used + VIRTQ_RING_ENTRIES +
@@ -444,7 +454,7 @@ static void take_used(void)
         length = *(const volatile UINT32 *)(element + VIRTQ_USED_LENGTH);
         device.used_seen++;
         if (id >= QUEUE_SIZE || !device.held[id])
-            fail("the device returned a buffer it did not hold", id);
+            fail("used buffer", ERR_BAD_STATE);
         device.held[id] = 0;
         returned[count++] = (UINT16)id;
         if (length >= EVENT_SIZE)
@@ -463,20 +473,20 @@ _Noreturn void virtio_input_main(UINT32 bootstrap, UINT64 argument)
     (void)argument;
     start_device(bootstrap);
     check(channel_create(CLIENT_QUEUE_CAPACITY, &device.events, &client),
-          "channel_create");
+          "channel create");
     check(object_wait_async(device.events, device.virtio.port, CLIENT_KEY,
                             CHANNEL_PEER_CLOSED),
-          "cannot watch the client's endpoint");
+          "client watch");
     send(&device.description, sizeof device.description);
     report(bootstrap, client);
     for (;;) {
         check(port_wait(device.virtio.port, DEADLINE_INFINITE, &packet),
-              "port_wait");
+              "port wait");
         if (packet.type == PACKET_SIGNAL && packet.key == CLIENT_KEY)
             stop();
         if (packet.type != PACKET_INTERRUPT || packet.key != QUEUE_KEY)
-            fail("an unexpected packet came", packet.type);
-        check(interrupt_ack(device.virtio.interrupt), "interrupt_ack");
+            fail("packet", ERR_BAD_STATE);
+        check(interrupt_ack(device.virtio.interrupt), "interrupt ack");
         take_used();
     }
 }

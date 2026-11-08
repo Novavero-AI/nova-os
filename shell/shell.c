@@ -92,6 +92,9 @@ static SECRET password, again;
 static UINT8 new_name[NAME_LINE];
 static UINT32 new_name_length;
 
+/* The name of the known command running, which its log lines give. */
+static const char *running;
+
 /* The names of syscalls.md S7's status codes, by value. */
 static const char *const status_names[] = {
     "OK",
@@ -191,17 +194,30 @@ static void show_status(UINT32 status)
         show_number(status);
 }
 
-/* The debug log's line for how a command ended: the command and the
-   status alone, never what it was given, since that may be a path typed,
-   and so the rest of a password typed at a prompt a file drew, or a
-   line typed for write. */
-static void log_status(const char *command, UINT32 status)
+/* The start of a log line of event for the session's user. */
+static void say_event(const char *event)
 {
     say("nova-shell: ");
-    say_printable(user.name, user.name_length);
-    say(": ");
-    say(command);
-    say(" gives status ");
+    say(event);
+    say(" user=");
+    say_value_bytes(user.name, user.name_length);
+}
+
+static void say_role(int administrator_role)
+{
+    say(administrator_role ? " role=administrator" : " role=user");
+}
+
+/* The debug log's line for how the running command ended: its name and
+   the status alone, never what it was given, since that may be a path
+   typed, and so the rest of a password typed at a prompt a file drew,
+   or a line typed for write. */
+static void log_status(UINT32 status)
+{
+    say_event("command ended");
+    say(" name=");
+    say(running);
+    say(" status=");
     say_number(status);
     say("\r\n");
 }
@@ -215,7 +231,7 @@ static void refuse(const char *command, const char *what, UINT32 status)
     show(": ");
     show_status(status);
     show("\n");
-    log_status(command, status);
+    log_status(status);
 }
 
 /* The end of a command that reads or changes a file: its refusal, or
@@ -225,7 +241,7 @@ static void finish(const char *command, const char *what, UINT32 status)
     if (status != OK)
         refuse(command, what, status);
     else
-        log_status(command, status);
+        log_status(status);
 }
 
 /* ------------------------------------------------------------------------
@@ -363,19 +379,18 @@ static void help(void)
    shell ran the command. */
 static void whoami(void)
 {
-    const char *role =
-        user.flags & ACCOUNT_ADMINISTRATOR ? ", an administrator" : "";
+    int administrator_role = (user.flags & ACCOUNT_ADMINISTRATOR) != 0;
 
     show_bytes(user.name, user.name_length);
     show(", id ");
     show_number(user.id);
-    show(role);
+    show(administrator_role ? ", an administrator" : "");
     show("\n");
-    say("nova-shell: whoami: ");
-    say_printable(user.name, user.name_length);
-    say(", id ");
+    say("nova-shell: whoami name=");
+    say_value_bytes(user.name, user.name_length);
+    say(" id=");
     say_number(user.id);
-    say(role);
+    say_role(administrator_role);
     say("\r\n");
 }
 
@@ -763,9 +778,9 @@ static void run(void)
     show(" ended with exit code ");
     show_number(exit_code);
     show("\n");
-    say("nova-shell: ");
-    say(resolved);
-    say(" ended with exit code ");
+    say("nova-shell: program ended path=");
+    say_value(resolved);
+    say(" exit=");
     say_number(exit_code);
     say("\r\n");
 }
@@ -873,9 +888,9 @@ static void user_create(void)
     show(", id ");
     show_number(created.id);
     show(".\n");
-    say("nova-shell: ");
-    say_printable(user.name, user.name_length);
-    say(" created an account\r\n");
+    say("nova-shell: account created by=");
+    say_value_bytes(user.name, user.name_length);
+    say("\r\n");
 }
 
 static void logout(void)
@@ -983,11 +998,10 @@ _Noreturn void shell_main(UINT32 bootstrap, UINT64 argument)
 
     (void)argument;
     read_bootstrap(bootstrap);
-    say("nova-shell: a session for ");
-    say_printable(user.name, user.name_length);
-    say(administrator != HANDLE_INVALID
-            ? ", with the administrator handle\r\n"
-            : ", without the administrator handle\r\n");
+    say("nova-shell: session name=");
+    say_value_bytes(user.name, user.name_length);
+    say_role(administrator != HANDLE_INVALID);
+    say("\r\n");
     show("Type help for the commands.\n");
     for (;;) {
         prompt();
@@ -1003,14 +1017,16 @@ _Noreturn void shell_main(UINT32 bootstrap, UINT64 argument)
         /* A known command's name and nothing typed: a line is whatever
            was typed, and a person who took a prompt a file drew for
            login's may type a password there. */
-        say("nova-shell: ");
-        say_printable(user.name, user.name_length);
-        say(" runs ");
-        say(command ? command->name : "no command");
-        say("\r\n");
         if (command) {
+            say_event("command");
+            say(" name=");
+            say(command->name);
+            say("\r\n");
+            running = command->name;
             command->run();
         } else {
+            say_event("command unknown");
+            say("\r\n");
             show(words[0]);
             show(": no such command; help lists them\n");
         }

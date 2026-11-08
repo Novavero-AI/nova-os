@@ -101,13 +101,6 @@ ENTRY_RANGE idt_entry_range(void)
     return range;
 }
 
-static void log_breakpoint(const INTERRUPT_FRAME *frame)
-{
-    serial_write("nova: breakpoint caught at rip ");
-    serial_hex(frame->rip);
-    serial_write("\r\n");
-}
-
 /* The kernel has no recovery from an exception of its own: report it and
    stop. A stack overflow faults on the stack's guard page, and the page
    fault cannot be delivered on the exhausted stack, so it ends here as a
@@ -115,23 +108,23 @@ static void log_breakpoint(const INTERRUPT_FRAME *frame)
    in CR2. */
 _Noreturn void exception_halt(const INTERRUPT_FRAME *frame)
 {
-    serial_write("nova: exception ");
+    serial_write("nova: exception vector=");
     serial_number(frame->vector);
-    serial_write(" at rip ");
+    serial_write(" rip=");
     serial_hex(frame->rip);
     if (has_error_code(frame->vector)) {
-        serial_write(", error code ");
+        serial_write(" error=");
         serial_hex(frame->error_code);
     }
     if (frame->vector == PAGE_FAULT_VECTOR ||
         frame->vector == DOUBLE_FAULT_VECTOR) {
-        serial_write(", cr2 ");
+        serial_write(" cr2=");
         serial_hex(read_cr2());
     }
-    serial_write(", rsp ");
+    serial_write(" rsp=");
     serial_hex(frame->rsp);
-    serial_write(", halted\r\n");
-    halt_forever();
+    serial_write("\r\n");
+    serial_halt();
 }
 
 /* A page fault in the kernel is a bug, unless it is user_copy's access
@@ -165,7 +158,7 @@ void interrupt_dispatch(INTERRUPT_FRAME *frame)
         user_exception(frame);
     switch (frame->vector) {
     case BREAKPOINT_VECTOR:
-        log_breakpoint(frame);
+        /* arch_init's check of the IDT: the handler only returns. */
         break;
     case GENERAL_PROTECTION_VECTOR:
         kernel_general_protection(frame);

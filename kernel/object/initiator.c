@@ -105,9 +105,9 @@ STATUS initiator_create(const RESOURCE *resource, UINT64 requester,
     object_init(&initiator->object, &initiator_type);
     initiator->requester = requester;
     flags = serial_lock();
-    serial_write("nova: dma: initiator for requester ");
+    serial_write("nova: dma unconfined pci=");
     resource_log_requester(requester);
-    serial_write(" unconfined: no iommu, the device reaches all memory\r\n");
+    serial_write("\r\n");
     serial_unlock(flags);
     *out = initiator;
     return OK;

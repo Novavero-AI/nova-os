@@ -278,19 +278,15 @@ static void clear_bit(UINT8 *map, UINT64 n)
     map[n / BITS_PER_BYTE] &= (UINT8)~(1 << (n % BITS_PER_BYTE));
 }
 
-static void say_status(const char *what, UINT32 status)
+/* Log event, which ends in failed or refused, with status, and end the
+   service. */
+_Noreturn static void stop(const char *event, UINT32 status)
 {
     say("nova-fs: ");
-    say(what);
-    say(", status ");
+    say(event);
+    say(" status=");
     say_number(status);
     say("\r\n");
-}
-
-_Noreturn static void stop(const char *why, UINT32 status)
-{
-    say_status(why, status);
-    say("nova-fs: stopping\r\n");
     process_exit(SERVICE_EXIT_FAILED);
 }
 
@@ -341,7 +337,7 @@ static UINT32 block_call(UINT32 operation, UINT64 sector, UINT32 length,
                               received, 0, &bytes, &count);
     if (status != OK || bytes != sizeof answer || count != 0 ||
         answer.transaction != request.transaction)
-        stop("the block driver did not answer", status);
+        stop("block call failed", status);
     if (information)
         *information = answer.information;
     return answer.status;
@@ -392,9 +388,9 @@ static UINT32 read_checked(const POOL_POINTER *pointer, UINT32 n)
                 return OK;
             status = ERR_DATA_INTEGRITY;
         }
-        say("nova-fs: block ");
+        say("nova-fs: block refused number=");
         say_number(pointer->address[i]);
-        say(" fails its checksum\r\n");
+        say(" reason=checksum\r\n");
     }
     return status;
 }
@@ -734,8 +730,7 @@ static UINT32 object_read(UINT32 object, UINT64 offset, UINT8 *to,
 static void changed(UINT32 status)
 {
     if (status != OK)
-        stop("a change failed after it began; the pool holds its last commit",
-             status);
+        stop("change failed", status);
 }
 
 /* Read block index of object, which a change writes only in part, and
@@ -1291,7 +1286,7 @@ static UINT32 commit(void)
     if (status == OK)
         status = block_call(BLOCK_FLUSH, 0, 0, 0, 0);
     if (status != OK)
-        stop("a commit failed", status);
+        stop("commit failed", status);
     for (n = 0; freeing_blocks && n < pool_blocks; n++)
         if (bit(freeing_map, n)) {
             clear_bit(freeing_map, n);
@@ -1476,18 +1471,31 @@ static int gpt_entry_unused(const UINT8 *entry)
 /* The used entries' extents, read in one pass with the array's CRC. */
 static UINT64 used_first[GPT_ENTRIES_MAX], used_last[GPT_ENTRIES_MAX];
 
-/* The pool partition, by its type GUID in the disk's primary GPT. The
-   header and the entry array must pass their CRCs (UEFI 2.11 5.3.2);
-   the header must put the array after itself, the backup header at the
-   disk's last LBA, and its usable LBAs after the array and before the
-   backup array's room at the disk's end; and the pool's entry must lie
-   within those usable LBAs and overlap no other used entry (5.3.1). A
-   disk that fails any of these is refused. So the pool never covers
-   the protective MBR, the primary header or array, the disk's last
-   LBAs the backup table takes where 5.3.1 places it, or another
-   partition. The backup table, which 5.3.2 has software read when the
-   primary fails, is not read. */
-static UINT32 find_partition(UINT64 capacity)
+/* Log the refusal of the disk's GPT by check, and return 0. */
+static int gpt_refused(const char *check)
+{
+    say("nova-fs: gpt refused check=");
+    say(check);
+    say("\r\n");
+    return 0;
+}
+
+/* The pool partition, by its type GUID in the disk's primary GPT. A
+   disk that fails a check is refused by the check's name: header, the
+   header's CRC (UEFI 2.11 5.3.2) and an entry size and count the
+   service reads; layout, the array after the header and within the
+   disk, the backup header at the disk's last LBA, and the usable LBAs
+   after the array and before the backup array's room at the disk's
+   end; entries, the entry array's CRC; type, an entry of the pool's
+   type; and extent, the pool's entry within the usable LBAs,
+   overlapping no other used entry (5.3.1), and of a size the service
+   opens. So the pool never covers the protective MBR, the primary
+   header or array, the disk's last LBAs the backup table takes where
+   5.3.1 places it, or another partition. The backup table, which 5.3.2
+   has software read when the primary fails, is not read. Returns
+   whether the disk passes; a read the driver fails stops the
+   service. */
+static int find_partition(UINT64 capacity)
 {
     static const UINT8 type[POOL_GUID_SIZE] = POOL_PARTITION_TYPE;
     const UINT8 *entry;
@@ -1500,11 +1508,9 @@ static UINT32 find_partition(UINT64 capacity)
     status = block_call(BLOCK_READ, GPT_HEADER_LBA, POOL_SECTOR_SIZE,
                         IO_PAGE * PAGE_SIZE, 0);
     if (status != OK)
-        return status;
-    if (!gpt_header_valid(page(IO_PAGE))) {
-        say("nova-fs: the disk's GPT header fails its check\r\n");
-        return ERR_DATA_INTEGRITY;
-    }
+        stop("gpt read failed", status);
+    if (!gpt_header_valid(page(IO_PAGE)))
+        return gpt_refused("header");
     entries = pool_get64(page(IO_PAGE) + GPT_ENTRIES_LBA);
     count = pool_get32(page(IO_PAGE) + GPT_ENTRY_COUNT);
     size = pool_get32(page(IO_PAGE) + GPT_ENTRY_SIZE);
@@ -1512,27 +1518,24 @@ static UINT32 find_partition(UINT64 capacity)
     first_usable = pool_get64(page(IO_PAGE) + GPT_FIRST_USABLE);
     last_usable = pool_get64(page(IO_PAGE) + GPT_LAST_USABLE);
     if (size < GPT_ENTRY_MIN || size > POOL_SECTOR_SIZE ||
-        POOL_SECTOR_SIZE % size || count > GPT_ENTRIES_MAX ||
-        entries >= capacity)
-        return ERR_NOT_SUPPORTED;
+        POOL_SECTOR_SIZE % size || count > GPT_ENTRIES_MAX)
+        return gpt_refused("header");
     array_sectors =
         ((UINT64)count * size + POOL_SECTOR_SIZE - 1) / POOL_SECTOR_SIZE;
-    if (entries <= GPT_HEADER_LBA || array_sectors > capacity - entries ||
+    if (entries <= GPT_HEADER_LBA || entries >= capacity ||
+        array_sectors > capacity - entries ||
         pool_get64(page(IO_PAGE) + GPT_ALTERNATE_LBA) != capacity - 1 ||
         first_usable < entries + array_sectors ||
         last_usable >= capacity - 1 - array_sectors ||
-        first_usable > last_usable) {
-        say("nova-fs: the disk's GPT header places its tables or its usable "
-            "LBAs where they overlap\r\n");
-        return ERR_DATA_INTEGRITY;
-    }
+        first_usable > last_usable)
+        return gpt_refused("layout");
     per_sector = POOL_SECTOR_SIZE / size;
     for (i = 0; i < count; i++) {
         if (i % per_sector == 0) {
             status = block_call(BLOCK_READ, entries + i / per_sector,
                                 POOL_SECTOR_SIZE, IO_PAGE * PAGE_SIZE, 0);
             if (status != OK)
-                return status;
+                stop("gpt read failed", status);
         }
         entry = page(IO_PAGE) + i % per_sector * size;
         crc = pool_crc32(crc, entry, size);
@@ -1550,27 +1553,22 @@ static UINT32 find_partition(UINT64 capacity)
         }
         used++;
     }
-    if (crc != expected) {
-        say("nova-fs: the disk's GPT entry array fails its check\r\n");
-        return ERR_DATA_INTEGRITY;
-    }
+    if (crc != expected)
+        return gpt_refused("entries");
     if (!found)
-        return ERR_NOT_FOUND;
+        return gpt_refused("type");
     for (i = 0; i < used; i++)
         if (i != pool && used_first[i] <= last && first <= used_last[i])
             break;
     if (first < first_usable || first > last || last > last_usable ||
-        i < used) {
-        say("nova-fs: the disk's pool entry lies outside the usable LBAs or "
-            "overlaps another\r\n");
-        return ERR_DATA_INTEGRITY;
-    }
+        i < used)
+        return gpt_refused("extent");
     pool_first_lba = first;
     pool_blocks = (last - first + 1) / POOL_SECTORS_PER_BLOCK;
     pool_middle = pool_blocks / 2;
     if (pool_blocks < POOL_BLOCKS_MIN || pool_blocks > POOL_BLOCKS_MAX)
-        return ERR_NOT_SUPPORTED;
-    return OK;
+        return gpt_refused("extent");
+    return 1;
 }
 
 /* ------------------------------------------------------------------------
@@ -1805,7 +1803,7 @@ static UINT32 read_file(const CHANNEL *c, UINT64 offset, UINT32 length,
         *count = record.size - offset < length ? record.size - offset : length;
     status = object_read(c->slot, offset, reply + sizeof(IO_REPLY), *count);
     if (status == ERR_DATA_INTEGRITY)
-        say("nova-fs: a read fails its integrity check\r\n");
+        say("nova-fs: read refused reason=integrity\r\n");
     if (status != OK)
         *count = 0;
     return status;
@@ -2133,7 +2131,7 @@ static void attach(UINT64 *capacity)
         status = handle_duplicate(section, BLOCK_SECTION_RIGHTS,
                                   &transfer.handle);
     if (status != OK)
-        stop("cannot make the shared section", status);
+        stop("shared section failed", status);
     handle_close(section);
     shared = (UINT8 *)SHARED_BASE;
     transfer.rights = RIGHTS_SAME;
@@ -2156,7 +2154,7 @@ static void attach(UINT64 *capacity)
     if (status == OK)
         status = answer.status;
     if (status != OK)
-        stop("the block driver did not take the shared section", status);
+        stop("block attach failed", status);
     *capacity = answer.information;
 }
 
@@ -2182,19 +2180,19 @@ static void read_bootstrap(UINT32 bootstrap, UINT32 *root)
 
 static void say_pool(void)
 {
-    say("nova-fs: pool at lba ");
+    say("nova-fs: pool opened lba=");
     say_number(pool_first_lba);
-    say(", ");
+    say(" blocks=");
     say_number(pool_blocks);
-    say(" blocks of ");
+    say(" block_bytes=");
     say_number(POOL_BLOCK_SIZE);
-    say(" bytes; newest commit ");
+    say(" txg=");
     say_number(committed_txg);
-    say(", ");
+    say(" slots=");
     say_number(volume.slots);
-    say(" node slots, ");
+    say(" used=");
     say_number(used_blocks);
-    say(" blocks in use\r\n");
+    say("\r\n");
 }
 
 /* As the store service's loop (store/store.c): channels served from the
@@ -2211,14 +2209,15 @@ _Noreturn void fs_main(UINT32 bootstrap, UINT64 argument)
     (void)argument;
     read_bootstrap(bootstrap, &root);
     attach(&capacity);
-    status = find_partition(capacity);
-    if (status != OK)
-        stop("the disk holds no pool partition this service opens", status);
+    if (!find_partition(capacity))
+        process_exit(SERVICE_EXIT_FAILED);
     status = open_pool();
     if (status == OK)
         status = record_get(POOL_ROOT_SLOT, &record);
+    if (status == ERR_DATA_INTEGRITY || status == ERR_NOT_FOUND)
+        stop("pool refused", status);
     if (status != OK)
-        stop("the pool does not open", status);
+        stop("pool open failed", status);
     say_pool();
     add_channel(root, 0, VOLUME_RIGHTS, POOL_ROOT_SLOT, record.generation,
                 POOL_KIND_DIRECTORY, OPENS_START_CLIENTS);
@@ -2241,6 +2240,6 @@ _Noreturn void fs_main(UINT32 bootstrap, UINT64 argument)
         }
     }
     commit();
-    say("nova-fs: no channel left open, committed, ending\r\n");
+    say("nova-fs: stopped\r\n");
     process_exit(SERVICE_EXIT_DONE);
 }

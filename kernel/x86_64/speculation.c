@@ -2,10 +2,10 @@
    the kernel reads the enumeration M2 lists, decides each class's measure
    by the rules of M4 to M16 in an order that lets each rule see the ones
    it depends on, sets the measures set once at boot, enables the entry
-   and exit's measure sites for the rest, and writes one line to the log:
-   the processor, then for each class what it gets and why. A class the
-   processor gives no means to mitigate is logged UNMITIGATED, and one
-   whose mitigation the guidance obtained cannot confirm, unconfirmed.
+   and exit's measure sites for the rest, and logs the processor, then a
+   line for each class with what it gets and why. A class the processor
+   gives no means to mitigate is logged UNMITIGATED, and one whose
+   mitigation the guidance obtained cannot confirm, unconfirmed.
 
    The vendors' guidance is cited by speculation.md's names. */
 
@@ -223,45 +223,48 @@ static void enumerate(void)
 }
 
 /* ------------------------------------------------------------------------
-   The log line. */
+   The log lines (docs/spec/log.md T1). */
 
 static void report(const char *class_name, const char *measure,
                    const char *reason)
 {
-    serial_write("; ");
+    serial_write("nova: mitigation class=");
     serial_write(class_name);
-    serial_write(" ");
-    serial_write(measure);
+    serial_write(" measure=");
+    serial_value(measure);
     if (reason) {
-        serial_write(" (");
-        serial_write(reason);
-        serial_write(")");
+        serial_write(" reason=");
+        serial_value(reason);
     }
+    serial_write("\r\n");
 }
 
+/* A vendor other than Intel and AMD is logged as other, under Intel's
+   rules (M2). */
 static void report_processor(void)
 {
-    serial_write("nova: speculation: ");
+    serial_write("nova: cpu vendor=");
     serial_write(cpu.vendor == VENDOR_INTEL ? "GenuineIntel"
                  : amd()                    ? "AuthenticAMD"
-                                            : "other vendor, Intel's rules");
-    serial_write(" signature ");
+                                            : "other rules=intel");
+    serial_write(" signature=");
     serial_hex(cpu.signature);
     if (amd()) {
-        serial_write(" family ");
+        serial_write(" family=");
         serial_hex(cpu.family);
-        serial_write(" model ");
+        serial_write(" model=");
         serial_hex(cpu.model);
     }
-    serial_write(cpu.hypervisor ? ", hypervisor" : ", bare metal");
+    serial_write(cpu.hypervisor ? " hypervisor=yes" : " hypervisor=no");
     if (cpu.arch_present) {
-        serial_write(", arch capabilities ");
+        serial_write(" arch_capabilities=");
         serial_hex(cpu.arch);
     } else if (intel_rules()) {
         serial_write(cpu.structured_edx & STRUCTURED_EDX_ARCH_CAPABILITIES
-                         ? ", arch capabilities refused"
-                         : ", no arch capabilities");
+                         ? " arch_capabilities=refused"
+                         : " arch_capabilities=none");
     }
+    serial_write("\r\n");
 }
 
 /* ------------------------------------------------------------------------
@@ -401,7 +404,7 @@ static void decide_branch_target(int entry_ibpb)
         report("bti", "UNMITIGATED", "no IBRS");
     }
     switch_ibpb = ibpb_present;
-    report("process switch", ibpb_present ? "ibpb" : "UNMITIGATED",
+    report("process_switch", ibpb_present ? "ibpb" : "UNMITIGATED",
            ibpb_present ? 0 : "no IBPB");
 }
 
@@ -422,7 +425,7 @@ static void decide_return_stack(void)
     if (amd() && !(cpu.amd_8_ebx & AMD_8_EBX_IBPB_RET) &&
         !(cpu.amd_21_eax & AMD_21_EAX_ERAPS)) {
         switch_rsb_overwrite = 1;
-        report("rsb switch", "32 calls", "no IBPB_RET or ERAPS");
+        report("rsb_switch", "32 calls", "no IBPB_RET or ERAPS");
     }
 }
 
@@ -614,10 +617,10 @@ static void enable_sites(const MEASURE_SITE *first, const MEASURE_SITE *end)
         if (!(site->measure & measures))
             continue;
         if (*(const UINT8 *)site->site != JMP_REL32) {
-            serial_write("\r\nnova: speculation: measure site ");
+            serial_write("nova: mitigation site refused address=");
             serial_hex(site->site);
-            serial_write(" is not a jump, halted\r\n");
-            halt_forever();
+            serial_write(" reason=\"not a jump\"\r\n");
+            serial_halt();
         }
         paging_write_text(site->site, nop5, SITE_SIZE);
     }
@@ -660,7 +663,6 @@ void speculation_init(void)
         report("spec_ctrl", "UNMITIGATED",
                "the processor refused IBRS and BHI_DIS_S together");
     }
-    serial_write("\r\n");
     spec_ctrl_user = spec_ctrl_kernel & ~SPEC_CTRL_IBRS;
     enable_sites(entry_measures, entry_measures_end);
     enable_sites(syscall_measures, syscall_measures_end);

@@ -6,8 +6,8 @@
    gives; takes MSI-X table entry 0 for its queues' used-buffer
    notifications (4.1.5.1.2), delivered as packets on a port; and sets up
    split virtqueues (2.7) in pages it pins for the device. A step that
-   fails logs why under the driver's name and ends the process with the
-   driver's failure code. */
+   fails is logged under the driver's name, with its status, and ends
+   the process with the driver's failure code. */
 
 #ifndef NOVA_VIRTIO_DRIVER_H
 #define NOVA_VIRTIO_DRIVER_H
@@ -71,14 +71,15 @@ typedef struct {
     UINT32 port, interrupt;
 } VIRTIO_DRIVER;
 
-/* Log what failed under the driver's name, with status, and end the
-   process with its failure code. */
+/* Log "<name>: <event> failed status=<status>" (docs/spec/log.md T1),
+   event the words that name the step that failed, and end the process
+   with the driver's failure code. */
 _Noreturn void virtio_driver_fail(const VIRTIO_DRIVER *driver,
-                                  const char *what, UINT32 status);
+                                  const char *event, UINT32 status);
 
 /* virtio_driver_fail unless status is OK. */
 void virtio_driver_check(const VIRTIO_DRIVER *driver, UINT32 status,
-                         const char *what);
+                         const char *event);
 
 /* Take the handles and the record of the bootstrap message queued on
    channel, which stays open; open the log; map the function's
@@ -94,9 +95,10 @@ void virtio_driver_open(VIRTIO_DRIVER *driver, const char *name,
                         UINT64 device_config_size);
 
 /* Map size bytes of section, from its start, read-write at the next free
-   address in the driver, and return where. */
+   address in the driver, and return where; event names the step in the
+   line a failure logs. */
 volatile UINT8 *virtio_driver_map(VIRTIO_DRIVER *driver, UINT32 section,
-                                  UINT64 size, const char *what);
+                                  UINT64 size, const char *event);
 
 /* OR bits into device_status (2.1). */
 void virtio_driver_set_status(VIRTIO_DRIVER *driver, UINT8 bits);

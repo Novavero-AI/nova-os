@@ -8,7 +8,9 @@
    service, \nova\fs.exe, takes that endpoint and the server end of its
    volume's root (services.h).
    init keeps the root, through which it creates /data and /users at
-   first boot (F11, item 1) and publishes them in the namespace (F4).
+   first boot (F11, item 1) and publishes them in the namespace (F4). On
+   a test disk it then runs \nova\fstest.exe and reports its exit code
+   as the fstest test (tests.h).
 
    Neither the driver nor the service is restarted when it ends, and the
    function is not stopped then: its pins stay in quarantine, so no page
@@ -23,6 +25,7 @@
 #include "path.h"
 #include "pci.h"
 #include "services.h"
+#include "tests.h"
 #include "virtio_blk.h"
 
 #define BLOCK_FILE "virtblk.exe"
@@ -53,15 +56,6 @@
 static UINT32 fs_root = HANDLE_INVALID;
 static VIEW namespace_view;
 static UINT8 message[CHANNEL_MAX_BYTES];
-
-static void say_status(const char *what, UINT32 status)
-{
-    say("nova-init: ");
-    say(what);
-    say(", status ");
-    say_number(status);
-    say("\r\n");
-}
 
 static void close_transfers(const HANDLE_TRANSFER *handles, UINT32 count)
 {
@@ -183,7 +177,7 @@ static UINT32 start_driver(const PLATFORM *platform,
     close_open(&initiator);
     close_open(&job);
     if (status != OK) {
-        say_status("the data disk's driver did not report", status);
+        say_status("data disk driver report failed", status);
         return HANDLE_INVALID;
     }
     return endpoint.handle;
@@ -222,7 +216,7 @@ static void start_fs(const PLATFORM *platform, UINT32 job, UINT32 block)
     close_open(&program.process);
     if (status != OK) {
         close_open(&fs_root);
-        say_status("the file system service did not start", status);
+        say_status("data disk service start failed", status);
     }
 }
 
@@ -232,17 +226,18 @@ void data_start(const PLATFORM *platform, UINT32 job)
     UINT32 block;
 
     if (!platform_data_disk(platform, &device)) {
-        say("nova-init: no data disk: no second virtio block function\r\n");
+        say("nova-init: data disk absent "
+            "reason=\"no second virtio block function\"\r\n");
         return;
     }
     if (!boot_file(BLOCK_FILE) || !boot_file(FS_FILE)) {
-        say("nova-init: no data disk: \\nova\\ lacks " BLOCK_FILE " or "
-            FS_FILE "\r\n");
+        say("nova-init: data disk absent "
+            "reason=\"no " BLOCK_FILE " or " FS_FILE "\"\r\n");
         return;
     }
-    say("nova-init: the data disk is ");
+    say("nova-init: data disk pci=");
     pci_say_function(device.requester);
-    say("; starting its driver and the file system service\r\n");
+    say("\r\n");
     block = start_driver(platform, &device);
     if (block != HANDLE_INVALID)
         start_fs(platform, job, block);
@@ -322,8 +317,8 @@ static UINT32 mount(UINT32 namespace_root, const char *name)
 }
 
 /* Run the check program with /data, reached through the namespace,
-   read-write and read-only, and its mode. */
-static UINT32 run_check(UINT32 job, UINT32 debug_log)
+   read-write and read-only, and its mode, and report its exit code. */
+static void run_check(UINT32 job, UINT32 debug_log)
 {
     HANDLE_TRANSFER handles[LAUNCH_FIRST_DIRECTORY + FSTEST_VIEW_ENTRIES];
     LAUNCH_HEADER *header = (LAUNCH_HEADER *)message;
@@ -347,8 +342,11 @@ static UINT32 run_check(UINT32 job, UINT32 debug_log)
         handles[i].rights = RIGHTS_SAME;
     }
     status = load_boot_file(job, boot_file(FSTEST_FILE), &program);
-    if (status != OK)
-        return status;
+    if (status != OK) {
+        say_status("fstest load failed", status);
+        tests_report(INIT_TEST_FSTEST, KTAP_FAILED, "it did not load");
+        return;
+    }
     if (resource_create(debug_log, SYSTEM_PRIVILEGE_DEBUG_LOG, 1,
                         &handles[LAUNCH_DEBUG_LOG].handle) != OK ||
         handle_duplicate(program.process, SELF_RIGHTS,
@@ -380,29 +378,26 @@ static UINT32 run_check(UINT32 job, UINT32 debug_log)
     close_open(&program.thread);
     if (status != OK) {
         close_open(&program.process);
-        return status;
+        say_status("fstest start failed", status);
+        tests_report(INIT_TEST_FSTEST, KTAP_FAILED, "it did not start");
+        return;
     }
-    say("nova-init: started \\nova\\" FSTEST_FILE " ");
-    say(mode);
-    say(" with a view of /data, read-write and read-only, and of the "
-        "namespace without WRITE\r\n");
     if (object_wait_one(program.process, PROCESS_TERMINATED,
                         DEADLINE_INFINITE, &observed) != OK ||
         process_info(program.process, &state, &exit_code) != OK)
         exit_code = 0;
     handle_close(program.process);
-    say("nova-init: \\nova\\" FSTEST_FILE " ended, exit code ");
-    say_number(exit_code);
-    say("\r\n");
-    return exit_code == FSTEST_EXIT_PASSED ? OK : ERR_BAD_STATE;
+    tests_report_exit(INIT_TEST_FSTEST, exit_code, FSTEST_EXIT_PASSED);
 }
 
 void data_mount(UINT32 job, UINT32 debug_log, UINT32 namespace_root)
 {
     UINT32 status;
 
-    if (fs_root == HANDLE_INVALID)
+    if (fs_root == HANDLE_INVALID) {
+        tests_report(INIT_TEST_FSTEST, KTAP_SKIPPED, "no data disk");
         return;
+    }
     namespace_view.count = 0;
     status = view_add(&namespace_view, "/", namespace_root);
     if (status == OK)
@@ -412,13 +407,17 @@ void data_mount(UINT32 job, UINT32 debug_log, UINT32 namespace_root)
     if (status == OK)
         status = io_flush(fs_root);
     if (status != OK) {
-        say_status("/data and /users are not published", status);
+        say_status("data unpublished", status);
+        tests_report(INIT_TEST_FSTEST, KTAP_SKIPPED, "no /data");
         return;
     }
-    say("nova-init: /data and /users published from the data disk\r\n");
-    if (!boot_file(FSTEST_FILE))
+    say("nova-init: data published\r\n");
+    if (!tests_enabled())
         return;
-    status = run_check(job, debug_log);
-    if (status != OK)
-        say_status("the data disk's check did not pass", status);
+    if (!boot_file(FSTEST_FILE)) {
+        tests_report(INIT_TEST_FSTEST, KTAP_FAILED,
+                     "no \\nova\\" FSTEST_FILE " on a test disk");
+        return;
+    }
+    run_check(job, debug_log);
 }

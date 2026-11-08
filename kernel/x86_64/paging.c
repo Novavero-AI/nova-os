@@ -118,9 +118,9 @@ void paging_init(void)
     for (i = 0; i < LOWER_HALF_ENTRIES; i++)
         top_table[i] = 0;
     flush_translations();
-    serial_write("nova: ");
+    serial_write("nova: paging levels=");
     serial_number((UINT64)levels);
-    serial_write("-level paging, lower half unmapped\r\n");
+    serial_write("\r\n");
 }
 
 UINT64 paging_kernel_space(void)
@@ -157,14 +157,14 @@ static UINT64 kernel_physical(UINT64 linear)
     return (entry & PTE_ADDRESS & ~(span - 1)) + linear % span;
 }
 
-static void stop(const char *what, UINT64 address)
+_Noreturn static void stop(const char *what, UINT64 address)
 {
-    serial_write("nova: paging: ");
-    serial_write(what);
-    serial_write(" at ");
+    serial_write("nova: paging failed reason=");
+    serial_value(what);
+    serial_write(" address=");
     serial_hex(address);
-    serial_write(", halted\r\n");
-    halt_forever();
+    serial_write("\r\n");
+    serial_halt();
 }
 
 void paging_write_text(UINT64 linear, const UINT8 *bytes, UINT64 count)

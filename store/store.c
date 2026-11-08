@@ -401,9 +401,9 @@ static void open_path(const CHANNEL *c, const UINT8 *path, UINT32 length,
                              c->path, node.digest);
     if (status != OK) {
         if (status == ERR_DATA_INTEGRITY) {
-            say("nova-store: integrity error opening ");
-            say_printable(path, length);
-            say("\r\n");
+            say("nova-store: open refused path=");
+            say_value_bytes(path, length);
+            say(" reason=integrity\r\n");
         }
         send(endpoint, transaction, status, 0, 0, 0, 0);
         handle_close(endpoint);
@@ -805,7 +805,7 @@ static int serve_request(UINT32 index, UINT32 bytes)
                                  &information)
                      : ERR_NOT_SUPPORTED;
         if (status == ERR_DATA_INTEGRITY)
-            say("nova-store: integrity error reading a file\r\n");
+            say("nova-store: read refused reason=integrity\r\n");
         send(c.handle, request->transaction, status,
              status == OK ? information : 0,
              status == OK ? (UINT32)information : 0, 0, 0);
@@ -815,7 +815,7 @@ static int serve_request(UINT32 index, UINT32 bytes)
                      ? get_section(&c, request->rights, &information, &handle)
                      : ERR_NOT_SUPPORTED;
         if (status == ERR_DATA_INTEGRITY)
-            say("nova-store: integrity error filling a section\r\n");
+            say("nova-store: section refused reason=integrity\r\n");
         send(c.handle, request->transaction, status,
              status == OK ? information : 0, 0, &handle, status == OK);
         return 1;
@@ -865,7 +865,8 @@ static void read_bootstrap(UINT32 bootstrap)
         store_image_open(&image, (const UINT8 *)IMAGE_BASE,
                          boot.image_size) != OK ||
         image.registration_count > STORE_PATHS_MAX) {
-        say("nova-store: the store image is not one this service reads\r\n");
+        say("nova-store: image open failed "
+            "reason=\"not one this service reads\"\r\n");
         process_exit(SERVICE_EXIT_FAILED);
     }
     handle_close(handles[STORE_BOOTSTRAP_IMAGE].handle);
@@ -873,13 +874,13 @@ static void read_bootstrap(UINT32 bootstrap)
                CONTROL_RIGHTS, 0);
     add_client(handles[STORE_BOOTSTRAP_ROOT].handle, CHANNEL_ROOT,
                STORE_RIGHTS, 0);
-    say("nova-store: serving ");
+    say("nova-store: serving paths=");
     say_number(image.registration_count);
-    say(" paths, ");
+    say(" nodes=");
     say_number(image.node_count);
-    say(" nodes and ");
+    say(" blobs=");
     say_number(image.blob_count);
-    say(" blobs from the store image, read only\r\n");
+    say("\r\n");
 }
 
 /* Wait on every channel; serve those readable, from the last, so that
@@ -912,6 +913,6 @@ _Noreturn void store_main(UINT32 bootstrap, UINT64 argument)
                 remove_channel(i);
         }
     }
-    say("nova-store: no channel left open, ending\r\n");
+    say("nova-store: stopped\r\n");
     process_exit(SERVICE_EXIT_DONE);
 }

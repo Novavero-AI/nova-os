@@ -10,24 +10,29 @@
    case PROCESS_OPTION_WRITE_EXECUTE exists for (docs/spec/objects.md
    O5).
 
-   init logs the size and sha256 of each output and checks each link
-   against the sha256 nova-nix's Stage0 (Windows) CI job pins for it
-   (in nova-nix's own .github/workflows/ci.yml), so the chain on nova-os
-   is held to the chain on Windows byte for byte. M2 is the first link
-   built on the C library of libc-core.M1, and nothing pins the file it
-   writes, so the chain runs on to M1, whose link is pinned.
+   init checks each link against the sha256 nova-nix's Stage0 (Windows)
+   CI job pins for it (in nova-nix's own .github/workflows/ci.yml), so
+   the chain on nova-os is held to the chain on Windows byte for byte.
+   M2 is the first link built on the C library of libc-core.M1, and
+   nothing pins the file it writes, so the chain runs on to M1, whose
+   link is pinned.
 
-   The chain, the bootstrap check, runs when the boot volume holds all
-   of its inputs, as the test disk does. A volume that holds none, the
-   system's disk, has no check to run, and init says so and goes on. A
-   volume that holds some but not all is refused: it is a test disk with
-   inputs missing, and passing it would report the checks passed with
-   the chain unrun. */
+   The chain, the bootstrap check, runs on a test disk whose boot volume
+   holds all of its inputs, as the chain disk's does, and is reported as
+   the chain test (tests.h), each step a case named by the file it
+   writes; a step that fails gives its command line, why, and for a
+   link the sha256 it wrote, as diagnostics, and the steps after it,
+   which need its output, are skipped. On a test disk that holds none of
+   the inputs the test is skipped. A volume that holds some but not all
+   fails it: it is a chain disk with inputs missing, and passing it would
+   report the test passed with the chain unrun. */
 
 #include "init.h"
 #include "compat.h"
 #include "nt32.h"
 #include "sha256.h"
+#include "test_report.h"
+#include "tests.h"
 #include "view.h"
 
 #define NTDLL_FILE "ntdll.dll"
@@ -270,18 +275,47 @@ static void hex_digest(const UINT8 *digest, char *text)
     text[2 * SHA256_DIGEST_SIZE] = 0;
 }
 
+/* The steps' cases, at depth 2 under the chain test. A link's passing
+   result carries PINNED and the link's name as its data. */
+static KTAP_PLAN cases;
+
+#define PINNED "pinned "
+
+/* Room for a link's name, the longest of which, cc_x86, has six
+   characters. */
+#define LINK_NAME_MAX 8
+
+/* Report step number failed: its command line and why as diagnostics,
+   then its result. */
 static int failed(UINT32 number, const char *why)
 {
-    say("nova-init: the chain failed at step ");
-    say_number(number + 1);
-    say(", ");
+    ktap_diagnostic_start(&cases);
     say(steps[number].program);
     say(" ");
     say(steps[number].arguments);
-    say(": ");
-    say(why);
     say("\r\n");
+    ktap_diagnostic(&cases, why);
+    ktap_result(&cases, KTAP_FAILED, steps[number].output, 0);
     return 0;
+}
+
+/* Report step passed: a link with PINNED and its name, which its pin
+   matched. */
+static void pass(const STEP *step)
+{
+    char data[sizeof PINNED + LINK_NAME_MAX];
+    UINT32 i, at = sizeof PINNED - 1;
+
+    if (!step->pin) {
+        ktap_result(&cases, KTAP_PASSED, step->output, 0);
+        return;
+    }
+    for (i = 0; i < at; i++)
+        data[i] = PINNED[i];
+    for (i = 0; step->link[i] && i < LINK_NAME_MAX; i++)
+        data[at + i] = step->link[i];
+    data[at + i] = 0;
+    ktap_result(&cases, KTAP_PASSED, step->output, data);
 }
 
 /* Run step number with ntdll and check what it writes. */
@@ -298,13 +332,6 @@ static int run_step(UINT32 job, UINT32 number, const BOOT_FILE_VIEW *ntdll)
 
     if (!build_command_line(step))
         return failed(number, "its command line is too long");
-    say("nova-init: step ");
-    say_number(number + 1);
-    say(" of ");
-    say_number(STEP_COUNT);
-    say(": ");
-    say(command_line);
-    say("\r\n");
     if (!file_named(step->program, length_of(step->program), number,
                     &program.name, &program.data, &program.size))
         return failed(number, "its program is not there");
@@ -321,9 +348,8 @@ static int run_step(UINT32 job, UINT32 number, const BOOT_FILE_VIEW *ntdll)
     process_info(process, &state, &exit_code);
     handle_close(process);
     if (state != PROCESS_STATE_TERMINATED || exit_code != STATUS_SUCCESS) {
-        say("nova-init: step ");
-        say_number(number + 1);
-        say(" ended with exit status ");
+        ktap_diagnostic_start(&cases);
+        say("exit status ");
         say_hex(exit_code);
         say("\r\n");
         return failed(number, "it did not succeed");
@@ -338,19 +364,17 @@ static int run_step(UINT32 job, UINT32 number, const BOOT_FILE_VIEW *ntdll)
     sha256_update(&context, output->data, output->size);
     sha256_final(&context, digest);
     hex_digest(digest, text);
-    say("nova-init: ");
-    say(step->output);
-    say(": ");
-    say_number(output->size);
-    say(" bytes, sha256 ");
-    say(text);
-    if (step->pin) {
-        say(", nova-nix's ");
+    if (step->pin && !word_is(text, 2 * SHA256_DIGEST_SIZE, step->pin)) {
+        ktap_diagnostic_start(&cases);
+        say(step->output);
+        say(" has sha256 ");
+        say(text);
+        say(", not nova-nix's ");
         say(step->link);
-    }
-    say("\r\n");
-    if (step->pin && !word_is(text, 2 * SHA256_DIGEST_SIZE, step->pin))
+        say("\r\n");
         return failed(number, "its output is not the link nova-nix pins");
+    }
+    pass(step);
     return 1;
 }
 
@@ -364,47 +388,57 @@ static UINT32 sources_present(void)
     return count;
 }
 
-/* Refuse a boot volume that holds present of the chain's inputs but not
-   all, naming those it lacks. */
-static int incomplete(UINT32 present)
+/* Fail the chain test for a boot volume that holds present of the
+   chain's inputs but not all, naming those it lacks, a line each, so
+   that no line outgrows one write. */
+static void incomplete(UINT32 present)
 {
-    const char *separator = " ";
     UINT32 i;
 
-    say("nova-init: the chain failed: the boot volume holds ");
+    tests_diagnostic_start(INIT_TEST_CHAIN);
+    say("the boot volume holds ");
     say_number(present);
-    say(" of its ");
+    say(" of the chain's ");
     say_number(SOURCE_COUNT);
-    say(" inputs and lacks");
+    say(" inputs\r\n");
     for (i = 0; i < SOURCE_COUNT; i++)
         if (!boot_file(sources[i].boot)) {
-            say(separator);
+            tests_diagnostic_start(INIT_TEST_CHAIN);
+            say("it lacks ");
             say(sources[i].boot);
-            separator = ", ";
+            say("\r\n");
         }
-    say("\r\n");
-    return 0;
+    tests_report(INIT_TEST_CHAIN, KTAP_FAILED, 0);
 }
 
-int chain_run(UINT32 job)
+void chain_run(UINT32 job)
 {
     const BOOT_FILE_VIEW *ntdll = boot_file(NTDLL_FILE);
     UINT32 present = sources_present(), i;
+    int passed = 1;
 
+    if (!tests_enabled())
+        return;
     if (!present) {
-        say("nova-init: the bootstrap check is not on this disk\r\n");
-        return 1;
+        tests_report(INIT_TEST_CHAIN, KTAP_SKIPPED, "not on this disk");
+        return;
     }
-    if (present != SOURCE_COUNT)
-        return incomplete(present);
+    if (present != SOURCE_COUNT) {
+        incomplete(present);
+        return;
+    }
     if (!ntdll) {
-        say("nova-init: the chain failed: no ntdll.dll on the boot volume\r\n");
-        return 0;
+        tests_report(INIT_TEST_CHAIN, KTAP_FAILED,
+                     "no ntdll.dll on the boot volume");
+        return;
     }
-    for (i = 0; i < STEP_COUNT; i++)
-        if (!run_step(job, i, ntdll))
-            return 0;
-    say("nova-init: the chain built nova-nix's hex0, hex1, hex2, catm, M0, "
-        "cc_x86, M2 and M1\r\n");
-    return 1;
+    ktap_plan(&cases, KTAP_CASE_DEPTH, STEP_COUNT);
+    for (i = 0; i < STEP_COUNT; i++) {
+        if (passed)
+            passed = run_step(job, i, ntdll);
+        else
+            ktap_result(&cases, KTAP_SKIPPED, steps[i].output,
+                        "an earlier step failed");
+    }
+    tests_report(INIT_TEST_CHAIN, passed ? KTAP_PASSED : KTAP_FAILED, 0);
 }

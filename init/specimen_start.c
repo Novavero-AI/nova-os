@@ -60,15 +60,6 @@ static int same(const UINT8 *a, const UINT8 *b, UINT32 count)
     return 1;
 }
 
-static void say_status(const char *what, UINT32 status)
-{
-    say("nova-init: ");
-    say(what);
-    say(", status ");
-    say_number(status);
-    say("\r\n");
-}
-
 /* Note the store path whose name is SPECIMEN_NAME. */
 static void find_specimen(void *context, const UINT8 *name, UINT32 length,
                           UINT32 kind)
@@ -143,7 +134,7 @@ void specimen_start(const PLATFORM *platform, const STORE_SERVICES *services,
     handles[LAUNCH_FIRST_DIRECTORY].rights = RIGHTS_SAME;
     status = load(platform, services, &program, handles);
     if (status != OK) {
-        say_status("the specimen does not load from /store", status);
+        say_status("specimen load failed", status);
         return;
     }
     launch.header.view_count = 1;
@@ -168,7 +159,7 @@ void specimen_start(const PLATFORM *platform, const STORE_SERVICES *services,
     if (mine != HANDLE_INVALID)
         handle_close(mine);
     if (status != OK) {
-        say_status("the specimen did not start", status);
+        say_status("specimen start failed", status);
         if (!launched)
             for (i = 0; i <= LAUNCH_FIRST_DIRECTORY; i++)
                 handle_close(handles[i].handle);
@@ -181,8 +172,8 @@ void specimen_start(const PLATFORM *platform, const STORE_SERVICES *services,
         handle_close(program.process);
         return;
     }
-    say("nova-init: the display sent to ");
-    say(path);
-    say(" in place of the console\r\n");
+    say("nova-init: display given path=");
+    say_value(path);
+    say("\r\n");
     handle_close(program.process);
 }

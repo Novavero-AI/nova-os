@@ -124,24 +124,30 @@ CI checks every pull request and every push to main:
   `tools/check-fade.c`, `tools/check-pointer.c`, `tools/check-text.c`
   and `design/backgrounds/check-limb.sh`, and actionlint over the
   workflows.
-- **Boot** boots the reproduced `disk.img` under QEMU with Ubuntu 24.04's
-  OVMF, with a copy of `data.img` as its data disk: on QEMU's default
-  processor, on Skylake-Client, which needs page-table isolation, on
-  `-cpu max`, and under KVM. The serial log must show each part starting
-  and its checks passing; then, sent through QEMU's monitor, a tablet's
-  moves, clicks and wheel turns and a mouse's moves must reach the
-  console, and, typed through it, the first boot's account is created on
-  the fresh data disk and the shell runs `whoami`; the session then fills
-  the console's panel, and the wheel scrolls it back and forward, each
-  screen checked equal to the one `ci/screens.c` draws on the host with
-  the console's own drawing code. A further boot of the same data disk logs
-  in with that account, which it must still hold. Other boots corrupt
-  the data disk's GPT, and the log must show the file system service
-  refusing the disk. A boot of `specimen.img` takes QMP's screendump
-  once the type specimen has drawn, which must equal its prototype's
-  render pixel for pixel.
+- **Boot** boots the reproduced disks under QEMU with Ubuntu 24.04's
+  OVMF, with a copy of `data.img` as the data disk: `disk.img`, the
+  system's disk, on QEMU's default processor, and `test.img`, the test
+  disk, on Skylake-Client, which needs page-table isolation, on `-cpu
+  max`, and under KVM. The serial log must show each part starting, by
+  the events its lines report ([log.md](docs/spec/log.md)), and a test
+  disk's report, in KTAP, every test passing: the kernel's self-tests,
+  the first process's checks of its calls, the data disk's check, the
+  test program from `/store` and the boot disk's read. Then, sent
+  through QEMU's monitor, a tablet's moves, clicks and wheel turns and
+  a mouse's moves must reach the console, and, typed through it, the
+  first boot's account is created on the fresh data disk and the shell
+  runs `whoami`; the session then fills the console's panel, and the
+  wheel scrolls it back and forward, each screen checked equal to the
+  one `ci/screens.c` draws on the host with the console's own drawing
+  code. A boot of the test disk boots the same data disk again, logs in
+  with that account, which it must still hold, and its data disk's
+  check reads back what the first boot wrote. Other boots of `disk.img`
+  corrupt the data disk's GPT, and the log must show the file system
+  service refusing the disk. A boot of `specimen.img` takes QMP's
+  screendump once the type specimen has drawn, which must equal its
+  prototype's render pixel for pixel.
 - **Chain** boots `chain.img` and checks that each step of the bootstrap
-  chain runs and each pinned link matches.
+  chain passes in its test report and each pinned link matches.
 
 The jobs' scripts are in `ci/`, each with its usage in its header. CI
 only checks `SHA256SUMS`; `ci/update-hashes.sh`, which refuses to run

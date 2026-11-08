@@ -86,6 +86,10 @@
 /* The administrator channel's queue: one request and its reply. */
 #define ADMINISTRATOR_CAPACITY 1
 
+/* The name of the self-test of BLAKE2b and Argon2id at start, in its
+   line (docs/spec/log.md T3). */
+#define SELFTEST_NAME "argon2id"
+
 /* The largest request: the header, credentials, a name and a
    password. */
 #define REQUEST_MAX                                                       \
@@ -222,9 +226,9 @@ static UINT32 read_account(const UINT8 *name, UINT32 length, ACCOUNT *account)
         !record_decode(record_bytes, got, name, length, account))
         status = ERR_DATA_INTEGRITY;
     if (status == ERR_DATA_INTEGRITY) {
-        say("nova-accounts: the record of ");
-        say_printable(name, length);
-        say(" does not read as a record\r\n");
+        say("nova-accounts: record refused name=");
+        say_value_bytes(name, length);
+        say(" reason=integrity\r\n");
     }
     return status;
 }
@@ -400,12 +404,13 @@ static UINT32 create_account(const UINT8 *name, UINT32 length,
     handle_close(home);
     status = write_account(account);
     if (status == OK) {
-        say("nova-accounts: created ");
-        say_printable(name, length);
-        say(", id ");
+        say("nova-accounts: account created name=");
+        say_value_bytes(name, length);
+        say(" id=");
         say_number(account->id);
-        say(account->flags & ACCOUNT_ADMINISTRATOR ? ", an administrator\r\n"
-                                                   : "\r\n");
+        say(account->flags & ACCOUNT_ADMINISTRATOR
+                ? " role=administrator\r\n"
+                : " role=user\r\n");
     }
     return status;
 }
@@ -511,9 +516,9 @@ static void open_session(const CHANNEL *c, UINT32 transaction,
     user_of(account);
     send(c->handle, transaction, OK, 0, sizeof(ACCOUNTS_USER), handles,
          count);
-    say("nova-accounts: ");
-    say_printable(account->name, account->name_length);
-    say(" logged in\r\n");
+    say("nova-accounts: login accepted name=");
+    say_value_bytes(account->name, account->name_length);
+    say("\r\n");
 }
 
 /* ------------------------------------------------------------------------
@@ -555,7 +560,7 @@ static void login(CHANNEL *c, UINT32 transaction, const UINT8 *name,
         open_session(c, transaction, &account);
         return;
     }
-    say("nova-accounts: a login was refused\r\n");
+    say("nova-accounts: login refused\r\n");
     answer_later(c, transaction, ERR_ACCESS_DENIED);
 }
 
@@ -661,9 +666,9 @@ static int serve_setup(UINT32 index)
             ACCOUNTS_LOGIN_END_RIGHTS) {
         if (add_channel(received[0].handle, CHANNEL_LOGIN) == OK)
             return 1;
-        say("nova-accounts: no room for a login channel\r\n");
+        say("nova-accounts: setup refused reason=\"no room\"\r\n");
     } else {
-        say("nova-accounts: a malformed setup on the control channel\r\n");
+        say("nova-accounts: setup refused reason=malformed\r\n");
     }
     for (i = 0; i < count; i++)
         handle_close(received[i].handle);
@@ -704,24 +709,23 @@ static void remove_channel(UINT32 index)
     channels[index] = channels[--channel_count];
 }
 
-/* Map ARENA_SIZE bytes of fresh sections at ARENA_BASE. */
-static int map_arena(void)
+/* Map ARENA_SIZE bytes of fresh sections at ARENA_BASE. Returns the
+   status of the call that failed, or OK. */
+static UINT32 map_arena(void)
 {
     UINT64 at;
-    UINT32 section;
+    UINT32 section, status = OK;
 
-    for (at = 0; at < ARENA_SIZE; at += SECTION_MAX_SIZE) {
-        if (section_create(SECTION_MAX_SIZE, 0, &section) != OK)
-            return 0;
-        if (process_map(self, section, 0, ARENA_BASE + at, SECTION_MAX_SIZE,
-                        MAP_READ | MAP_WRITE) != OK) {
+    for (at = 0; status == OK && at < ARENA_SIZE; at += SECTION_MAX_SIZE) {
+        status = section_create(SECTION_MAX_SIZE, 0, &section);
+        if (status == OK) {
+            status = process_map(self, section, 0, ARENA_BASE + at,
+                                 SECTION_MAX_SIZE, MAP_READ | MAP_WRITE);
             handle_close(section);
-            return 0;
         }
-        handle_close(section);
     }
     arena = (ARGON2_BLOCK *)ARENA_BASE;
-    return 1;
+    return status;
 }
 
 static void read_bootstrap(UINT32 bootstrap)
@@ -749,29 +753,51 @@ static void read_bootstrap(UINT32 bootstrap)
         process_exit(SERVICE_EXIT_FAILED);
 }
 
+/* Log event, which ends in failed, with status, and end the service. */
+_Noreturn static void stop(const char *event, UINT32 status)
+{
+    say("nova-accounts: ");
+    say(event);
+    say(" status=");
+    say_number(status);
+    say("\r\n");
+    process_exit(SERVICE_EXIT_FAILED);
+}
+
+/* BLAKE2b against RFC 7693's values (Appendices A and E) and Argon2id
+   against RFC 9106's tag (5.3). */
+static void self_test(void)
+{
+    const char *reason = 0;
+
+    if (!blake2b_self_test())
+        reason = "BLAKE2b differs from RFC 7693";
+    else if (!argon2_self_test(arena, ARENA_BLOCKS))
+        reason = "Argon2id differs from RFC 9106";
+    if (reason) {
+        say("nova-accounts: selftest failed name=" SELFTEST_NAME " reason=");
+        say_value(reason);
+        say("\r\n");
+        process_exit(SERVICE_EXIT_FAILED);
+    }
+    say("nova-accounts: selftest passed name=" SELFTEST_NAME "\r\n");
+}
+
 static void start(UINT32 bootstrap)
 {
-    UINT32 count;
+    UINT32 count, status;
 
     read_bootstrap(bootstrap);
-    if (!map_arena()) {
-        say("nova-accounts: no memory for Argon2id\r\n");
-        process_exit(SERVICE_EXIT_FAILED);
-    }
-    if (!blake2b_self_test() || !argon2_self_test(arena, ARENA_BLOCKS)) {
-        say("nova-accounts: BLAKE2b or Argon2id differs from its RFC's "
-            "test values\r\n");
-        process_exit(SERVICE_EXIT_FAILED);
-    }
-    say("nova-accounts: BLAKE2b gives RFC 7693's values (Appendices A and "
-        "E) and Argon2id RFC 9106's tag (5.3)\r\n");
-    if (scan_records(&count) != OK) {
-        say("nova-accounts: /data/accounts does not list\r\n");
-        process_exit(SERVICE_EXIT_FAILED);
-    }
-    say("nova-accounts: ");
+    status = map_arena();
+    if (status != OK)
+        stop("arena map failed", status);
+    self_test();
+    status = scan_records(&count);
+    if (status != OK)
+        stop("records list failed", status);
+    say("nova-accounts: ready accounts=");
     say_number(count);
-    say(count == 1 ? " account\r\n" : " accounts\r\n");
+    say("\r\n");
 }
 
 /* The loop waits on every channel: for a request on one with no reply
@@ -822,6 +848,6 @@ _Noreturn void accounts_main(UINT32 bootstrap, UINT64 argument)
                 remove_channel(i);
         }
     }
-    say("nova-accounts: no channel left open, ending\r\n");
+    say("nova-accounts: stopped\r\n");
     process_exit(SERVICE_EXIT_DONE);
 }

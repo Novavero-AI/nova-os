@@ -136,11 +136,12 @@ static UINT64 now(void)
     return nanoseconds;
 }
 
-static void say_status(const char *what, UINT32 status)
+/* A line for event, which ends in failed or refused, with status. */
+static void say_status(const char *event, UINT32 status)
 {
     say("nova-console: ");
-    say(what);
-    say(", status ");
+    say(event);
+    say(" status=");
     say_number(status);
     say("\r\n");
 }
@@ -360,25 +361,24 @@ static UINT32 pointer_noted;
 
 static void line_axes(LINE *l, UINT32 axes)
 {
+    line_add(l, " axes=");
     if (axes == BOTH_AXES)
-        line_add(l, " x and y");
+        line_add(l, "xy");
     else
-        line_add(l, axes == INPUT_AXIS_X ? " x" : " y");
+        line_add(l, axes == INPUT_AXIS_X ? "x" : "y");
 }
 
 /* A button by its evdev name, a code past those by its number, and a
    keyboard's key by neither, since its code is what was typed. */
 static void line_button(LINE *l, UINT32 code)
 {
-    if (code >= BTN_LEFT && code - BTN_LEFT < BUTTON_NAMES) {
+    line_add(l, " button=");
+    if (code >= BTN_LEFT && code - BTN_LEFT < BUTTON_NAMES)
         line_add(l, button_names[code - BTN_LEFT]);
-        line_add(l, " button");
-    } else if (code >= BTN_MISC) {
-        line_add(l, "button ");
+    else if (code >= BTN_MISC)
         line_number(l, code);
-    } else {
+    else
         line_add(l, "key");
-    }
 }
 
 /* Whether note says what the note before it did: the same motion's
@@ -406,22 +406,24 @@ static void pointer_line(UINT32 note)
     line_add(&l, "nova-console: pointer ");
     switch (note & NOTE_KIND) {
     case NOTE_ABSOLUTE:
-        line_add(&l, "moved, absolute");
+        line_add(&l, "move mode=absolute");
         line_axes(&l, detail);
         break;
     case NOTE_RELATIVE:
-        line_add(&l, "moved, relative");
+        line_add(&l, "move mode=relative");
         line_axes(&l, detail);
         break;
     case NOTE_PRESSED:
-    case NOTE_RELEASED:
+        line_add(&l, "press");
         line_button(&l, detail);
-        line_add(&l, (note & NOTE_KIND) == NOTE_PRESSED ? " pressed"
-                                                         : " released");
+        break;
+    case NOTE_RELEASED:
+        line_add(&l, "release");
+        line_button(&l, detail);
         break;
     default:
-        line_add(&l, detail == WHEEL_UP ? "wheel turned up"
-                                        : "wheel turned down");
+        line_add(&l, detail == WHEEL_UP ? "wheel direction=up"
+                                        : "wheel direction=down");
         break;
     }
     line_say(&l);
@@ -491,12 +493,11 @@ static int is_description(const INPUT_DEVICE *d)
            (!(d->absolute & INPUT_AXIS_Y) || d->y.max > d->y.min);
 }
 
-static void line_range(LINE *l, const char *axis, const INPUT_RANGE *r)
+static void line_range(LINE *l, const char *key, const INPUT_RANGE *r)
 {
-    line_add(l, axis);
-    line_add(l, " from ");
+    line_add(l, key);
     line_signed(l, r->min);
-    line_add(l, " to ");
+    line_add(l, "..");
     line_signed(l, r->max);
 }
 
@@ -507,17 +508,15 @@ static void describe(const INPUT_DEVICE *d)
     LINE l;
 
     l.length = 0;
-    line_add(&l, "nova-console: input from a ");
+    line_add(&l, "nova-console: input kind=");
     if (d->kind == INPUT_DEVICE_KEYBOARD) {
         line_add(&l, "keyboard");
     } else {
         line_add(&l, "pointer");
-        if (!d->absolute)
-            line_add(&l, " with no absolute axis");
         if (d->absolute & INPUT_AXIS_X)
-            line_range(&l, ", x", &d->x);
+            line_range(&l, " x=", &d->x);
         if (d->absolute & INPUT_AXIS_Y)
-            line_range(&l, ", y", &d->y);
+            line_range(&l, " y=", &d->y);
     }
     line_say(&l);
 }
@@ -573,9 +572,7 @@ static void serve_session(int index)
             continue;
         }
         if (status != ERR_PEER_CLOSED)
-            say_status("a session sent what the protocol does not have; "
-                       "it ends",
-                       status);
+            say_status("session message refused", status);
         end_session(index);
         pump();
         return;
@@ -594,8 +591,7 @@ static void add_session(const RECEIVED_HANDLE *handle)
                 sessions[i].reading = 0;
                 return;
             }
-    say("nova-console: a session is refused: no room, or not a channel "
-        "the console can serve\r\n");
+    say("nova-console: session refused\r\n");
     handle_close(handle->handle);
 }
 
@@ -609,7 +605,6 @@ static void say_ms(UINT64 nanoseconds)
     say_number(tenths / TIMES_TEN_PER_MS);
     say(".");
     say_number(tenths % TIMES_TEN_PER_MS);
-    say(" ms");
 }
 
 /* Fit the text to the panel's width: its lines wrap at the narrower of
@@ -638,15 +633,17 @@ static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
 
     handle_close(resource);
     if (status == ERR_NOT_SUPPORTED) {
-        say("nova-console: a display it cannot draw on, or a second\r\n");
+        say(drawing
+                ? "nova-console: display refused reason=\"second display\"\r\n"
+                : "nova-console: display refused reason=unsupported\r\n");
         return;
     }
     if (status != OK) {
-        say_status("cannot map the framebuffer", status);
+        say_status("framebuffer map failed", status);
         return;
     }
     if (!panel_layout(&layout, screen.width, screen.height)) {
-        say("nova-console: no room for a cell on the screen\r\n");
+        say("nova-console: display refused reason=\"no room for a cell\"\r\n");
         return;
     }
     backdrop = mapping_memory(&mapping, panel_backdrop_size(&layout), &status);
@@ -654,11 +651,11 @@ static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
         masks = mapping_memory(&mapping, font_masks_size(layout.cell_width),
                                &status);
     if (!backdrop || !masks) {
-        say_status("no memory for the panel", status);
+        say_status("panel memory failed", status);
         return;
     }
     if (!panel_backdrop(&layout, screen.width, screen.height, backdrop)) {
-        say("nova-console: no background for a screen this size\r\n");
+        say("nova-console: display refused reason=\"no background\"\r\n");
         return;
     }
     font_render(layout.cell_width, masks);
@@ -668,19 +665,19 @@ static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
     panel_show(&screen, &layout, backdrop, &shown);
     fit_text();
     drawing = 1;
-    say("nova-console: drawing on the ");
+    say("nova-console: display screen=");
     say_number(screen.width);
     say("x");
     say_number(screen.height);
-    say(" screen in cells of ");
+    say(" cell=");
     say_number(layout.cell_width);
     say("x");
     say_number(layout.cell_height);
-    say(", ");
+    say(" grid=");
     say_number(layout.columns);
-    say(" columns by ");
+    say("x");
     say_number(layout.rows);
-    say(" lines; panel drawn in ");
+    say(" draw_ms=");
     say_ms(now() - started);
     say("\r\n");
 }
@@ -801,10 +798,7 @@ static void serve_input(int index)
         if (status == OK && take_input(index, byte_count))
             continue;
         if (status != ERR_PEER_CLOSED)
-            say_status("an input message out of place: not the device's "
-                       "description first, then its key events or pointer "
-                       "reports",
-                       status);
+            say_status("input message refused", status);
         close_input(index);
         return;
     }
@@ -825,8 +819,7 @@ static void add_input(UINT32 endpoint)
             inputs[i].endpoint = endpoint;
             return;
         }
-    say("nova-console: an input endpoint past the ones it reads is "
-        "closed\r\n");
+    say("nova-console: input refused reason=\"no room\"\r\n");
     handle_close(endpoint);
 }
 
@@ -842,7 +835,7 @@ static void serve_bootstrap(void)
     if (status == ERR_SHOULD_WAIT)
         return;
     if (status == ERR_PEER_CLOSED) {
-        say("nova-console: the platform driver closed its channel\r\n");
+        say("nova-console: stopped\r\n");
         process_exit(EXIT_SUPERVISOR_GONE);
     }
     if (status == OK && byte_count == INPUT_CLIENT_MESSAGE_SIZE &&
@@ -854,9 +847,7 @@ static void serve_bootstrap(void)
     }
     if (status == OK && handle_count)
         handle_close(handle.handle);
-    say_status("a message from the platform driver that is not an input "
-               "endpoint",
-               status);
+    say_status("platform message failed", status);
     process_exit(EXIT_FAILED);
 }
 
@@ -888,7 +879,7 @@ static void serve_control(void)
     if (status == OK && handle_count)
         handle_close(handle.handle);
     if (status != ERR_PEER_CLOSED)
-        say_status("a control message the console does not take", status);
+        say_status("control message refused", status);
     if (status != OK)
         close_if_open(&control);
 }
@@ -923,7 +914,7 @@ static void serve(void)
     }
     status = object_wait_many(entries, count, deadline);
     if (status != OK && status != ERR_TIMED_OUT) {
-        say_status("cannot wait for its channels", status);
+        say_status("wait failed", status);
         process_exit(EXIT_FAILED);
     }
     for (i = 0; i < count; i++) {
@@ -962,7 +953,6 @@ _Noreturn void console_main(UINT32 bootstrap_channel, UINT64 argument)
         inputs[i].endpoint = HANDLE_INVALID;
     take_bootstrap();
     text_init(&text, TEXT_COLUMNS_MAX);
-    say("nova-console: running, waiting for the display and sessions\r\n");
     for (;;)
         serve();
 }

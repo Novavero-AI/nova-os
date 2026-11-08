@@ -3,11 +3,13 @@
    here does (virtio_driver.h), with one request virtqueue (2.7) in a
    pinned page, and runs in one of two modes (virtio_blk.h).
 
-   Inspecting, it reads sectors: the GPT header at LBA 1, the partition
-   entry array it names, and the first sector of the first partition, the
-   EFI System Partition (docs/spec/disk-layout.md). On a disk without a
-   GPT it reads the MBR's first partition instead. It logs what it read,
-   resets the device, releases its pins and exits.
+   Inspecting, it checks the boot disk (docs/spec/disk-layout.md): LBA 1
+   must hold a GPT header's signature, the first entry of the partition
+   entry array the header names a type and a first LBA, and the sector
+   there, the first of the EFI System Partition, must end with the boot
+   signature. A disk that passes is not logged; one that does not is,
+   with the check it fails. Either way the driver resets the device,
+   releases its pin and exits, with the result as its exit code.
 
    Serving, it reports with a client's endpoint and serves the block
    protocol there (block_protocol.h): it pins the section the client
@@ -91,33 +93,19 @@ _Static_assert(SECTOR_SIZE == BLOCK_SECTOR_SIZE,
 
 #define QUEUE_KEY 1
 
-/* The GPT header (UEFI 5.3.2) and partition entry (5.3.3), the protective
-   or legacy MBR (5.2.1), and the FAT boot sector (fatgen103: BS_OEMName
-   at 3, BS_FilSysType at 82 for FAT32 and 54 for FAT12 and FAT16, and
-   the signature at 510). */
+/* The GPT header's signature and its entry array's LBA (UEFI 5.3.2), a
+   partition entry's type and first LBA (5.3.3), and the signature at
+   byte 510 that ends a FAT boot sector (fatgen103). */
 #define GPT_HEADER_LBA 1
 #define GPT_SIGNATURE "EFI PART"
 #define GPT_SIGNATURE_SIZE 8
-#define GPT_REVISION 8
 #define GPT_ENTRIES_LBA 72
 #define GPT_ENTRY_TYPE 0
 #define GPT_ENTRY_TYPE_SIZE 16
 #define GPT_ENTRY_START 32
-#define GPT_ENTRY_END 40
-#define MBR_LBA 0
-#define MBR_FIRST_PARTITION 446
-#define MBR_PARTITION_TYPE 4
-#define MBR_PARTITION_START 8
 #define BOOT_SIGNATURE 510
 #define BOOT_SIGNATURE_FIRST 0x55
 #define BOOT_SIGNATURE_SECOND 0xaa
-#define FAT_OEM_NAME 3
-#define FAT_OEM_NAME_SIZE 8
-#define FAT32_TYPE 82
-#define FAT16_TYPE 54
-#define FAT_TYPE_SIZE 8
-#define FAT_TYPE_PREFIX "FAT"
-#define FAT_TYPE_PREFIX_SIZE 3
 
 typedef struct {
     VIRTIO_DRIVER virtio;
@@ -129,11 +117,10 @@ typedef struct {
     UINT64 features;
     UINT32 pin;
     UINT16 avail_index, used_seen;
-    UINT32 reads, interrupts;
     UINT32 client;          /* serving: the driver's end of the client's */
     UINT32 section_pin;     /* the attached section's, or HANDLE_INVALID */
     UINT64 section_size;
-    UINT64 writes, flushes;
+    UINT64 reads, writes, flushes;
 } DEVICE;
 
 /* A run of bytes a descriptor names. */
@@ -154,14 +141,14 @@ static RECEIVED_HANDLE received[CHANNEL_MAX_HANDLES];
 /* channel_write needs a valid array even for no handles. */
 static const HANDLE_TRANSFER no_handles[1];
 
-_Noreturn static void fail(const char *what, UINT32 status)
+_Noreturn static void fail(const char *event, UINT32 status)
 {
-    virtio_driver_fail(&device.virtio, what, status);
+    virtio_driver_fail(&device.virtio, event, status);
 }
 
-static void check(UINT32 status, const char *what)
+static void check(UINT32 status, const char *event)
 {
-    virtio_driver_check(&device.virtio, status, what);
+    virtio_driver_check(&device.virtio, status, event);
 }
 
 static UINT32 read32_le(const volatile UINT8 *p)
@@ -212,14 +199,13 @@ static UINT64 read_capacity(void)
 static void start_device(UINT32 bootstrap, UINT64 features)
 {
     VIRTIO_DRIVER *virtio = &device.virtio;
-    UINT64 accepted, addresses[DMA_PAGES];
+    UINT64 addresses[DMA_PAGES];
 
     device.section_pin = HANDLE_INVALID;
     virtio_driver_open(virtio, "nova-virtio-blk", VIRTIO_BLK_EXIT_FAILED,
                        bootstrap, CONFIG_SIZE);
     virtio_driver_interrupt(virtio, QUEUE_KEY);
-    accepted = virtio_driver_negotiate(virtio, features);
-    device.features = accepted;
+    device.features = virtio_driver_negotiate(virtio, features);
     device.capacity = read_capacity();
     device.queue = virtio_driver_dma(virtio, DMA_PAGES, addresses,
                                      &device.pin);
@@ -230,15 +216,6 @@ static void start_device(UINT32 bootstrap, UINT64 features)
                             addresses[0] + AVAIL_OFFSET,
                             addresses[0] + USED_OFFSET);
     virtio_driver_set_status(virtio, VIRTIO_STATUS_DRIVER_OK);
-    say("nova-virtio-blk: ");
-    pci_say_function(virtio->device.requester);
-    say(" running: features ");
-    say_hex(accepted);
-    say(", capacity ");
-    say_number(device.capacity);
-    say(" sectors, one queue of ");
-    say_number(QUEUE_SIZE);
-    say(" on MSI-X\r\n");
 }
 
 /* ------------------------------------------------------------------------
@@ -272,14 +249,13 @@ static void wait_used(void)
     PORT_PACKET packet;
     UINT64 now;
 
-    check(clock_monotonic(&now), "clock_monotonic");
+    check(clock_monotonic(&now), "clock");
     do {
         check(port_wait(device.virtio.port, now + REQUEST_TIMEOUT_NS, &packet),
-              "no interrupt came for a request");
+              "request interrupt");
         if (packet.type != PACKET_INTERRUPT || packet.key != QUEUE_KEY)
-            fail("an unexpected packet came", packet.type);
-        device.interrupts++;
-        check(interrupt_ack(device.virtio.interrupt), "interrupt_ack");
+            fail("packet", ERR_BAD_STATE);
+        check(interrupt_ack(device.virtio.interrupt), "interrupt ack");
     } while (used_index() == device.used_seen);
     load_fence();
 }
@@ -318,125 +294,74 @@ static UINT8 submit(UINT32 type, UINT64 sector, const SEGMENT *segments,
               device.used_seen % QUEUE_SIZE * VIRTQ_USED_ELEMENT_SIZE;
     device.used_seen++;
     if (*(volatile UINT32 *)(element + VIRTQ_USED_ID) != 0)
-        fail("the device used a chain it was not given",
-             *(volatile UINT32 *)(element + VIRTQ_USED_ID));
+        fail("used chain", ERR_BAD_STATE);
     return device.request[STATUS_OFFSET];
+}
+
+/* The block protocol's status for the status byte a request ended
+   with (5.2.6). */
+static UINT32 request_status(UINT8 status)
+{
+    if (status == REQUEST_STATUS_OK)
+        return OK;
+    return status == REQUEST_STATUS_UNSUPPORTED ? ERR_NOT_SUPPORTED : ERR_IO;
+}
+
+/* ------------------------------------------------------------------------
+   The boot disk's check. */
+
+/* Reset the device, so that it reads and writes no page of the pin
+   any more (3.3.1), release the pin, and end with exit_code. */
+_Noreturn static void end_inspect(UINT32 exit_code)
+{
+    virtio_driver_reset(&device.virtio);
+    check(pin_release(device.pin), "pin release");
+    process_exit(exit_code);
+}
+
+_Noreturn static void inspect_failed(const char *reason)
+{
+    say("nova-virtio-blk: inspect failed reason=");
+    say_value(reason);
+    say("\r\n");
+    end_inspect(VIRTIO_BLK_EXIT_FAILED);
 }
 
 /* Read one sector, at lba, into the request page's data. */
 static const volatile UINT8 *read_sector(UINT64 lba)
 {
     SEGMENT data;
-    UINT8 status;
 
     if (lba >= device.capacity)
-        fail("a read past the device's capacity", ERR_OUT_OF_RANGE);
+        inspect_failed("a sector past the disk");
     data.address = device.request_device + DATA_OFFSET;
     data.length = SECTOR_SIZE;
-    status = submit(REQUEST_TYPE_IN, lba, &data, 1);
-    if (status != REQUEST_STATUS_OK)
-        fail("a read request failed", status);
-    device.reads++;
+    check(request_status(submit(REQUEST_TYPE_IN, lba, &data, 1)), "read");
     return device.request + DATA_OFFSET;
 }
 
-/* ------------------------------------------------------------------------
-   What the disk holds. */
-
-/* The longest text field the driver logs from a sector. */
-#define QUOTED_MAX 8
-
-/* count bytes of DMA memory, at most QUOTED_MAX, in quotes. */
-static void say_quoted(const volatile UINT8 *bytes, UINT32 count)
+_Noreturn static void inspect(UINT32 bootstrap)
 {
-    UINT8 copy[QUOTED_MAX];
+    const volatile UINT8 *sector;
+    UINT64 start;
     UINT32 i;
 
-    for (i = 0; i < count && i < QUOTED_MAX; i++)
-        copy[i] = bytes[i];
-    say("\"");
-    say_printable(copy, i);
-    say("\"");
-}
-
-static void say_sector_text(UINT64 lba, const char *what,
-                            const volatile UINT8 *bytes, UINT32 count)
-{
-    say("nova-virtio-blk: lba ");
-    say_number(lba);
-    say(": ");
-    say(what);
-    say(" ");
-    say_quoted(bytes, count);
-}
-
-/* The first partition's first LBA, from the GPT if LBA 1 holds its
-   header, else from the MBR; 0 if neither names one. */
-static UINT64 first_partition(void)
-{
-    const volatile UINT8 *sector = read_sector(GPT_HEADER_LBA);
-    UINT64 entries, start;
-    UINT32 i;
-
-    if (same_text(sector, GPT_SIGNATURE, GPT_SIGNATURE_SIZE)) {
-        say_sector_text(GPT_HEADER_LBA, "GPT header, signature", sector,
-                        GPT_SIGNATURE_SIZE);
-        say(", revision ");
-        say_hex(read32_le(sector + GPT_REVISION));
-        entries = read64_le(sector + GPT_ENTRIES_LBA);
-        say(", partition entries at lba ");
-        say_number(entries);
-        say("\r\n");
-        sector = read_sector(entries);
-        for (i = 0; i < GPT_ENTRY_TYPE_SIZE; i++)
-            if (sector[GPT_ENTRY_TYPE + i])
-                break;
-        if (i == GPT_ENTRY_TYPE_SIZE)
-            return 0;
-        start = read64_le(sector + GPT_ENTRY_START);
-        say("nova-virtio-blk: lba ");
-        say_number(entries);
-        say(": first partition, lba ");
-        say_number(start);
-        say(" to ");
-        say_number(read64_le(sector + GPT_ENTRY_END));
-        say("\r\n");
-        return start;
-    }
-    say_sector_text(GPT_HEADER_LBA, "no GPT header, it begins", sector,
-                    GPT_SIGNATURE_SIZE);
-    say("\r\n");
-    sector = read_sector(MBR_LBA);
+    start_device(bootstrap, FEATURES_INSPECT);
+    handle_close(bootstrap);
+    sector = read_sector(GPT_HEADER_LBA);
+    if (!same_text(sector, GPT_SIGNATURE, GPT_SIGNATURE_SIZE))
+        inspect_failed("no GPT signature");
+    sector = read_sector(read64_le(sector + GPT_ENTRIES_LBA));
+    for (i = 0; i < GPT_ENTRY_TYPE_SIZE && !sector[GPT_ENTRY_TYPE + i]; i++)
+        ;
+    start = read64_le(sector + GPT_ENTRY_START);
+    if (i == GPT_ENTRY_TYPE_SIZE || !start)
+        inspect_failed("no partition");
+    sector = read_sector(start);
     if (sector[BOOT_SIGNATURE] != BOOT_SIGNATURE_FIRST ||
         sector[BOOT_SIGNATURE + 1] != BOOT_SIGNATURE_SECOND)
-        return 0;
-    start = read32_le(sector + MBR_FIRST_PARTITION + MBR_PARTITION_START);
-    say("nova-virtio-blk: lba 0: MBR, first partition type ");
-    say_hex(sector[MBR_FIRST_PARTITION + MBR_PARTITION_TYPE]);
-    say(" at lba ");
-    say_number(start);
-    say("\r\n");
-    return start;
-}
-
-/* Log the boot sector's OEM name, file system type and signature. */
-static void say_boot_sector(UINT64 lba)
-{
-    const volatile UINT8 *sector = read_sector(lba);
-    UINT32 type = same_text(sector + FAT32_TYPE, FAT_TYPE_PREFIX,
-                            FAT_TYPE_PREFIX_SIZE)
-                      ? FAT32_TYPE
-                      : FAT16_TYPE;
-
-    say_sector_text(lba, "boot sector, OEM name", sector + FAT_OEM_NAME,
-                    FAT_OEM_NAME_SIZE);
-    say(", file system type ");
-    say_quoted(sector + type, FAT_TYPE_SIZE);
-    say(", signature ");
-    say_hex_width(sector[BOOT_SIGNATURE], 2);
-    say(" ");
-    say_hex_width(sector[BOOT_SIGNATURE + 1], 2);
-    say("\r\n");
+        inspect_failed("no boot signature");
+    end_inspect(VIRTIO_BLK_EXIT_DONE);
 }
 
 /* ------------------------------------------------------------------------
@@ -447,16 +372,16 @@ static void say_boot_sector(UINT64 lba)
 _Noreturn static void stop(void)
 {
     virtio_driver_reset(&device.virtio);
-    check(pin_release(device.pin), "pin_release");
+    check(pin_release(device.pin), "pin release");
     if (device.section_pin != HANDLE_INVALID)
-        check(pin_release(device.section_pin), "pin_release");
-    say("nova-virtio-blk: the client closed its end after ");
+        check(pin_release(device.section_pin), "pin release");
+    say("nova-virtio-blk: stopped reads=");
     say_number(device.reads);
-    say(" reads, ");
+    say(" writes=");
     say_number(device.writes);
-    say(" writes and ");
+    say(" flushes=");
     say_number(device.flushes);
-    say(" flushes; device reset, pins released\r\n");
+    say("\r\n");
     process_exit(VIRTIO_BLK_EXIT_DONE);
 }
 
@@ -471,7 +396,7 @@ static void report(UINT32 bootstrap, UINT32 client)
     transfer.rights = BLOCK_CLIENT_RIGHTS;
     check(channel_write(bootstrap, &transaction, VIRTIO_BLK_REPORT_SIZE,
                         &transfer, 1),
-          "cannot report to the platform driver");
+          "report");
     handle_close(bootstrap);
 }
 
@@ -492,11 +417,11 @@ static void answer(UINT32 transaction, UINT32 status, UINT64 information)
         if (written == ERR_PEER_CLOSED)
             stop();
         if (written != ERR_SHOULD_WAIT)
-            fail("cannot answer the client", written);
+            fail("answer", written);
         check(object_wait_one(device.client,
                               CHANNEL_WRITABLE | CHANNEL_PEER_CLOSED,
                               DEADLINE_INFINITE, &observed),
-              "waiting for the client");
+              "client wait");
     }
 }
 
@@ -549,7 +474,7 @@ static UINT32 transfer(const BLOCK_REQUEST *request)
     SEGMENT segments[SEGMENTS_MAX];
     UINT32 count, type = request->operation == BLOCK_READ ? REQUEST_TYPE_IN
                                                            : REQUEST_TYPE_OUT;
-    UINT8 status;
+    UINT32 status;
 
     if (request->length == 0 || request->length % SECTOR_SIZE != 0 ||
         request->length > BLOCK_TRANSFER_MAX ||
@@ -563,10 +488,9 @@ static UINT32 transfer(const BLOCK_REQUEST *request)
     if (type == REQUEST_TYPE_OUT && (device.features & 1ULL << FEATURE_RO))
         return ERR_ACCESS_DENIED;
     count = segments_of(request->buffer, request->length, segments);
-    status = submit(type, request->sector, segments, count);
-    if (status != REQUEST_STATUS_OK)
-        return status == REQUEST_STATUS_UNSUPPORTED ? ERR_NOT_SUPPORTED
-                                                    : ERR_IO;
+    status = request_status(submit(type, request->sector, segments, count));
+    if (status != OK)
+        return status;
     if (type == REQUEST_TYPE_IN)
         device.reads++;
     else
@@ -577,18 +501,16 @@ static UINT32 transfer(const BLOCK_REQUEST *request)
 /* A flush, sector 0 and no data (5.2.6.1). */
 static UINT32 flush(const BLOCK_REQUEST *request)
 {
-    UINT8 status;
+    UINT32 status;
 
     if (request->sector || request->length || request->buffer)
         return ERR_INVALID_ARGS;
     if (!(device.features & 1ULL << FEATURE_FLUSH))
         return ERR_NOT_SUPPORTED;
-    status = submit(REQUEST_TYPE_FLUSH, 0, 0, 0);
-    if (status != REQUEST_STATUS_OK)
-        return status == REQUEST_STATUS_UNSUPPORTED ? ERR_NOT_SUPPORTED
-                                                    : ERR_IO;
-    device.flushes++;
-    return OK;
+    status = request_status(submit(REQUEST_TYPE_FLUSH, 0, 0, 0));
+    if (status == OK)
+        device.flushes++;
+    return status;
 }
 
 /* Read the client's next message whole and answer it. */
@@ -602,7 +524,7 @@ static void serve_one(void)
                           CHANNEL_MAX_HANDLES, &bytes, &count);
     if (status == ERR_PEER_CLOSED)
         stop();
-    check(status, "reading the client's request");
+    check(status, "request read");
     if (bytes != sizeof *request) {
         for (i = 0; i < count; i++)
             handle_close(received[i].handle);
@@ -636,36 +558,30 @@ _Noreturn static void serve(UINT32 bootstrap)
     UINT32 theirs, observed;
 
     start_device(bootstrap, FEATURES_SERVE);
+    say("nova-virtio-blk: running pci=");
+    pci_say_function(device.virtio.device.requester);
+    say(" features=");
+    say_hex(device.features);
+    say(" sectors=");
+    say_number(device.capacity);
+    say(" queue=");
+    say_number(QUEUE_SIZE);
+    say("\r\n");
     check(channel_create(CLIENT_CAPACITY, &device.client, &theirs),
-          "channel_create");
+          "channel create");
     report(bootstrap, theirs);
     for (;;) {
         check(object_wait_one(device.client,
                               CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
                               DEADLINE_INFINITE, &observed),
-              "waiting for the client");
+              "client wait");
         serve_one();
     }
 }
 
 _Noreturn void virtio_blk_main(UINT32 bootstrap, UINT64 argument)
 {
-    UINT64 start;
-
     if (argument == VIRTIO_BLK_SERVE)
         serve(bootstrap);
-    start_device(bootstrap, FEATURES_INSPECT);
-    handle_close(bootstrap);
-    start = first_partition();
-    if (!start)
-        fail("the disk names no partition", ERR_NOT_SUPPORTED);
-    say_boot_sector(start);
-    virtio_driver_reset(&device.virtio);
-    check(pin_release(device.pin), "pin_release");
-    say("nova-virtio-blk: ");
-    say_number(device.reads);
-    say(" sectors read, ");
-    say_number(device.interrupts);
-    say(" MSI-X interrupts taken; device reset, pin released\r\n");
-    process_exit(VIRTIO_BLK_EXIT_DONE);
+    inspect(bootstrap);
 }

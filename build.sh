@@ -3,7 +3,8 @@
 # TinyCC, compiled from its source by the host's C compiler, links the
 # loader, the kernel and every program; tools the host compiler builds
 # convert Inter's faces to nova-os fonts and write the store image, the
-# boot disk, the specimen's disk, the test disk and an empty data disk.
+# system's boot disk, the test disk, the specimen disk, the chain disk
+# and an empty data disk (docs/spec/disk-layout.md).
 # SHA256SUMS gives the sha256 of every file in OUT that a build must
 # reproduce.
 #
@@ -161,6 +162,7 @@ tcc x86_64 -shared -I gfx -I boot -Wl,-subsystem=efiapp -Wl,-e=efi_main \
 tcc x86_64 -shared -I gfx -I boot -I kernel -Wl,-subsystem=native \
   -Wl,-e=kernel_main -Wl,-section-alignment=$SECTION_ALIGNMENT \
   -Wl,-file-alignment=$FILE_ALIGNMENT -o "$out/kernel.exe" kernel/main.c \
+  kernel/selftest.c \
   kernel/x86_64/arch.c kernel/x86_64/gdt.c kernel/x86_64/idt.c \
   kernel/x86_64/apic.c kernel/x86_64/paging.c kernel/x86_64/serial.c \
   kernel/x86_64/clock.c kernel/x86_64/context.c kernel/x86_64/entry.S \
@@ -189,9 +191,9 @@ tcc i386 -shared -Wl,-subsystem=native -Wl,-e=ntdll_entry \
 program init.exe init_main -I native -I lib -I drivers -I kernel/random \
   -I store -I test init/init.c init/chain.c init/compat.c init/view.c \
   init/platform.c init/store.c init/console.c init/data.c \
-  init/login_start.c init/specimen_start.c drivers/pci.c \
+  init/login_start.c init/specimen_start.c init/tests.c drivers/pci.c \
   drivers/virtio_pci.c store/reader.c lib/path.c lib/program.c lib/log.c \
-  native/native.S kernel/random/sha256.c
+  lib/ktap.c native/native.S kernel/random/sha256.c
 program virtblk.exe virtio_blk_main -I native -I lib -I drivers \
   drivers/virtio_blk.c drivers/virtio_driver.c drivers/virtio_pci.c \
   drivers/pci.c lib/log.c native/native.S
@@ -210,7 +212,7 @@ program namespace.exe namespace_main -I native -I lib \
 program fs.exe fs_main -I native -I lib -I kernel/random fs/fs.c \
   fs/pool.c lib/name.c lib/log.c native/native.S kernel/random/sha256.c
 program fstest.exe fstest_main -I native -I lib -I test test/fstest.c \
-  lib/path.c lib/log.c native/native.S
+  lib/path.c lib/log.c lib/ktap.c native/native.S
 program accounts.exe accounts_main -I native -I lib -I kernel/random \
   accounts/accounts.c accounts/argon2.c accounts/blake2b.c \
   accounts/record.c lib/path.c lib/log.c native/native.S
@@ -221,7 +223,7 @@ program shell.exe shell_main -I native -I lib -I kernel/random \
   shell/shell.c lib/console.c lib/path.c lib/log.c native/native.S
 program hello.exe hello_main -I native -I lib -I test \
   -D "GREETING_PATH=\"/store/$greeting\"" test/hello.c lib/path.c \
-  lib/log.c native/native.S
+  lib/log.c lib/ktap.c native/native.S
 program specimen.exe specimen_main -I native -I lib -I gfx -I test \
   -D "FONTS_PATH=\"/store/$fonts/share/fonts\"" test/specimen.c \
   test/specimen_draw.c lib/outline.c lib/typeface.c lib/typeset.c \
@@ -251,18 +253,25 @@ services=$(./mknar services nova-services dir bin \
 
 # The system's boot disk holds the loader and, in \NOVA\, these files.
 set -- BOOTX64.EFI kernel.exe init.exe ntdll.dll virtblk.exe virtinp.exe \
-  console.exe store.img fs.exe fstest.exe
+  console.exe store.img fs.exe
 ./mkimage disk.img disk.vhdx "$@"
 
-# The specimen's disk holds the same files and SPECIMEN, an empty file,
-# which makes the first process give the display to the type specimen
-# from /store in place of the console.
+# The test disk holds the same files, the data disk's check and TESTS,
+# an empty file, which makes the kernel and the first process run their
+# tests and report them.
+: > TESTS
+set -- "$@" fstest.exe TESTS
+./mkimage test.img test.vhdx "$@"
+
+# The specimen disk holds the test disk's files and SPECIMEN, an empty
+# file, which makes the first process give the display to the type
+# specimen from /store in place of the console.
 : > SPECIMEN
 ./mkimage specimen.img specimen.vhdx "$@" SPECIMEN
 
-# The test disk holds the same files and, under 8.3 names, the inputs of
-# stage0-pe32's chain up to M1, unmodified, which the bootstrap check
-# reads.
+# The chain disk holds the test disk's files and, under 8.3 names, the
+# inputs of stage0-pe32's chain up to M1, unmodified, which the
+# bootstrap check reads.
 mkdir -p chain
 while read -r name url; do
   curl -fsSL -o "chain/$name" "$url"

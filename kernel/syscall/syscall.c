@@ -538,12 +538,11 @@ static void log_unconfined(const INTERRUPT *interrupt)
 {
     UINT64 flags = serial_lock();
 
-    serial_write("nova: interrupt: vector ");
-    serial_hex(interrupt->vector);
-    serial_write(" for requester ");
+    serial_write("nova: msi unconfined pci=");
     resource_log_requester(interrupt->source - INTERRUPT_SOURCE_MSI);
-    serial_write(" unconfined: no interrupt remapping, the device can "
-                 "raise any vector\r\n");
+    serial_write(" vector=");
+    serial_hex(interrupt->vector);
+    serial_write("\r\n");
     serial_unlock(flags);
 }
 

@@ -32,6 +32,10 @@ typedef struct {
     const UINT8 *data;
 } BOOT_FILE_VIEW;
 
+/* Log nova-init: followed by event and status's number as its status
+   key (docs/spec/log.md T1); event ends with failed for a failure. */
+void say_status(const char *event, UINT32 status);
+
 /* Whether two ASCII names are the same regardless of case, as FAT's
    are. */
 int same_name(const char *a, const char *b);
@@ -63,11 +67,12 @@ UINT32 unmap_from_init(const UINT8 *address, UINT64 size);
 UINT8 *map_into_init_at(UINT32 section, UINT64 address, UINT64 size,
                         UINT32 protection);
 
-/* Run stage0-pe32's chain from its hex0 seed to M1, each step as a
-   32-bit process created in job, and check each link it builds against
-   nova-nix's (chain.c). Returns 1 if every link matched or the boot
-   volume holds none of the chain's inputs, 0 if not. */
-int chain_run(UINT32 job);
+/* On a test disk, run stage0-pe32's chain from its hex0 seed to M1,
+   each step as a 32-bit process created in job, check each link it
+   builds against nova-nix's, and report the chain test with its steps
+   as its cases (chain.c); report it skipped if the boot volume holds
+   none of the chain's inputs. On any other disk, do nothing. */
+void chain_run(UINT32 job);
 
 /* The store service and the namespace server, which store_run starts
    and leaves running for the life of the system, through init's
@@ -93,11 +98,12 @@ UINT32 load_from_store(UINT32 job, const VIEW *view, const char *path,
 int launch_handles(UINT32 debug_log, const PROGRAM *program,
                    HANDLE_TRANSFER *handles);
 
-/* Start the store service over image and the namespace server, publish
-   /store, and run the test program from /store in job with a view of
-   its closure (store.c), creating each program's debug log from
-   debug_log. Returns 1, with init's channels to the two services, which
-   run on, in *services, if the program passed its checks; 0, with both
+/* Start the store service over image and the namespace server in job,
+   publish /store and the data disk's directories (data.h), and on a
+   test disk run the test program from /store with a view of its closure
+   and report the hello test (store.c), creating each program's debug
+   log from debug_log. Returns 1, with init's channels to the two
+   services, which run on, in *services, if both started; 0, with both
    HANDLE_INVALID, if not. */
 int store_run(UINT32 job, UINT32 debug_log, const BOOT_FILE_VIEW *image,
               STORE_SERVICES *services);
