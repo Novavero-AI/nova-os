@@ -132,10 +132,12 @@ CI checks every pull request and every push to main:
   it runs `tools/check-masks.c`, `tools/check-fade.c`,
   `tools/check-pointer.c`, `tools/check-text.c`,
   `tools/check-backdrop.c`, `tools/check-outline.c`,
-  `tools/check-compose.c`, `design/backgrounds/check-limb.sh`,
-  `ci/check-mkinterface.sh`, which runs `tools/check-probe-protocol.c`
-  under the sanitizers, `tools/check-console-protocol.c` and
-  `tools/check-display-protocol.c`, and actionlint over the workflows.
+  `tools/check-compose.c`, `tools/check-nvo.c`, `tools/check-decimal.c`
+  (on the decimal test cases it downloads, pinned by sha256),
+  `design/backgrounds/check-limb.sh`, `ci/check-mkinterface.sh`, which
+  runs `tools/check-probe-protocol.c` under the sanitizers,
+  `tools/check-console-protocol.c` and `tools/check-display-protocol.c`,
+  and actionlint over the workflows.
 - **Boot** boots the reproduced disks under QEMU with Ubuntu 24.04's
   OVMF, with a copy of `data.img` as the data disk: `disk.img`, the
   system's disk, on QEMU's default processor, and `test.img`, the test

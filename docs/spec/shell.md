@@ -144,7 +144,9 @@ and a script file's extension is `.nvo`.
    ([L13](#l13-command-resolution)); quoted, each is text. In expression
    mode the operators of L2 are tokens of their own and a bare word is a
    `parse` error; `/` where an operator can stand is the operator, and a
-   path literal begins only where an operand can.
+   path literal begins only where an operand can. A path or glob in an
+   expression, and the parts that touch it, end at a `,`; only in command
+   mode is a comma an ordinary character.
 5. Literals:
 
    | Literal | Examples | Value |
@@ -189,6 +191,94 @@ and a script file's extension is `.nvo`.
   condition captures its output, `if (> $n 2)` (Elvish, Unique
   semantics, "Predicates and if"); its cost is arithmetic written as
   commands.
+
+**Decided: limits and error positions.** A source nests at most 32
+levels: brackets (`(`, `[`, `{`, `$(`, `${`, a type's `<` and a
+parameter list's `(`), blocks, groups, substitutions, type parameters
+and prefix operators together; one more is a `parse` error. The number
+of a decimal, size or duration literal is at most 256 bytes. An integer
+literal above 9223372036854775807 is a `parse` error, so the smallest
+`int` has no literal and is written `-9223372036854775807 - 1`. A
+duration literal comes to whole nanoseconds as a size comes to whole
+bytes, so `1.5ns` is a `parse` error as `1.5B` is. A `parse` error is at
+the offset of the first byte it concerns: a byte that is not UTF-8, a
+word or character the grammar has no place for, a `$` that no name
+follows, the second operator of a chained comparison, the backslash of a
+bad escape, the start of a literal that does not fit, and, for a string
+or bracket that is never closed, its opening. A source that ends where
+a bracket still needs a token, as `(1 +`, `def f(`, `${`, `${a.`,
+`let x: path(re` and `def f(--x(-` do, is a bracket that is never
+closed, and the opening is that of the innermost bracket the source
+ends in, which may be a `path(` or a flag parameter's `(-x)`, though
+neither counts a level; a source that ends outside every bracket, as
+`1 +` does, is an error at its end. A source cut inside a number or an
+operator is refused at the first byte the grammar has no place for,
+`[2.5e-` at its `e`, `[5K` at its `K` and `(1 !` at its `!`, and is
+`unexpected`, not `unterminated`: the kind alone does not tell input
+that more text would complete. A carriage return not followed by a line
+feed is neither a blank nor a newline, so it is a `parse` error. `needs`
+is a keyword wherever it stands and a statement only at the top of a
+file; elsewhere it is a `parse` error, and a program of that name runs
+as `^needs`.
+
+- **Why:** a limit the spec states, not one the machine's stack sets,
+  makes a source valid on every machine or on none; the opening of an
+  unclosed bracket is where the reader looks to close it; one rule for
+  durations and sizes is one thing to learn.
+- **Cost:** machine-written source nested past 32 is refused; a
+  300-digit decimal is written shorter; `needs` cannot name a program
+  without the caret.
+- **Not taken:** a depth set by the stack the shell has, under which the
+  same source parses on one machine and not on another; an error at the
+  end of the source for an unclosed bracket, which points at nothing.
+
+**Decided: a comma ends a path in an expression.** In expression mode a
+`,` ends a path or glob and the parts that touch it, so `[./a, ./b]`,
+`[./a,./b]` and `{a: ./x, b: ./y}` each hold two paths. The path of
+`use` is read the same way. In command mode a comma is an ordinary
+character: `--format=%h,%s` and `cp ./a,b ./c` are one word each, and
+`./a,b` in a command is one path.
+
+- **Why:** a list of paths is the most ordinary list a script writes,
+  and it should mean two paths with or without a blank after each comma;
+  in an expression a comma separates and does nothing else, while a
+  program's argument such as `--format=%h,%s` needs it as a character.
+- **Cost:** in an expression a path that holds a comma is written with a
+  quoted part, `./"a,b"`, as a path that holds a space is
+  ([L4](#l4-words-quoting-and-expansion) rule 7).
+- **Not taken:** ending the path at a comma only inside brackets, under
+  which one word means two things by where it stands, `let x = ./a,b`
+  against `[./a,b]`; requiring a blank before the comma, a trap in the
+  most ordinary list of paths.
+
+**Decided: keywords, marks and `#`.** A keyword is a whole word: `else`
+and `catch` are the keywords only when the run of characters to the next
+metacharacter is that word, so `else!` and `else,y` begin a command
+wherever a statement can, after a block's `}` as anywhere. `=>` is a
+mark only as a whole word, with no part touching it: `=>$x`, `=>"x"` and
+`=>(a)` are each a word of two parts, and `=>x` is text. A mark has no
+place at the head of a stage, so an unquoted `=>` there is a `parse`
+error at its offset, and a program of that name is run as `^=>`. In a
+command's arguments a `#` that touches an earlier part of a word is a
+character of it, so `ls "a"#b` has the one word `"a"#b`, and a `#` where
+a word could begin starts a comment, so `^#x` is a caret with no name, a
+`parse` error. In an expression a token can begin after an operand
+(L1, rule 3), so `"a"#b`, `$y#b` and `(1)#b` are each an operand and a
+comment. No blank is needed after a head, a block, a closure or a
+spread: `ls{a}` and `ls"a"` are a head and an argument, `{a}b` a block
+and the word `b`, `{a}#c` a block and a comment, `...$x"abc"` a spread
+and a string, `...$x.y?` a spread and the word `?`, as `a{b}` is a word
+and a block.
+
+- **Why:** one reading of a stage's first token everywhere makes a tree
+  printed as source read back as itself; a grant is made by a word that
+  can be seen to be one, not by the bytes a word happens to begin with.
+- **Cost:** a grant of a variable is `=> $x`, not `=>$x`; a program
+  named `=>` is run as `^=>`, and one whose name begins with `#` cannot
+  be a head; `ls$x` is `ls` and `$x`, not one word as in POSIX.
+- **Not taken:** `=>` as a mark wherever a metacharacter follows, under
+  which `=>$x` grants and `=>x` is text; a `#` that begins a comment
+  inside a word, which would split `ls "a"#b` and `ls a#b` differently.
 
 ## L2. Grammar
 
@@ -244,13 +334,14 @@ stage       = command | expr ;                  (* see "Stages" below *)
 
 command     = head { argument } ;
 head        = BARE | "^" BARE ;     (* the first BARE: not a keyword, not
-                                       wholly a literal, not starting
-                                       with "-"; after "^", any BARE *)
+                                       "=>", not wholly a literal, not
+                                       starting with "-"; after "^", any
+                                       BARE *)
 argument    = FLAG | "=>" ( word | "..." spread ) | "..." spread
             | word | block | closure ;
 spread      = VARIABLE { "." member } | "(" pipeline ")" ;
-word        = part { part } ;                   (* parts touch: no blank *)
-path_word   = ( PATH | GLOB ) { part } ;
+word        = part { part | HASHRUN } ;         (* parts touch: no blank *)
+path_word   = ( PATH | GLOB ) { part | HASHRUN } ;
 part        = BARE | PATH | GLOB | STRING | interp
             | "(" pipeline ")" | list ;
 interp      = VARIABLE { "." member } [ "?" ]
@@ -278,7 +369,7 @@ record      = "{" [ entry { "," entry } [ "," ] ] "}" ;
 entry       = ( NAME | STRING ) ":" expr | "..." expr ;
 table       = "[" "[" NAME { "," NAME } "]" ";"
               row { "," row } [ "," ] "]" ;
-row         = "[" expr { "," expr } "]" ;
+row         = "[" [ expr { "," expr } ] "]" ;
 
 (* Tokens. A token ends where the next character cannot continue it. *)
 
@@ -291,11 +382,17 @@ VARIABLE    = "$" NAME ;
 meta        = " " | TAB | LF | CR | "|" | ";" | "(" | ")" | "[" | "]"
             | "{" | "}" | '"' | "'" | "$" ;
 BARE        = char_not_meta_or_hash { char_not_meta } ;
+HASHRUN     = "#" { char_not_meta } ;       (* a run that touches an earlier
+                                               part of a word may begin
+                                               with "#" *)
 path_start  = "/" | "./" | "../" | "~/" ;
 PATH        = path_start { char_not_meta } | "/" | "." | ".." | "~" ;
                                     (* with no unquoted "*" or "?" *)
 GLOB        = path_start { char_not_meta } ;
                                     (* with at least one "*" or "?" *)
+                                    (* In an expression "," is also a meta:
+                                       a PATH or GLOB, and the parts that
+                                       touch it, end at one. *)
 FLAG        = "--" | "--" DEFNAME [ "=" { char_not_meta } ]
             | "-" LETTER { char_not_meta } ;
 dec         = DIGIT { DIGIT | "_" } ;
@@ -360,6 +457,19 @@ path meant to be granted is its own word (`-I ./include`).
   bugs L4 removes. POSIX's rule that a command name containing a slash is
   run as a file (POSIX 2.9.1.4); here it would make `./src / "x"` a
   command, so a path at the head stays a value.
+
+**Decided: what the parser leaves to evaluation.** A table literal's rows
+may hold any number of values, and a record literal may repeat a key,
+as in `{a: 1, "a": 2}`; the grammar accepts both, and the evaluator,
+which builds the value ([L3](#l3-values-and-types)), is where each is an
+error.
+
+- **Why:** the parser's work is the grammar; a rule about a value
+  belongs where the value is made.
+- **Cost:** a row of the wrong length or a repeated key is found when
+  the statement runs, not when the file is read.
+- **Not taken:** a `parse` error for each, which would make the parser
+  know what a table's columns and a record's keys are.
 
 ## L3. Values and types
 
@@ -446,6 +556,45 @@ of a decimal fraction such as 1.1" (CBOR 3.4.4).
   rounded to int 5" when bound to an `[int]` parameter (PowerShell
   8.14). Elvish's truthiness, in which "all exceptions are booleanly
   false" (Elvish, Unique semantics, "Exit Status and Exceptions").
+
+**Decided: decimal range, the unit types' operators and equality.** A
+decimal has the exponent range of Decimal's 34-digit format: a result
+below `1E-6143` keeps fewer digits down to `1E-6176` and below that
+rounds to zero, without an error, and one of `1E+6145` or more raises
+`overflow`. Zero keeps its sign through arithmetic, equals zero of
+either sign, and is plus zero when negated, as Decimal's minus gives it;
+a result has the exponent Decimal's operation gives it, so `6 / 3` is
+`2` and `2 * 0.50` is `1.00`. `/`, `//` and `%` by zero raise
+`division-by-zero`, `0 / 0` included. `//` and `%` on decimals raise
+`overflow` when the integer quotient has more than 34 digits, Decimal's
+"division impossible", even when the remainder is defined exactly, as in
+`1E+31 % 0.001`. A decimal `%` raises `overflow` when its floored
+remainder needs more than 34 digits, as `-1 % 1E+35` does, because no
+decimal then satisfies `a == (a // b) * b + a % b`. `-` and `*` follow
+`+`: `-` takes numbers, sizes or durations, a time less a duration is a
+time and a time less a time a duration; `*` takes numbers, and a size or
+a duration with an `int` in either order; unary `-` takes numbers, sizes
+and durations, and the smallest `int` raises `overflow`. A size is a
+signed 64-bit count of bytes, as a duration is of nanoseconds, so
+`1B - 2B` is a size of `-1B`. `==` on records compares keys in order, so
+`{a: 1, b: 2}` and `{b: 2, a: 1}` are unequal; two closures are equal
+when they hold the same code and the same captured values, and two
+errors when they have the same kind and message.
+
+- **Why:** the format's range and rounding of the small are Decimal's,
+  which the spec's precision already cites; `-` and `*` keep a size a
+  size and a duration a duration, and a signed size gives `-` an answer
+  for every pair; a record is "ordered", as the table above says, so its
+  order is part of what `==` compares; a remainder that cannot be exact
+  is an error, not a rounded value.
+- **Cost:** `{a: 1, b: 2} == {b: 2, a: 1}` is false; a size or a
+  duration is not divided, and two of them are not multiplied;
+  `-1E-34 % 7` raises `overflow` though `1E-34 % 7` is `1E-34`.
+- **Not taken:** records compared as sets of fields, which would make
+  `==` ignore the order `select` gives; a size over a size as a
+  `decimal`, which has a use but is a conversion to write; a remainder
+  rounded to 34 digits, which can equal the divisor and so breaks the
+  identity `%` is defined by.
 
 ## L4. Words, quoting and expansion
 
