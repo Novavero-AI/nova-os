@@ -92,7 +92,7 @@ without running anything, every handle the command would receive.
 
 ## The name
 
-**Decided** (by the owner): the language is nvo, its command is `nvo`,
+**Decided:** the language is nvo, its command is `nvo`,
 and a script file's extension is `.nvo`.
 
 - **Why:** one short name for the language and its command, as rc and
@@ -599,8 +599,7 @@ of a decimal fraction such as 1.1" (CBOR 3.4.4).
 
 ## L7. Pipelines
 
-**Decided** (by the owner): the value encoding, rule 9; values mode for
-the terminal, rule 7. **Decided:** the rest.
+**Decided.**
 
 1. **A stream is a sequence of values.** Built-ins and functions write
    values. An external program that speaks bytes contributes one `bytes`
@@ -1004,8 +1003,7 @@ store path and signature.
 
 ## L14. Running from the store
 
-**Decided** (by the owner): rule 3, that a program file outside `/store`
-is refused in the first version. **Decided:** the rest.
+**Decided.**
 
 1. **By store path.** `run /store/<hash>-hello-2.12.1/bin/hello
    <arguments>` runs that program without installing it. The shell names
@@ -1128,8 +1126,7 @@ settings and no network reach it unless one of these names them.
 
 ## L16. Designation
 
-**Decided** (by the owner): the bound of `into path` is `$cwd` when
-`--within` is not given. **Decided:** the rest.
+**Decided.**
 
 Every path value carries a bound: the subtree within
 which the shell will grant it. Granting a path outside its bound raises
@@ -1172,9 +1169,7 @@ names `/users/bob/notes`, outside `~`, and is refused.
 
 ## L17. Rights
 
-**Decided** (by the owner): rule 2, that a signature's `path(write)`
-grants write where the user names the path, and that highlighting shows
-the write before Enter. **Decided:** the rest.
+**Decided.**
 
 | Written | A file gets | A directory gets |
 |---|---|---|
@@ -1352,7 +1347,7 @@ def main(src: path, dest: path(write)) {
 
 ## L20. The recipe and the command line
 
-**Decided** (by the owner): consent, rule 3. **Decided:** the rest.
+**Decided.**
 
 What an external program holds when it starts is the union of:
 
@@ -1450,8 +1445,7 @@ What an external program holds when it starts is the union of:
 
 ## L21. Interactive behaviour
 
-**Decided** (by the owner): Ctrl+L, rule 10; the prompt, rule 11.
-**Decided:** the rest.
+**Decided.**
 
 The console edits the line where it draws it
 ([console.md C4](console.md#c4-sessions)); the shell assists through the
@@ -1575,11 +1569,7 @@ console protocol:
 
 ## L24. Settings and service commands
 
-**Decided** (by the owner): every service describes its interface once,
-in one interface description language, and a generator makes from that
-description the service's C protocol header, its nvo commands, its
-Settings forms and its documentation. New services start on it, and
-existing protocols move over to it one by one. **Decided:** the rest.
+**Decided.**
 
 Settings are served by a settings service whose keys each have a name
 (`desktop.background`), a schema (type, allowed values, default,
@@ -1644,8 +1634,7 @@ setting watch desktop.background        # one record per change, until interrupt
 
 ## L25. Built-ins
 
-**Decided** (by the owner): `clear`, which clears the console's panel.
-**Decided:** the rest.
+**Decided.**
 
 A command is built in only if it changes the shell's own
 state (S), transforms values in a pipeline, where an external process

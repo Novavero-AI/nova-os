@@ -356,7 +356,7 @@ the console ([input.md K3](input.md#k3-the-report-and-the-client),
 
 ### N6. Our own stack, or a port
 
-**Decided** (by the owner): our own stack, in C, shaped as this item
+**Decided:** our own stack, in C, shaped as this item
 gives, with lwIP 2.2.1 (BSD-3-Clause) the named fallback.
 
 The stack is written for nova-os, in C, from the RFCs this document
@@ -497,7 +497,7 @@ rest to path MTU discovery, which v1 lacks.
 
 ### N8. IPv6
 
-**Decided** (by the owner): IPv4 first, and IPv6 next, with every
+**Decided:** IPv4 first, and IPv6 next, with every
 address in the protocols a family and 16 bytes from the start.
 
 v1 is IPv4 only; IPv6 comes in the next version. Every address in the
@@ -579,8 +579,7 @@ and "a server multiplexes its own timeouts"
 
 ### N10. DHCP and the interface
 
-**Decided** (by the owner): the DHCP client stays in the service.
-**Decided:** the rest.
+**Decided.**
 
 The service configures its one interface by DHCP, as RFC
 2131's client (4.4):
@@ -626,8 +625,7 @@ The control channel's status request reports the same
 
 ### N11. Names and the resolver
 
-**Decided** (by the owner): the resolver is a process of its own.
-**Decided:** the rest.
+**Decided.**
 
 Names are resolved for programs, never by them. A program
 connects to a name ([N13](#n13-the-socket-protocol)); the service checks
@@ -683,9 +681,7 @@ to the resolver, a process of its own, which answers with addresses.
 
 ### N12. Grants
 
-**Decided** (by the owner): `*` covers every address but loopback, and
-local access is written explicitly; what the service logs is a setting
-of the network service. **Decided:** the rest.
+**Decided.**
 
 No call opens a socket from nothing. The network is reached only
 through a grant: a channel to the network service that the service
@@ -840,8 +836,7 @@ settings handle changes it.
 
 ### N13. The socket protocol
 
-**Decided** (by the owner): socket data travels inline in messages
-only, in v1. **Decided:** the rest.
+**Decided.**
 
 `include/network_protocol.h`. Every kind of network object is a channel
 to the service. Every message starts with an `IO_REQUEST` and every
@@ -972,9 +967,7 @@ directory protocol's rights narrow at each open
 
 ### N15. Declared authority
 
-**Decided** (by the owner): a session's network is set per account in
-the system recipe, and an account it names none for gets outbound only;
-the shell holds no network grant (item 4). **Decided:** the rest.
+**Decided.**
 
 Every grant comes from a control channel, and every control channel
 from the one above it, so each level can only narrow the one above.
@@ -1289,7 +1282,7 @@ socket hold at most 14 pages of kernel memory, 10 for a 32 KiB read and
 
 ### N19. TLS
 
-**Decided** (by the owner): TLS is a library in each program that
+**Decided:** TLS is a library in each program that
 needs it, and which library is a later specification's to decide.
 
 TLS is not the stack's. It lives in each program that
@@ -1396,9 +1389,7 @@ console session's do.
 
 ### N21. The CI test plan
 
-**Decided** (by the owner): no boot looks a name up across the network
-in v1; the resolver is checked on the host, and `localhost` in the
-boot. **Decided:** the rest.
+**Decided.**
 
 The Boot job's machine (`ci/boot.py`, `DEVICES`) gains a network device
 on QEMU's user network, in place of `-net none`:

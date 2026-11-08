@@ -11,8 +11,7 @@ two are separate documents. The theme's values and the layout of the
 screens the system draws are [look.md](look.md)'s.
 
 Each item gives the design, why, what it costs, and the main
-alternative not taken. Items the owner has ruled on are marked
-**Decided**; every other item is **Proposed**.
+alternative not taken, and every item is **Decided**.
 
 Sources are pinned in [README.md](README.md) and cited by these names:
 
@@ -134,7 +133,7 @@ and its checks.
 
 ## U3. Fonts
 
-**Decided** (by the owner): Inter, under the OFL 1.1, is the interface's
+**Decided:** Inter, under the OFL 1.1, is the interface's
 typeface, rendered by nova-os from its outlines; it is converted at build
 time into nova-os's font format; the code points converted are whole
 Unicode blocks of Latin, Greek and Cyrillic with punctuation,
@@ -244,8 +243,7 @@ be released under the OFL" (OFL FAQ 1.3).
 
 ## U4. Text layout
 
-**Decided** (by the owner): rule 8's two substitutions, fixed at build
-time. **Decided:** the rest.
+**Decided.**
 
 `lib/typeset.c` turns UTF-8 into positioned glyphs and lines, from a
 font `lib/typeface.c` reads:
@@ -327,9 +325,7 @@ a combining mark shows the mark unpositioned.
 
 ## U5. The interface as data
 
-**Decided** (by the owner): the interface as data, drawn by a renderer,
-with the raw window of [display.md D6](display.md#d6-windows-and-buffers)
-as the escape. **Decided:** the rest.
+**Decided.**
 
 A program describes its interface as a value in the shell's value model
 ([shell.md L3](shell.md#l3-values-and-types)): a record whose `kind`
@@ -535,10 +531,7 @@ root down.
 
 ## U9. Theming from tokens
 
-**Decided** (by the owner): login and the desktop share one visual
-language, Horizon, which keeps Limb as a sharp wallpaper, marks the
-focus with a small horizon glow, and has no full-screen blur;
-[look.md](look.md) gives its tokens' values. **Decided:** the rest.
+**Decided.**
 
 A theme is a value of tokens, served by the settings service as the keys
 under `theme.` ([shell.md
@@ -605,10 +598,7 @@ token changes every window the next time it draws.
 
 ## U11. The HUD
 
-**Decided** (by the owner): a central HUD command bar launches
-programs, finds files, opens settings and runs nvo commands with
-structured results, one API for the interface and the shell.
-**Decided:** the rest.
+**Decided.**
 
 1. **Its place.** `hud.exe` is the session's, started by login with an
    `OVERLAY` connection and its end of a shell's session; the HUD key

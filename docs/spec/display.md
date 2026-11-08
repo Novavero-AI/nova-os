@@ -144,9 +144,7 @@ a time:
 
 ## D3. The compositor's supervision, its restart and what a crash shows
 
-**Decided** (by the owner): programs survive a restart of the compositor
-by reconnecting through login's grant channel (rule 4). **Decided:** the
-rest.
+**Decided.**
 
 The first process supervises the compositor as it
 supervises a driver ([ipc.md I10](ipc.md#i10-driver-failure-and-restart)):
@@ -221,8 +219,7 @@ its exit from the process handle it holds
 
 ## D4. The console in a window and as the fallback
 
-**Decided** (by the owner): the terminal's shell in values mode; the
-terminal's label, `terminal`. **Decided:** the rest.
+**Decided.**
 
 The console keeps its session protocol
 ([console.md C4](console.md#c4-sessions)), its keys, its panel and its
@@ -375,8 +372,7 @@ display, and its label is its name, whatever it calls itself.
 
 ## D6. Windows and buffers
 
-**Decided** (by the owner): a buffer larger than a section is held in
-bands of sections, with no kernel change. **Decided:** the rest.
+**Decided.**
 
 A window is a channel. To make one, a client creates a
 channel of `WINDOW_CAPACITY` (64) messages and sends one end in a
@@ -466,7 +462,7 @@ screen's order, `PIXEL_RGB` or `PIXEL_BGR`, as it writes.
 
 ## D7. Presenting and pacing
 
-**Decided** (by the owner): the scale, rule 5. **Decided:** the rest.
+**Decided.**
 
 A client shows a frame with `WINDOW_PRESENT`: the buffer
 and up to `WINDOW_DAMAGE_MAX` (16) rectangles, in the buffer's pixels,
@@ -531,14 +527,7 @@ it stopped reading. A client draws only into a released buffer.
 
 ## D8. Composition
 
-**Decided** (by the owner): the strip is always shown, and true full
-screen waits until a game needs it, when it comes with a system
-overlay; the compositor draws the frame and label of every `APP`
-window, and windows of the other layers have none; the strip runs
-along the top and holds the wordmark, the marks, the window list, the
-search field, the notices, the clock and the user
-([look.md V9](look.md#v9-the-bar)); notifications have a layer of their
-own ([D20](#d20-notifications)). **Decided:** the rest.
+**Decided.**
 
 Translucency is over a static wallpaper, precomputed, and
 there is no full-screen blur, since all drawing is on the CPU, as the
@@ -879,10 +868,7 @@ channel, and to no other:
 
 ## D12. The secure attention key and global keys
 
-**Decided** (by the owner): the secure attention key is Ctrl+Alt+Delete,
-the keypad's Delete included; the HUD key is Super tapped alone and
-Alt+Space, both settings; Super with 1 to 9, W, Up and Down are the
-system's window keys. **Decided:** the rest.
+**Decided.**
 
 Some keys belong to the system and never reach a window:
 
@@ -971,8 +957,7 @@ the keyboard.
 
 ## D13. The graphical login
 
-**Decided** (by the owner): login shows a list of the accounts.
-**Decided:** the rest.
+**Decided.**
 
 1. Login's screen is a `SYSTEM` window over the wallpaper, drawn with
    the toolkit ([ui.md U12](ui.md#u12-the-first-programs)): the accounts'
@@ -1126,8 +1111,7 @@ labels, never the content.
 
 ## D16. Trusted interface and the powerbox
 
-**Decided** (by the owner): the strip's marks at its left, rule 1, and
-consent shown by the powerbox. **Decided:** the rest.
+**Decided.**
 
 The trusted interface is what `SYSTEM` and `TRUSTED`
 windows show: login's screens on `SYSTEM`, which only login's
@@ -1379,10 +1363,7 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
 
 ## D20. Notifications
 
-**Decided** (by the owner): a notification service of its own,
-drawing on a layer between `APP` and `OVERLAY`, each notification under
-the label of the channel it came on, never a name its sender gives.
-**Decided:** the rest.
+**Decided.**
 
 1. **The service.** `notify.exe` is the session's, started by login in
    a job of its own with a `NOTIFICATION` connection, `notify`, marked,

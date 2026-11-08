@@ -9,10 +9,9 @@ process draws what, on which layer; this document gives what they look
 like.
 
 Each item gives the design, why, what it costs, and the main
-alternative not taken. Every item is **Decided**, from the screens the
-owner approved, and **Decided** (by the owner) marks a choice the owner
-made between alternatives. "The notes" are the design notes approved
-with the screens; the repository holds neither.
+alternative not taken, and every item is **Decided**. "The notes" are
+the design notes that accompany the screens this document records; the
+repository holds neither.
 
 Sources are pinned in [README.md](README.md) and cited by these names:
 
@@ -22,7 +21,7 @@ Sources are pinned in [README.md](README.md) and cited by these names:
 
 ## V1. The direction
 
-**Decided** (by the owner): Horizon, for login and the desktop alike,
+**Decided:** Horizon, for login and the desktop alike,
 with a slim bar of type across the top rather than a frosted dock, an
 account list at login
 ([display.md D13](display.md#d13-the-graphical-login)), the HUD as one
@@ -66,10 +65,7 @@ are, and what moves is light and small rectangles
 
 ## V2. Scale
 
-**Decided** (by the owner): sizes are points, and a point is the
-display's scale in pixels
-([display.md D7](display.md#d7-presenting-and-pacing), rule 5).
-**Decided:** the rest.
+**Decided.**
 
 Every size and place in this document is in points. On a screen of
 scale s a size of v points is drawn at v x s pixels, kept in 256ths of
@@ -115,8 +111,7 @@ scales 1, 2 and 2.25.
 
 ## V3. Colours
 
-**Decided** (by the owner): an unfocused window's text is the tertiary
-ink at full strength. **Decided:** the rest.
+**Decided.**
 
 Colours by role, in sRGB, drawn at full strength unless a percentage is
 given, and mixed in linear light as `gfx/raster.c` mixes.
@@ -266,10 +261,7 @@ tiles 16 over half their size.
 
 ## V5. Type
 
-**Decided** (by the owner): Inter, in its six static faces
-([ui.md U3](ui.md#u3-fonts)), with tabular figures and `cv05` fixed at
-build time ([ui.md U4](ui.md#u4-text-layout), rule 8). **Decided:** the
-rest.
+**Decided.**
 
 Inter Regular, Medium and SemiBold for text up to 20 points, and Inter
 Display Light, Regular and SemiBold from 22. A line's height is
@@ -450,9 +442,7 @@ the edge is drawn, about the window's width by 70 points.
 
 ## V8. Motion
 
-**Decided** (by the owner): the sunrise at sign-in, which reduced
-motion skips, and the spinner still under reduced motion.
-**Decided:** the rest.
+**Decided.**
 
 Ease-out, `1 - (1 - t)^3`, for arrivals, and ease-in, `t^3`, for
 departures. Nothing scales and nothing blurs: what moves is light and
@@ -522,13 +512,7 @@ check those screens.
 
 ## V9. The bar
 
-**Decided** (by the owner): a slim bar of type across the top, not a
-frosted menu bar and dock: at its left the wordmark, then the marks and
-the focused window's label, as [display.md
-D16](display.md#d16-trusted-interface-and-the-powerbox), rule 1, gives,
-then the window list, with the focused window's entry marked there too;
-in its centre the search field; at its right the compositor's notices,
-the clock and the user. **Decided:** the rest.
+**Decided.**
 
 The bar is [display.md D8](display.md#d8-composition)'s strip, along
 the top of the screen: the compositor draws it, no window covers it and
@@ -602,9 +586,7 @@ points once a minute.
 
 ## V10. Login
 
-**Decided** (by the owner): an account list
-([display.md D13](display.md#d13-the-graphical-login)), drawn in
-Horizon; the first boot's password hint. **Decided:** the rest.
+**Decided.**
 
 Every login screen is Limb, whole and sharp, under the bar
 ([V9](#v9-the-bar)), with no panel, blur or shadow but the monograms'.
@@ -646,12 +628,7 @@ goes to the chosen account's field.
 
 ## V11. Windows
 
-**Decided** (by the owner): `APP` windows alone have frames, and a
-title bar shows the window's label, then the title its client sets, as
-[display.md D8](display.md#d8-composition) gives; the terminal's label
-is `terminal`; the window keys are reserved
-([display.md D12](display.md#d12-the-secure-attention-key-and-global-keys));
-the terminal draws values as structure. **Decided:** the rest.
+**Decided.**
 
 **The frame** of an `APP` window is the compositor's; the HUD, the
 powerbox's boxes and notifications have none. Radius 12, the window's
@@ -749,10 +726,7 @@ row horizon under its name, and its description,
 
 ## V12. The HUD
 
-**Decided** (by the owner): one command bar
-([ui.md U11](ui.md#u11-the-hud)), opened by display.md D12's keys,
-Super tapped alone and Alt+Space, both in `desktop.hud-keys`.
-**Decided:** the rest.
+**Decided.**
 
 A raised surface 800 wide, centred, its top 116 below the screen's,
 radius 16, as tall as its content. It opens on its keys and with the
@@ -813,10 +787,7 @@ pointer from the bar's search field; Esc closes it.
 
 ## V13. Notifications
 
-**Decided** (by the owner): a notification service of its own,
-`notify.exe`, on a layer between `APP` and `OVERLAY`, each notification
-under the label of the channel it came on
-([display.md D20](display.md#d20-notifications)). **Decided:** the rest.
+**Decided.**
 
 A raised surface 380 x 124, radius 12, at the top right, 12 below the
 bar and 24 from the screen's right edge, one at a time. A 32-point
@@ -843,11 +814,7 @@ notification never takes the keyboard. It arrives and leaves as
 
 ## V14. The system asking
 
-**Decided** (by the owner): requests are drawn by the system, the bar
-marking them ([V9](#v9-the-bar)); consent is the powerbox's, for any
-declaration ([display.md
-D16](display.md#d16-trusted-interface-and-the-powerbox)). **Decided:**
-the rest.
+**Decided.**
 
 While a request is shown, everything but the bar and the request's box
 is drawn at 28 percent of its light, in one step: the other windows,
