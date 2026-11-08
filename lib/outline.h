@@ -1,11 +1,11 @@
 /** @file
     Filled outlines: paths of lines and quadratic and cubic Bezier
     curves, filled by the nonzero winding rule with the exact area each
-    pixel has inside them, and mixed into a canvas in linear light with
-    gfx/raster.h's sRGB tables (design/text/README.md). Integer
-    arithmetic only, with no machine dependence, so a host build draws
-    the same pixels as nova-os does; design/text/outline.py is its
-    prototype.
+    pixel has inside them, written as coverage into a plane of bytes or
+    mixed into a canvas in linear light with gfx/raster.h's sRGB tables
+    (design/text/README.md). Integer arithmetic only, with no machine
+    dependence, so a host build draws the same pixels as nova-os does;
+    design/text/outline.py is its prototype.
 
     Coordinates are in OUTLINE_ONE units to a pixel, x growing right and
     y down, and lie within OUTLINE_COORDINATE_MAX of 0. */
@@ -31,7 +31,8 @@
     lines. */
 #define OUTLINE_EDGES_MAX 4096
 
-/** The widest canvas outline_fill draws on, in pixels. */
+/** The widest canvas outline_fill draws on, and the widest plane
+    outline_coverage writes, in pixels. */
 #define OUTLINE_WIDTH_MAX 16384
 
 /** Pixels in memory: width x height of them, each 0x00RRGGBB in sRGB
@@ -88,7 +89,8 @@ typedef struct {
     OUTLINE_PIECE pieces[OUTLINE_EDGES_MAX];       /**< a row's pieces */
     OUTLINE_CROSSING crossings[OUTLINE_EDGES_MAX]; /**< a slice's pieces */
     INT64 splits[OUTLINE_ONE + 1];                 /**< a row's slices */
-    INT64 area[OUTLINE_WIDTH_MAX + 1];             /**< a row's areas */
+    /** a row's areas, then its coverage */
+    INT64 area[OUTLINE_WIDTH_MAX + 1];
 } OUTLINE;
 
 /** Empty outline, to build a path in it. */
@@ -125,14 +127,30 @@ void outline_rounded_rect(OUTLINE *outline, INT64 left, INT64 top,
     (x, y), four cubic Bezier curves. */
 void outline_circle(OUTLINE *outline, INT64 x, INT64 y, INT64 radius);
 
+/** Close the open contour, then write into cover, a plane of width x
+    height bytes, a row after the row above it, the coverage of each
+    pixel: the share of its area the outline's nonzero winding covers,
+    from 0 where it covers none to OUTLINE_COVERAGE_MAX where it covers
+    the whole pixel. The pixel at column x and row y of the plane is the
+    one whose top left corner lies x and y pixels from the outline's
+    origin, as in outline_fill's canvas. Every byte of the plane is
+    written. Returns 1; or 0 with nothing written if a call building the
+    outline could not be followed (more than OUTLINE_EDGES_MAX lines, a
+    coordinate or radius past OUTLINE_COORDINATE_MAX, a line with no
+    contour open), width is past OUTLINE_WIDTH_MAX, or width or height is
+    negative. */
+int outline_coverage(OUTLINE *outline, UINT8 *cover, INT64 width,
+                     INT64 height);
+
 /** Close the open contour, then mix ink, 0x00RRGGBB in sRGB codes, at
     opacity of OUTLINE_OPACITY_ONE, into each pixel of canvas the
-    outline covers, by the share of the pixel's area its nonzero winding
-    covers, in linear light. Returns 1; or 0 with nothing drawn if a
-    call building the outline could not be followed (more than
-    OUTLINE_EDGES_MAX lines, a coordinate or radius past
-    OUTLINE_COORDINATE_MAX, a line with no contour open), canvas is wider
-    than OUTLINE_WIDTH_MAX, or opacity is past OUTLINE_OPACITY_ONE. */
+    outline covers, by outline_coverage's coverage of the pixel, in
+    linear light; a pixel it covers none of is left as it is. Returns 1;
+    or 0 with nothing drawn if a call building the outline could not be
+    followed (more than OUTLINE_EDGES_MAX lines, a coordinate or radius
+    past OUTLINE_COORDINATE_MAX, a line with no contour open), canvas is
+    wider than OUTLINE_WIDTH_MAX, or opacity is past
+    OUTLINE_OPACITY_ONE. */
 int outline_fill(OUTLINE *outline, const CANVAS *canvas, UINT32 ink,
                  UINT32 opacity);
 

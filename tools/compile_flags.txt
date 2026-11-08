@@ -5,6 +5,7 @@
 -I../include
 -I../kernel/random
 -I../console
+-I../lib
 -I../fs
 -I../gfx
 -I../kernel

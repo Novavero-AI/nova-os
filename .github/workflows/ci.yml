@@ -99,6 +99,13 @@ jobs:
             gfx/font.c gfx/raster.c gfx/limb.c
           "$RUNNER_TEMP/check-backdrop"
 
+      - name: The rasterizer's coverage is each pixel's area, and a fill mixes by it
+        run: |
+          cc -std=c99 -Wall -Wextra -pedantic -Werror -I include -I lib \
+            -I gfx -o "$RUNNER_TEMP/check-outline" tools/check-outline.c \
+            lib/outline.c gfx/raster.c
+          "$RUNNER_TEMP/check-outline"
+
       - name: gfx/limb.c draws Limb as its prototype does
         run: design/backgrounds/check-limb.sh
 
