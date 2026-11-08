@@ -16,6 +16,11 @@
 # bytes. --werror adds -Wall -Werror to every TinyCC command, so that a
 # warning TinyCC gives on nova-os's sources fails the build.
 #
+# NOVA_OS_DOWNLOAD_DIR, if set and not empty, names a directory, made if
+# it does not exist, that keeps the build's downloads: a file there whose
+# sha256 is the one SHA256SUMS gives is used in place of a fetch, any
+# other is fetched again, and each file fetched is kept there.
+#
 # Needs a C compiler as cc, curl, tar and unzip. Runs under sh on Linux
 # and macOS and under busybox-w32's sh on Windows.
 set -eu
@@ -73,6 +78,11 @@ src=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 mkdir -p -- "$1"
 out=$(CDPATH='' cd -- "$1" && pwd)
 tcc_dir=$out/tinycc-$TINYCC_REV
+downloads=
+if [ -n "${NOVA_OS_DOWNLOAD_DIR-}" ]; then
+  mkdir -p -- "$NOVA_OS_DOWNLOAD_DIR"
+  downloads=$(CDPATH='' cd -- "$NOVA_OS_DOWNLOAD_DIR" && pwd)
+fi
 
 # The host's tools, C99 with only the standard library, built from the
 # tree alone before anything is downloaded: sha256 prints a file's
@@ -106,11 +116,19 @@ pinned() {
 }
 
 # fetch NAME URL: writes URL's file as OUT/NAME once its sha256 is the
-# one SHA256SUMS gives for NAME. Fetched bytes with any other sha256
-# stop the build, and are removed, before anything reads them.
+# one SHA256SUMS gives for NAME. A copy of the download directory's NAME
+# with that sha256 stands in for the fetch, and a fetched file is kept
+# there. Fetched bytes with any other sha256 stop the build, and are
+# removed, before anything reads them.
 fetch() {
   pin=$(pinned "$1")
   part=$out/$1.part
+  if [ -n "$downloads" ] && [ -f "$downloads/$1" ] &&
+    cp -- "$downloads/$1" "$part" &&
+    [ "$("$out/sha256" "$part")" = "$pin" ]; then
+    mv -f -- "$part" "$out/$1"
+    return
+  fi
   curl -fsSL -o "$part" "$2"
   fetched=$("$out/sha256" "$part")
   if [ "$fetched" != "$pin" ]; then
@@ -119,6 +137,18 @@ fetch() {
     exit 1
   fi
   mv -f -- "$part" "$out/$1"
+  if [ -n "$downloads" ]; then
+    # Copied under a name holding this shell's process ID, then renamed
+    # into place, so that a build reading the directory meanwhile finds
+    # the whole file or none.
+    kept=$downloads/$1.$$
+    mkdir -p -- "$(dirname -- "$kept")"
+    if ! { cp -- "$out/$1" "$kept" && mv -f -- "$kept" "$downloads/$1"; }
+    then
+      rm -f -- "$kept"
+      exit 1
+    fi
+  fi
 }
 
 # TinyCC as two cross compilers, one writing x86-64 PE and one writing

@@ -105,6 +105,14 @@ before using it, and writes every image into the directory it is given:
 ./build.sh out
 ```
 
+With `NOVA_OS_DOWNLOAD_DIR` set to a directory, build.sh keeps its
+downloads there and fetches only a file that is missing there or whose
+sha256 differs, so a rebuild needs no network:
+
+```sh
+NOVA_OS_DOWNLOAD_DIR=~/.cache/nova-os ./build.sh out
+```
+
 SHA256SUMS lists the sha256 of every file a build must reproduce. To
 check a build:
 

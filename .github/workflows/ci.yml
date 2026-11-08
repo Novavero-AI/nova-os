@@ -135,7 +135,9 @@ jobs:
           retention-days: 7
 
   # No cache: every byte is built from the pinned sources on each run,
-  # with each host's own compiler building TinyCC.
+  # with each host's own compiler building TinyCC. The first build
+  # fetches the sources into the job's download directory, and the
+  # job's later builds read them from there.
   reproduce:
     name: Reproduce (${{ matrix.name }})
     strategy:
@@ -157,12 +159,18 @@ jobs:
         run: cc --version
 
       - name: Build with build.sh and check against SHA256SUMS
+        env:
+          NOVA_OS_DOWNLOAD_DIR: ${{ runner.temp }}/downloads
         run: ci/reproduce.sh "$RUNNER_TEMP/reproduce"
 
-      - name: A download with other bytes than its pin stops the build before use
-        run: python3 -I ci/check-downloads.py "$RUNNER_TEMP/check-downloads"
+      - name: Downloads are checked before use, and kept ones need no network
+        run: |
+          python3 -I ci/check-downloads.py "$RUNNER_TEMP/downloads" \
+            "$RUNNER_TEMP/check-downloads"
 
       - name: TinyCC gives no warning
+        env:
+          NOVA_OS_DOWNLOAD_DIR: ${{ runner.temp }}/downloads
         run: ./build.sh --werror "$RUNNER_TEMP/warnings"
 
       - name: lib/ draws its text and outlines as their prototype does
