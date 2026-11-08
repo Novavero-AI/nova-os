@@ -24,9 +24,17 @@ const CONSOLE_SESSIONS 8
 const CONSOLE_READ_NO_ECHO 0x1
 # The bytes of the answer to CONSOLE_SETUP_BACKGROUND.
 const CONSOLE_PREPARED_SIZE 4
-# The messages the control channel queues: the background, the display
-# and a session for each the console serves.
-const CONSOLE_CONTROL_CAPACITY CONSOLE_SESSIONS + 2
+# The messages the control channel queues: the options, the background,
+# the display and a session for each the console serves.
+const CONSOLE_CONTROL_CAPACITY CONSOLE_SESSIONS + 3
+
+# The options the first process sets (console.md C2), from flag files on
+# a test disk alone.
+
+# ui.reduce-motion: the caret does not blink.
+const CONSOLE_OPTION_REDUCE_MOTION 0x1
+# Every option.
+const CONSOLE_OPTIONS CONSOLE_OPTION_REDUCE_MOTION
 
 # A client's end of a session: it writes requests and reads replies,
 # and the end may move to the program that is to use it.
@@ -49,8 +57,8 @@ end
 # A message on the control channel.
 struct CONSOLE_SETUP
   u32 transaction = 0  # 0
-  # CONSOLE_SETUP_DISPLAY, CONSOLE_SETUP_SESSION or
-  # CONSOLE_SETUP_BACKGROUND
+  # CONSOLE_SETUP_DISPLAY, CONSOLE_SETUP_SESSION,
+  # CONSOLE_SETUP_BACKGROUND or CONSOLE_SETUP_OPTIONS
   u32 kind
 end
 
@@ -71,6 +79,13 @@ struct CONSOLE_SETUP_BACKGROUND_MESSAGE
   BOOTSTRAP_DISPLAY display
   # what the sections hold, as the kernel labelled them
   BOOTSTRAP_BACKGROUND background
+end
+
+# The setup that gives the console its options, before the background
+# and the display.
+struct CONSOLE_SETUP_OPTIONS_MESSAGE
+  CONSOLE_SETUP setup                # CONSOLE_SETUP_OPTIONS
+  u32 options mask CONSOLE_OPTIONS   # CONSOLE_OPTION_ bits
 end
 
 # The channel the platform driver keeps to the input drivers' client
@@ -138,6 +153,11 @@ channel control
   reply prepared
     body transaction
     field transaction = 0
+  end
+
+  # The options, once, before the background and the display.
+  request options CONSOLE_SETUP_OPTIONS 6
+    body CONSOLE_SETUP_OPTIONS_MESSAGE
   end
 end
 

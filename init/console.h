@@ -1,7 +1,7 @@
 /* init's part in the console (docs/spec/console.md C1, C2): the
-   console's bootstrap message and control channel, the kernel's
-   background before the release, the display's handoff once the kernel
-   releases it, and sessions. */
+   console's bootstrap message and control channel, its options, the
+   kernel's background before the release, the display's handoff once
+   the kernel releases it, and sessions. */
 
 #ifndef NOVA_INIT_CONSOLE_H
 #define NOVA_INIT_CONSOLE_H
@@ -14,8 +14,10 @@
    driver keeps of the console's bootstrap channel: the debug log, the
    console's process with MAP, and the console's end of a new control
    channel, whose other end init keeps in place of the last console's.
-   Returns the status of the first call that fails, with nothing it made
-   left open, or OK. */
+   The first message on that channel is the console's options (C2).
+   Returns the status of the first call that fails before the bootstrap
+   message is written, with nothing it made left open, or OK; a failure
+   to send the options is logged. */
 UINT32 console_bootstrap(const PLATFORM *platform, UINT32 process,
                          UINT32 channel);
 

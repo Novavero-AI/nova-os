@@ -10,10 +10,10 @@
 
    One thread waits on every channel at once with object_wait_many, with
    a deadline at the caret's next blink while a read waits on a drawn
-   panel, and serves
-   each channel that is ready; a session is served at most its queue's
-   worth of messages a round, so a busy one cannot keep the keys from
-   the others. */
+   panel and the options do not hold it still, and serves each channel
+   that is ready; a session is served at most its queue's worth of
+   messages a round, so a busy one cannot keep the keys from the
+   others. */
 
 #include "console_protocol.h"
 #include "font.h"
@@ -40,7 +40,8 @@
 #define MAPPINGS_BASE 0x0000000100000000ULL
 
 /* The caret shows for half a second, then hides for as long, while a
-   read waits; a key shows it again at once. */
+   read waits; a key shows it again at once. With the option
+   CONSOLE_OPTION_REDUCE_MOTION it stays shown. */
 #define NS_PER_MS 1000000ULL
 #define CARET_BLINK_NS (500 * NS_PER_MS)
 
@@ -123,6 +124,7 @@ static PANEL panel = {&screen, &layout, 0, 0, &inks};
 static PANEL_SHOWN shown;
 static UINT32 caret_lit;
 static UINT64 blink_at;
+static UINT32 reduce_motion;
 static MAPPING mapping = {HANDLE_INVALID, MAPPINGS_BASE};
 
 static union {
@@ -132,6 +134,7 @@ static union {
     INPUT_POINTER report;
     CONSOLE_SETUP_DISPLAY_MESSAGE setup;
     CONSOLE_SETUP_BACKGROUND_MESSAGE background;
+    CONSOLE_SETUP_OPTIONS_MESSAGE options;
     UINT8 bytes[sizeof(CONSOLE_REQUEST) + CONSOLE_WRITE_MAX];
 } message;
 
@@ -156,6 +159,20 @@ static UINT64 now(void)
 
     clock_monotonic(&nanoseconds);
     return nanoseconds;
+}
+
+/* Show the caret for CARET_BLINK_NS more. */
+static void caret_show(void)
+{
+    caret_lit = 1;
+    blink_at = now() + CARET_BLINK_NS;
+}
+
+/* Whether the caret is on a timer: it blinks while a read waits, unless
+   the options hold it still. */
+static int caret_blinks(void)
+{
+    return reader >= 0 && !reduce_motion;
 }
 
 /* A line for event, which ends in failed or refused, with status. */
@@ -203,8 +220,7 @@ static int start_read(void)
         return 0;
     reader = first;
     editor_start(&editor, &text, sessions[first].limit, sessions[first].echo);
-    caret_lit = 1;
-    blink_at = now() + CARET_BLINK_NS;
+    caret_show();
     return 1;
 }
 
@@ -296,8 +312,7 @@ static void key(const INPUT_EVENT *event)
         return;
     }
     back = 0;
-    caret_lit = 1;
-    blink_at = now() + CARET_BLINK_NS;
+    caret_show();
     if (reader >= 0) {
         apply(edit, character);
     } else if (typed_count < CONSOLE_LINE_MAX) {
@@ -1045,11 +1060,19 @@ static void serve_bootstrap(void)
     process_exit(EXIT_FAILED);
 }
 
-/* A display, a session or the kernel's background from the first
-   process. A message the description does not allow is dropped, with the
-   handles it carried closed; a background that has a reply is answered
-   with the request's transaction alone, so the first process does not
-   wait for it (docs/spec/interface.md P10). */
+/* Take the options the first process sends (console.md C2): with
+   CONSOLE_OPTION_REDUCE_MOTION the caret stays lit. */
+static void set_options(UINT32 options)
+{
+    reduce_motion = (options & CONSOLE_OPTION_REDUCE_MOTION) != 0;
+    caret_show();
+}
+
+/* The options, a display, a session or the kernel's background from the
+   first process. A message the description does not allow is dropped,
+   with the handles it carried closed; a background that has a reply is
+   answered with the request's transaction alone, so the first process
+   does not wait for it (docs/spec/interface.md P10). */
 static void serve_control(void)
 {
     RECEIVED_HANDLE handles[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
@@ -1070,6 +1093,8 @@ static void serve_control(void)
             take_background(&message.background, handles, handle_count);
         else if (which == CONSOLE_SETUP_SESSION)
             add_session(&handles[0]);
+        else if (which == CONSOLE_SETUP_OPTIONS)
+            set_options(message.options.options);
         else
             display(handles[0].handle, &message.setup.display);
         return;
@@ -1092,7 +1117,7 @@ static void serve(void)
 {
     WAIT_ENTRY entries[ENTRIES];
     UINT32 which[ENTRIES], count = 0, i, status;
-    UINT64 deadline = drawing && reader >= 0 ? blink_at : DEADLINE_INFINITE;
+    UINT64 deadline = drawing && caret_blinks() ? blink_at : DEADLINE_INFINITE;
 
     entries[count].handle = bootstrap;
     which[count++] = ENTRY_BOOTSTRAP;
@@ -1135,7 +1160,7 @@ static void serve(void)
             serve_session((int)(which[i] - ENTRY_SESSIONS));
     }
     pump();
-    if (reader >= 0 && now() >= blink_at) {
+    if (caret_blinks() && now() >= blink_at) {
         caret_lit = !caret_lit;
         blink_at = now() + CARET_BLINK_NS;
     }

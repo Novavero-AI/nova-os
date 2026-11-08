@@ -340,11 +340,14 @@ set -- BOOTX64.EFI kernel.exe init.exe ntdll.dll virtblk.exe virtinp.exe \
   console.exe store.img fs.exe
 ./mkimage disk.img disk.vhdx "$@"
 
-# The test disk holds the same files, the data disk's check and TESTS,
-# an empty file, which makes the kernel and the first process run their
-# tests and report them.
+# The test disk holds the same files, the data disk's check, TESTS, an
+# empty file, which makes the kernel and the first process run their
+# tests and report them, and NOMOTION, an empty file, which on a test
+# disk makes the first process set ui.reduce-motion, so that the
+# console's caret holds still for a screen to be compared.
 : > TESTS
-set -- "$@" fstest.exe TESTS
+: > NOMOTION
+set -- "$@" fstest.exe TESTS NOMOTION
 ./mkimage test.img test.vhdx "$@"
 
 # The specimen disk holds the test disk's files and SPECIMEN, an empty

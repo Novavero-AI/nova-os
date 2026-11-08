@@ -2,14 +2,14 @@
    input client (platform.c), which starts it and asks this file for its
    bootstrap message, so each start of the console, the first and every
    restart, gets a control channel of its own; the end init keeps is the
-   one the background, the next display and sessions go to. The kernel's
-   background goes to a console started before the release, which
-   prepares its panel from it and answers before init reports its
-   startup done (console_prepare). The display goes only after the
-   kernel has released it, so a console started before the release gets
-   it from console_start, and one started after from console_started,
-   which also gives login a session on it (login_start.c); login's first
-   session comes with its own start. */
+   one the options, the background, the next display and sessions go to,
+   the options first. The kernel's background goes to a console started
+   before the release, which prepares its panel from it and answers
+   before init reports its startup done (console_prepare). The display
+   goes only after the kernel has released it, so a console started
+   before the release gets it from console_start, and one started after
+   from console_started, which also gives login a session on it
+   (login_start.c); login's first session comes with its own start. */
 
 #include "console.h"
 #include "console_protocol.h"
@@ -47,6 +47,9 @@ static union {
 _Static_assert(CONSOLE_BOOTSTRAP_TO_CLIENT_BYTES_MAX <=
                    CONSOLE_CONTROL_TO_SERVER_BYTES_MAX,
                "the bootstrap message fits the outgoing buffer");
+
+/* channel_write needs a valid array even for no handles. */
+static const HANDLE_TRANSFER no_handles[1];
 
 static UINT32 control = HANDLE_INVALID;
 static int released;
@@ -146,6 +149,27 @@ void console_prepare(const PLATFORM *platform, BOOT_BACKGROUND *background)
         say("nova-init: console answer refused reason=malformed\r\n");
 }
 
+/* Send the console its options, the first message on its control channel
+   (console.md C2): ui.reduce-motion where the boot disk is a test disk
+   with the flag file, and no bit otherwise. A console that has already
+   ended has closed the channel, which its supervisor logs. */
+static void send_options(void)
+{
+    CONSOLE_SETUP_OPTIONS_MESSAGE message;
+    UINT32 size, status;
+
+    message.setup.transaction = 0;
+    message.setup.kind = 0;
+    message.options = tests_flag(TEST_FLAG_NO_MOTION)
+                          ? CONSOLE_OPTION_REDUCE_MOTION
+                          : 0;
+    status = console_control_options_encode(&message, outgoing.bytes, &size);
+    if (status == OK)
+        status = channel_write(control, outgoing.bytes, size, no_handles, 0);
+    if (status != OK && status != ERR_PEER_CLOSED)
+        say_status("console options send failed", status);
+}
+
 UINT32 console_session(void)
 {
     CONSOLE_SETUP setup;
@@ -209,6 +233,7 @@ UINT32 console_bootstrap(const PLATFORM *platform, UINT32 process,
     if (control != HANDLE_INVALID)
         handle_close(control);
     control = mine;
+    send_options();
     return OK;
 }
 

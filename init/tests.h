@@ -2,7 +2,8 @@
    are the init test of the boot's report, the second of its two
    top-level tests: each runs in the order INIT_TEST gives and is
    reported once, with tests_report. On any other disk none runs and
-   nothing is written. */
+   nothing is written. The flag files a test disk may carry besides
+   TESTS are read with tests_flag. */
 
 #ifndef NOVA_TESTS_H
 #define NOVA_TESTS_H
@@ -26,6 +27,14 @@ void tests_begin(void);
 
 /* Whether the boot disk is a test disk. */
 int tests_enabled(void);
+
+/* The flag file that sets ui.reduce-motion on a test disk (disk-layout.md,
+   display.md D19). */
+#define TEST_FLAG_NO_MOTION "NOMOTION"
+
+/* Whether the boot disk is a test disk that holds the flag file name: a
+   flag file acts on a test disk alone. */
+int tests_flag(const char *name);
 
 /* Start a diagnostic line of test, which the caller writes with log.h
    and ends, after reporting not run any test before it not yet

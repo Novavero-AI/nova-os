@@ -3,6 +3,7 @@
 Usage: python3 -I ci/boot.py --code CODE.fd --vars VARS.fd --log LOG
                              [--timeout SECONDS] [--expect LINE ...]
                              [--tests] [--data DATA [--corrupt-gpt KIND]]
+                             [--size WIDTHxHEIGHT]
                              [--fonts FONTS [--screen SCREEN.ppm]]
                              {system,persist,chain,specimen} DISK
                              [-- QEMU_ARG ...]
@@ -59,8 +60,11 @@ back and forward through QMP. Before the turns and after each, QMP's
 screendump must come to equal, within SCREEN_TIMEOUT, the screen
 ci/screens.c draws from the same lines, prompt and turns, with the
 caret in either phase of its blink, built with the host's C compiler,
-CC if set. In persist mode the same copy of the data disk is booted
-twice: the first boot is system mode's but for the wheel, and the
+CC if set. On a test disk, whose first process sets ui.reduce-motion
+for its flag file NOMOTION (docs/spec/display.md D19), the caret holds
+steady: each screen must show it lit, and the screen must stay the same
+for STEADY_SECONDS more. In persist mode the same copy of the data disk
+is booted twice: the first boot is system mode's but for the wheel, and the
 second must report the account the first made and, typed again, log in
 with it, run whoami and show the file, which the disk must still hold.
 In chain mode, the boot of chain.img must report the chain's steps
@@ -74,6 +78,11 @@ while the background was prepared, from the start of the kernel's
 drawing to the first process's startup report: at least one, unless
 the preparation ended within the longest a turning spinner goes
 between frames.
+With --size, QEMU's display is a VGA device whose EDID offers that size
+in pixels, with the video memory a frame that large needs, and the
+display line the console logs must name the size, or the boot fails at
+once, which also checks the recipe against the QEMU and EDK2 releases
+the boot runs with.
 Each --expect LINE, in T1's form, adds a line the boot must report,
 with the keys LINE gives. With a data disk, the boot must also report
 the file system service opening its pool and /data and /users
@@ -122,6 +131,31 @@ MEMORY = "256M"
 DEVICES = ["-net", "none", "-device", "virtio-rng-pci",
            "-device", "virtio-keyboard-pci", "-device", "virtio-mouse-pci",
            "-device", "virtio-tablet-pci", "-no-reboot"]
+
+# The display --size gives QEMU, in place of its default one: a VGA
+# device whose EDID offers the size, for the firmware to set as its
+# mode. The video memory is more than the default 16 MiB, which a frame
+# of 2880 x 1800 pixels of 4 bytes passes; without it the firmware
+# offers 800 x 600 (docs/spec/display.md D19).
+VIDEO_MEMORY_MB = 32
+SIZE = re.compile(r"([1-9][0-9]*)x([1-9][0-9]*)")
+
+
+def screen_size(text):
+    """--size's WIDTHxHEIGHT as a width and a height in pixels."""
+    match = SIZE.fullmatch(text)
+    if not match:
+        raise argparse.ArgumentTypeError(
+            "not WIDTHxHEIGHT in pixels: %r" % text)
+    return int(match.group(1)), int(match.group(2))
+
+
+def size_arguments(size):
+    """QEMU's arguments for a display of size, a width and a height."""
+    return ["-vga", "none", "-device",
+            "VGA,edid=on,xres=%d,yres=%d,vgamem_mb=%d"
+            % (size[0], size[1], VIDEO_MEMORY_MB)]
+
 
 # A line of nova-os's log (docs/spec/log.md T1): its component, the
 # event's words, and its keys, each value bare or in double quotes. A
@@ -225,6 +259,10 @@ TICK_MS = 1
 TIME_SLICE_MS = 10
 SPINNER_GAP_MS = FRAME_MS + TICK_MS + TIME_SLICE_MS + TICK_MS
 
+# The console's line for the display it draws on, whose screen key is
+# the display's width and height in pixels, which --size checks.
+DISPLAY = Event("nova-console: display", screen=re.compile(r"\d+x\d+"))
+
 # The console's lines on its panel's backdrop: on the system disk, its
 # line once it draws the panel, made from the kernel's background; on a
 # test disk, whose console the first process tells of a display a row
@@ -302,7 +340,14 @@ WRITTEN = "write"
 WHEEL_TURNED = "wheel"
 CARET = "caret"
 CARET_PHASES = ["on", "off"]
+CARET_STEADY = ["on"]
 SCREEN_TIMEOUT = 60
+# How long a screen must stay as it is where the caret is steady. The
+# caret blinks with a lit half and a hidden half of CARET_BLINK_NS
+# (console/console.c), half a second each, so a blinking caret shows
+# its hidden half within a second; three seconds allow a console that
+# takes twice as long to wake, as one under emulation may.
+STEADY_SECONDS = 3
 PPM_MAGIC = b"P6"
 PPM_MAXVAL = b"255"
 PPM_FIELDS = 4
@@ -850,17 +895,28 @@ def check_spinner(keys, line):
           flush=True)
 
 
+def check_display(keys, line, size):
+    """Fail if keys, those of the console's display line, name a screen
+    other than size, the width and height QEMU was asked for."""
+    asked = "%dx%d" % size
+    if keys["screen"] != asked:
+        raise BootFailed("the display is %s, not the %s the boot asked "
+                         "for: %s" % (keys["screen"], asked, line))
+
+
 class Serial:
     """The guest's serial lines, read from QEMU's standard output. What
     a line holds of UNLOGGED is noted in leaked. With report, a Ktap,
     every line is read into it; without, a report's version line fails
-    the boot."""
+    the boot. With size, a display line that names another size fails
+    it."""
 
-    def __init__(self, stream, log, report):
+    def __init__(self, stream, log, report, size):
         self.lines = queue.Queue()
         self.start = time.monotonic()
         self.leaked = set()
         self.report = report
+        self.size = size
         self.reader = threading.Thread(target=self.read, args=(stream, log))
         self.reader.start()
 
@@ -908,6 +964,8 @@ class Serial:
                                  + line[LINE_START.search(line).start():])
             if BACKGROUND.matches(parsed):
                 check_spinner(parsed[2], line)
+            if self.size and DISPLAY.matches(parsed):
+                check_display(parsed[2], line, self.size)
             missing = [event for event in missing
                        if not event.matches(parsed)]
 
@@ -998,10 +1056,12 @@ def log_in(serial, qmp, data, first):
                  FILE_COMMANDS if first else LATER_FILE_COMMANDS, data)
 
 
-def drive(serial, qmp_path, data, accounts, first, screens, scratch):
+def drive(serial, qmp_path, data, accounts, first, screens, scratch,
+          steady):
     """Over QMP: send the pointer's events, then, with accounts, create
     the account or log in with it as log_in does, and with screens, the
-    program ci/screens.c builds to, check the wheel as scroll does."""
+    program ci/screens.c builds to, check the wheel as scroll does, with
+    the caret steady or not."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(QMP_TIMEOUT)
         connection.connect(qmp_path)
@@ -1011,7 +1071,7 @@ def drive(serial, qmp_path, data, accounts, first, screens, scratch):
             if accounts:
                 log_in(serial, qmp, data, first)
             if screens:
-                scroll(serial, qmp, data, screens, scratch)
+                scroll(serial, qmp, data, screens, scratch, steady)
 
 
 def read_ppm(path):
@@ -1095,18 +1155,20 @@ def draw_screen(screens, scratch, width, height, inputs):
     return read_ppm(path)[2]
 
 
-def match_screen(qmp, scratch, screens, inputs):
+def match_screen(qmp, scratch, screens, inputs, steady):
     """Take QMP's screendump until its pixels' SHA-256 is that of the
-    console's screen screens draws at its size from inputs, with the
-    caret in either phase of its blink, which a screen with no caret in
-    view draws alike, or SCREEN_TIMEOUT passes."""
+    console's screen screens draws at its size from inputs, or
+    SCREEN_TIMEOUT passes. The caret is in either phase of its blink,
+    which a screen with no caret in view draws alike; where it is
+    steady, it is lit, and the screen must then stay that one for
+    STEADY_SECONDS, since a blinking caret matches whenever it is lit."""
     shot = os.path.abspath(os.path.join(scratch, SCREEN_COPY))
     deadline = time.monotonic() + SCREEN_TIMEOUT
     qmp.execute("screendump", filename=shot)
     width, height, pixels = read_ppm(shot)
     wanted = [draw_screen(screens, scratch, width, height,
                           inputs + [CARET, phase])
-              for phase in CARET_PHASES]
+              for phase in (CARET_STEADY if steady else CARET_PHASES)]
     digests = [hashlib.sha256(image).digest() for image in wanted]
     while hashlib.sha256(pixels).digest() not in digests:
         if time.monotonic() >= deadline:
@@ -1119,17 +1181,38 @@ def match_screen(qmp, scratch, screens, inputs):
         _, _, pixels = read_ppm(shot)
     print("          the %dx%d screen equals ci/screens.c's, sha256 %s"
           % (width, height, hashlib.sha256(pixels).hexdigest()), flush=True)
+    if steady:
+        hold_screen(qmp, shot, wanted, digests)
 
 
-def scroll(serial, qmp, data, screens, scratch):
+def hold_screen(qmp, shot, wanted, digests):
+    """Take QMP's screendump, which it writes to shot, for STEADY_SECONDS
+    and fail if one's SHA-256 is not among digests, those of the images
+    in wanted."""
+    end = time.monotonic() + STEADY_SECONDS
+    while time.monotonic() < end:
+        qmp.execute("screendump", filename=shot)
+        width, height, pixels = read_ppm(shot)
+        if hashlib.sha256(pixels).digest() not in digests:
+            raise BootFailed("the %dx%d screen changed in %d pixels within "
+                             "the %d s it must hold still"
+                             % (width, height,
+                                min(differing(pixels, image)
+                                    for image in wanted), STEADY_SECONDS))
+    print("          the screen held still for %d s" % STEADY_SECONDS,
+          flush=True)
+
+
+def scroll(serial, qmp, data, screens, scratch, steady):
     """Write the file of SCROLL_COMMAND, its lines filling the console's
     panel, wait for the shell's prompt after it, then turn the wheel as
     WHEEL_TURNS gives, and match each screen with the one screens draws
-    from the lines, the prompt and the turns."""
+    from the lines, the prompt and the turns, as match_screen does with
+    steady."""
     run_commands(serial, qmp, [SCROLL_COMMAND], data)
     inputs = [word for line in SCROLL_LINES + [END_OF_LINES]
               for word in (TYPED_LINE, line)] + [WRITTEN, PROMPT]
-    match_screen(qmp, scratch, screens, inputs)
+    match_screen(qmp, scratch, screens, inputs, steady)
     for detents in WHEEL_TURNS:
         name = "wheel-up" if detents > 0 else "wheel-down"
         for _ in range(abs(detents)):
@@ -1137,7 +1220,7 @@ def scroll(serial, qmp, data, screens, scratch):
             qmp.execute("input-send-event",
                         events=button(name, True) + button(name, False))
             inputs += [WHEEL_TURNED, "1" if detents > 0 else "-1"]
-        match_screen(qmp, scratch, screens, inputs)
+        match_screen(qmp, scratch, screens, inputs, steady)
 
 
 def stop(qemu):
@@ -1454,6 +1537,7 @@ def boot(args, scratch, log, data_drive, data_lines, first):
          "-drive", "if=virtio,format=raw,readonly=on,file=" + args.disk]
         + data_drive
         + DEVICES
+        + (size_arguments(args.size) if args.size else [])
         + ["-display", "none", "-serial", "stdio",
            "-qmp", "unix:%s,server=on,wait=off" % qmp_path]
         + args.qemu_args)
@@ -1463,7 +1547,7 @@ def boot(args, scratch, log, data_drive, data_lines, first):
     serial = None
     report = Ktap() if args.tests else None
     try:
-        serial = Serial(qemu.stdout, log, report)
+        serial = Serial(qemu.stdout, log, report, args.size)
         lines = {"chain": CHAIN_LINES,
                  "specimen": SPECIMEN_LINES}.get(
                      args.mode, SYSTEM_LINES + CONSOLE_DRAWN[args.tests])
@@ -1483,7 +1567,7 @@ def boot(args, scratch, log, data_drive, data_lines, first):
             check_specimen(qmp_path, scratch, args.fonts, args.screen)
         if args.mode in ("system", "persist"):
             drive(serial, qmp_path, os.path.join(scratch, DATA_COPY),
-                  accounts, first, screens, scratch)
+                  accounts, first, screens, scratch, args.tests)
     finally:
         stop(qemu)
         if serial:
@@ -1525,6 +1609,9 @@ def main():
                         help="the data disk, attached as a writable copy")
     parser.add_argument("--corrupt-gpt", choices=sorted(GPT_REFUSED),
                         help="change a byte of the data disk's GPT")
+    parser.add_argument("--size", type=screen_size, metavar="WIDTHxHEIGHT",
+                        help="the display's size in pixels, which the "
+                        "console's display line must name")
     parser.add_argument("--fonts",
                         help="the nova-os fonts the specimen's prototype "
                         "draws with")
@@ -1544,6 +1631,8 @@ def main():
         parser.error("specimen needs --fonts, and only specimen takes it")
     if args.screen and args.mode != "specimen":
         parser.error("only specimen takes --screen")
+    if args.size and args.mode not in ("system", "persist"):
+        parser.error("only system and persist take --size")
     if args.timeout is None:
         args.timeout = DEFAULT_TIMEOUTS[args.mode]
     with tempfile.TemporaryDirectory() as scratch, \

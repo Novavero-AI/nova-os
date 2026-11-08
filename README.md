@@ -178,7 +178,8 @@ once its driver runs, keeps QEMU from capturing the mouse.
 
 - `out/test.img` in place of `out/disk.img` boots the system and runs
   its tests, which report on the serial port in KTAP; they write their
-  files in the data disk's `/data/fstest`.
+  files in the data disk's `/data/fstest`. The console's caret does not
+  blink on it, so that a screen can be compared.
 - `out/specimen.img` in place of `out/disk.img` runs the tests and shows
   the type specimen over Limb; the console runs but draws nothing.
 - `out/chain.img` in place of `out/disk.img` runs the tests and the

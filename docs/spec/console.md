@@ -203,9 +203,13 @@ compositor, whose last frame the screen still shows: the console draws
 Limb over the whole screen, computed at the display's size, and then
 its panel, where `CONSOLE_SETUP_DISPLAY` follows the kernel's release
 and draws the panel alone over the kernel's Limb. A console in window
-mode that gets it leaves window mode. The options come once, before
-the display or the connection; with `CONSOLE_OPTION_REDUCE_MOTION` the
-caret does not blink ([ui.md U10](ui.md#u10-accessibility)).
+mode that gets it leaves window mode. The first process sends the
+options once to each console it starts, the first and every restart, as
+the first message on its control channel, before the background, the
+display or the connection. Their bits are 0 but those a test disk's flag
+files set. With `CONSOLE_OPTION_REDUCE_MOTION` the caret does not blink
+and stays lit ([ui.md U10](ui.md#u10-accessibility)); without it the
+caret blinks (C4).
 The control channel queues `CONSOLE_CONTROL_CAPACITY` messages,
 `CONSOLE_SESSIONS` + 3: the options, the background or a connection,
 the display or the display after a compositor, and a session for each
@@ -253,13 +257,25 @@ matched against the host's render of its own path.
   from the part of the first process that starts programs on the
   console, which keeps the other end without reaching into the platform
   driver.
+- **Why the options come in the setup, first:** the first process holds
+  the boot disk's files and knows whether the disk is a test disk,
+  which the console does not; a restarted console is a new process that
+  remembers nothing of the last, so each gets them, ahead of anything it
+  draws.
+- **Why a steady caret is lit:** a caret that stopped in its hidden
+  half would show the reader nothing of where the line is edited.
 - **Why one program in two modes:** the console is the one program that
   shows text with no compositor, and the shell's whole interface is its
   session protocol, so one program keeps one font, one line editor and
   one set of keys, and the fallback is code that runs every day.
 - **Cost:** without an input device the platform driver starts no
-  client, so there is no console; two drawing paths in the console.
-- **Not taken:** the console publishing itself in the namespace for
+  client, so there is no console; two drawing paths in the console; an
+  options message at every start of a console, with no bit set on the
+  system disk.
+- **Not taken:** the console reading the flag file itself. Its cost is
+  a console that learns which disk it boots from, and the boot files
+  mapped into a second program, where the first process alone holds
+  them. The console publishing itself in the namespace for
   programs to open. Its cost is a namespace that serves for the life of
   the system, which the first milestone's does not; a session handed by
   the program's creator also keeps a program's authority to its
@@ -345,10 +361,11 @@ without its end. With echo the line is drawn after the output so far as
 it is edited, and Enter moves the output position to the next line;
 with `CONSOLE_READ_NO_ECHO` nothing of it is drawn, its end included,
 and the position stays where it was. The caret blinks at the editing
-position while a read waits. A session has at most one read waiting;
-reads from several sessions are served in the order the console takes
-them from their queues, and the keys go to the first. The reply carries
-the read's transaction ID, as a reply to a call does
+position while a read waits, unless the options hold it still (C2). A
+session has at most one read waiting; reads from several sessions are
+served in the order the console takes them from their queues, and the
+keys go to the first. The reply carries the read's transaction ID, as a
+reply to a call does
 ([ipc.md I3](ipc.md#i3-synchronous-call-and-asynchronous-queues)).
 
 Any other message ends the session: one shorter than a request, an
