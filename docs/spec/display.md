@@ -637,10 +637,11 @@ one of cover 0 is three lookups in the material's tables; one between
 is decoded, mixed and encoded as `gfx/raster.c` mixes.
 
 **Shapes and shadows.** A window's corners and its shadow are coverage
-masks from the theme's radius, made once per size. A corner pixel mixes
-the window over what is composed beneath it, and a shadow darkens what
-is beneath by its level, each a table per level; both read only the
-compositor's band, never the framebuffer.
+masks from the theme's radius, made once per size, a corner's from
+`outline_coverage` ([ui.md U2](ui.md#u2-the-rasterizer), rule 6). A
+corner pixel mixes the window over what is composed beneath it, and a
+shadow darkens what is beneath by its level, each a table per level;
+both read only the compositor's band, never the framebuffer.
 
 **Output.** Each finished band is written to the framebuffer row by
 row, from the start of the 64-byte block holding the rectangle's left
@@ -1523,8 +1524,9 @@ login's session as it does on its own
    panel's box's size, which D6's placement puts where the panel stands
    in direct mode. Its corners' radius is five quarters of the cell
    `gfx/font.h`'s rule gives for the screen, and a corner pixel's cover
-   is `lib/outline.c`'s exact area of the window's rounded rectangle
-   (`outline_rounded_rect`). Its pixels are those
+   is the coverage of the window's rounded rectangle
+   (`outline_rounded_rect`) that [ui.md U2](ui.md#u2-the-rasterizer),
+   rule 6, gives. Its pixels are those
    [console.md C2](console.md#c2-starting-the-console) gives for a
    window.
 5. **A window's first frame.** The compositor answers `DISPLAY_WINDOW`

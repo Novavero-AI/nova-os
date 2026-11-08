@@ -99,7 +99,21 @@ and its checks.
    with the prototype, and compares them byte for byte, as
    `check-limb.sh` and `check-font.sh` do;
    `design/text/compare-freetype.sh` bounds the text's distance from
-   FreeType's unhinted rendering of the same glyphs.
+   FreeType's unhinted rendering of the same glyphs;
+   `tools/check-outline.c` checks rule 6's coverage against the area of
+   rectangles and triangles worked out apart from it, against sampled
+   curves, and that a fill mixes by it.
+6. **Coverage on its own.** `outline_coverage` writes each pixel's
+   coverage, rule 3's, as a byte from 0 to 255 into a plane of bytes the
+   caller gives, width by height, the pixel at its first byte the one at
+   the outline's origin, as a canvas's first pixel is for `outline_fill`.
+   Every byte is written, 0 where the outline covers none; a path it
+   cannot follow, a plane wider than 16,384 pixels or a negative size is
+   refused with 0 and no byte written. `outline_fill` takes each row's
+   coverage from the same routine and mixes by it, so a plane holds the
+   coverage a fill of the same path mixes by, and a plane smaller than
+   the path holds the same pixels as a larger one. The compositor makes a
+   window's corners from it ([display.md D8](display.md#d8-composition)).
 
 - **Why exact area:** Inter's static fonts hold glyphs whose contours
   overlap in the same direction: in Latin-1, U+00C7, U+00D0, U+00D8,
@@ -115,12 +129,28 @@ and its checks.
   a surface is to alpha blend it onto the surface in linear space and
   then apply gamma correction" (FreeType), and the rest of the system
   mixes that way, so text and shapes agree at their edges.
+- **Why coverage on its own:** a window's corners are "coverage masks
+  from the theme's radius, made once per size" (display.md D8), and a
+  fill only mixes an ink into a canvas. One routine gives a pixel its
+  coverage whether it is mixed or kept, so a corner's mask is, byte for
+  byte, the coverage a fill of the same path mixes by, where a second
+  routine would round twice and could part from the first. The plane is
+  the caller's memory, so the call needs none beyond the outline's own.
 - **Cost:** a row's crossings come from testing each pair of its
   lines, and each slice's lines are sorted, so a row of k lines costs
   k squared tests; each glyph is filled on its own, which keeps k to a
   glyph's lines across a row. Text blended in linear light "thins out,
   making it harder to read" at small sizes (FreeType), which
-  [U4](#u4-text-layout), rule 7, addresses.
+  [U4](#u4-text-layout), rule 7, addresses. A plane is written whole,
+  where a fill leaves a pixel it covers none of alone, and a fill reads
+  each row's coverage back in a second pass over the row. A path of
+  long, shallow curves can leave a pixel whole inside it a unit past
+  whole, and one whole outside it a unit below none (single cubics
+  thousands of pixels long and two high do), so coverage is held from 0
+  to 255, where a byte would wrap.
+  A rounded rectangle's four corners repeat each other to within one
+  code, not exactly: each corner's curve is rounded to 256ths from its
+  own points, and the roundings do not mirror.
 - **Not taken:** the signed area of every line summed into each pixel
   in one pass, its magnitude clamped at a whole pixel, as font-rs,
   stb_truetype's second rasterizer and FreeType's smooth rasterizer
@@ -130,6 +160,15 @@ and its checks.
   horizontal extent exact. Its cost is sixteen passes of crossings a
   row, and an edge's coverage down the row in sixteenths, up to a
   thirty-second of a pixel from its area.
+  Coverage read back from a fill of white over black. It gives the codes
+  of mixed light, and the 256 coverages give 183 codes, so 143 share a
+  code with another. A callback given each row's coverage, with the fill
+  and the plane built on it. Its cost is an indirect call a row and a
+  context each caller declares, to serve a caller that wants rows
+  without a plane, and none does: a corner's mask is one small plane. A
+  stride, to write into part of a larger plane. No caller writes less
+  than a plane of its own, and one can be added with the first that
+  does.
 
 ## U3. Fonts
 

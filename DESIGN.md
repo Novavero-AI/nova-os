@@ -127,8 +127,8 @@ CI checks every pull request and every push to main:
   -Wextra -pedantic -Wshadow` find nothing in any C source, built with
   its `compile_flags.txt`; it runs `tools/check-masks.c`,
   `tools/check-fade.c`, `tools/check-pointer.c`, `tools/check-text.c`,
-  `tools/check-backdrop.c` and `design/backgrounds/check-limb.sh`, and
-  actionlint over the workflows.
+  `tools/check-backdrop.c`, `tools/check-outline.c` and
+  `design/backgrounds/check-limb.sh`, and actionlint over the workflows.
 - **Boot** boots the reproduced disks under QEMU with Ubuntu 24.04's
   OVMF, with a copy of `data.img` as the data disk: `disk.img`, the
   system's disk, on QEMU's default processor, and `test.img`, the test

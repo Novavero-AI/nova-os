@@ -9,7 +9,9 @@
    row is each pixel's area inside the outline, exactly, whatever the
    contours' overlaps. design/text/outline.py is the prototype, and
    design/text/README.md gives the choice of this method over summing
-   every line's signed area.
+   every line's signed area. A row's areas become its pixels' coverage in
+   one routine, which outline_coverage writes out as bytes and
+   outline_fill mixes ink by.
 
    The prototype's integers are unbounded and its // rounds toward minus
    infinity. Here every value fits an INT64 for coordinates within
@@ -427,6 +429,71 @@ static int row(OUTLINE *o, INT64 top, INT64 width)
     return 1;
 }
 
+/* The rows and columns of a canvas, width x height pixels, that the
+   outline's lines can reach: rows first up to last and columns left up to
+   right, within it. Returns 0 if they reach none. */
+static int reach(const OUTLINE *o, INT64 width, INT64 height, INT64 *first,
+                 INT64 *last, INT64 *left, INT64 *right)
+{
+    INT64 xmin, xmax, ymin, ymax;
+    UINT32 i;
+
+    if (o->count == 0)
+        return 0;
+    xmin = xmax = o->edges[0].x0;
+    ymin = ymax = o->edges[0].y0;
+    for (i = 0; i < o->count; i++) {
+        const OUTLINE_EDGE *e = &o->edges[i];
+
+        xmin = e->x0 < xmin ? e->x0 : xmin;
+        xmin = e->x1 < xmin ? e->x1 : xmin;
+        xmax = e->x0 > xmax ? e->x0 : xmax;
+        xmax = e->x1 > xmax ? e->x1 : xmax;
+        ymin = e->y0 < ymin ? e->y0 : ymin;
+        ymin = e->y1 < ymin ? e->y1 : ymin;
+        ymax = e->y0 > ymax ? e->y0 : ymax;
+        ymax = e->y1 > ymax ? e->y1 : ymax;
+    }
+    *first = floor_div(ymin, OUTLINE_ONE);
+    *last = floor_div(ymax - 1, OUTLINE_ONE) + 1;
+    *left = floor_div(xmin, OUTLINE_ONE);
+    *right = floor_div(xmax, OUTLINE_ONE) + 1;
+    *first = *first < 0 ? 0 : *first;
+    *last = *last > height ? height : *last;
+    *left = *left < 0 ? 0 : *left;
+    *right = *right > width ? width : *right;
+    return *first < *last && *left < *right;
+}
+
+/* Set o->area[x], for each column x from left up to right, to the
+   coverage of row r's pixel there: its area inside the outline times
+   OUTLINE_COVERAGE_MAX, rounded to the nearest, from 0 to
+   OUTLINE_COVERAGE_MAX. Both outline_coverage and outline_fill take
+   coverage from here, so a pixel has one coverage whichever draws it.
+   A column is 0 where no line crosses the row. width is the canvas's or
+   the plane's, which clips the lines. */
+static void row_coverage(OUTLINE *o, INT64 r, INT64 left, INT64 right,
+                         INT64 width)
+{
+    INT64 area = 0, x;
+
+    /* cell() adds a pixel's remaining area to the column after it, so the
+       column at right is cleared as well. */
+    for (x = left; x <= right; x++)
+        o->area[x] = 0;
+    if (!row(o, r * OUTLINE_ONE, width))
+        return;
+    for (x = left; x < right; x++) {
+        INT64 coverage;
+
+        area += o->area[x];
+        coverage = rounded(area * OUTLINE_COVERAGE_MAX, FULL);
+        coverage = coverage < 0 ? 0 : coverage;
+        o->area[x] = coverage > OUTLINE_COVERAGE_MAX ? OUTLINE_COVERAGE_MAX
+                                                      : coverage;
+    }
+}
+
 /* Mix ink into pixel at coverage, of OUTLINE_COVERAGE_MAX, and opacity. */
 static UINT32 mix(UINT32 pixel, UINT32 ink, INT64 coverage, INT64 opacity)
 {
@@ -445,61 +512,47 @@ static UINT32 mix(UINT32 pixel, UINT32 ink, INT64 coverage, INT64 opacity)
     return out;
 }
 
+int outline_coverage(OUTLINE *outline, UINT8 *cover, INT64 width,
+                     INT64 height)
+{
+    INT64 first, last, left, right, r, x;
+
+    outline_close(outline);
+    if (outline->failed || width < 0 || height < 0 ||
+        width > OUTLINE_WIDTH_MAX)
+        return 0;
+    for (r = 0; r < height; r++)
+        for (x = 0; x < width; x++)
+            cover[r * width + x] = 0;
+    if (!reach(outline, width, height, &first, &last, &left, &right))
+        return 1;
+    for (r = first; r < last; r++) {
+        row_coverage(outline, r, left, right, width);
+        for (x = left; x < right; x++)
+            cover[r * width + x] = (UINT8)outline->area[x];
+    }
+    return 1;
+}
+
 int outline_fill(OUTLINE *outline, const CANVAS *canvas, UINT32 ink,
                  UINT32 opacity)
 {
-    INT64 xmin, xmax, ymin, ymax, first, last, left, right, r, x;
-    UINT32 i;
+    INT64 first, last, left, right, r, x;
 
     outline_close(outline);
     if (outline->failed || canvas->width > OUTLINE_WIDTH_MAX ||
         opacity > OUTLINE_OPACITY_ONE)
         return 0;
-    if (outline->count == 0)
-        return 1;
-    xmin = xmax = outline->edges[0].x0;
-    ymin = ymax = outline->edges[0].y0;
-    for (i = 0; i < outline->count; i++) {
-        const OUTLINE_EDGE *e = &outline->edges[i];
-
-        xmin = e->x0 < xmin ? e->x0 : xmin;
-        xmin = e->x1 < xmin ? e->x1 : xmin;
-        xmax = e->x0 > xmax ? e->x0 : xmax;
-        xmax = e->x1 > xmax ? e->x1 : xmax;
-        ymin = e->y0 < ymin ? e->y0 : ymin;
-        ymin = e->y1 < ymin ? e->y1 : ymin;
-        ymax = e->y0 > ymax ? e->y0 : ymax;
-        ymax = e->y1 > ymax ? e->y1 : ymax;
-    }
-    first = floor_div(ymin, OUTLINE_ONE);
-    last = floor_div(ymax - 1, OUTLINE_ONE) + 1;
-    left = floor_div(xmin, OUTLINE_ONE);
-    right = floor_div(xmax, OUTLINE_ONE) + 1;
-    first = first < 0 ? 0 : first;
-    last = last > canvas->height ? canvas->height : last;
-    left = left < 0 ? 0 : left;
-    right = right > canvas->width ? canvas->width : right;
-    if (first >= last || left >= right)
+    if (!reach(outline, canvas->width, canvas->height, &first, &last, &left,
+               &right))
         return 1;
     for (r = first; r < last; r++) {
         UINT32 *pixels = canvas->pixels + r * canvas->stride;
-        INT64 area = 0;
 
-        for (x = left; x <= right; x++)
-            outline->area[x] = 0;
-        if (!row(outline, r * OUTLINE_ONE, canvas->width))
-            continue;
-        for (x = left; x < right; x++) {
-            INT64 coverage;
-
-            area += outline->area[x];
-            coverage = rounded(area * OUTLINE_COVERAGE_MAX, FULL);
-            if (coverage <= 0)
-                continue;
-            if (coverage > OUTLINE_COVERAGE_MAX)
-                coverage = OUTLINE_COVERAGE_MAX;
-            pixels[x] = mix(pixels[x], ink, coverage, opacity);
-        }
+        row_coverage(outline, r, left, right, canvas->width);
+        for (x = left; x < right; x++)
+            if (outline->area[x] > 0)
+                pixels[x] = mix(pixels[x], ink, outline->area[x], opacity);
     }
     return 1;
 }
