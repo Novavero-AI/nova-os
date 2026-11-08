@@ -98,14 +98,15 @@ and on Windows with a TinyCC built from stage0-pe32's seed.
 
 [build.sh](build.sh) needs a C compiler as `cc`, `curl`, `tar` and
 `unzip`. It fetches TinyCC's source, Inter's release and the chain disk's
-inputs, and writes every image into the directory it is given:
+inputs, checks each against its sha256 in [SHA256SUMS](SHA256SUMS)
+before using it, and writes every image into the directory it is given:
 
 ```sh
 ./build.sh out
 ```
 
-[SHA256SUMS](SHA256SUMS) lists the sha256 of every file a build must
-reproduce. To check a build:
+SHA256SUMS lists the sha256 of every file a build must reproduce. To
+check a build:
 
 ```sh
 (cd out && sha256sum -c ../SHA256SUMS)        # Linux

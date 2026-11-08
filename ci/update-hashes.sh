@@ -6,6 +6,11 @@
 # no longer writes fails the run until its line is removed. SHA256SUMS
 # is replaced whole, by a rename, or left as it was.
 #
+# build.sh refuses a download whose sha256 differs from its line, and
+# names the sha256 it fetched, so each download's line is written by
+# hand from that refusal; a new download's line can start as any 64
+# hexadecimal digits.
+#
 # CI checks SHA256SUMS against a build of the commit (ci/reproduce.sh)
 # and never rewrites it, so this refuses to run where CI is set, as
 # GitHub Actions sets it.
