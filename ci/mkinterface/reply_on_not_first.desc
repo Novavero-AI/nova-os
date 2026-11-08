@@ -1,0 +1,34 @@
+# Refused at line 18: a reply on another channel that is not that channel's first message.
+
+# A description that breaks one rule.
+interface reply_on_not_first
+
+# The start of every message.
+struct HDR
+  u32 transaction  # the request's
+  u32 kind         # the message's
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+
+  # A request.
+  request ping PING 1
+    body HDR
+    reply pong on d
+    # The end.
+    handle channel travels read write needs read write
+  end
+end
+
+# Another channel.
+channel d
+  invalid client close
+
+  # A reply.
+  reply pong
+    body HDR
+  end
+end

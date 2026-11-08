@@ -1,0 +1,23 @@
+# Refused at line 21: status on a request.
+
+# A description that breaks one rule.
+interface status_on_request
+
+# The start of every message.
+struct HDR
+  u32 transaction  # the request's
+  u32 kind         # the message's
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body HDR
+    status kind
+  end
+end

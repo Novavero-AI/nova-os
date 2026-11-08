@@ -1,0 +1,30 @@
+# Refused at line 23: handle counts whose sum wraps past 2^64.
+
+# A description that breaks one rule.
+interface handle_total_wrap
+
+# A body with a count.
+struct NB
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 n  # a count
+  u8 small  # a small count
+  u8 pad1  # pad
+  u16 pad2  # pad
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body NB
+    # A handle.
+    handle channel min 0x8000000000000000 max 0x8000000000000000 travels read needs read
+    # Another.
+    handle channel min 0x8000000000000000 max 0x8000000000000000 travels read needs read
+  end
+end

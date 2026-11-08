@@ -1,0 +1,7 @@
+# Refused at line 4: a name the generator makes that the description declares.
+
+# A description that breaks one rule.
+interface guard_name
+
+# A number.
+const NOVA_GUARD_NAME_PROTOCOL_H 1

@@ -1,0 +1,6 @@
+# Refused at line 6: end closes no block.
+
+# A description that breaks one rule.
+interface end_alone
+
+end

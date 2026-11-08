@@ -1,0 +1,9 @@
+# Refused at line 7: a setting name that is not a setting name.
+
+# A description that breaks one rule.
+interface setting_name
+
+# A setting.
+setting A.b int
+  default 1
+end

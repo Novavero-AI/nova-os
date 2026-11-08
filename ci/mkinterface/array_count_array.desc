@@ -1,0 +1,10 @@
+# Refused at line 9: an array as a count.
+
+# A description that breaks one rule.
+interface array_count_array
+
+# A layout.
+struct S
+  u8 n array 2  # n
+  u8 a array 4 count n  # a
+end

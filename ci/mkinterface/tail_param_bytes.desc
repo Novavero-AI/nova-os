@@ -1,0 +1,27 @@
+# Refused at line 25: a tail whose parameter is bytes.
+
+# A description that breaks one rule.
+interface tail_param_bytes
+
+# A body with a count.
+struct NB
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 n  # a count
+  u8 small  # a small count
+  u8 pad1  # pad
+  u16 pad2  # pad
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body NB
+    tail bytes bytes count n max 8  # the data
+  end
+end

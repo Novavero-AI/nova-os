@@ -1,0 +1,10 @@
+# Refused at line 10: a rights constant as an operand of a constant.
+
+# A description that breaks one rule.
+interface rights_operand_const
+
+# Rights.
+rights R channel read write
+
+# A number.
+const A R + 1

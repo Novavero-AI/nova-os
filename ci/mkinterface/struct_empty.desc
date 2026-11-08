@@ -1,0 +1,8 @@
+# Refused at line 7: a structure with no field.
+
+# A description that breaks one rule.
+interface struct_empty
+
+# Empty.
+struct S
+end

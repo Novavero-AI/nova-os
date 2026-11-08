@@ -1,0 +1,10 @@
+# Refused at line 9: text on u16 elements.
+
+# A description that breaks one rule.
+interface array_text_u16
+
+# A layout.
+struct S
+  u32 n  # n
+  u16 a array 4 count n text  # a
+end

@@ -1,0 +1,10 @@
+# Refused at line 7: a setting whose generated macro is a kernel name.
+
+# A description that breaks one rule.
+interface setting_kernel_name
+
+# A setting.
+setting type enum
+  allowed process thread
+  default process
+end

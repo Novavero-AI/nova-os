@@ -1,0 +1,22 @@
+# Refused at line 19: a body that does not begin with a transaction.
+
+# A description that breaks one rule.
+interface body_no_transaction
+
+# Not a header.
+struct BAD
+  u32 kind  # the message's
+  u32 more  # more
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body BAD
+  end
+end

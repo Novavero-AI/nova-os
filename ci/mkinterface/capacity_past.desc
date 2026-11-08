@@ -1,0 +1,26 @@
+# Refused at line 17: a capacity past CHANNEL_MAX_CAPACITY.
+
+# A description that breaks one rule.
+interface capacity_past
+
+# The start of every message.
+struct HDR
+  u32 transaction  # the request's
+  u32 kind         # the message's
+end
+
+# Much.
+const MANY 1025
+
+# A channel.
+channel c
+  capacity MANY
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body HDR
+  end
+end

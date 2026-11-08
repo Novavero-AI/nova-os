@@ -1,0 +1,33 @@
+# Refused at line 18: a request with a reply on another channel that carries no channel end.
+
+# A description that breaks one rule.
+interface reply_on_no_end
+
+# The start of every message.
+struct HDR
+  u32 transaction  # the request's
+  u32 kind         # the message's
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+
+  # A request.
+  request ping PING 1
+    body HDR
+    reply pong on d
+  end
+end
+
+# Another channel.
+channel d
+  invalid client close
+
+  # A reply.
+  reply pong
+    body none
+    first
+  end
+end

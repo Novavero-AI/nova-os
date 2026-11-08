@@ -1,0 +1,7 @@
+# Refused at line 7: rights without a right.
+
+# A description that breaks one rule.
+interface rights_short
+
+# Rights.
+rights R channel

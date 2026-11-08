@@ -1,0 +1,7 @@
+# Refused at line 7: a string that is not closed.
+
+# A description that breaks one rule.
+interface string_open
+
+# A text.
+const A "abc

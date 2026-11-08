@@ -1,0 +1,23 @@
+# Refused at line 21: reply in an event.
+
+# A description that breaks one rule.
+interface reply_on_request
+
+# The start of every message.
+struct HDR
+  u32 transaction  # the request's
+  u32 kind         # the message's
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # An event.
+  event tick TICK 1
+    body HDR
+    reply pong
+  end
+end

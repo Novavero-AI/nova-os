@@ -1,0 +1,7 @@
+# Refused at line 7: a constant named for a name the generated code uses.
+
+# A description that breaks one rule.
+interface const_kernel_name
+
+# A number.
+const OK 1

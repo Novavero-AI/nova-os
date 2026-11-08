@@ -1,0 +1,31 @@
+# Refused at line 29: a structure tail of an imported structure with no listed fields.
+
+# A description that breaks one rule.
+interface tail_struct_unlisted
+
+import native_abi.h
+  struct BOOTSTRAP_DISPLAY 24
+end
+
+# A body with a count.
+struct NB
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 n  # a count
+  u8 small  # a small count
+  u8 pad1  # pad
+  u16 pad2  # pad
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body NB
+    tail shown BOOTSTRAP_DISPLAY  # the record
+  end
+end

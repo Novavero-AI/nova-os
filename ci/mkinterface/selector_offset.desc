@@ -1,0 +1,34 @@
+# Refused at line 31: a selector at another offset.
+
+# A description that breaks one rule.
+interface selector_offset
+
+# The start of every message.
+struct HDR
+  u32 transaction  # the request's
+  u32 kind         # the message's
+end
+
+# Another start.
+struct HDR2
+  u32 transaction  # the request's
+  u32 pad  # pad
+  u32 kind  # the message's
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body HDR
+  end
+
+  # Another.
+  request pong PONG 2
+    body HDR2
+  end
+end

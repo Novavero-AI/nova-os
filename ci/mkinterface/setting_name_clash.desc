@@ -1,0 +1,12 @@
+# Refused at line 10: a setting whose default macro is declared.
+
+# A description that breaks one rule.
+interface setting_name_clash
+
+# A clash.
+const A_B_DEFAULT 1
+
+# A setting.
+setting a.b int
+  default 1
+end

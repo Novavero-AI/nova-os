@@ -114,7 +114,9 @@ CI checks every pull request and every push to main:
   `ci/check-downloads.py` that a download whose sha256 differs from
   `SHA256SUMS` stops the build before use, and that a build whose
   download directory holds every download succeeds with curl's every
-  connection refused. It also builds with `--werror`, TinyCC's `-Wall
+  connection refused. The build stops where a protocol header tracked in
+  `include/` is not what `mkinterface` makes of its description in
+  `interfaces/`. It also builds with `--werror`, TinyCC's `-Wall
   -Werror`, runs `design/text/check-text.sh` on the fonts the build
   converted, and on Linux `design/text/compare-freetype.sh`.
 - **Seed** runs `build.sh` on Windows, under busybox-w32's sh, with a
@@ -125,11 +127,15 @@ CI checks every pull request and every push to main:
   runs.
 - **Lint** checks that tracked text is ASCII and that clang's `-Wall
   -Wextra -pedantic -Wshadow` find nothing in any C source, built with
-  its `compile_flags.txt`; it runs `tools/check-masks.c`,
-  `tools/check-fade.c`, `tools/check-pointer.c`, `tools/check-text.c`,
+  its `compile_flags.txt`, except `tools/check-probe-protocol.c`, which
+  `ci/check-mkinterface.sh` builds with them against the header it makes;
+  it runs `tools/check-masks.c`, `tools/check-fade.c`,
+  `tools/check-pointer.c`, `tools/check-text.c`,
   `tools/check-backdrop.c`, `tools/check-outline.c`,
-  `tools/check-compose.c` and `design/backgrounds/check-limb.sh`, and
-  actionlint over the workflows.
+  `tools/check-compose.c`, `design/backgrounds/check-limb.sh`,
+  `ci/check-mkinterface.sh`, which runs `tools/check-probe-protocol.c`
+  under the sanitizers, `tools/check-console-protocol.c` and
+  `tools/check-display-protocol.c`, and actionlint over the workflows.
 - **Boot** boots the reproduced disks under QEMU with Ubuntu 24.04's
   OVMF, with a copy of `data.img` as the data disk: `disk.img`, the
   system's disk, on QEMU's default processor, and `test.img`, the test

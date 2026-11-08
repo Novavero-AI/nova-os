@@ -1,0 +1,7 @@
+# Refused at line 7: interface twice.
+
+# A description that breaks one rule.
+interface interface_twice
+
+# Again.
+interface again

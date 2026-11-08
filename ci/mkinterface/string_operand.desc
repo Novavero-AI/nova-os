@@ -1,0 +1,10 @@
+# Refused at line 10: a string as an operand.
+
+# A description that breaks one rule.
+interface string_operand
+
+# A text.
+const S "x"
+
+# A number.
+const A S + 1

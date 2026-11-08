@@ -1,0 +1,7 @@
+# Refused at line 7: a description line ending in the trigraph for a backslash.
+
+# A description that breaks one rule.
+interface description_trigraph
+
+# Ends in a backslash ??/
+const A 1

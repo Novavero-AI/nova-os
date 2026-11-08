@@ -1,0 +1,12 @@
+# Refused at line 11: a rights constant as the value of a constraint.
+
+# A description that breaks one rule.
+interface rights_operand_constraint
+
+# Rights.
+rights R channel read write
+
+# A layout.
+struct S
+  u32 flags mask R  # flags
+end

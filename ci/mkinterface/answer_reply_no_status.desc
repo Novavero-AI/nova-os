@@ -1,0 +1,28 @@
+# Refused at line 15: answer naming a reply without a status.
+
+# A description that breaks one rule.
+interface answer_reply_no_status
+
+# The start of every message.
+struct HDR
+  u32 transaction  # the request's
+  u32 kind         # the message's
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server answer pong
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body HDR
+    reply pong
+  end
+
+  # A reply.
+  reply pong
+    body HDR
+  end
+end

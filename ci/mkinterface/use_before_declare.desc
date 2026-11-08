@@ -1,0 +1,10 @@
+# Refused at line 7: a name used before it is declared.
+
+# A description that breaks one rule.
+interface use_before_declare
+
+# A number.
+const A B + 1
+
+# Another.
+const B 1

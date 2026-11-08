@@ -1,0 +1,34 @@
+# Refused at line 25: a channel declared twice.
+
+# A description that breaks one rule.
+interface channel_twice
+
+# The start of every message.
+struct HDR
+  u32 transaction  # the request's
+  u32 kind         # the message's
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body HDR
+  end
+end
+
+# Again.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request pong PONG 1
+    body HDR
+  end
+end

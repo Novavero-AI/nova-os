@@ -1,0 +1,7 @@
+# Refused at line 7: a description holding a comment opener.
+
+# A description that breaks one rule.
+interface description_delimiter_open
+
+# Starts /* here.
+const A 1

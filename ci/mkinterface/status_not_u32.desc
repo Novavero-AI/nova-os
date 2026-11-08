@@ -1,0 +1,36 @@
+# Refused at line 34: a status that is not a u32.
+
+# A description that breaks one rule.
+interface status_not_u32
+
+# A start.
+struct RH
+  u32 transaction  # the request's
+  u16 code  # a code
+  u16 pad  # pad
+end
+
+# The start of every message.
+struct HDR
+  u32 transaction  # the request's
+  u32 kind         # the message's
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body HDR
+    reply pong
+  end
+
+  # A reply.
+  reply pong
+    body RH
+    status code
+  end
+end

@@ -1,0 +1,9 @@
+# Refused at line 8: min 0 on an unsigned field.
+
+# A description that breaks one rule.
+interface constraint_min_zero
+
+# A layout.
+struct S
+  u32 a min 0  # a
+end

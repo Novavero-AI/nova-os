@@ -1,0 +1,10 @@
+# Refused at line 9: a contour on an int.
+
+# A description that breaks one rule.
+interface setting_contour_on_int
+
+# A setting.
+setting a.b int
+  default 1
+  contour 0,0 1,1
+end

@@ -1,0 +1,27 @@
+# Refused at line 23: a message of more than CHANNEL_MAX_BYTES bytes.
+
+# A description that breaks one rule.
+interface message_too_big
+
+# A body with a count.
+struct NB
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 n  # a count
+  u8 small  # a small count
+  u8 pad1  # pad
+  u16 pad2  # pad
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body NB
+    tail data bytes count n max 70000  # the data
+  end
+end

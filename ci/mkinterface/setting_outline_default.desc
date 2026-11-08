@@ -1,0 +1,9 @@
+# Refused at line 8: a default on an outline.
+
+# A description that breaks one rule.
+interface setting_outline_default
+
+# A setting.
+setting a.b outline
+  default 0,0
+end

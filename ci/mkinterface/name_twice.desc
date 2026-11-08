@@ -1,0 +1,10 @@
+# Refused at line 10: a C name declared twice.
+
+# A description that breaks one rule.
+interface name_twice
+
+# A number.
+const A 1
+
+# Another.
+const A 2

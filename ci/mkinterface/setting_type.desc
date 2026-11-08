@@ -1,0 +1,8 @@
+# Refused at line 7: an unknown setting type.
+
+# A description that breaks one rule.
+interface setting_type
+
+# A setting.
+setting a.b widget
+end

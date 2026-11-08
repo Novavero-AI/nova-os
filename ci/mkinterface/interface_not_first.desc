@@ -1,0 +1,7 @@
+# Refused at line 4: the first statement is not `interface`.
+
+# A number.
+const A 1
+
+# A case.
+interface interface_not_first

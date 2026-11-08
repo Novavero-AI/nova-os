@@ -1,0 +1,10 @@
+# Refused at line 9: a signed count.
+
+# A description that breaks one rule.
+interface array_count_signed
+
+# A layout.
+struct S
+  i32 n  # n
+  u8 a array 4 count n  # a
+end

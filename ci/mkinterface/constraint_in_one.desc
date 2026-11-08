@@ -1,0 +1,9 @@
+# Refused at line 8: in with one value.
+
+# A description that breaks one rule.
+interface constraint_in_one
+
+# A layout.
+struct S
+  u32 a in 1  # a
+end

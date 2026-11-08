@@ -1,0 +1,10 @@
+# Refused at line 9: a default longer than its max.
+
+# A description that breaks one rule.
+interface setting_text_long
+
+# A setting.
+setting a.b text
+  max 3
+  default "abcd"
+end

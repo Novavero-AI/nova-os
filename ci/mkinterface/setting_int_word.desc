@@ -1,0 +1,9 @@
+# Refused at line 8: an int default that is no number.
+
+# A description that breaks one rule.
+interface setting_int_word
+
+# A setting.
+setting a.b int
+  default ten
+end

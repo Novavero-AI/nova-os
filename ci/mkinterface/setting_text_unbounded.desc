@@ -1,0 +1,8 @@
+# Refused at line 7: a text with no max.
+
+# A description that breaks one rule.
+interface setting_text_unbounded
+
+# A setting.
+setting a.b text
+end

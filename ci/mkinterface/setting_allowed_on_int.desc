@@ -1,0 +1,10 @@
+# Refused at line 8: allowed on an int.
+
+# A description that breaks one rule.
+interface setting_allowed_on_int
+
+# A setting.
+setting a.b int
+  allowed a b
+  default 1
+end

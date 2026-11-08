@@ -1,0 +1,9 @@
+# Refused at line 8: an array of no elements.
+
+# A description that breaks one rule.
+interface array_empty
+
+# A layout.
+struct S
+  u8 a array 0  # a
+end

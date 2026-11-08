@@ -1,0 +1,7 @@
+# Refused at line 7: sizeof of no structure.
+
+# A description that breaks one rule.
+interface sizeof_unknown
+
+# A number.
+const A sizeof NOPE

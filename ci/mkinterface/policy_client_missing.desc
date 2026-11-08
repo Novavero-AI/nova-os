@@ -1,0 +1,26 @@
+# Refused at line 13: events with no invalid client.
+
+# A description that breaks one rule.
+interface policy_client_missing
+
+# The start of every message.
+struct HDR
+  u32 transaction  # the request's
+  u32 kind         # the message's
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+
+  # A request.
+  request ping PING 1
+    body HDR
+  end
+
+  # An event.
+  event pong PONG 2
+    body HDR
+  end
+end

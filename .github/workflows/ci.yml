@@ -118,6 +118,23 @@ jobs:
       - name: gfx/limb.c draws Limb as its prototype does
         run: design/backgrounds/check-limb.sh
 
+      - name: The generator refuses each description in ci/mkinterface/ at its line and makes a header that checks right
+        run: ci/check-mkinterface.sh "$RUNNER_TEMP/check-mkinterface"
+
+      - name: The console's messages are the bytes console.md C2 and C4 give
+        run: |
+          cc -std=c11 -Wall -Wextra -pedantic -Werror -I include \
+            -o "$RUNNER_TEMP/check-console-protocol" \
+            tools/check-console-protocol.c
+          "$RUNNER_TEMP/check-console-protocol"
+
+      - name: The display's generated header compiles and checks its messages
+        run: |
+          cc -std=c11 -Wall -Wextra -pedantic -Werror -I include \
+            -o "$RUNNER_TEMP/check-display-protocol" \
+            tools/check-display-protocol.c
+          "$RUNNER_TEMP/check-display-protocol"
+
       - name: The workflows pass actionlint
         run: |
           archive=actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz

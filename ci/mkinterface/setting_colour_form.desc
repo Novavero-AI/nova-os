@@ -1,0 +1,9 @@
+# Refused at line 8: a colour that is not 0xRRGGBB.
+
+# A description that breaks one rule.
+interface setting_colour_form
+
+# A setting.
+setting a.b colour
+  default 0xFFF
+end

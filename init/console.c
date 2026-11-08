@@ -14,25 +14,15 @@
 #include "console.h"
 #include "console_protocol.h"
 #include "init.h"
-#include "input_protocol.h"
 #include "login_start.h"
 #include "tests.h"
 
 #define PIXEL_BYTES 4
 
-/* The rights each handle the console gets travels with: the debug log
-   to write to it, its process to map memory, its control channel to read
-   from and answer the background on, its end of a session to serve it,
-   the framebuffer's resource to make sections over it, and the
-   background's sections to map them to read; none to pass on. */
-#define CONSOLE_LOG_RIGHTS RESOURCE_RIGHT_USE
-#define CONSOLE_SELF_RIGHTS PROCESS_RIGHT_MAP
-#define CONSOLE_CONTROL_RIGHTS                                            \
-    (CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT)
-#define CONSOLE_END_RIGHTS                                                \
-    (CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT)
+/* The rights the framebuffer's resource travels with: to make sections
+   over it, and none to pass on. The other handles the console gets
+   travel with the rights console.desc gives them. */
 #define FRAMEBUFFER_RIGHTS RESOURCE_RIGHT_USE
-#define BACKGROUND_RIGHTS SECTION_RIGHT_READ
 
 /* On a test disk the console is told of a display MISMATCH_ROWS taller
    than the one it is given, so that the kernel's background does not
@@ -41,6 +31,22 @@
    test disk's boot takes that path and draws the screen the system
    disk's boot draws from the background. */
 #define MISMATCH_ROWS 1
+
+/* The bytes of each message sent to the console, aligned to 8 bytes as
+   the generated functions require (docs/spec/interface.md P14) and as
+   long as the control channel's longest message, which holds the
+   bootstrap channel's too; and of the console's answer. */
+static union {
+    UINT64 alignment;
+    UINT8 bytes[CONSOLE_CONTROL_TO_SERVER_BYTES_MAX];
+} outgoing;
+static union {
+    UINT64 alignment;
+    UINT8 bytes[CONSOLE_CONTROL_TO_CLIENT_BYTES_MAX];
+} incoming;
+_Static_assert(CONSOLE_BOOTSTRAP_TO_CLIENT_BYTES_MAX <=
+                   CONSOLE_CONTROL_TO_SERVER_BYTES_MAX,
+               "the bootstrap message fits the outgoing buffer");
 
 static UINT32 control = HANDLE_INVALID;
 static int released;
@@ -82,10 +88,15 @@ static void send_display(const PLATFORM *platform)
     CONSOLE_SETUP_DISPLAY_MESSAGE message;
     HANDLE_TRANSFER framebuffer;
     UINT32 status = display_message(platform, &message, &framebuffer);
+    UINT32 resource = framebuffer.handle, size;
 
     if (status == OK)
-        status = channel_write(control, &message, sizeof message,
-                               &framebuffer, 1);
+        status = console_control_display_encode(&message, &resource, 1,
+                                                &framebuffer,
+                                                outgoing.bytes, &size);
+    if (status == OK)
+        status = channel_write(control, outgoing.bytes, size, &framebuffer,
+                               1);
     if (status != OK) {
         close_handles(&framebuffer, 1);
         say_status("display send failed", status);
@@ -97,24 +108,24 @@ void console_prepare(const PLATFORM *platform, BOOT_BACKGROUND *background)
     CONSOLE_SETUP_BACKGROUND_MESSAGE message;
     HANDLE_TRANSFER sections[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
     RECEIVED_HANDLE handle;
-    UINT32 answer = 0, byte_count = 0, handle_count, observed, i, status;
+    UINT32 byte_count = 0, handle_count = 0, size, observed, status;
 
     if (control == HANDLE_INVALID) {
         boot_background_close(background);
         return;
     }
     message.setup.transaction = 0;
-    message.setup.kind = CONSOLE_SETUP_BACKGROUND;
+    message.setup.kind = 0;
     message.display = platform->boot->display;
     if (tests_enabled())
         message.display.height += MISMATCH_ROWS;
     message.background = background->label;
-    for (i = 0; i < background->count; i++) {
-        sections[i].handle = background->sections[i];
-        sections[i].rights = BACKGROUND_RIGHTS;
-    }
-    status = channel_write(control, &message, sizeof message, sections,
-                           background->count);
+    status = console_control_background_encode(&message, background->sections,
+                                               background->count, sections,
+                                               outgoing.bytes, &size);
+    if (status == OK)
+        status = channel_write(control, outgoing.bytes, size, sections,
+                               background->count);
     if (status != OK) {
         boot_background_close(background);
         if (status != ERR_PEER_CLOSED)
@@ -125,12 +136,13 @@ void console_prepare(const PLATFORM *platform, BOOT_BACKGROUND *background)
     status = object_wait_one(control, CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
                              DEADLINE_INFINITE, &observed);
     if (status == OK)
-        status = channel_read(control, &answer, sizeof answer, &handle, 0,
-                              &byte_count, &handle_count);
+        status = channel_read(control, incoming.bytes, sizeof incoming.bytes,
+                              &handle, 0, &byte_count, &handle_count);
     if (status != OK && status != ERR_PEER_CLOSED)
         say_status("console answer failed", status);
     else if (status == OK &&
-             (byte_count != CONSOLE_PREPARED_SIZE || answer != 0))
+             console_control_prepared_check(incoming.bytes, byte_count,
+                                            &handle, handle_count) != OK)
         say("nova-init: console answer refused reason=malformed\r\n");
 }
 
@@ -138,20 +150,22 @@ UINT32 console_session(void)
 {
     CONSOLE_SETUP setup;
     HANDLE_TRANSFER end;
-    UINT32 client = HANDLE_INVALID, status = ERR_BAD_STATE;
+    UINT32 mine = HANDLE_INVALID, client = HANDLE_INVALID;
+    UINT32 status = ERR_BAD_STATE, size;
 
-    end.handle = HANDLE_INVALID;
-    end.rights = CONSOLE_END_RIGHTS;
     setup.transaction = 0;
-    setup.kind = CONSOLE_SETUP_SESSION;
+    setup.kind = 0;
     if (control != HANDLE_INVALID)
-        status = channel_create(CONSOLE_SESSION_CAPACITY, &end.handle,
-                                &client);
+        status = channel_create(CONSOLE_SESSION_CAPACITY, &mine, &client);
     if (status == OK)
-        status = channel_write(control, &setup, sizeof setup, &end, 1);
+        status = console_control_session_encode(&setup, &mine, 1, &end,
+                                                outgoing.bytes, &size);
+    if (status == OK)
+        status = channel_write(control, outgoing.bytes, size, &end, 1);
     if (status == OK)
         return client;
-    close_handles(&end, 1);
+    if (mine != HANDLE_INVALID)
+        handle_close(mine);
     if (client != HANDLE_INVALID)
         handle_close(client);
     say_status("console session failed", status);
@@ -161,29 +175,33 @@ UINT32 console_session(void)
 UINT32 console_bootstrap(const PLATFORM *platform, UINT32 process,
                          UINT32 channel)
 {
-    HANDLE_TRANSFER handles[CONSOLE_BOOTSTRAP_HANDLES];
-    UINT32 mine = HANDLE_INVALID, transaction = 0, i;
+    HANDLE_TRANSFER transfers[CONSOLE_BOOTSTRAP_HANDLES];
+    UINT32 handles[CONSOLE_BOOTSTRAP_HANDLES];
+    UINT32 mine = HANDLE_INVALID, size, i;
     UINT32 status;
 
     for (i = 0; i < CONSOLE_BOOTSTRAP_HANDLES; i++)
-        handles[i].handle = HANDLE_INVALID;
-    handles[CONSOLE_BOOTSTRAP_DEBUG_LOG].rights = CONSOLE_LOG_RIGHTS;
-    handles[CONSOLE_BOOTSTRAP_SELF].rights = CONSOLE_SELF_RIGHTS;
-    handles[CONSOLE_BOOTSTRAP_CONTROL].rights = CONSOLE_CONTROL_RIGHTS;
+        handles[i] = HANDLE_INVALID;
     status = resource_create(platform->debug_log, SYSTEM_PRIVILEGE_DEBUG_LOG,
-                             1, &handles[CONSOLE_BOOTSTRAP_DEBUG_LOG].handle);
+                             1, &handles[CONSOLE_BOOTSTRAP_DEBUG_LOG]);
     if (status == OK)
         status = handle_duplicate(process, PROCESS_RIGHT_MAP | RIGHT_TRANSFER,
-                                  &handles[CONSOLE_BOOTSTRAP_SELF].handle);
+                                  &handles[CONSOLE_BOOTSTRAP_SELF]);
     if (status == OK)
         status = channel_create(CONSOLE_CONTROL_CAPACITY, &mine,
-                                &handles[CONSOLE_BOOTSTRAP_CONTROL].handle);
+                                &handles[CONSOLE_BOOTSTRAP_CONTROL]);
     if (status == OK)
-        status = channel_write(channel, &transaction,
-                               INPUT_CLIENT_MESSAGE_SIZE, handles,
+        status = console_bootstrap_start_encode(0, handles,
+                                                CONSOLE_BOOTSTRAP_HANDLES,
+                                                transfers, outgoing.bytes,
+                                                &size);
+    if (status == OK)
+        status = channel_write(channel, outgoing.bytes, size, transfers,
                                CONSOLE_BOOTSTRAP_HANDLES);
     if (status != OK) {
-        close_handles(handles, CONSOLE_BOOTSTRAP_HANDLES);
+        for (i = 0; i < CONSOLE_BOOTSTRAP_HANDLES; i++)
+            if (handles[i] != HANDLE_INVALID)
+                handle_close(handles[i]);
         if (mine != HANDLE_INVALID)
             handle_close(mine);
         return status;

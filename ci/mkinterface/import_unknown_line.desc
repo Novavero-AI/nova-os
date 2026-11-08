@@ -1,0 +1,8 @@
+# Refused at line 7: an unknown line in an import.
+
+# A description that breaks one rule.
+interface import_unknown_line
+
+import native_abi.h
+  frobnicate X 1
+end

@@ -1,0 +1,30 @@
+# Refused at line 28: a structure tail at an offset 4 of 8.
+
+# A description that breaks one rule.
+interface tail_struct_misaligned
+
+# A pair of u64.
+struct PAIR
+  u64 a  # a
+  u64 b  # b
+end
+
+# A body of 12 bytes.
+struct B12
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 n  # a count
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body B12
+    tail pair PAIR  # the pair
+  end
+end

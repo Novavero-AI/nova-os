@@ -1,0 +1,10 @@
+# Refused at line 8: a count that is no field before the array.
+
+# A description that breaks one rule.
+interface array_count_after
+
+# A layout.
+struct S
+  u8 a array 4 count n  # a
+  u32 n  # n
+end

@@ -1,0 +1,11 @@
+# Refused at line 9: a u16 at offset 1.
+
+# A description that breaks one rule.
+interface u16_misaligned
+
+# A layout.
+struct S
+  u8 a  # a
+  u16 b  # b
+  u8 c  # c
+end

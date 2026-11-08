@@ -1,0 +1,10 @@
+# Refused at line 9: a header imported twice.
+
+# A description that breaks one rule.
+interface import_twice
+
+import native_abi.h
+end
+
+import native_abi.h
+end

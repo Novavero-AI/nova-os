@@ -1,0 +1,7 @@
+# Refused at line 7: a right named twice.
+
+# A description that breaks one rule.
+interface rights_twice
+
+# Rights.
+rights R channel read read

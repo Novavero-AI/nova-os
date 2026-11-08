@@ -1,0 +1,7 @@
+# Refused at line 7: a description above and beside.
+
+# A description that breaks one rule.
+interface description_both
+
+# Above.
+const A 1  # beside

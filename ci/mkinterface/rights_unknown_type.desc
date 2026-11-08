@@ -1,0 +1,7 @@
+# Refused at line 7: an unknown object type.
+
+# A description that breaks one rule.
+interface rights_unknown_type
+
+# Rights.
+rights R foo read

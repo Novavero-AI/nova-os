@@ -1,0 +1,10 @@
+# Refused at line 9: a scalar at an offset that is not a multiple of its size.
+
+# A description that breaks one rule.
+interface scalar_misaligned
+
+# A layout.
+struct S
+  u8 a  # a
+  u32 b  # b
+end
