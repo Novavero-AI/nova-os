@@ -13,7 +13,7 @@ byte from a 1,623-byte seed.
 ## What it is
 
 nova-os is an operating system in early development. It boots through
-UEFI on x86-64, in a virtual machine for now, and its programming model
+UEFI on x86-64, in a virtual machine, and its programming model
 is NT's: kernel objects in one namespace, handles with access rights
 and a native system-call API, on a small kernel, with drivers, file
 systems and services as user-mode processes. It is written in C and
@@ -194,8 +194,8 @@ once its driver runs, keeps QEMU from capturing the mouse.
 
 - [docs/spec](docs/spec/README.md) holds nova-os's specifications and
   pins the external specifications they cite.
-- [DESIGN.md](DESIGN.md) holds the principles, the decisions made so
-  far, the stages and what CI tests.
+- [DESIGN.md](DESIGN.md) holds the principles, the decisions, the
+  stages and what CI tests.
 - The API reference documents the public headers. Doxygen generates it:
   `doxygen` at the repository's root writes it to
   `reference/html/index.html`.

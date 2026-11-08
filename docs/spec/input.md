@@ -70,7 +70,7 @@ name's `size`, so the name ends at its first NUL.
   mouse's motion, and a pointer's buttons and wheel, are what the first
   set needs ([display.md D10](display.md#d10-the-pointer)); the
   device's `EV_LED` and `EV_REP` (QEMU's keyboard has both) are for the
-  status queue and for software autorepeat, which nothing does yet.
+  status queue and for software autorepeat, which nothing does.
 - **Why check the codes against the bitmap:** the device states what it
   sends, so a code outside that set is one the driver does not
   recognize, and the client never receives a code the device did not

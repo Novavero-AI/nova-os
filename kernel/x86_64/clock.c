@@ -3,7 +3,7 @@
    64-bit counter wraparound", which Intel guarantees not to happen
    within 10 years of reset (SDM Vol. 3B 20.17). The counter keeps a
    constant rate only where it is invariant (SDM Vol. 3B 20.17.1), which
-   neither nova-boot nor the kernel checks yet (docs/spec/boot-protocol.md,
+   neither nova-boot nor the kernel checks (docs/spec/boot-protocol.md,
    Undecided). */
 
 #include "clock.h"

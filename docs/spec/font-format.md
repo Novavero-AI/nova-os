@@ -165,14 +165,14 @@ ranges given that the font maps, in that order:
 or contextual alternates. Two substitutions are to come, `tnum` and
 `cv05` ([ui.md U4](ui.md#u4-text-layout), rule 8): the converter is to
 write each alternate as a glyph of its own, with a record of the glyph
-it stands for, which this format does not yet hold.
+it stands for, which this format does not hold.
 
 ## What nova-os ships
 
 [build.sh](../../build.sh) converts Inter 4.1, fetched from its release
 and checked by the SHA-256 `SHA256SUMS` gives, as follows.
 
-**Faces.** The six static faces the approved login and desktop designs
+**Faces.** The six static faces the login and desktop designs
 ([look.md V5](look.md#v5-type)) set type in, and no other: Inter
 Regular, Medium and SemiBold for text up to 20 points, Inter Display
 Light, Regular and SemiBold for display sizes from 22 (the designs'

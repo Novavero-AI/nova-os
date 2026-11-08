@@ -1,7 +1,7 @@
 /* Interrupt objects (docs/spec/ipc.md I7): one interrupt source, delivered
    as packets on the port it is bound to. This kernel delivers
    message-signalled interrupts, each on a vector of its own; global
-   system interrupts through an I/O APIC are not implemented yet. */
+   system interrupts through an I/O APIC are not implemented. */
 
 #ifndef NOVA_INTERRUPT_H
 #define NOVA_INTERRUPT_H

@@ -73,7 +73,7 @@ a pixel and rounded once, as [ui.md U8](ui.md#u8-layout), rule 4,
 rounds; type is then multiplied by `ui.text-scale`
 ([ui.md U10](ui.md#u10-accessibility), rule 3). A place is given from
 the edge or the centre it is measured from, and scales the same way.
-The approved screens were drawn at 2880 x 1800 with every size twice
+The design screens were drawn at 2880 x 1800 with every size twice
 its value here.
 
 | Screen | Scale | The bar, 36 | A hairline, 0.75 | Body text, 13 |
@@ -92,17 +92,17 @@ cells a whole number of pixels wide (`gfx/font.h`), so a code chip's
 cell of 7 points is 7 x s rounded to the nearest pixel: 7, 14 and 16 at
 scales 1, 2 and 2.25.
 
-- **Why:** the approved lengths and type sizes halve to whole points,
-  so they are whole pixels at scales 1 and 2, and the screens' 8-pixel
-  grid is a grid of 4 points ([V6](#v6-shapes-and-controls)); hairlines
-  and strokes stay fractions, as on the approved screens. One scale
+- **Why:** the design screens' lengths and type sizes halve to whole
+  points, so they are whole pixels at scales 1 and 2, and the screens'
+  8-pixel grid is a grid of 4 points ([V6](#v6-shapes-and-controls));
+  hairlines and strokes stay fractions, as on the design screens. One scale
   serves the system's screens and every program's windows, so the two
   grow alike.
 - **Cost:** at 2880 x 1800, scale 2.25, every size is 12.5 percent
-  larger than on the approved screens, which were drawn as at scale 2.
+  larger than on the design screens, which were drawn as at scale 2.
   At scale 1 the label is 10 pixels and body text 13, under
   [ui.md U4](ui.md#u4-text-layout)'s small text, rule 7.
-- **Not taken:** the approved screens' pixels at 2880 x 1800, each
+- **Not taken:** the design screens' pixels at 2880 x 1800, each
   divided by 2.25. Their cost is fractional base sizes: the bar 32,
   body text 11.6, the grid 3.56. The notes' rule, every size multiplied
   by the screen's height over 1800; its cost is a second scale beside
@@ -127,7 +127,7 @@ given, and mixed in linear light as `gfx/raster.c` mixes.
 | Ink on the accent | `#0B1222` | A primary button's label and its keycap |
 | Danger | `#FF7A6B` | Errors and their underlines; close under the pointer, at 92 percent |
 | Ink on danger | `#1A0B0A` | Close's cross under the pointer |
-| Valid | `#7DD3A0` | A form's valid state; no approved screen shows it |
+| Valid | `#7DD3A0` | A form's valid state; no design screen shows it |
 
 Code, in the terminal and the HUD: [shell.md
 L21](shell.md#l21-interactive-behaviour)'s styles, rule 2, and the
@@ -410,7 +410,7 @@ from the line or from the sun:
 
 The ends fade by a smoothstep over a tenth of L, and the light tapers as
 `(1 - (d / reach)^2)^2` to zero at its reach, 70 points above the line
-and 20 below. Measured on the approved screens: `#FFFBFC` at the sun,
+and 20 below. Measured on the design screens: `#FFFBFC` at the sun,
 `#959DB9` along the core far from it, `#284576` 4 points above. In
 error the core is `#FFD6CC` at 1.0 and the glow `#962820` at 1.4, with
 no warm term and the sun at the line's centre.
@@ -576,7 +576,7 @@ points once a minute.
   repeated for the pointer. The strip as display.md first had it, the
   marks, the focused window's label and the notices alone; its cost is
   a desktop with no window list, no pointer's way to the HUD and no
-  clock. The approved screens' bar with the marks at its right edge;
+  clock. The design screens' bar with the marks at its right edge;
   its cost is the proof of the trusted interface placed among the
   clock and the notices, which change, rather than at the strip's
   start. The bar without the wordmark, the trust mark first; its cost
@@ -894,7 +894,7 @@ and run", primary, with Enter.
 
 ## Not designed
 
-The approved screens are login, the desktop at rest, the HUD in five
+The design screens are login, the desktop at rest, the HUD in five
 states, three windows, a notification and two requests. They do not
 show these, which are designed before they are built:
 

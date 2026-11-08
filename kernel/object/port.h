@@ -1,7 +1,7 @@
 /* Ports (docs/spec/ipc.md I4): queues of packets that threads wait on
    with port_wait. This kernel queues interrupt packets, from interrupts
    bound to the port (interrupt.h), and signal packets, from watches
-   object_wait_async registers; port_queue is not implemented yet. */
+   object_wait_async registers; port_queue is not implemented. */
 
 #ifndef NOVA_PORT_H
 #define NOVA_PORT_H

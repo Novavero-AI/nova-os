@@ -82,7 +82,7 @@ _Static_assert(USER_CODE32 == 0x00cffa000000ffffULL, "32-bit user code");
 #define GDT_ENTRIES (SELECTOR_INDEX(TSS_SELECTOR) + 2)
 
 /* The 64-bit TSS (SDM Vol. 3A 10.7, Figure 10-11): RSP0 and the IST
-   pointers are used. There is no I/O permission bit map yet. */
+   pointers are used. There is no I/O permission bit map. */
 typedef struct {
     UINT32 reserved0;
     UINT64 rsp[3];

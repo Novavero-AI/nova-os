@@ -257,7 +257,7 @@ panel three lines a detent, back or forward through what it has shown
 
 - **Why a US layout:** QEMU's keyboard reports positions, which evdev
   names by their US labels; another layout is a table more, and choosing
-  one is a setting nothing offers yet.
+  one is a setting nothing offers.
 - **Why the secure attention key goes to login:** a program can draw a
   picture of login's prompt, but no program receives the key, so a
   person who presses it first knows that what follows is login's.

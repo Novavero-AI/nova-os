@@ -1,6 +1,6 @@
 /* Threads and the scheduler.
 
-   One processor for now. Its scheduling state is a CPU record that
+   One processor. Its scheduling state is a CPU record that
    cpu_self finds, and every change to that record, or to the scheduling
    fields of a thread once it is started, is made with interrupts
    disabled, which on one processor keeps out both the timer interrupt

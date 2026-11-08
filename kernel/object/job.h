@@ -15,7 +15,7 @@
 #include "object.h"
 
 /* The rights of a job's handle: every right a job has (O5, rule 1)
-   except WAIT, since this kernel does not yet assert a job's
+   except WAIT, since this kernel does not assert a job's
    TERMINATED. A child job's handle carries WRITE_EXECUTE only if the
    parent's handle it was created through did. */
 #define JOB_RIGHTS                                                       \

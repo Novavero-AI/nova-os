@@ -94,7 +94,7 @@ and its checks.
    mixed and encoded with the same tables.
 5. **Checked on the host.** A prototype in Python, `design/text/`, in
    the same integer arithmetic; `design/text/check-text.sh` renders a
-   reference sheet of the approved designs' faces and sizes, rounded
+   reference sheet of the designs' faces and sizes, rounded
    rectangles and circles over Limb with the C built for the host and
    with the prototype, and compares them byte for byte, as
    `check-limb.sh` and `check-font.sh` do;
@@ -138,8 +138,8 @@ typeface, rendered by nova-os from its outlines; it is converted at build
 time into nova-os's font format; the code points converted are whole
 Unicode blocks of Latin, Greek and Cyrillic with punctuation,
 superscripts and currency, without Cyrillic's combining marks, and the
-four arrows the approved designs' key hints use, 1,022 of them; and the
-six static faces the approved login and desktop designs use are
+four arrows the designs' key hints use, 1,022 of them; and the
+six static faces the login and desktop designs use are
 converted.
 
 **The source.** Inter 4.1, the release at tag `v4.1` (commit
@@ -224,8 +224,8 @@ be released under the OFL" (OFL FAQ 1.3).
   [U4](#u4-text-layout) can lay out, in whole blocks; the rest of Inter
   needs shaping, or marks that U4 cannot place, and Cyrillic's combining
   marks wait for mark placement too. The four arrows are the ones the
-  approved login's and desktop's key hints show. The six faces are the
-  ones the approved login and desktop designs
+  login and desktop designs' key hints show. The six faces are the
+  ones the login and desktop designs
   ([look.md V5](look.md#v5-type)) set type in: Inter for
   text up to 20 points, and Inter Display for the large headings, names
   and titles from 22. Each face is a converted file, and the variable
@@ -590,7 +590,7 @@ token changes every window the next time it draws.
 
 - **Why:** the interface as data makes the accessibility tree the
   interface itself, so it cannot fall out of step with what is drawn.
-- **Cost:** no screen reader exists yet; the protocol is specified when
+- **Cost:** no screen reader exists; the protocol is specified when
   one is built.
 - **Not taken:** a screen reader that reads pixels. Its cost is a
   capture of every window for the reader, and text recovered by
@@ -641,7 +641,7 @@ token changes every window the next time it draws.
   terminal as the same line (DESIGN.md, principle 3); the grants a
   command makes are the shell's, already specified and shown.
 - **Cost:** the HUD waits on the nvo interpreter, which
-  [shell.md](shell.md) specifies and nothing yet implements; every HUD search is a shell
+  [shell.md](shell.md) specifies and nothing implements; every HUD search is a shell
   round trip.
 - **Not taken:** a launcher with its own index of programs and files.
   Its cost is a second authority over the session's files, and actions
@@ -664,7 +664,7 @@ action it offers is an nvo command the shell can run.
   command whose result is known.
 - **Cost:** Files and Settings depend on the shell's file commands,
   the settings service and the generic bridge, which [shell.md](shell.md)
-  specifies and nothing yet builds. They
+  specifies and nothing builds. They
   are the first programs drawn through the renderer, in phase 7
   ([display.md D19](display.md#d19-the-build-plan)).
 - **Not taken:** a desktop of icons and folders as the first programs.

@@ -200,13 +200,13 @@ largest, `M2-0-0.M1`, is 1.7 MB.
   library, and nothing pins the file it writes, `M1-macro.M1`. The four
   steps after it build M1 from that file with links already checked,
   and M1 is pinned, so M2's own run is checked too.
-- **Why:** the boot volume is the one storage nova-os reads today, and
+- **Why:** the boot volume is the one storage nova-os reads, and
   the outputs need nowhere to persist for the checks.
 - **Why only from the chain disk:** the chain takes minutes under QEMU's
   emulation, and a boot of the system, or of the test disk, does not
   wait for it.
-- **Why not the directory protocol yet:** each step writes its output,
-  and the one server of that protocol so far, the store service, serves
+- **Why not the directory protocol:** each step writes its output,
+  and the one server of that protocol, the store service, serves
   the store read only ([storage.md F16](storage.md#f16-the-first-milestone)).
   The steps' inputs are files of the boot volume, not store paths, and
   their outputs need a writable directory, a build's scratch directory

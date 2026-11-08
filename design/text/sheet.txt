@@ -1,5 +1,5 @@
-# The reference sheet: text in each face and size the approved login
-# and desktop designs use, at their sizes on a 2880 x 1800 screen, a
+# The reference sheet: text in each face and size the login and
+# desktop designs use, at their sizes on a 2880 x 1800 screen, a
 # line of each script converted, and the rounded rectangles and circles
 # the designs draw, over Limb. sheet.py's header gives the items.
 # check-text.sh draws it with lib/ and with sheet.py and compares the

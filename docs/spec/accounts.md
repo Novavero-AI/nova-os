@@ -183,7 +183,7 @@ memory-wiping option of RFC 9106 4, step 9.
   196,608 compressions per login and per account created: 9 to 13
   seconds under QEMU's emulation of x86-64 on an Apple M2, against 0.8
   seconds for the same C built unoptimized and run natively there; on
-  x86-64 hardware it is not yet measured. Login shows `Checking...`
+  x86-64 hardware it is not measured. Login shows `Checking...`
   while a login is checked and `Creating the account...` while one is
   created, and the shell the latter for `user create`, so no one faces
   a screen that seems to have stopped. One login is checked at a time,
@@ -376,11 +376,11 @@ other end the HUD holds.
   login keeps the one it has; a relay lets it outlive the shell's, and
   keeps whatever the shell sends from ending login's.
 - **Cost:** a program run from the shell cannot write to the console or
-  reach the user's files yet; every console request of the shell's costs
+  reach the user's files; every console request of the shell's costs
   a second message and a switch to login; login stays in every session,
   serving every one of its channels on one port; login needs
   `CREATE_JOB` on the sessions' job. Programs a shell started run on
-  after it ends, since the kernel has no call yet to end a job's
+  after it ends, since the kernel has no call to end a job's
   processes.
 - **Not taken:** a child that inherits its parent's handles, as NT
   handle inheritance and Unix file descriptors do. Its cost is a

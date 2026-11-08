@@ -186,7 +186,7 @@ NMI, double fault and machine check can arrive at CPL 3 or inside S3's
 windows (S3), so with either set of page tables loaded and either IBRS
 value. Where M11 or M6's rule 4 applies they save CR3 and
 IA32_SPEC_CTRL, load the kernel's values, and restore both on return.
-Each stops the kernel today, so none returns and none restores.
+Each stops the kernel, so none returns and none restores.
 
 On the entry and the exit, a measure only some processors need is
 assembled in place behind an unconditional jump over it, which the kernel
@@ -729,7 +729,7 @@ Options").
 ## M16. Sibling threads
 
 **Decided:** the kernel runs at most one logical processor per core until
-it has a design for sibling threads. Today it runs on one processor
+it has a design for sibling threads. It runs on one processor
 ([boot-protocol.md](boot-protocol.md#other-processors)).
 
 A design that runs siblings must meet what the guidance asks of them:

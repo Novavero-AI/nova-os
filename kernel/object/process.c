@@ -470,7 +470,7 @@ _Noreturn void process_thread_exit(void)
 }
 
 /* A fault goes first to the process's exception channel (O10), which no
-   process can open yet, so no handler resolves it: the process ends with
+   process can open, so no handler resolves it: the process ends with
    the vector as its exit code. */
 _Noreturn void process_fault(UINT32 vector)
 {

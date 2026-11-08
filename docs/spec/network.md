@@ -301,7 +301,7 @@ the console ([input.md K3](input.md#k3-the-report-and-the-client),
    ends with `VIRTIO_NET_EXIT_CLIENT_BROKE` ([N4](#n4-the-frame-protocol),
    rule 2). The first process starts the driver again without counting
    a restart against it, and counts one against the service. The kernel
-   has no call yet that ends a process from outside
+   has no call that ends a process from outside
    ([accounts.md A10](accounts.md#a10-supervision)), so a service that
    breaks the protocol twice within `RESTART_PERIOD_SECONDS` cannot be
    restarted: the first process gives the network up, its function
@@ -1275,7 +1275,7 @@ socket hold at most 14 pages of kernel memory, 10 for a 32 KiB read and
   client can close at most 64 connections a minute itself, and all
   clients 256, without its connects failing; the kernel memory of the
   service's queued replies is charged to the service's job by I1, rule
-  5, which this kernel does not enforce yet
+  5, which this kernel does not enforce
   ([ipc.md I4](ipc.md#i4-ports), rule 3).
 - **Not taken:** charging each client's sockets to its job. No call
   tells a server the job at a channel's other end, as F17 found.
@@ -1289,8 +1289,8 @@ TLS is not the stack's. It lives in each program that
 needs it, as a library from the program's closure, in the program's own
 process: its keys and its plaintext never leave that process. The trust
 anchors are a store path the program's derivation names; checking a
-certificate's validity period needs the wall-clock time, which a
-wall-clock service not yet specified will give
+certificate's validity period needs the wall-clock time, which an
+unspecified wall-clock service gives
 ([storage.md F2](storage.md#f2-attributes) names it). Which library,
 and whether nova-os writes its own, is the TLS specification's to
 decide.

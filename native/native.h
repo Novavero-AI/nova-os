@@ -5,7 +5,7 @@
     convention of S4. Each returns the call's status (S7), and writes its
     results through the pointers it takes, 0 when the call fails, except
     where a function says otherwise. These are the calls the kernel
-    implements so far. */
+    implements. */
 
 #ifndef NOVA_NATIVE_H
 #define NOVA_NATIVE_H

@@ -224,7 +224,7 @@ its exit from the process handle it holds
 - **Cost:** a restart loses every window's place, and a program that
   does not handle `PEER_CLOSED` on its connection loses its windows for
   good. A program shown when the compositor is given up runs on unseen,
-  since the kernel has no call yet to end it
+  since the kernel has no call to end it
   ([accounts.md A7](accounts.md#a7-the-session)). Between the
   compositor's end and its successor's first frame, the screen shows a
   stale frame.
@@ -321,7 +321,7 @@ connection issued from it, and every window and capture of each, and
 tells the issuer with `DISPLAY_CLOSED` and the number it gave the
 connection. At logout login closes the session's connection, so every
 window, connection and capture of the session goes at once; the
-session's processes run on, since the kernel has no call yet to end
+session's processes run on, since the kernel has no call to end
 them ([accounts.md A7](accounts.md#a7-the-session)), but none can show
 anything. If login ends, its own connection closes and everything it
 issued goes with it.
@@ -788,7 +788,7 @@ change.
   why the README's Run command attaches one; and an absolute position
   needs no acceleration curve.
 - **Why relative motion now:** real mice report relative motion, and
-  QEMU's virtio mouse does today; the driver passes the deltas on as the
+  QEMU's virtio mouse does; the driver passes the deltas on as the
   device gives them, so the policy that turns them into the pointer's
   motion can come with the compositor without a change of protocol.
 - **Cost:** two message formats on one kind of endpoint; a driver per
@@ -984,8 +984,8 @@ the keyboard.
    channel the first process marks as the console's. The service
    answers with every account's name, in bytewise order, and nothing
    else. A login channel not so marked is refused it, with
-   `ERR_ACCESS_DENIED`. Only login holds a login channel now, so the
-   mark separates nothing yet; it is there for a login from elsewhere,
+   `ERR_ACCESS_DENIED`. Only login holds a login channel, so the
+   mark separates nothing; it is there for a login from elsewhere,
    such as a network's, which must not list names.
 3. The password field draws no character of what is typed, only a mark
    for each, and the line goes to the service as
@@ -1307,7 +1307,7 @@ a GPU changes the compositor's output and nothing above it.
    one writer, and the driver cannot make a section of another memory
    type over it ([ipc.md I6](ipc.md#i6-device-memory-and-io-ports)).
    That the firmware's GOP on `virtio-vga` gives nova-boot that
-   framebuffer is not yet checked; the driver's first boot checks it.
+   framebuffer is not checked; the driver's first boot checks it.
 5. **Acceleration, later,** composes client buffers on the GPU, each
    uploaded as a texture from the sections it already has. A buffer
    that lives in GPU memory, for a program that renders on the GPU, is a

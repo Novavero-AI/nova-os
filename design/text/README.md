@@ -5,9 +5,9 @@ Bezier curves, and of `lib/typeface.c` and `lib/typeset.c`, which read
 a nova-os font ([docs/spec/font-format.md](../../docs/spec/font-format.md))
 and set text in it: `outline.py` and `typeface.py`, in the same integer
 arithmetic, so the C draws the same pixels. `sheet.txt` is a reference
-sheet of the approved designs' faces and sizes and of their rounded
-rectangles and circles over Limb, and `specimen.py` the type specimen's
-screen, which `test/specimen.c` draws in nova-os.
+sheet of the login and desktop designs' faces and sizes and of their
+rounded rectangles and circles over Limb, and `specimen.py` the type
+specimen's screen, which `test/specimen.c` draws in nova-os.
 
 ## The rasterizer
 
@@ -64,7 +64,7 @@ on the pixel grid.
   that sit on it on that row's edge, the same in every line.
 - **Cost:** a glyph's coverage depends on its position's fraction, so a
   cache of glyph masks would need one mask per fraction, or positions
-  rounded to a few fractions; nothing caches masks yet, and each glyph
+  rounded to a few fractions; nothing caches masks, and each glyph
   is filled where it stands.
 
 `lib/typeset.c` decodes UTF-8, a byte that does not start a well-formed

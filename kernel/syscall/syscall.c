@@ -411,7 +411,7 @@ static STATUS thread_exit_call(const UINT64 *arguments, UINT64 *results)
     process_thread_exit();
 }
 
-/* section_create(size, options): a handle. No option is defined yet. */
+/* section_create(size, options): a handle. No option is defined. */
 static STATUS section_create_call(const UINT64 *arguments, UINT64 *results)
 {
     HANDLE_TABLE *table = caller_handles();

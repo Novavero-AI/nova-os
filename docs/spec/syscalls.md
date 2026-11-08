@@ -503,7 +503,7 @@ mappings may be writable and executable at once
 ([objects.md O5](objects.md#o5-access-rights)); another bit fails with
 `ERR_INVALID_ARGS`. `section_create` rounds `size` up to whole pages and
 fills them with zeros; `SECTION_MAX_SIZE` (2 MiB) is its limit, and no
-option is defined yet. `process_map` takes a fixed address, page-aligned
+option is defined. `process_map` takes a fixed address, page-aligned
 like `offset` and `size`, and a protection of `MAP_READ` (1) with
 `MAP_WRITE` (2), `MAP_EXECUTE` (4), both or neither; a range that is
 partly mapped already fails with `ERR_BAD_STATE`, and its result is the
@@ -531,7 +531,7 @@ writes one `UINT64` device address per page. `interrupt_create` takes
 `options` 0 for a message-signalled source, numbered as
 [ipc.md I6](ipc.md#i6-device-memory-and-io-ports) gives, and fails with
 `ERR_NOT_SUPPORTED` for a global system interrupt, which this kernel
-does not route yet. The vector it allocates is charged to the calling
+does not route. The vector it allocates is charged to the calling
 process's job until the interrupt's last handle closes; past the job's
 quota, or with no vector free, the call fails with `ERR_NO_RESOURCES`.
 `pin_release` ends the pin and removes its handle together, so no other
