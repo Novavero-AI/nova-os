@@ -1,0 +1,7 @@
+# Refused at line 7: a division by 0.
+
+# A description that breaks one rule.
+interface divide_by_zero
+
+# A number.
+const A 4 / 0

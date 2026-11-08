@@ -1,0 +1,8 @@
+# Refused at line 8: an import closed by `end` and more.
+
+# A description that breaks one rule.
+interface import_end_junk
+
+import native_abi.h
+  const X 1
+end junk

@@ -20,6 +20,9 @@ set -f
 checked=0
 failed=0
 for source in $(git ls-files '*.c'); do
+  # It includes a header that ci/check-mkinterface.sh makes, and is compiled
+  # there with these warnings and the sanitizers.
+  [ "$source" = tools/check-probe-protocol.c ] && continue
   checked=$((checked + 1))
   dir=$(dirname "$source")
   until [ -f "$dir/compile_flags.txt" ]; do
@@ -34,12 +37,13 @@ for source in $(git ls-files '*.c'); do
   standard=
   case $source in
     # These are C11, as the build lines in their headers say, because
-    # include/cpu.h, include/input_protocol.h and include/native_abi.h
-    # are; tools/compile_flags.txt gives the C99 the other tools are
-    # written in. Drop this once they have a compile_flags.txt of their
-    # own.
+    # include/cpu.h, include/input_protocol.h, include/native_abi.h and
+    # the generated protocol headers are; tools/compile_flags.txt gives
+    # the C99 the other tools are written in. Drop this once they have a
+    # compile_flags.txt of their own.
     tools/check-masks.c | tools/check-pointer.c | tools/check-text.c | \
-      tools/check-backdrop.c | tools/check-compose.c)
+      tools/check-backdrop.c | tools/check-compose.c | \
+      tools/check-console-protocol.c | tools/check-display-protocol.c)
       standard=-std=c11 ;;
   esac
   # shellcheck disable=SC2086

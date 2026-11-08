@@ -1,0 +1,10 @@
+# Refused at line 9: default twice.
+
+# A description that breaks one rule.
+interface setting_default_twice
+
+# A setting.
+setting a.b bool
+  default true
+  default false
+end

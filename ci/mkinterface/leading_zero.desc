@@ -1,0 +1,7 @@
+# Refused at line 7: a number with a leading zero.
+
+# A description that breaks one rule.
+interface leading_zero
+
+# A number.
+const A 007

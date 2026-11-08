@@ -1,0 +1,23 @@
+# Refused at line 16: invalid server twice.
+
+# A description that breaks one rule.
+interface policy_twice
+
+# The start of every message.
+struct HDR
+  u32 transaction  # the request's
+  u32 kind         # the message's
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid server drop
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body HDR
+  end
+end

@@ -170,7 +170,7 @@ rights DISPLAY_CONNECTION_RIGHTS channel read write wait transfer
 # A message on the control channel.
 struct COMPOSITOR_SETUP
   # the request's, other than 0 where it has a reply, which echoes it;
-  # 0 on a request with no reply and on an event
+  # 0 on an event
   u32 transaction
   u32 kind         # the message's kind
 end
@@ -260,7 +260,7 @@ struct WINDOW_BUFFER_REQUEST
   u32 buffer max WINDOW_BUFFER_LAST       # its number
   u32 width min 1 max WINDOW_WIDTH_MAX    # its width in pixels
   u32 height min 1 max WINDOW_HEIGHT_MAX  # its height in pixels
-  u32 stride min 1                        # its pixels from one row to the next, at least width
+  u32 stride min 1                        # its pixels from one row to the next; 0 is refused here, below width by the compositor (D19)
 end
 
 # A rectangle of a buffer, in the buffer's pixels (D7).

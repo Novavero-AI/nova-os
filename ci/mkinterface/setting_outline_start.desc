@@ -1,0 +1,9 @@
+# Refused at line 8: a contour that starts with a control point.
+
+# A description that breaks one rule.
+interface setting_outline_start
+
+# A setting.
+setting a.b outline
+  contour q 1,1 0,0 2,2
+end

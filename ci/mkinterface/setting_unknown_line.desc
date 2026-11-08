@@ -1,0 +1,10 @@
+# Refused at line 9: an unknown line in a setting.
+
+# A description that breaks one rule.
+interface setting_unknown_line
+
+# A setting.
+setting a.b bool
+  default true
+  frobnicate
+end

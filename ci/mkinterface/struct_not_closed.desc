@@ -1,0 +1,8 @@
+# Refused at line 7: a structure that is not closed.
+
+# A description that breaks one rule.
+interface struct_not_closed
+
+# A layout.
+struct S
+  u32 a  # a

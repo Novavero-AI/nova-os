@@ -90,7 +90,8 @@ fi
 # store image (docs/spec/store-image.md), mkfont a TrueType font as a
 # nova-os font (docs/spec/font-format.md), mkimage a boot disk as a raw
 # image and as a VHDX file (docs/spec/disk-layout.md), mkdata a data
-# disk holding an empty pool (docs/spec/pool-format.md).
+# disk holding an empty pool (docs/spec/pool-format.md), mkinterface the
+# C header of an interface description (docs/spec/interface.md).
 cd -- "$src"
 cc "$HOST_OPTIMIZATION" -o "$out/sha256" -I include -I kernel/random \
   tools/sha256.c kernel/random/sha256.c
@@ -102,6 +103,24 @@ cc "$HOST_OPTIMIZATION" -o "$out/mkfont" -I include tools/mkfont.c
 cc "$HOST_OPTIMIZATION" -o "$out/mkimage" tools/mkimage.c
 cc "$HOST_OPTIMIZATION" -o "$out/mkdata" -I include -I kernel/random -I fs \
   tools/mkdata.c fs/pool.c kernel/random/sha256.c
+cc "$HOST_OPTIMIZATION" -o "$out/mkinterface" tools/mkinterface.c
+
+# Each interface description makes its protocol header, which must be
+# the one tracked in include/, the header every program is built from
+# (docs/spec/interface.md P16). A stale header stops the build here, before
+# anything is compiled from it.
+mkdir -p -- "$out/include"
+for description in interfaces/*.desc; do
+  name=${description##*/}
+  name=${name%.desc}
+  header=include/${name}_protocol.h
+  "$out/mkinterface" "$description" "$out/$header"
+  if ! cmp -s -- "$out/$header" "$header"; then
+    echo "$0: $header is not what mkinterface makes of $description;" \
+      "regenerate it with: $out/mkinterface $description $header" >&2
+    exit 1
+  fi
+done
 
 # pinned NAME: the sha256 SHA256SUMS gives for NAME.
 pinned() {

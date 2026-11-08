@@ -1,0 +1,9 @@
+# Refused at line 8: a value past what the type holds.
+
+# A description that breaks one rule.
+interface constraint_past_type
+
+# A layout.
+struct S
+  u8 a = 300  # a
+end

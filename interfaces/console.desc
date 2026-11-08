@@ -1,0 +1,175 @@
+# The console's protocols (docs/spec/console.md): a client's session,
+# over which it writes text and reads lines typed at the console (C4),
+# and the messages with which the first process starts the console and
+# hands it the display and its sessions (C2). Every field is
+# little-endian.
+interface console
+
+import native_abi.h
+  const BOOTSTRAP_BACKGROUND_SECTIONS_MAX 64
+  struct BOOTSTRAP_DISPLAY 24
+  struct BOOTSTRAP_BACKGROUND 16
+end
+
+# The most bytes one write shows.
+const CONSOLE_WRITE_MAX 4096
+# The most bytes one line holds.
+const CONSOLE_LINE_MAX 256
+# The messages the console's end of a session queues (ipc.md I1); a
+# client that fills it waits for CHANNEL_WRITABLE.
+const CONSOLE_SESSION_CAPACITY 16
+# The sessions the console serves at once.
+const CONSOLE_SESSIONS 8
+# A read's flag: the line is not shown as it is typed, nor is its end.
+const CONSOLE_READ_NO_ECHO 0x1
+# The bytes of the answer to CONSOLE_SETUP_BACKGROUND.
+const CONSOLE_PREPARED_SIZE 4
+# The messages the control channel queues: the background, the display
+# and a session for each the console serves.
+const CONSOLE_CONTROL_CAPACITY CONSOLE_SESSIONS + 2
+
+# A client's end of a session: it writes requests and reads replies,
+# and the end may move to the program that is to use it.
+rights CONSOLE_SESSION_RIGHTS channel read write wait transfer
+
+# A request on a session.
+struct CONSOLE_REQUEST
+  u32 transaction  # echoed in a read's reply (ipc.md I3)
+  u32 operation    # CONSOLE_WRITE or CONSOLE_READ
+  u32 length       # a write's bytes, or a read's most
+  u32 flags        # 0, or CONSOLE_READ_NO_ECHO on a read
+end
+
+# The reply to a read, which the line follows.
+struct CONSOLE_REPLY
+  u32 transaction  # the read's
+  u32 length       # the line's bytes, which follow
+end
+
+# A message on the control channel.
+struct CONSOLE_SETUP
+  u32 transaction = 0  # 0
+  # CONSOLE_SETUP_DISPLAY, CONSOLE_SETUP_SESSION or
+  # CONSOLE_SETUP_BACKGROUND
+  u32 kind
+end
+
+# The bytes of a setup.
+const CONSOLE_SETUP_SIZE sizeof CONSOLE_SETUP
+
+# The setup that hands the console the display.
+struct CONSOLE_SETUP_DISPLAY_MESSAGE
+  CONSOLE_SETUP setup        # CONSOLE_SETUP_DISPLAY
+  BOOTSTRAP_DISPLAY display  # the display, as nova-boot drew on it
+end
+
+# The setup that offers the console the kernel's background, to
+# prepare its panel from before the display comes (console.md C5).
+struct CONSOLE_SETUP_BACKGROUND_MESSAGE
+  CONSOLE_SETUP setup  # CONSOLE_SETUP_BACKGROUND
+  # the display the console is to be given
+  BOOTSTRAP_DISPLAY display
+  # what the sections hold, as the kernel labelled them
+  BOOTSTRAP_BACKGROUND background
+end
+
+# The channel the platform driver keeps to the input drivers' client
+# (input.md K3), as the console takes it: its bootstrap message, then
+# one input endpoint a message.
+channel bootstrap
+  invalid client exit
+
+  # The console's bootstrap message: a transaction ID of 0 and these
+  # handles in this order.
+  event start
+    body transaction
+    first
+    # the debug log's resource
+    handle resource travels use needs none index CONSOLE_BOOTSTRAP_DEBUG_LOG
+    # its process, with MAP
+    handle process travels map needs map index CONSOLE_BOOTSTRAP_SELF
+    # its end of the control channel
+    handle channel travels read write wait needs read write wait index CONSOLE_BOOTSTRAP_CONTROL
+    handles CONSOLE_BOOTSTRAP_HANDLES  # how many handles it carries
+  end
+
+  # An endpoint to read a description and then key events or pointer
+  # reports from, as a driver reported it (input_protocol.h).
+  event endpoint
+    body transaction
+    handle channel travels read wait needs read wait  # the endpoint
+  end
+end
+
+# The control channel, from the first process: a CONSOLE_SETUP, its
+# kind saying what follows it and what handles it carries. The console
+# answers every CONSOLE_SETUP_BACKGROUND, so its end carries
+# CHANNEL_RIGHT_WRITE as well as CHANNEL_RIGHT_READ and RIGHT_WAIT.
+channel control
+  capacity CONSOLE_CONTROL_CAPACITY
+  select kind
+  invalid server drop
+  invalid client drop
+
+  # The display.
+  request display CONSOLE_SETUP_DISPLAY 1
+    body CONSOLE_SETUP_DISPLAY_MESSAGE
+    # an MMIO resource covering the framebuffer's pages
+    handle resource travels use needs none
+  end
+
+  # A session.
+  request session CONSOLE_SETUP_SESSION 2
+    body CONSOLE_SETUP
+    # the console's end of the session
+    handle channel travels read write wait needs read write wait
+  end
+
+  # The kernel's background, before the display.
+  request background CONSOLE_SETUP_BACKGROUND 3
+    body CONSOLE_SETUP_BACKGROUND_MESSAGE
+    # the background's sections, mapped one after another
+    handle section min 0 max BOOTSTRAP_BACKGROUND_SECTIONS_MAX travels read needs read
+    reply prepared
+  end
+
+  # The answer to a background, once the panel is prepared from it or
+  # it is refused: a transaction ID of 0 and no handles.
+  reply prepared
+    body transaction
+    field transaction = 0
+  end
+end
+
+# Sessions (C4). A client writes requests on its end of a session; the
+# console answers each read with a CONSOLE_REPLY and the line.
+channel session
+  capacity CONSOLE_SESSION_CAPACITY
+  select operation
+  invalid server close
+  invalid client drop
+
+  # Show the length bytes that follow the request. No reply.
+  request write CONSOLE_WRITE 1
+    body CONSOLE_REQUEST
+    field flags = 0
+    tail text bytes count length max CONSOLE_WRITE_MAX  # the bytes shown
+  end
+
+  # Read a line of at most length bytes, edited at the console and
+  # ended by Enter. The reply carries the request's transaction ID, the
+  # line's length and the line, printable ASCII without its end. A
+  # session has at most one read waiting.
+  request read CONSOLE_READ 2
+    body CONSOLE_REQUEST
+    field length min 1 max CONSOLE_LINE_MAX
+    field flags mask CONSOLE_READ_NO_ECHO
+    reply line
+  end
+
+  # The line a read asked for, printable ASCII without its end.
+  reply line
+    body CONSOLE_REPLY
+    tail line bytes count length max CONSOLE_LINE_MAX  # the line
+  end
+end

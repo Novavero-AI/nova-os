@@ -1,0 +1,9 @@
+# Refused at line 8: a max at its type's largest.
+
+# A description that breaks one rule.
+interface constraint_max_largest
+
+# A layout.
+struct S
+  u8 a max 255  # a
+end

@@ -1,0 +1,9 @@
+# Refused at line 8: a material's tint that is not a colour.
+
+# A description that breaks one rule.
+interface setting_material_tint
+
+# A setting.
+setting a.b material
+  default 0x151A 50
+end

@@ -1,0 +1,7 @@
+# Refused at line 7: a right the type does not have.
+
+# A description that breaks one rule.
+interface rights_unknown_right
+
+# Rights.
+rights R channel launch

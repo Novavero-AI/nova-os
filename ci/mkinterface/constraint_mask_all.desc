@@ -1,0 +1,9 @@
+# Refused at line 8: a mask the type already guarantees.
+
+# A description that breaks one rule.
+interface constraint_mask_all
+
+# A layout.
+struct S
+  u8 a mask 255  # a
+end

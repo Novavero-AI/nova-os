@@ -1,0 +1,7 @@
+# Refused at line 7: a tab.
+
+# A description that breaks one rule.
+interface tab
+
+# A number.
+const A 1	

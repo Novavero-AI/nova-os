@@ -1,0 +1,56 @@
+# Refused at line 54: more than 16 field lines in a message.
+
+# A description that breaks one rule.
+interface limit_field_lines
+
+# A body of 17 counts.
+struct BIGBODY
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 f1  # a count
+  u32 f2  # a count
+  u32 f3  # a count
+  u32 f4  # a count
+  u32 f5  # a count
+  u32 f6  # a count
+  u32 f7  # a count
+  u32 f8  # a count
+  u32 f9  # a count
+  u32 f10  # a count
+  u32 f11  # a count
+  u32 f12  # a count
+  u32 f13  # a count
+  u32 f14  # a count
+  u32 f15  # a count
+  u32 f16  # a count
+  u32 f17  # a count
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body BIGBODY
+    field f1 min 1
+    field f2 min 1
+    field f3 min 1
+    field f4 min 1
+    field f5 min 1
+    field f6 min 1
+    field f7 min 1
+    field f8 min 1
+    field f9 min 1
+    field f10 min 1
+    field f11 min 1
+    field f12 min 1
+    field f13 min 1
+    field f14 min 1
+    field f15 min 1
+    field f16 min 1
+    field f17 min 1
+  end
+end

@@ -1,0 +1,10 @@
+# Refused at line 9: a default that is not allowed.
+
+# A description that breaks one rule.
+interface setting_enum_default
+
+# A setting.
+setting a.b enum
+  allowed red green
+  default blue
+end

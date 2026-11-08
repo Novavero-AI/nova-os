@@ -56,13 +56,6 @@
 
 #define WAKE_SIGNALS (CHANNEL_READABLE | CHANNEL_PEER_CLOSED)
 
-/* The rights the console needs on its end of a session and of the
-   control channel, which it answers the background on, and on an input
-   endpoint, which it only reads. */
-#define SESSION_NEEDS (CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT)
-#define CONTROL_NEEDS SESSION_NEEDS
-#define CHANNEL_NEEDS (CHANNEL_RIGHT_READ | RIGHT_WAIT)
-
 /* Where the panel's backdrop came from, as the display's line says. */
 #define BACKDROP_SECTION "section"
 #define BACKDROP_COMPUTED "computed"
@@ -143,11 +136,19 @@ static union {
 } message;
 
 /* A read's reply, wiped once written, since a line read without echo is
-   a secret. */
-static struct {
+   a secret. It is the buffer the generated encoding writes, aligned to 8
+   bytes (docs/spec/interface.md P14). */
+static union {
+    UINT64 alignment;
     CONSOLE_REPLY reply;
-    UINT8 line[CONSOLE_LINE_MAX];
+    UINT8 bytes[CONSOLE_SESSION_TO_CLIENT_BYTES_MAX];
 } answer;
+
+/* The answer to a background, aligned the same way. */
+static union {
+    UINT64 alignment;
+    UINT8 bytes[CONSOLE_CONTROL_TO_CLIENT_BYTES_MAX];
+} background_answer;
 
 static UINT64 now(void)
 {
@@ -225,15 +226,15 @@ static void end_session(int index)
 static void answer_read(void)
 {
     SESSION *session = &sessions[reader];
-    UINT32 i, status;
+    UINT32 size, status;
 
     answer.reply.transaction = session->transaction;
-    answer.reply.length = editor.length;
-    for (i = 0; i < editor.length; i++)
-        answer.line[i] = editor.bytes[i];
-    status = channel_write(session->channel, &answer,
-                           (UINT32)sizeof answer.reply + editor.length,
-                           no_handles, 0);
+    answer.reply.length = 0;
+    status = console_session_line_encode(&answer.reply, editor.bytes,
+                                         editor.length, answer.bytes, &size);
+    if (status == OK)
+        status = channel_write(session->channel, answer.bytes, size,
+                               no_handles, 0);
     wipe(&answer, sizeof answer);
     wipe(editor.bytes, sizeof editor.bytes);
     session->reading = 0;
@@ -545,26 +546,25 @@ static void describe(const INPUT_DEVICE *d)
 /* ------------------------------------------------------------------------
    Sessions. */
 
-/* Act on the request in message, byte_count bytes long, from session
-   index. Returns 0 if it is not one the protocol has, which ends the
-   session. */
-static int request(int index, UINT32 byte_count)
+/* Act on the request in message, byte_count bytes long and carrying
+   handle_count handles, from session index. Returns 0 if it is not one
+   the protocol allows, or is a read while the session's earlier read
+   waits, which ends the session (C4). */
+static int request(int index, UINT32 byte_count, const RECEIVED_HANDLE *handles,
+                   UINT32 handle_count)
 {
     const CONSOLE_REQUEST *r = &message.request;
     SESSION *session = &sessions[index];
+    UINT32 which;
 
-    if (byte_count < sizeof *r)
+    if (console_session_request_check(message.bytes, byte_count, handles,
+                                      handle_count, &which) != OK)
         return 0;
-    if (r->operation == CONSOLE_WRITE) {
-        if (r->flags != 0 || r->length > CONSOLE_WRITE_MAX ||
-            byte_count != sizeof *r + r->length)
-            return 0;
-        output(message.bytes + sizeof *r, r->length);
+    if (which == CONSOLE_WRITE) {
+        output(console_session_write_text(message.bytes), r->length);
         return 1;
     }
-    if (r->operation != CONSOLE_READ || byte_count != sizeof *r ||
-        (r->flags & ~(UINT32)CONSOLE_READ_NO_ECHO) || r->length == 0 ||
-        r->length > CONSOLE_LINE_MAX || session->reading)
+    if (session->reading)
         return 0;
     session->reading = 1;
     session->transaction = r->transaction;
@@ -587,7 +587,8 @@ static void serve_session(int index)
                               &handle_count);
         if (status == ERR_SHOULD_WAIT)
             return;
-        if (status == OK && request(index, byte_count)) {
+        if (status == OK &&
+            request(index, byte_count, handles, handle_count)) {
             if (sessions[index].channel == HANDLE_INVALID)
                 return;
             continue;
@@ -600,18 +601,19 @@ static void serve_session(int index)
     }
 }
 
+/* Serve the session whose end handle is, a handle the control channel's
+   check accepted; refused, logged and closed if all CONSOLE_SESSIONS
+   places are taken. */
 static void add_session(const RECEIVED_HANDLE *handle)
 {
     int i;
 
-    if (handle->type == TYPE_CHANNEL &&
-        (handle->rights & SESSION_NEEDS) == SESSION_NEEDS)
-        for (i = 0; i < CONSOLE_SESSIONS; i++)
-            if (sessions[i].channel == HANDLE_INVALID) {
-                sessions[i].channel = handle->handle;
-                sessions[i].reading = 0;
-                return;
-            }
+    for (i = 0; i < CONSOLE_SESSIONS; i++)
+        if (sessions[i].channel == HANDLE_INVALID) {
+            sessions[i].channel = handle->handle;
+            sessions[i].reading = 0;
+            return;
+        }
     say("nova-console: session refused\r\n");
     handle_close(handle->handle);
 }
@@ -762,44 +764,43 @@ static void prepare_from(const CONSOLE_SETUP_BACKGROUND_MESSAGE *m,
     finish_panel(b->width, b->height, BACKDROP_SECTION, started);
 }
 
-/* Whether the count handles a background message carried are the
-   sections its label's image takes, each with READ. */
-static int are_sections(const BOOTSTRAP_BACKGROUND *b,
-                        const RECEIVED_HANDLE *handles, UINT32 count)
+/* Answer the first process's background, which carried transaction,
+   with the control channel's reply: the panel is prepared or it is
+   refused. */
+static void answer_prepared(UINT32 transaction)
 {
-    UINT32 i;
+    UINT32 size, status = console_control_prepared_encode(
+                    transaction, background_answer.bytes, &size);
 
-    if (count != bootstrap_background_sections(b->width, b->height))
-        return 0;
-    for (i = 0; i < count; i++)
-        if (handles[i].type != TYPE_SECTION ||
-            !(handles[i].rights & SECTION_RIGHT_READ))
-            return 0;
-    return 1;
+    if (status == OK)
+        status = channel_write(control, background_answer.bytes, size,
+                               no_handles, 0);
+    if (status != OK)
+        say_status("background answer failed", status);
 }
 
-/* The kernel's background, offered before the display in a message of
-   byte_count bytes at m (C5): prepare the panel from it where its label
+/* The kernel's background, offered before the display in the message at m
+   (C5), whose check passed: prepare the panel from it where its label
    matches the display the console is to be given, close its sections,
    and answer the first process, which waits for the answer before it
-   reports its startup done. A background that does not match, or a
-   message that is not one, is refused, logged, and answered too, and
-   the panel is prepared once the display comes. */
+   reports its startup done. A background that does not match, or that
+   holds other sections than its label's image takes, is refused,
+   logged, and answered too, and the panel is prepared once the display
+   comes. */
 static void take_background(const CONSOLE_SETUP_BACKGROUND_MESSAGE *m,
-                            UINT32 byte_count, const RECEIVED_HANDLE *handles,
-                            UINT32 count)
+                            const RECEIVED_HANDLE *handles, UINT32 count)
 {
     UINT64 started = now();
     const char *refusal = 0;
-    UINT32 transaction = 0, status, i;
+    UINT32 i;
 
-    if (byte_count != sizeof *m || m->setup.transaction != 0)
-        refusal = "malformed";
-    else if (drawing)
+    if (drawing)
         refusal = "after the display";
     else
         refusal = panel_background_refusal(&m->background, &m->display);
-    if (!refusal && !are_sections(&m->background, handles, count))
+    if (!refusal &&
+        count != bootstrap_background_sections(m->background.width,
+                                               m->background.height))
         refusal = "wrong sections";
     if (refusal) {
         say("nova-console: background refused reason=");
@@ -810,10 +811,7 @@ static void take_background(const CONSOLE_SETUP_BACKGROUND_MESSAGE *m,
     }
     for (i = 0; i < count; i++)
         handle_close(handles[i].handle);
-    status = channel_write(control, &transaction, CONSOLE_PREPARED_SIZE,
-                           no_handles, 0);
-    if (status != OK)
-        say_status("background answer failed", status);
+    answer_prepared(m->setup.transaction);
 }
 
 /* Take the display through resource, which covers its framebuffer, and
@@ -907,11 +905,11 @@ static void render(void)
 static void take_bootstrap(void)
 {
     RECEIVED_HANDLE handles[CONSOLE_BOOTSTRAP_HANDLES];
-    UINT32 transaction = 1, byte_count, handle_count, observed, i;
+    UINT32 byte_count, handle_count, observed, i;
     UINT32 status;
 
     for (;;) {
-        status = channel_read(bootstrap, &transaction, sizeof transaction,
+        status = channel_read(bootstrap, message.bytes, sizeof message.bytes,
                               handles, CONSOLE_BOOTSTRAP_HANDLES, &byte_count,
                               &handle_count);
         if (status != ERR_SHOULD_WAIT)
@@ -919,14 +917,9 @@ static void take_bootstrap(void)
         object_wait_one(bootstrap, WAKE_SIGNALS, DEADLINE_INFINITE,
                         &observed);
     }
-    if (status == OK && byte_count == INPUT_CLIENT_MESSAGE_SIZE &&
-        transaction == 0 && handle_count == CONSOLE_BOOTSTRAP_HANDLES &&
-        handles[CONSOLE_BOOTSTRAP_DEBUG_LOG].type == TYPE_RESOURCE &&
-        handles[CONSOLE_BOOTSTRAP_SELF].type == TYPE_PROCESS &&
-        (handles[CONSOLE_BOOTSTRAP_SELF].rights & PROCESS_RIGHT_MAP) &&
-        handles[CONSOLE_BOOTSTRAP_CONTROL].type == TYPE_CHANNEL &&
-        (handles[CONSOLE_BOOTSTRAP_CONTROL].rights & CONTROL_NEEDS) ==
-            CONTROL_NEEDS) {
+    if (status == OK &&
+        console_bootstrap_start_check(message.bytes, byte_count, handles,
+                                      handle_count) == OK) {
         say_open(handles[CONSOLE_BOOTSTRAP_DEBUG_LOG].handle);
         mapping.self = handles[CONSOLE_BOOTSTRAP_SELF].handle;
         control = handles[CONSOLE_BOOTSTRAP_CONTROL].handle;
@@ -1029,9 +1022,10 @@ static void add_input(UINT32 endpoint)
 static void serve_bootstrap(void)
 {
     RECEIVED_HANDLE handle;
-    UINT32 transaction = 1, byte_count, handle_count;
-    UINT32 status = channel_read(bootstrap, &transaction, sizeof transaction,
-                                 &handle, 1, &byte_count, &handle_count);
+    UINT32 byte_count, handle_count;
+    UINT32 status = channel_read(bootstrap, message.bytes,
+                                 sizeof message.bytes, &handle, 1,
+                                 &byte_count, &handle_count);
 
     if (status == ERR_SHOULD_WAIT)
         return;
@@ -1039,10 +1033,9 @@ static void serve_bootstrap(void)
         say("nova-console: stopped\r\n");
         process_exit(EXIT_SUPERVISOR_GONE);
     }
-    if (status == OK && byte_count == INPUT_CLIENT_MESSAGE_SIZE &&
-        transaction == 0 && handle_count == 1 &&
-        handle.type == TYPE_CHANNEL &&
-        (handle.rights & CHANNEL_NEEDS) == CHANNEL_NEEDS) {
+    if (status == OK &&
+        console_bootstrap_endpoint_check(message.bytes, byte_count, &handle,
+                                         handle_count) == OK) {
         add_input(handle.handle);
         return;
     }
@@ -1053,43 +1046,43 @@ static void serve_bootstrap(void)
 }
 
 /* A display, a session or the kernel's background from the first
-   process. */
+   process. A message the description does not allow is dropped, with the
+   handles it carried closed; a background that has a reply is answered
+   with the request's transaction alone, so the first process does not
+   wait for it (docs/spec/interface.md P10). */
 static void serve_control(void)
 {
     RECEIVED_HANDLE handles[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
-    const CONSOLE_SETUP *setup = &message.setup.setup;
-    UINT32 byte_count, handle_count = 0, i;
-    UINT32 status = channel_read(control, message.bytes, sizeof message.bytes,
-                                 handles, BOOTSTRAP_BACKGROUND_SECTIONS_MAX,
-                                 &byte_count, &handle_count);
+    UINT32 byte_count, handle_count = 0, which = CONSOLE_CONTROL_UNNAMED, i;
+    UINT32 read_status = channel_read(control, message.bytes,
+                                      sizeof message.bytes, handles,
+                                      BOOTSTRAP_BACKGROUND_SECTIONS_MAX,
+                                      &byte_count, &handle_count);
+    UINT32 status = read_status;
 
-    if (status == ERR_SHOULD_WAIT)
+    if (read_status == ERR_SHOULD_WAIT)
         return;
-    if (status == OK && byte_count >= CONSOLE_SETUP_SIZE &&
-        setup->kind == CONSOLE_SETUP_BACKGROUND) {
-        take_background(&message.background, byte_count, handles,
-                        handle_count);
-        return;
-    }
-    if (status == OK && byte_count >= CONSOLE_SETUP_SIZE &&
-        setup->transaction == 0) {
-        if (setup->kind == CONSOLE_SETUP_SESSION &&
-            byte_count == CONSOLE_SETUP_SIZE && handle_count == 1) {
+    if (read_status == OK)
+        status = console_control_request_check(message.bytes, byte_count,
+                                               handles, handle_count, &which);
+    if (status == OK) {
+        if (which == CONSOLE_SETUP_BACKGROUND)
+            take_background(&message.background, handles, handle_count);
+        else if (which == CONSOLE_SETUP_SESSION)
             add_session(&handles[0]);
-            return;
-        }
-        if (setup->kind == CONSOLE_SETUP_DISPLAY &&
-            byte_count == sizeof message.setup && handle_count == 1 &&
-            handles[0].type == TYPE_RESOURCE) {
+        else
             display(handles[0].handle, &message.setup.display);
-            return;
-        }
+        return;
     }
-    for (i = 0; status == OK && i < handle_count; i++)
+    if (which == CONSOLE_SETUP_BACKGROUND) {
+        say("nova-console: background refused reason=malformed\r\n");
+        answer_prepared(message.setup.setup.transaction);
+    }
+    for (i = 0; read_status == OK && i < handle_count; i++)
         handle_close(handles[i].handle);
-    if (status != ERR_PEER_CLOSED)
+    if (read_status != ERR_PEER_CLOSED)
         say_status("control message refused", status);
-    if (status != OK)
+    if (read_status != OK)
         close_if_open(&control);
 }
 

@@ -1,6 +1,8 @@
-/* The console client (console.h): CONSOLE_REQUESTs on a session, as
-   console_protocol.h lays them out. A write has no reply; a read's reply
-   carries its transaction. */
+/* The console client (console.h): a session's requests laid out by
+   console_protocol.h's generated functions, which refuse what the
+   description does not allow, and a read's reply accepted by its check
+   (docs/spec/console.md C4, docs/spec/interface.md P14). A write has no
+   reply; a read's reply carries its transaction. */
 
 #include "console.h"
 #include "native.h"
@@ -9,8 +11,17 @@
 /* Transactions a program assigns itself have bit 31 clear (ipc.md I3). */
 #define TRANSACTION_MASK 0x7fffffffu
 
-static UINT8 request_bytes[sizeof(CONSOLE_REQUEST) + CONSOLE_WRITE_MAX];
-static UINT8 reply_bytes[sizeof(CONSOLE_REPLY) + CONSOLE_LINE_MAX];
+/* The bytes of a request and of a reply, each aligned to 8 bytes and as
+   long as the longest message of its direction, as the generated
+   functions require (interface.md P14). */
+static union {
+    UINT64 alignment;
+    UINT8 bytes[CONSOLE_SESSION_TO_SERVER_BYTES_MAX];
+} request_buffer;
+static union {
+    UINT64 alignment;
+    UINT8 bytes[CONSOLE_SESSION_TO_CLIENT_BYTES_MAX];
+} reply_buffer;
 static UINT32 last_transaction;
 
 /* A message with no handles still names an array in user memory, which
@@ -45,18 +56,19 @@ static UINT32 send(UINT32 session, const void *bytes, UINT32 length)
 
 UINT32 console_write(UINT32 session, const UINT8 *text, UINT32 length)
 {
-    CONSOLE_REQUEST *request = (CONSOLE_REQUEST *)request_bytes;
-    UINT32 piece, i, status = OK;
+    CONSOLE_REQUEST request;
+    UINT32 piece, size, status = OK;
 
+    request.transaction = 0;
+    request.operation = 0;
+    request.length = 0;
+    request.flags = 0;
     while (status == OK && length > 0) {
         piece = length < CONSOLE_WRITE_MAX ? length : CONSOLE_WRITE_MAX;
-        request->transaction = 0;
-        request->operation = CONSOLE_WRITE;
-        request->length = piece;
-        request->flags = 0;
-        for (i = 0; i < piece; i++)
-            request_bytes[sizeof *request + i] = text[i];
-        status = send(session, request_bytes, sizeof *request + piece);
+        status = console_session_write_encode(&request, text, piece,
+                                              request_buffer.bytes, &size);
+        if (status == OK)
+            status = send(session, request_buffer.bytes, size);
         text += piece;
         length -= piece;
     }
@@ -76,38 +88,43 @@ UINT32 console_read_line(UINT32 session, CONSOLE_ECHO_MODE echo, UINT8 *line,
                          UINT32 capacity, UINT32 *length)
 {
     static RECEIVED_HANDLE handles[CHANNEL_MAX_HANDLES];
-    const CONSOLE_REPLY *reply = (const CONSOLE_REPLY *)reply_bytes;
+    const CONSOLE_REPLY *reply = (const CONSOLE_REPLY *)reply_buffer.bytes;
     CONSOLE_REQUEST request;
-    UINT32 status, observed, bytes = 0, count = 0, i;
+    const UINT8 *text;
+    UINT32 status, observed, bytes = 0, count = 0, size, i;
 
     *length = 0;
-    if (capacity == 0 || capacity > CONSOLE_LINE_MAX)
-        return ERR_INVALID_ARGS;
     request.transaction = next_transaction();
-    request.operation = CONSOLE_READ;
+    request.operation = 0;
     request.length = capacity;
     request.flags = echo == CONSOLE_NO_ECHO ? CONSOLE_READ_NO_ECHO : 0;
-    status = send(session, &request, sizeof request);
+    status = console_session_read_encode(&request, request_buffer.bytes,
+                                         &size);
+    if (status == OK)
+        status = send(session, request_buffer.bytes, size);
     if (status == OK)
         status = object_wait_one(session,
                                  CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
                                  DEADLINE_INFINITE, &observed);
     if (status == OK)
-        status = channel_read(session, reply_bytes, sizeof reply_bytes,
-                              handles, CHANNEL_MAX_HANDLES, &bytes, &count);
+        status = channel_read(session, reply_buffer.bytes,
+                              sizeof reply_buffer.bytes, handles,
+                              CHANNEL_MAX_HANDLES, &bytes, &count);
     for (i = 0; status == OK && i < count; i++)
         handle_close(handles[i].handle);
     if (status == OK &&
-        (count != 0 || bytes < sizeof *reply ||
+        (console_session_line_check(reply_buffer.bytes, bytes, handles,
+                                    count) != OK ||
          reply->transaction != request.transaction ||
-         reply->length > capacity || bytes != sizeof *reply + reply->length))
+         reply->length > capacity))
         status = ERR_BAD_STATE;
     if (status == OK) {
+        text = console_session_line_line(reply_buffer.bytes);
         for (i = 0; i < reply->length; i++)
-            line[i] = reply_bytes[sizeof *reply + i];
+            line[i] = text[i];
         *length = reply->length;
     }
     /* A line read without echo is a password: no copy of it stays. */
-    wipe(reply_bytes, sizeof reply_bytes);
+    wipe(reply_buffer.bytes, sizeof reply_buffer.bytes);
     return status;
 }

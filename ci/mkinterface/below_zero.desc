@@ -1,0 +1,7 @@
+# Refused at line 7: a result below 0.
+
+# A description that breaks one rule.
+interface below_zero
+
+# A number.
+const A 1 - 2

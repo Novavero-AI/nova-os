@@ -1,0 +1,7 @@
+# Refused at line 7: a parenthesis that is not closed.
+
+# A description that breaks one rule.
+interface parenthesis_open
+
+# A number.
+const A ( 1 + 2

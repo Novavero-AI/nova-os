@@ -1,0 +1,30 @@
+# Refused at line 28: an index name declared twice.
+
+# A description that breaks one rule.
+interface handle_index_twice
+
+# A body with a count.
+struct NB
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 n  # a count
+  u8 small  # a small count
+  u8 pad1  # pad
+  u16 pad2  # pad
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body NB
+    # A handle.
+    handle channel travels read needs read index SLOT
+    # Another.
+    handle channel travels read needs read index SLOT
+  end
+end

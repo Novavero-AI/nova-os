@@ -1,0 +1,10 @@
+# Refused at line 7: a structure whose size is not a multiple of its largest scalar's.
+
+# A description that breaks one rule.
+interface struct_size
+
+# A layout.
+struct S
+  u64 a  # a
+  u32 b  # b
+end

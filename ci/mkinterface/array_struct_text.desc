@@ -1,0 +1,15 @@
+# Refused at line 14: text on structure elements.
+
+# A description that breaks one rule.
+interface array_struct_text
+
+# Inner.
+struct IN
+  u32 x  # x
+end
+
+# Outer.
+struct OUT
+  u32 n  # n
+  IN a array 4 count n text  # a
+end

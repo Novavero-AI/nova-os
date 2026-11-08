@@ -1,0 +1,14 @@
+# Refused at line 12: a setting declared twice.
+
+# A description that breaks one rule.
+interface setting_twice
+
+# A setting.
+setting a.b bool
+  default true
+end
+
+# Again.
+setting a.b bool
+  default true
+end

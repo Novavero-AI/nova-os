@@ -1,0 +1,6 @@
+# Refused at line 6: a description beside its declaration ending in the trigraph.
+
+# A description that breaks one rule.
+interface description_trigraph_trail
+
+const A 1  # Ends in a backslash ??/

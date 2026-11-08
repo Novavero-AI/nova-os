@@ -1,0 +1,9 @@
+# Refused at line 8: an array whose size in bytes wraps past 2^64.
+
+# A description that breaks one rule.
+interface array_size_wrap
+
+# A layout.
+struct S
+  u64 a array 0x2000000000000001  # a
+end

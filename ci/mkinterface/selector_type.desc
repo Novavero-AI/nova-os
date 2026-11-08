@@ -1,0 +1,24 @@
+# Refused at line 21: a selector that is a u8.
+
+# A description that breaks one rule.
+interface selector_type
+
+# The start of every message.
+struct H8
+  u32 transaction  # the request's
+  u8 kind  # the message's
+  u8 pad1  # pad
+  u16 pad2  # pad
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body H8
+  end
+end

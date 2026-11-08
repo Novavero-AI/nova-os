@@ -1,0 +1,6 @@
+# Refused at line 6: a constant without a description.
+
+# A description that breaks one rule.
+interface description_missing
+
+const A 1

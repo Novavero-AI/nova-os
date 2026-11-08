@@ -1,0 +1,9 @@
+# Refused at line 8: a field named for a C keyword.
+
+# A description that breaks one rule.
+interface field_keyword
+
+# A layout.
+struct S
+  u32 int  # int
+end

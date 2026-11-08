@@ -7,8 +7,9 @@ grammar, how a description lays out messages and the handles they
 carry, what a receiver does with a message that breaks its
 description, how messages are numbered, settings and their defaults,
 the C header the generator writes with the functions both ends encode
-and check messages with, where that header lives, and the console's
-description, the first protocol described.
+and check messages with, where that header lives, the console's
+description, the first protocol described, and what the generator
+refuses where the grammar says nothing.
 [shell.md L24](shell.md#l24-settings-and-service-commands), rules 4 to
 7, decides that each service is described this way; the nvo commands,
 the Settings window's forms and the documentation it names are later
@@ -117,8 +118,10 @@ and the kernel and its assembly include it.
    with no blank line between, are its description; where there are
    none, the comment on its own line is. Each comment line loses its
    `#` and the one space after it. A declaration with both is refused,
-   and so is a description holding `*/`. A declaration P3 marks
-   described must have a description; every other comment is the
+   and so is a description the header's comment could not carry: one
+   holding `/*` or `*/`, or a line ending in `??/`
+   ([P24](#p24-text-in-a-description-and-in-a-string)). A declaration P3
+   marks described must have a description; every other comment is the
    reader's alone.
 7. **Blocks.** `import`, `struct`, `channel`, `request`, `reply`,
    `event` and `setting` open a block, which a line `end` closes. A
@@ -221,10 +224,18 @@ the grammar:
    namespaces are: C names, one for the whole description; channels;
    messages, one for each channel; fields, one for each structure; and
    tails, one for each message. So `window` may name a channel, a
-   request on another channel and a field. No declared C name is one the generator makes
-   ([P14](#p14-the-generated-header)), no field or tail is named for a
-   C keyword, and no generated function has two parameters of one
-   name.
+   request on another channel and a field. No declared C name is one the
+   generator makes ([P14](#p14-the-generated-header)) or one the
+   generated functions take from `native_abi.h` and `types.h`: `OK`,
+   `ERR_INVALID_ARGS`, `ERR_NOT_SUPPORTED`, `RIGHTS_SAME`,
+   `RECEIVED_HANDLE`, `HANDLE_TRANSFER`, the scalar types' C names, the
+   object types' `TYPE_` macros and the rights' macros of
+   [P9](#p9-handles); a setting's macros are names the generator makes.
+   No field or tail is named for a C keyword, no tail for a parameter or
+   a local of the generated functions (`bytes`, `byte_count`,
+   `handles`, `handle_count`, `transfers`, `which`, `transaction`,
+   `body`, `out`, `p`, `at`, `total`, `i`, `j`, `n`, `c`, `k`, `lo` and
+   `hi`), and no generated function has two parameters of one name.
 3. A message's `handle` lines give its handles' positions in the order
    written, and its `tail` lines its tails' order; its other lines
    stand in any order after `body`.
@@ -264,15 +275,22 @@ the grammar:
    `const CONSOLE_CONTROL_CAPACITY CONSOLE_SESSIONS + 2` gives
    `#define CONSOLE_CONTROL_CAPACITY (CONSOLE_SESSIONS + 2)`, and every
    constant is an integer constant expression, usable in `#if` and in
-   an array's size.
+   an array's size. A level of parentheses where an operand or a result
+   passes 2,147,483,647, what a C `int` holds, starts with `1ULL * `, so
+   that C computes it in unsigned 64-bit arithmetic as the generator
+   did: `const BIG 2000000000 + 2000000000` gives
+   `#define BIG (1ULL * 2000000000 + 2000000000)`. A level within what an
+   `int` holds is written as the description has it
+   ([P22](#p22-constants-as-operands)).
 3. `const NAME "text"` gives `#define NAME "text"`; a string is no
    operand.
 4. `rights NAME TYPE RIGHT...` gives the rights' macros of
    [P9](#p9-handles) joined by `|`, in the order written:
    `rights CONSOLE_SESSION_RIGHTS channel read write wait transfer`
    gives `#define CONSOLE_SESSION_RIGHTS (CHANNEL_RIGHT_READ |
-   CHANNEL_RIGHT_WRITE | RIGHT_WAIT | RIGHT_TRANSFER)`. Its value is an
-   operand, and its name a `rights-spec`.
+   CHANNEL_RIGHT_WRITE | RIGHT_WAIT | RIGHT_TRANSFER)`. Its name is a
+   `rights-spec`, and its value is no operand
+   ([P22](#p22-constants-as-operands)).
 5. The generator knows the channel's limits, [ipc.md
    I1](ipc.md#i1-channels)'s: `CHANNEL_MAX_BYTES` (65,536),
    `CHANNEL_MAX_HANDLES` (64) and `CHANNEL_MAX_CAPACITY` (1,024). They
@@ -350,12 +368,16 @@ the grammar:
    wherever the structure is used; a message's `field` line constrains,
    for that message alone, a field its structure leaves unconstrained.
    A constraint the field's type already guarantees, `min 0` on an
-   unsigned field or a `max` at its type's largest, is refused.
+   unsigned field or a `max` at its type's largest, is refused, and so
+   is a value above what the type holds
+   ([P21](#p21-arrays-and-constraints)).
 4. `TYPE name array N` is N elements of a scalar type or a structure.
    With `count F`, F is a scalar field before it in the same structure,
    at most N, and the elements past F are 0. With `text`, which needs
    `count` and `u8`, the counted bytes are text ([P8](#p8-tails),
-   rule 6).
+   rule 6). An array takes no constraint of its own, and a structure it
+   holds carries its fields' constraints into each element
+   ([P21](#p21-arrays-and-constraints)).
 5. `S name` embeds structure S, declared or imported before it; its
    own constraints hold inside it.
 
@@ -368,7 +390,9 @@ the grammar:
   with zeros. The consumer of a message must verify that padding
   contains zeros" ([FIDL wire format][fidl-wire]).
 - **Cost:** the author writes the padding, and a field moved costs a
-  new structure ([P11](#p11-numbers-and-change)).
+  new structure ([P11](#p11-numbers-and-change)). A constraint that
+  relates two fields, such as a stride of at least a width, has no
+  form, and the receiver checks it where it reads both.
 - **Not taken:** Wayland's padding, where "the value of padding bytes
   is undefined" ([Wayland](README.md#display-and-interface-design-references),
   `Protocol.md`). Its cost is a process's leftover memory in every
@@ -418,8 +442,9 @@ called request. A message from the server to a client is called event"
    CHANNEL` names a reply that is the first message the server sends on
    another channel of the description, whose end the request carries,
    as an open's reply goes on the endpoint it carried
-   ([storage.md F1](storage.md#f1-the-directory-protocol)). A reply no
-   request names is refused.
+   ([storage.md F1](storage.md#f1-the-directory-protocol)); what the
+   generator checks of it is [P23](#p23-a-reply-on-another-channel)'s. A
+   reply no request names is refused.
 6. **`status PATH`** in a reply names a `u32` field holding a status,
    0 for success, as [syscalls.md S7](syscalls.md#s7-error-reporting)'s
    `OK` is. With any other status the reply is its body alone, with no
@@ -454,7 +479,7 @@ called request. A message from the server to a client is called event"
 **Decided.** After its body, a message may carry tails, in the order
 written, with nothing between them:
 
-1. `tail NAME S`: one structure S.
+1. `tail NAME S`: one structure S ([P25](#p25-structure-tails)).
 2. `tail NAME bytes|text|S count PATH max V`: PATH names a `u16`,
    `u32` or `u64` field of the body or of an earlier structure tail,
    holding the tail's bytes, or for S its elements, at most V. A
@@ -462,8 +487,8 @@ written, with nothing between them:
    the tail's.
 3. `tail NAME bytes|text rest max V`: every byte after the tails before
    it, at most V; only the last tail.
-4. `field PATH = tails`: the field holds the number of bytes after the
-   body, as `IO_REQUEST`'s `length` does.
+4. `field PATH = tails`: the field of the body holds the number of
+   bytes after the body, as `IO_REQUEST`'s `length` does.
 5. A message is its body and its tails, exactly: its check refuses a
    byte more or fewer.
 6. **Text** is UTF-8 as RFC 3629 gives it, with no overlong form, no
@@ -503,9 +528,12 @@ written, with nothing between them:
 
 1. `handle TYPE [min A] [max B] travels RIGHTS needs RIGHTS [index
    NAME]` gives one position, or with `min` and `max` a run of A to B
-   handles, by default exactly 1. Only a message's last `handle` line
-   may vary in number, and the most a message carries is at most
-   `CHANNEL_MAX_HANDLES`.
+   handles, by default exactly 1. A run of a fixed number, A equal to B,
+   takes that many positions, each checked and transferred as the line
+   says, and may come anywhere in the message. Only a message's last
+   `handle` line may vary in number, and the most a message carries is
+   at most `CHANNEL_MAX_HANDLES`. `min` and `max` come together
+   ([P20](#p20-handle-runs)).
 2. The types and rights are those of
    [objects.md O2](objects.md#o2-object-types) and
    [O5](objects.md#o5-access-rights), by the names `native_abi.h`
@@ -570,7 +598,9 @@ written, with nothing between them:
    2. with a selector, it holds the message's value;
    3. the transaction rules of [P7](#p7-channels-and-messages), rule 4;
    4. the body's constraints, in offset order, embedded structures'
-      included, then arrays' counts, their zeros and their text;
+      included, then for each array in offset order its count, its
+      zeros, its text and the constraints of its elements
+      ([P21](#p21-arrays-and-constraints));
    5. for a reply with `status` other than 0, the message is its body
       alone with no handle, and the check ends;
    6. each tail in order, its count within its maximum, its text, and
@@ -826,13 +856,19 @@ need one for key chords.
    and its `travels` rights; and checks the bytes and the number of
    handles as the receiver's check does. It returns `OK` with the
    message's size in `*byte_count`, or `ERR_INVALID_ARGS` with 0 there.
-   A reply whose status is not 0 takes tails of count 0 and no handles.
+   A reply whose status is not 0 takes tails of count 0 and no handles,
+   whatever the minimums of its runs are, and the encoding writes no
+   transfer for it; the number of handles is the runs' only where the
+   status is 0.
 6. **Buffers.** `bytes` is aligned to 8 bytes and holds at least the
    direction's `BYTES_MAX`, for encoding and for reading alike; a
    receiver reads a message's body by casting `bytes` once the check
-   passes.
+   passes, and a structure tail through its accessor, which returns a
+   pointer aligned for the structure ([P25](#p25-structure-tails)).
 7. **Literals and comments.** A literal is written as the description
-   writes it; a computed size in decimal. A description written above
+   writes it, a string with each `?` as `\?`
+   ([P24](#p24-text-in-a-description-and-in-a-string)); a computed size
+   in decimal. A description written above
    its declaration becomes a `/** */` comment above the declaration, its
    lines as written; one written on the declaration's own line becomes
    a `/**< */` comment after it, and a structure's trailing comments
@@ -880,7 +916,11 @@ need one for key chords.
    each description in `ci/mkinterface/`, each breaking one rule of
    this document and naming in its first comment the line the refusal
    must give, and fails unless each is refused at that line. A rule the
-   generator gains gets a description there.
+   generator gains gets a description there. The script then makes the
+   header of `ci/probe/probe.desc`, which uses what the descriptions in
+   `interfaces/` do not, and runs `tools/check-probe-protocol.c` against
+   it under the sanitizers; output the generator must get right gets a
+   line in that description and a check there.
 
 - **Why:** the seed builds every byte (DESIGN.md, principle 1), so the
   tool is C a TinyCC from the seed compiles, as every host tool here is;
@@ -1268,6 +1308,213 @@ message's three handles and an endpoint's one.
 - **Not taken:** renaming the console's messages to the generator's
   pattern on the way over. Its cost is a change to every source that
   uses them in the step meant to change no byte.
+
+## P20. Handle runs
+
+**Decided.**
+
+1. In a `handle` line, `min` and `max` come together: a line with one of
+   them alone is refused at its line, and so is a `min` above its `max`.
+2. The generator adds each `handle` line's largest count to the
+   message's total as it reads the line, and refuses a message whose
+   total would pass `CHANNEL_MAX_HANDLES` at the message's own line,
+   whatever any one count is, so no count wraps the sum
+   ([P7](#p7-channels-and-messages), rule 8).
+
+- **Why:** a lone `min 1` or a lone `max 4` has two readings, a run
+  that ends at `CHANNEL_MAX_HANDLES` or at the other bound's default,
+  and a description read each way gives its receiver different handles.
+  A count is any number up to 2^64 - 1, so the total is checked before
+  it is made.
+- **Cost:** a run of no minimum is written `min 0 max 4`.
+- **Not taken:** a lone `min` running to `CHANNEL_MAX_HANDLES` and a
+  lone `max` running from 0. Their cost is a default every reader must
+  know, in a line whose point is the receiver's authority.
+
+## P21. Arrays and constraints
+
+**Decided.**
+
+1. A constraint on an array field is refused. A scalar takes a
+   constraint ([P6](#p6-layout), rule 3), and an array's elements that
+   need one are the fields of a structure.
+2. The constraints of a structure hold for every element of an array of
+   it: the counted elements of an array with `count`, and all the
+   elements of one without. A message's check applies them after the
+   array's count, its zeros and its text, in the elements' order
+   ([P10](#p10-checking-a-message), rule 1). An element past the count
+   is 0 and is held to nothing.
+3. A structure that holds an array, directly or in a structure it
+   embeds, is no element: an array of such structures, and a structure
+   tail of one, are refused, since no check walks the arrays inside an
+   element.
+4. A value of a constraint is at most what the field's type holds, for a
+   signed type its largest positive number, and a `mask` is within it;
+   a larger one is refused at its line.
+5. An array whose size in bytes passes 2^64 - 1, and a structure whose
+   size does, are refused at the field's line, so no size wraps.
+
+- **Why:** a receiver trusts every field of a structure the check
+  passed, and an element is a structure like the body's own; a bound or
+  a mask above the type is a check that never fails or always does, and
+  the value is a mistake whichever it is.
+- **Cost:** an array of scalars that must lie in a range is an array of a
+  structure of one field; a list of lists is a structure tail or an
+  array of structures with no array in them.
+- **Not taken:** a constraint on an array that holds for each element.
+  Its cost is a second reading of a scalar's constraint, and its
+  meaning for `text` and for counts. Nested loops in the check for
+  arrays inside elements. Their cost is a local for each depth in
+  functions that declare few, for a shape no protocol here has.
+
+## P22. Constants as operands
+
+**Decided.**
+
+1. A `rights` constant is no value of P3's grammar: a name that holds
+   one in an expression, a constraint, an array's size or a tail's `max`
+   is refused at its line. It names a set of rights for the `travels`
+   and `needs` of a `handle` line, whose macros the header joins
+   ([P4](#p4-constants-and-expressions), rule 4).
+2. A constant that is a number has the value the generator computed, and
+   the header spells each expression so that C computes it: a level of parentheses where an operand or a result
+   passes what a C `int` holds starts with `1ULL * `, and any other is
+   written as the description has it (P4, rule 2).
+
+- **Why:** the generator knows a right by its name and `native_abi.h`
+  alone gives it a number, so it cannot compute with one and keeps one
+  source of the numbers. The values it checks sizes and limits against
+  are the values a compiler computes, so a constant that wrapped in C's
+  `int` arithmetic would be a different number in the header from the one
+  a message was checked against, with no diagnostic from either.
+- **Cost:** a set of rights is not combined with another in a constant;
+  a header's constants that pass a C `int` carry `1ULL * `.
+- **Not taken:** the generator holding the rights' numbers. Its cost is a
+  second copy of `native_abi.h`'s constants that must change with it. A
+  suffix on every number the header writes. Its cost is every constant
+  of the shipped headers changing, nearly all of them within an `int`.
+
+## P23. A reply on another channel
+
+**Decided.** In `reply NAME on CHANNEL`
+([P7](#p7-channels-and-messages), rule 5), the generator checks that:
+
+1. CHANNEL is another channel of the description, and has a reply
+   NAME.
+2. That reply is marked `first` in its channel: it is the first message
+   the server sends on the end the request carries.
+3. The request has a `handle` line of type `channel`: the end the reply
+   goes on.
+
+Each is refused at the request's line. A request that carries two
+channel ends does not say in the language which the reply uses; its
+description does.
+
+- **Why:** these are the three facts rule 5 states, so a reply that no
+  server sends first, or on an end the request never gave, is refused
+  where it is written and not found by a boot.
+- **Cost:** the language does not tie the reply to one of several
+  channel ends; a protocol that needs it describes it in the request's
+  comment.
+- **Not taken:** naming the handle, as in `reply NAME on CHANNEL via
+  INDEX`. Its cost is a construct for a request with two channel ends,
+  which no protocol here has.
+
+## P24. Text in a description and in a string
+
+**Decided.**
+
+1. A description that holds `/*` or `*/`, or has a line that ends in
+   `??/`, is refused at its declaration's line. The header carries it
+   as a comment: `*/` ends the comment early; `/*` inside a comment
+   makes a compiler warn, and the tree compiles with warnings as
+   errors; and `??/` at the end of a line is a backslash to a compiler
+   that reads trigraphs, which joins the line to the next.
+2. The header writes each `?` of a string as `\?`, in a constant's string
+   and in a text setting's default, so that no two question marks and a
+   character form a trigraph, which a compiler reads before it reads the
+   string. `const S "a??/"` gives `#define S "a\?\?/"`, the same
+   characters.
+
+- **Why:** a description is text the author writes freely, and a
+  header that fails to compile for a character in it fails far from the
+  line that holds it; the escape is the one C gives for this.
+- **Cost:** a description cannot hold `/*`, `*/` or a line ending in
+  `??/`; a string is longer in the header than in the description by a
+  backslash for each `?`.
+- **Not taken:** refusing a `?` in a string. Its cost is a text such as
+  a prompt that cannot hold a question mark. Splitting a string into
+  two literals between question marks. Its cost is a rule to find the
+  places, where an escape on each needs none.
+
+## P25. Structure tails
+
+**Decided.**
+
+1. A structure tail starts at a multiple of its structure's alignment,
+   its largest scalar's size, wherever the tails before it end: the
+   body's size and the sizes of the structure tails before it add up to
+   a multiple of it, and every counted tail before it holds elements
+   whose size is one. A `bytes` or `text` tail holds elements of 1 byte,
+   so a structure that needs more alignment does not follow one. A tail
+   that breaks this is refused at its line.
+2. A structure used as a tail has its alignment known: an imported
+   structure used as one lists its fields ([P5](#p5-imports-and-the-kernels-vocabulary),
+   rule 1). A structure with an array is no tail's structure
+   ([P21](#p21-arrays-and-constraints), rule 3).
+3. `field PATH = tails` ([P8](#p8-tails), rule 4) names a field of the
+   body. A field of a structure tail is refused at its line.
+
+- **Why:** the accessor `p_m_t` returns `const S *` into the message,
+  and a pointer not aligned for S is undefined to use and a fault on
+  some targets, so a layout with no aligned reading is refused where it
+  is written. The encoding writes the `= tails` field with the body's,
+  from the total, before any tail's fields exist to write into.
+- **Cost:** a structure tail after a `bytes` or `text` tail, or after a
+  body that is not a multiple of its alignment, is written with the
+  padding the author names, in the body or in a structure, or with the
+  structure first.
+- **Not taken:** an accessor that copies the structure out, which
+  reads at any start. Its cost is a copy in every receiver, and a
+  signature unlike the body's view. Padding a tail's start in the
+  encoding. Its cost is bytes between tails that every count and the
+  `rest` tail must then account for.
+
+## P26. The generator's limits
+
+**Decided.** A description that fills one of the generator's tables is
+refused at the line that overflows it, naming the table, as `too many
+constants` does, and a description past its size at line 0, as no line
+holds it:
+
+| Table | Holds |
+|---|---|
+| A line | 4,096 bytes and 1,024 words |
+| A description | 1,048,576 bytes ([P15](#p15-the-generator)) |
+| C names | 4,096 |
+| Constants | 1,024 |
+| `rights` constants | 64 |
+| Structures | 256 |
+| Fields | 2,048, and 96 in a structure |
+| Imports | 16, naming 256 constants and structures in all |
+| Channels | 32 |
+| Messages | 256 |
+| In a message | 8 tails, 16 `field` lines, 16 `handle` lines, and 1,024 constrained fields and 1,024 arrays to check |
+| The documentation of a declaration | 512 lines, the sentence the generator adds included, refused at the first |
+| An `in` constraint | 16 values |
+| Settings | 128, and 32 allowed words in one |
+| An outline | 16 contours and 512 points |
+| Names the generator makes | 8,192 |
+
+- **Why:** the tool is C99 with the standard library and a seed's
+  compiler, and a fixed table is one comparison to check where a growing
+  one is an allocation to make and release in each place; every
+  description in the tree holds a small part of each.
+- **Cost:** a description that outgrows a table raises it in the tool,
+  with a case for it in `ci/mkinterface/` and a change to this table.
+- **Not taken:** tables that grow with the description. Their cost is
+  an allocation for each, and the limit of memory in place of one the
+  author can read.
 
 ## References
 

@@ -1,0 +1,7 @@
+# Refused at line 6: an import that is no header of include/.
+
+# A description that breaks one rule.
+interface import_name
+
+import ../secret
+end

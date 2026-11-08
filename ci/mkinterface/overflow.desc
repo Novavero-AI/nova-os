@@ -1,0 +1,7 @@
+# Refused at line 7: a result past 2^64 - 1.
+
+# A description that breaks one rule.
+interface overflow
+
+# A number.
+const A 0xFFFFFFFFFFFFFFFF + 1

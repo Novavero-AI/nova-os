@@ -1,0 +1,32 @@
+# Refused at line 13: an event and a reply in a direction without a selector.
+
+# A description that breaks one rule.
+interface event_beside_reply
+
+# The start of every message.
+struct HDR
+  u32 transaction  # the request's
+  u32 kind         # the message's
+end
+
+# A channel.
+channel c
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping
+    body HDR
+    reply pong
+  end
+
+  # A reply.
+  reply pong
+    body HDR
+  end
+
+  # An event.
+  event tick
+    body HDR
+  end
+end

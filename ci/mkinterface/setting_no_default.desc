@@ -1,0 +1,8 @@
+# Refused at line 7: a setting without a default.
+
+# A description that breaks one rule.
+interface setting_no_default
+
+# A setting.
+setting a.b bool
+end

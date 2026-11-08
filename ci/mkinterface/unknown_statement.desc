@@ -1,0 +1,6 @@
+# Refused at line 6: an unknown statement.
+
+# A description that breaks one rule.
+interface unknown_statement
+
+frobnicate A

@@ -1,0 +1,7 @@
+# Refused at line 7: an expression that mixes operators.
+
+# A description that breaks one rule.
+interface mixed_operators
+
+# A number.
+const A 1 + 2 * 3

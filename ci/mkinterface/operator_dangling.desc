@@ -1,0 +1,7 @@
+# Refused at line 7: an operator without a term.
+
+# A description that breaks one rule.
+interface operator_dangling
+
+# A number.
+const A 1 +

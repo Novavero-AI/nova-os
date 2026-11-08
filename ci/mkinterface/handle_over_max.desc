@@ -1,0 +1,28 @@
+# Refused at line 23: more than CHANNEL_MAX_HANDLES handles.
+
+# A description that breaks one rule.
+interface handle_over_max
+
+# A body with a count.
+struct NB
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 n  # a count
+  u8 small  # a small count
+  u8 pad1  # pad
+  u16 pad2  # pad
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body NB
+    # A run.
+    handle channel min 0 max 65 travels read needs read
+  end
+end

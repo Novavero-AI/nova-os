@@ -1,0 +1,27 @@
+# Refused at line 25: a field line naming no field.
+
+# A description that breaks one rule.
+interface field_rule_unknown
+
+# A body with a count.
+struct NB
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 n  # a count
+  u8 small  # a small count
+  u8 pad1  # pad
+  u16 pad2  # pad
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body NB
+    field nowhere = 1
+  end
+end

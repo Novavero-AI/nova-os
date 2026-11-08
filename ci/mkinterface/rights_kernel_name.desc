@@ -1,0 +1,7 @@
+# Refused at line 7: a rights constant named for a kernel right.
+
+# A description that breaks one rule.
+interface rights_kernel_name
+
+# Rights.
+rights RIGHT_WAIT channel read

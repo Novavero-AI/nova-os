@@ -1,0 +1,7 @@
+# Refused at line 7: a CR.
+
+# A description that breaks one rule.
+interface carriage_return
+
+# A number.
+const A 1

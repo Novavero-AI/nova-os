@@ -1,0 +1,24 @@
+# Refused at line 22: a field its structure already constrains.
+
+# A description that breaks one rule.
+interface field_rule_struct
+
+# A body.
+struct CB
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 flags = 0  # flags
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body CB
+    field flags = 1
+  end
+end

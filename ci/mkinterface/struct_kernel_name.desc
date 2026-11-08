@@ -1,0 +1,9 @@
+# Refused at line 7: a structure named for a name the generated code uses.
+
+# A description that breaks one rule.
+interface struct_kernel_name
+
+# A layout.
+struct HANDLE_TRANSFER
+  u32 a  # a
+end

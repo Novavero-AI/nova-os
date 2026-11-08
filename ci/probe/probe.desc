@@ -1,0 +1,239 @@
+# What the generated code must get right that the descriptions in
+# interfaces/ do not use: constrained elements of arrays, strings that hold
+# question marks, constants that pass what a C int holds, structure tails
+# after layouts that align them, runs of handles of a fixed number, a reply
+# with a status that carries handles only at status 0, a tail that takes the
+# rest of a message and the field that holds the bytes after the body, text
+# in an array and in a tail, counts of each width, signed constraints, and a
+# retired message and a first one beside the selector's others, and
+# the transactions of a channel with replies and events.
+# tools/check-probe-protocol.c checks each against the header this makes.
+interface probe
+
+# A sum whose operands and result pass what a C int holds.
+const PROBE_SUM 2000000000 + 2000000000
+# A product that passes 32 bits.
+const PROBE_PRODUCT 65536 * 65536
+# A hexadecimal sum that wraps in 32 bits.
+const PROBE_WRAP 0xFFFFFFFF + 1
+# One level of an expression inside another, the inner one past a C int.
+const PROBE_NESTED ( 2000000000 + 2000000000 ) / 2
+# Two constants that pass what a C int holds.
+const PROBE_NAMES PROBE_PRODUCT + PROBE_SUM
+# A product that stays within what a C int holds.
+const PROBE_SMALL 3 * 7
+# The most elements an array holds.
+const PROBE_COUNT_MAX 4
+
+# A string that ends in the trigraph for a backslash.
+const PROBE_SLASH "a??/"
+# A string that holds the trigraph for a bar.
+const PROBE_BAR "what??!"
+# A string of every trigraph.
+const PROBE_ALL "??=??/??'??(??)??!??<??>??-"
+
+# A text whose default holds a trigraph.
+setting probe.text text
+  default "what??!"
+  max 16
+end
+
+# An element whose fields are constrained.
+struct PROBE_ELEMENT
+  u32 value max 5  # at most 5
+  i32 delta min 1 max 5  # from 1 to 5, compared as signed
+end
+
+# A body of a counted array of elements, a fixed one, and bounds past what a
+# C int holds.
+struct PROBE_BODY
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 count  # how many of items
+  u32 pad = 0  # padding
+  PROBE_ELEMENT items array PROBE_COUNT_MAX count count  # the counted elements
+  PROBE_ELEMENT fixed array 2  # elements that all hold
+  u64 big max PROBE_SUM  # at most PROBE_SUM
+  u64 wrapped min PROBE_WRAP  # at least PROBE_WRAP
+end
+
+# A body that ends where a pair can start.
+struct PROBE_HEAD
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 count  # how many pairs follow the first
+  u32 pad = 0  # padding
+end
+
+# A pair of 64-bit values.
+struct PROBE_PAIR
+  u64 first  # the first
+  u64 second  # the second
+end
+
+# The start of every message of the runs, the reply and the retired one.
+struct PROBE_HDR
+  u32 transaction  # the request's
+  u32 kind  # the message's
+end
+
+# A reply that is a status and the bytes after it.
+struct PROBE_RESULT
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 status  # 0 for success
+  u32 length  # the bytes of data
+end
+
+# A body whose length field holds the bytes after it.
+struct PROBE_NOTE
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 length  # the bytes after the body
+end
+
+# Counts of each width, and a text in an array.
+struct PROBE_WIDE
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u64 size  # the bytes of data
+  u16 extra  # the bytes of more
+  u16 label_length  # the bytes of label
+  u8 label array 8 count label_length text  # a text of at most 8 bytes
+  u32 pad = 0  # padding
+end
+
+# Signed and unsigned fields with only a maximum or a minimum.
+struct PROBE_ROW
+  i32 low max 5  # at most 5, compared as signed
+  u32 high min 1  # at least 1
+  i64 wide max 5  # at most 5, compared as signed
+  i64 above min 1  # at least 1, compared as signed
+end
+
+# A body of rows: one in the body, two in an array, and a counted tail's.
+struct PROBE_SIGNED
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 count  # how many rows follow the body
+  u32 pad = 0  # padding
+  PROBE_ROW row  # a row in the body
+  PROBE_ROW rows array 2  # two rows
+end
+
+# The server's end of a connection that checks what it is sent.
+channel link
+  select kind
+  invalid server close
+  invalid client close
+
+  # Elements, to be checked in every position.
+  request store PROBE_STORE 1
+    body PROBE_BODY
+  end
+
+  # A pair, and a run of them after it.
+  request pairs PROBE_PAIRS 2
+    body PROBE_HEAD
+    # The pair after the body.
+    tail lead PROBE_PAIR
+    # The pairs after it.
+    tail run PROBE_PAIR count count max 3
+  end
+
+  # Open an end, on which the answer comes.
+  request open PROBE_OPEN 3
+    body PROBE_HEAD
+    reply opened on endpoint
+    # The end the server answers on.
+    handle channel travels read write needs read write
+  end
+
+  # Two sections that are always there, then up to three ports.
+  request run PROBE_RUN 4
+    body PROBE_HDR
+    handle section min 2 max 2 travels read write needs read  # the pair
+    handle port min 0 max 3 travels queue read needs queue  # the ports
+  end
+
+  # Three channel ends, the only handles.
+  request trio PROBE_TRIO 5
+    body PROBE_HDR
+    handle channel min 3 max 3 travels read write needs read write  # three
+  end
+
+  # A request answered with a status.
+  request fetch PROBE_FETCH 6
+    body PROBE_HDR
+    reply fetched
+  end
+
+  # Its reply, whose sections come only with status 0.
+  reply fetched
+    body PROBE_RESULT
+    status status
+    tail data bytes count length max 10  # the bytes
+    handle section min 1 max 2 travels read write needs read  # the sections
+  end
+
+  # A request answered with a status and one end.
+  request claim PROBE_CLAIM 12
+    body PROBE_HDR
+    reply claimed
+  end
+
+  # Its reply, whose end comes only with status 0.
+  reply claimed
+    body PROBE_RESULT
+    status status
+    handle channel travels read write needs read write  # the one end
+  end
+
+  # Text that takes the rest of the message, and the length it makes.
+  request note PROBE_NOTE_REQUEST 7
+    body PROBE_NOTE
+    tail text text rest max 20  # the text
+    field length = tails
+  end
+
+  # Counts of each width, and a text in an array.
+  request wide PROBE_WIDE_REQUEST 8
+    body PROBE_WIDE
+    tail data bytes count size max 6  # counted by a u64
+    tail more bytes count extra max 4  # counted by a u16
+  end
+
+  # Rows whose fields are signed, and ones that are not.
+  request signed PROBE_SIGNED_REQUEST 9
+    body PROBE_SIGNED
+    tail list PROBE_ROW count count max 2  # the rows after the body
+  end
+
+  # A message withdrawn, whose value stays.
+  request old PROBE_OLD 10
+    body PROBE_HDR
+    retired
+  end
+
+  # The client's first message, which no dispatcher matches.
+  request hello PROBE_HELLO 11
+    body PROBE_HDR
+    first
+  end
+
+  # An event, whose transaction is 0.
+  event tick PROBE_TICK 13
+    body PROBE_HDR
+  end
+end
+
+# An end a request opens.
+channel endpoint
+  invalid client close
+
+  # The answer to an open, the first message on the end it opened.
+  reply opened
+    body none
+    first
+  end
+end

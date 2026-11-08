@@ -1,0 +1,9 @@
+# Refused at line 8: a material's default without an amount.
+
+# A description that breaks one rule.
+interface setting_material_short
+
+# A setting.
+setting a.b material
+  default 0x151A24
+end

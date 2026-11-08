@@ -1,0 +1,10 @@
+# Refused at line 8: a word allowed twice.
+
+# A description that breaks one rule.
+interface setting_enum_twice
+
+# A setting.
+setting a.b enum
+  allowed red red
+  default red
+end

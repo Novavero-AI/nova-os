@@ -1,0 +1,7 @@
+# Refused at line 7: a constant named in lower case.
+
+# A description that breaks one rule.
+interface name_lower
+
+# A number.
+const lower 1

@@ -1,0 +1,26 @@
+# Refused at line 17: a capacity of 0.
+
+# A description that breaks one rule.
+interface capacity_zero
+
+# The start of every message.
+struct HDR
+  u32 transaction  # the request's
+  u32 kind         # the message's
+end
+
+# Nothing.
+const NONE 0
+
+# A channel.
+channel c
+  capacity NONE
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body HDR
+  end
+end

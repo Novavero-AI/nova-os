@@ -1,0 +1,9 @@
+# Refused at line 8: an array whose size in bytes wraps to 0.
+
+# A description that breaks one rule.
+interface array_size_wrap_zero
+
+# A layout.
+struct S
+  u64 a array 0x2000000000000000  # a
+end

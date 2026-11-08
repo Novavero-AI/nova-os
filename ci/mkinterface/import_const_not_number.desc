@@ -1,0 +1,8 @@
+# Refused at line 7: an imported constant that is no number.
+
+# A description that breaks one rule.
+interface import_const_not_number
+
+import native_abi.h
+  const X abc
+end

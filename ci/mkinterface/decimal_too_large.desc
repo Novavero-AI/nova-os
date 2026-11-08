@@ -1,0 +1,7 @@
+# Refused at line 7: a decimal past 2^63 - 1.
+
+# A description that breaks one rule.
+interface decimal_too_large
+
+# A number.
+const A 9223372036854775808

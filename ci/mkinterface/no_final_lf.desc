@@ -1,0 +1,7 @@
+# Refused at line 7: the last line does not end in LF.
+
+# A case.
+interface no_final_lf
+
+# A number.
+const A 1

@@ -1,0 +1,33 @@
+# Refused at line 31: a structure tail whose structure holds an array.
+
+# A description that breaks one rule.
+interface tail_struct_array
+
+# Holds an array.
+struct HOLD
+  u32 n  # a count
+  u32 items array 4 count n  # the items
+end
+
+# A body with a count.
+struct NB
+  u32 transaction  # the request's
+  u32 kind  # the message's
+  u32 n  # a count
+  u8 small  # a small count
+  u8 pad1  # pad
+  u16 pad2  # pad
+end
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+  invalid client close
+
+  # A request.
+  request ping PING 1
+    body NB
+    tail held HOLD  # the record
+  end
+end

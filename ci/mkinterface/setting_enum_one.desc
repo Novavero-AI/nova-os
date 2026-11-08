@@ -1,0 +1,10 @@
+# Refused at line 8: an enum allowing one word.
+
+# A description that breaks one rule.
+interface setting_enum_one
+
+# A setting.
+setting a.b enum
+  allowed one
+  default one
+end

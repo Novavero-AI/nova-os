@@ -1,0 +1,10 @@
+# Refused at line 7: an imported structure whose fields do not fill its size.
+
+# A description that breaks one rule.
+interface import_struct_size
+
+import native_abi.h
+  struct THING 8
+    u32 a
+  end
+end

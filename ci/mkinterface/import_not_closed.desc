@@ -1,0 +1,7 @@
+# Refused at line 6: an import that is not closed.
+
+# A description that breaks one rule.
+interface import_not_closed
+
+import native_abi.h
+  const X 1

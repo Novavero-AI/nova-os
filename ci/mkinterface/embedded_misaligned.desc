@@ -1,0 +1,18 @@
+# Refused at line 14: an embedded structure at an offset that is not a multiple of its largest scalar's size.
+
+# A description that breaks one rule.
+interface embedded_misaligned
+
+# Inner.
+struct IN
+  u32 x  # x
+end
+
+# Outer.
+struct OUT
+  u8 pad  # pad
+  IN inner  # inner
+  u8 pad2  # pad2
+  u8 pad3  # pad3
+  u8 pad4  # pad4
+end

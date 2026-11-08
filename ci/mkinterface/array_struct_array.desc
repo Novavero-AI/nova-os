@@ -1,0 +1,16 @@
+# Refused at line 15: an array of structures that hold an array.
+
+# A description that breaks one rule.
+interface array_struct_array
+
+# Holds an array.
+struct HOLD
+  u32 n  # a count
+  u32 items array 4 count n  # the items
+end
+
+# Outer.
+struct OUT
+  u32 n  # n
+  HOLD a array 2 count n  # a
+end

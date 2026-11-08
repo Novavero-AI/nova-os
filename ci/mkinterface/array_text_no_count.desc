@@ -1,0 +1,9 @@
+# Refused at line 8: text without count.
+
+# A description that breaks one rule.
+interface array_text_no_count
+
+# A layout.
+struct S
+  u8 a array 4 text  # a
+end

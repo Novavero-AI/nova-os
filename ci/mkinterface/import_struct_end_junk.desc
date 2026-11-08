@@ -1,0 +1,10 @@
+# Refused at line 9: the fields of an imported structure closed by `end` and more.
+
+# A description that breaks one rule.
+interface import_struct_end_junk
+
+import native_abi.h
+  struct THING 4
+    u32 a
+  end junk
+end

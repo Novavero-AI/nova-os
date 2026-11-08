@@ -1,0 +1,9 @@
+# Refused at line 8: a constraint on an array.
+
+# A description that breaks one rule.
+interface constraint_on_array
+
+# A layout.
+struct S
+  u8 a array 4 = 0  # a
+end

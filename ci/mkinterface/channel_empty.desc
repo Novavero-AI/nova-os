@@ -1,0 +1,10 @@
+# Refused at line 7: a channel with no message.
+
+# A description that breaks one rule.
+interface channel_empty
+
+# A channel.
+channel c
+  select kind
+  invalid server close
+end

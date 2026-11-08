@@ -1,0 +1,7 @@
+# Refused at line 7: a backslash in a string.
+
+# A description that breaks one rule.
+interface string_backslash
+
+# A text.
+const A "a\b"

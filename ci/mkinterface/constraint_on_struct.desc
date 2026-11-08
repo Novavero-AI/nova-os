@@ -1,0 +1,14 @@
+# Refused at line 13: a constraint on a structure field.
+
+# A description that breaks one rule.
+interface constraint_on_struct
+
+# Inner.
+struct IN
+  u32 x  # x
+end
+
+# Outer.
+struct OUT
+  IN a = 0  # a
+end

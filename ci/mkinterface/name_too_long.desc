@@ -1,0 +1,7 @@
+# Refused at line 7: a C name past 63 characters.
+
+# A description that breaks one rule.
+interface name_too_long
+
+# A number.
+const AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 1
