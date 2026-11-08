@@ -25,6 +25,11 @@ void *mapping_section(MAPPING *mapping, UINT32 section, UINT64 size,
     return (void *)at;
 }
 
+UINT32 mapping_unmap(MAPPING *mapping, const void *address, UINT64 size)
+{
+    return process_unmap(mapping->self, (UINT64)address, whole_pages(size));
+}
+
 void *mapping_memory(MAPPING *mapping, UINT64 size, UINT32 *status)
 {
     UINT64 start = mapping->next, offset, piece;
@@ -35,13 +40,16 @@ void *mapping_memory(MAPPING *mapping, UINT64 size, UINT32 *status)
                                                  : SECTION_MAX_SIZE;
         piece = whole_pages(piece);
         *status = section_create(piece, 0, &section);
-        if (*status != OK)
+        if (*status == OK) {
+            mapping_section(mapping, section, piece, MAP_READ | MAP_WRITE,
+                            status);
+            handle_close(section);
+        }
+        if (*status != OK) {
+            if (offset)
+                mapping_unmap(mapping, (const void *)start, offset);
             return 0;
-        mapping_section(mapping, section, piece, MAP_READ | MAP_WRITE,
-                        status);
-        handle_close(section);
-        if (*status != OK)
-            return 0;
+        }
     }
     return (void *)start;
 }

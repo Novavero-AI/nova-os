@@ -1,9 +1,12 @@
 /* The console, \nova\console.exe (docs/spec/console.md): the input
    drivers' client, which the platform driver starts and hands each
    input endpoint on its bootstrap channel (C2), and the server of the
-   sessions the first process sends on its control channel (C4).
-   Once the display comes there (C1) it draws the panel and, after every
-   round of messages, the cells whose text changed and the caret.
+   sessions the first process sends on its control channel (C4). The
+   kernel's background comes there before the display, and the console
+   prepares its panel from it where it matches the display, and answers;
+   otherwise it prepares the panel once the display comes (C5). With the
+   display (C1) it draws the panel and, after every round of messages,
+   the cells whose text changed and the caret.
 
    One thread waits on every channel at once with object_wait_many, with
    a deadline at the caret's next blink while a read waits on a drawn
@@ -31,8 +34,9 @@
 #define EXIT_FAILED 101
 
 /* Its own memory: the framebuffer's mapping, the backdrop and the masks,
-   each mapped at the next free address from here, far above its image
-   and below its stack. */
+   and the kernel's background while the backdrop is made from it, each
+   mapped at the next free address from here, far above its image and
+   below its stack. */
 #define MAPPINGS_BASE 0x0000000100000000ULL
 
 /* The caret shows for half a second, then hides for as long, while a
@@ -52,10 +56,16 @@
 
 #define WAKE_SIGNALS (CHANNEL_READABLE | CHANNEL_PEER_CLOSED)
 
-/* The rights the console needs on its end of a session, and on the
-   channels it only reads: the control channel and an input endpoint. */
+/* The rights the console needs on its end of a session and of the
+   control channel, which it answers the background on, and on an input
+   endpoint, which it only reads. */
 #define SESSION_NEEDS (CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT)
+#define CONTROL_NEEDS SESSION_NEEDS
 #define CHANNEL_NEEDS (CHANNEL_RIGHT_READ | RIGHT_WAIT)
+
+/* Where the panel's backdrop came from, as the display's line says. */
+#define BACKDROP_SECTION "section"
+#define BACKDROP_COMPUTED "computed"
 
 /* A session: its channel, HANDLE_INVALID for a free slot, and the read
    that waits on it, if one does, numbered in the order reads came. */
@@ -100,11 +110,21 @@ static TYPED typed[CONSOLE_LINE_MAX];
 static UINT32 typed_count;
 static UINT64 back;
 
+/* The panel, prepared for a screen of prepared_width x prepared_height
+   once prepared is set: its layout, its backdrop and masks in memory of
+   their sizes, its inks, where the backdrop came from and how long the
+   preparation took. */
 static UINT32 drawing;
 static SCREEN screen;
+static int prepared;
+static INT64 prepared_width, prepared_height;
+static const char *backdrop_source;
+static UINT64 prepare_ns;
 static LAYOUT layout;
 static UINT32 *backdrop;
+static UINT64 backdrop_size;
 static UINT8 *masks;
+static UINT64 masks_size;
 static INKS inks;
 static PANEL panel = {&screen, &layout, 0, 0, &inks};
 static PANEL_SHOWN shown;
@@ -118,6 +138,7 @@ static union {
     INPUT_DEVICE description;
     INPUT_POINTER report;
     CONSOLE_SETUP_DISPLAY_MESSAGE setup;
+    CONSOLE_SETUP_BACKGROUND_MESSAGE background;
     UINT8 bytes[sizeof(CONSOLE_REQUEST) + CONSOLE_WRITE_MAX];
 } message;
 
@@ -622,8 +643,182 @@ static void fit_text(void)
         editor_show(&editor, &text);
 }
 
+/* Give back the panel's memory, if it holds any. */
+static void release_panel(void)
+{
+    if (backdrop)
+        mapping_unmap(&mapping, backdrop, backdrop_size);
+    if (masks)
+        mapping_unmap(&mapping, masks, masks_size);
+    backdrop = 0;
+    masks = 0;
+    prepared = 0;
+}
+
+/* Lay the panel out for a width x height screen, with new memory for its
+   backdrop and masks in place of any it held. Returns OK;
+   ERR_NOT_SUPPORTED, changing nothing, if not one cell fits; or the
+   status of the call that failed, with the panel holding no memory. */
+static UINT32 lay_out(INT64 width, INT64 height)
+{
+    UINT32 status = OK;
+    LAYOUT next;
+
+    if (!panel_layout(&next, width, height))
+        return ERR_NOT_SUPPORTED;
+    release_panel();
+    layout = next;
+    backdrop_size = panel_backdrop_size(&layout);
+    masks_size = font_masks_size(layout.cell_width);
+    backdrop = mapping_memory(&mapping, backdrop_size, &status);
+    if (backdrop)
+        masks = mapping_memory(&mapping, masks_size, &status);
+    if (!masks)
+        release_panel();
+    return status;
+}
+
+/* With the backdrop made, render the masks and the inks, and note the
+   panel prepared for a width x height screen from source, since
+   started. */
+static void finish_panel(INT64 width, INT64 height, const char *source,
+                         UINT64 started)
+{
+    font_render(layout.cell_width, masks);
+    panel_inks(&inks);
+    panel.backdrop = backdrop;
+    panel.masks = masks;
+    prepared = 1;
+    prepared_width = width;
+    prepared_height = height;
+    backdrop_source = source;
+    prepare_ns = now() - started;
+}
+
+/* The bytes of band index of the kernel's background, an image of bytes
+   bytes (native_abi.h). */
+static UINT64 band_size(UINT64 bytes, UINT32 index)
+{
+    UINT64 rest = bytes - (UINT64)index * SECTION_MAX_SIZE;
+
+    return rest < SECTION_MAX_SIZE ? rest : SECTION_MAX_SIZE;
+}
+
+/* Map the count sections of the kernel's background, an image of bytes
+   bytes, to read, one after another, and return where the image starts,
+   with what was mapped in *mapped; or 0, with nothing left mapped and
+   the status of the call that failed in *status. */
+static const UINT32 *map_image(const RECEIVED_HANDLE *handles, UINT32 count,
+                               UINT64 bytes, UINT64 *mapped, UINT32 *status)
+{
+    const UINT8 *start = 0;
+    UINT32 i;
+
+    *mapped = 0;
+    for (i = 0; i < count; i++) {
+        const UINT8 *band = mapping_section(&mapping, handles[i].handle,
+                                            band_size(bytes, i), MAP_READ,
+                                            status);
+
+        if (!band) {
+            if (start)
+                mapping_unmap(&mapping, start, *mapped);
+            return 0;
+        }
+        if (!start)
+            start = band;
+        *mapped = (UINT64)(mapping.next - (UINT64)start);
+    }
+    return (const UINT32 *)start;
+}
+
+/* Prepare the panel's backdrop from the kernel's background, whose
+   count sections are at handles, once message has shown it matches the
+   display the console is to be given. Logged, with the panel left
+   unprepared, if its memory or the background's mapping fails. */
+static void prepare_from(const CONSOLE_SETUP_BACKGROUND_MESSAGE *m,
+                        const RECEIVED_HANDLE *handles, UINT32 count,
+                        UINT64 started)
+{
+    const BOOTSTRAP_BACKGROUND *b = &m->background;
+    UINT64 bytes = (UINT64)b->width * b->height *
+                   BOOTSTRAP_BACKGROUND_PIXEL_BYTES,
+           mapped;
+    const UINT32 *image;
+    UINT32 status = lay_out(b->width, b->height);
+
+    if (status != OK) {
+        say_status("panel memory failed", status);
+        return;
+    }
+    image = map_image(handles, count, bytes, &mapped, &status);
+    if (!image) {
+        release_panel();
+        say_status("background map failed", status);
+        return;
+    }
+    panel_backdrop_image(&layout, image, b->width, b->format, backdrop);
+    mapping_unmap(&mapping, image, mapped);
+    finish_panel(b->width, b->height, BACKDROP_SECTION, started);
+}
+
+/* Whether the count handles a background message carried are the
+   sections its label's image takes, each with READ. */
+static int are_sections(const BOOTSTRAP_BACKGROUND *b,
+                        const RECEIVED_HANDLE *handles, UINT32 count)
+{
+    UINT32 i;
+
+    if (count != bootstrap_background_sections(b->width, b->height))
+        return 0;
+    for (i = 0; i < count; i++)
+        if (handles[i].type != TYPE_SECTION ||
+            !(handles[i].rights & SECTION_RIGHT_READ))
+            return 0;
+    return 1;
+}
+
+/* The kernel's background, offered before the display in a message of
+   byte_count bytes at m (C5): prepare the panel from it where its label
+   matches the display the console is to be given, close its sections,
+   and answer the first process, which waits for the answer before it
+   reports its startup done. A background that does not match, or a
+   message that is not one, is refused, logged, and answered too, and
+   the panel is prepared once the display comes. */
+static void take_background(const CONSOLE_SETUP_BACKGROUND_MESSAGE *m,
+                            UINT32 byte_count, const RECEIVED_HANDLE *handles,
+                            UINT32 count)
+{
+    UINT64 started = now();
+    const char *refusal = 0;
+    UINT32 transaction = 0, status, i;
+
+    if (byte_count != sizeof *m || m->setup.transaction != 0)
+        refusal = "malformed";
+    else if (drawing)
+        refusal = "after the display";
+    else
+        refusal = panel_background_refusal(&m->background, &m->display);
+    if (!refusal && !are_sections(&m->background, handles, count))
+        refusal = "wrong sections";
+    if (refusal) {
+        say("nova-console: background refused reason=");
+        say_value(refusal);
+        say("\r\n");
+    } else {
+        prepare_from(m, handles, count, started);
+    }
+    for (i = 0; i < count; i++)
+        handle_close(handles[i].handle);
+    status = channel_write(control, &transaction, CONSOLE_PREPARED_SIZE,
+                           no_handles, 0);
+    if (status != OK)
+        say_status("background answer failed", status);
+}
+
 /* Take the display through resource, which covers its framebuffer, and
-   draw the panel. Any failure is logged, and the console goes on without
+   draw the panel, prepared now if it was not prepared for a screen this
+   size already. Any failure is logged, and the console goes on without
    drawing. */
 static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
 {
@@ -642,26 +837,28 @@ static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
         say_status("framebuffer map failed", status);
         return;
     }
-    if (!panel_layout(&layout, screen.width, screen.height)) {
-        say("nova-console: display refused reason=\"no room for a cell\"\r\n");
-        return;
+    if (!prepared || prepared_width != screen.width ||
+        prepared_height != screen.height) {
+        UINT64 preparing = now();
+
+        status = lay_out(screen.width, screen.height);
+        if (status == ERR_NOT_SUPPORTED) {
+            say("nova-console: display refused reason=\"no room for a "
+                "cell\"\r\n");
+            return;
+        }
+        if (status != OK) {
+            say_status("panel memory failed", status);
+            return;
+        }
+        if (!panel_backdrop(&layout, screen.width, screen.height, backdrop)) {
+            release_panel();
+            say("nova-console: display refused reason=\"no background\"\r\n");
+            return;
+        }
+        finish_panel(screen.width, screen.height, BACKDROP_COMPUTED,
+                     preparing);
     }
-    backdrop = mapping_memory(&mapping, panel_backdrop_size(&layout), &status);
-    if (backdrop)
-        masks = mapping_memory(&mapping, font_masks_size(layout.cell_width),
-                               &status);
-    if (!backdrop || !masks) {
-        say_status("panel memory failed", status);
-        return;
-    }
-    if (!panel_backdrop(&layout, screen.width, screen.height, backdrop)) {
-        say("nova-console: display refused reason=\"no background\"\r\n");
-        return;
-    }
-    font_render(layout.cell_width, masks);
-    panel_inks(&inks);
-    panel.backdrop = backdrop;
-    panel.masks = masks;
     panel_show(&screen, &layout, backdrop, &shown);
     fit_text();
     drawing = 1;
@@ -677,6 +874,10 @@ static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
     say_number(layout.columns);
     say("x");
     say_number(layout.rows);
+    say(" backdrop=");
+    say(backdrop_source);
+    say(" prepare_ms=");
+    say_ms(prepare_ns);
     say(" draw_ms=");
     say_ms(now() - started);
     say("\r\n");
@@ -724,8 +925,8 @@ static void take_bootstrap(void)
         handles[CONSOLE_BOOTSTRAP_SELF].type == TYPE_PROCESS &&
         (handles[CONSOLE_BOOTSTRAP_SELF].rights & PROCESS_RIGHT_MAP) &&
         handles[CONSOLE_BOOTSTRAP_CONTROL].type == TYPE_CHANNEL &&
-        (handles[CONSOLE_BOOTSTRAP_CONTROL].rights & CHANNEL_NEEDS) ==
-            CHANNEL_NEEDS) {
+        (handles[CONSOLE_BOOTSTRAP_CONTROL].rights & CONTROL_NEEDS) ==
+            CONTROL_NEEDS) {
         say_open(handles[CONSOLE_BOOTSTRAP_DEBUG_LOG].handle);
         mapping.self = handles[CONSOLE_BOOTSTRAP_SELF].handle;
         control = handles[CONSOLE_BOOTSTRAP_CONTROL].handle;
@@ -851,33 +1052,41 @@ static void serve_bootstrap(void)
     process_exit(EXIT_FAILED);
 }
 
-/* A display or a session from the first process. */
+/* A display, a session or the kernel's background from the first
+   process. */
 static void serve_control(void)
 {
-    RECEIVED_HANDLE handle;
+    RECEIVED_HANDLE handles[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
     const CONSOLE_SETUP *setup = &message.setup.setup;
-    UINT32 byte_count, handle_count;
+    UINT32 byte_count, handle_count = 0, i;
     UINT32 status = channel_read(control, message.bytes, sizeof message.bytes,
-                                 &handle, 1, &byte_count, &handle_count);
+                                 handles, BOOTSTRAP_BACKGROUND_SECTIONS_MAX,
+                                 &byte_count, &handle_count);
 
     if (status == ERR_SHOULD_WAIT)
         return;
-    if (status == OK && handle_count == 1 &&
-        byte_count >= CONSOLE_SETUP_SIZE && setup->transaction == 0) {
+    if (status == OK && byte_count >= CONSOLE_SETUP_SIZE &&
+        setup->kind == CONSOLE_SETUP_BACKGROUND) {
+        take_background(&message.background, byte_count, handles,
+                        handle_count);
+        return;
+    }
+    if (status == OK && byte_count >= CONSOLE_SETUP_SIZE &&
+        setup->transaction == 0) {
         if (setup->kind == CONSOLE_SETUP_SESSION &&
-            byte_count == CONSOLE_SETUP_SIZE) {
-            add_session(&handle);
+            byte_count == CONSOLE_SETUP_SIZE && handle_count == 1) {
+            add_session(&handles[0]);
             return;
         }
         if (setup->kind == CONSOLE_SETUP_DISPLAY &&
-            byte_count == sizeof message.setup &&
-            handle.type == TYPE_RESOURCE) {
-            display(handle.handle, &message.setup.display);
+            byte_count == sizeof message.setup && handle_count == 1 &&
+            handles[0].type == TYPE_RESOURCE) {
+            display(handles[0].handle, &message.setup.display);
             return;
         }
     }
-    if (status == OK && handle_count)
-        handle_close(handle.handle);
+    for (i = 0; status == OK && i < handle_count; i++)
+        handle_close(handles[i].handle);
     if (status != ERR_PEER_CLOSED)
         say_status("control message refused", status);
     if (status != OK)

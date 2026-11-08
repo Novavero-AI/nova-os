@@ -395,6 +395,30 @@
 #define BOOT_FILE_NAME_SIZE 32
 /** @} */
 
+/** @name The kernel's background
+    The second message on the first process's bootstrap channel, which
+    the kernel writes once it has drawn the desktop background offscreen
+    (docs/spec/boot-protocol.md, Startup done): a
+    BOOTSTRAP_BACKGROUND_MESSAGE, and the image's sections, each with
+    SECTION_RIGHT_READ, RIGHT_DUPLICATE and RIGHT_TRANSFER. The image is
+    width x height pixels, row after row with no gap between rows, each
+    pixel BOOTSTRAP_BACKGROUND_PIXEL_BYTES in the display's format: the
+    pixels the fade's last frame leaves on the screen. It is held in
+    bootstrap_background_sections() sections, every one SECTION_MAX_SIZE
+    bytes but the last, which mapped one after another read as one image
+    (display.md D6).
+    @{ */
+/** no image: the message carries no section */
+#define BOOTSTRAP_BACKGROUND_NONE 0
+/** Limb, as gfx/limb.c computes it */
+#define BOOTSTRAP_BACKGROUND_LIMB 1
+/** the most sections an image takes, a message's handles; the kernel
+    hands on no larger image */
+#define BOOTSTRAP_BACKGROUND_SECTIONS_MAX CHANNEL_MAX_HANDLES
+/** the bytes of one of the image's pixels */
+#define BOOTSTRAP_BACKGROUND_PIXEL_BYTES 4
+/** @} */
+
 /** The first process reports that its startup is done with one message
     on its bootstrap channel: BOOTSTRAP_DONE_SIZE bytes, a transaction ID
     of 0 (ipc.md I3), and no handles. The kernel holds the channel's other
@@ -503,6 +527,40 @@ typedef struct {
     ECAM_RANGE ecam[BOOTSTRAP_ECAM_RANGES_MAX];
     BOOTSTRAP_DISPLAY display; /**< the screen nova-boot drew on */
 } BOOTSTRAP_PLATFORM;
+
+/** What the kernel's background holds: which background, at what size
+    and in what pixel format. With BOOTSTRAP_BACKGROUND_NONE every other
+    field is 0. */
+typedef struct {
+    /** BOOTSTRAP_BACKGROUND_LIMB, or BOOTSTRAP_BACKGROUND_NONE */
+    UINT32 background;
+    UINT32 width;  /**< the image's width in pixels, the screen's */
+    UINT32 height; /**< the image's height in pixels, the screen's */
+    /** the screen's EFI_GRAPHICS_PIXEL_FORMAT, 0 (byte 0 red) or 1
+        (byte 0 blue) */
+    UINT32 format;
+} BOOTSTRAP_BACKGROUND;
+
+/** The bytes of the kernel's background message. */
+typedef struct {
+    UINT32 transaction;              /**< 0 */
+    BOOTSTRAP_BACKGROUND background; /**< what its sections hold */
+} BOOTSTRAP_BACKGROUND_MESSAGE;
+
+_Static_assert(sizeof(BOOTSTRAP_BACKGROUND_MESSAGE) == 20,
+               "one layout on every target");
+
+/** The sections an image of width x height pixels takes, every one
+    SECTION_MAX_SIZE bytes but the last. */
+static inline UINT64 bootstrap_background_sections(UINT32 width,
+                                                   UINT32 height)
+{
+    UINT64 pixels_per_section =
+        SECTION_MAX_SIZE / BOOTSTRAP_BACKGROUND_PIXEL_BYTES;
+
+    return ((UINT64)width * height + pixels_per_section - 1) /
+           pixels_per_section;
+}
 
 /** The 64-bit words of a port packet's payload. */
 #define PACKET_PAYLOAD_WORDS 4

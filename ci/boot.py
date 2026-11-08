@@ -31,9 +31,12 @@ the kernel must report its random number generator's self-test
 passing. chain and specimen take only a test disk.
 
 In system mode, the boot must report the store service serving, startup
-done, the background drawn, the console drawn, and the console taking
-the description of each of the keyboard, the mouse and the tablet, the
-tablet's with its axes' range. Then, sent through QMP, QEMU's monitor
+done, the background drawn, the console drawn, its panel's backdrop
+made from the kernel's background or, on a test disk, whose console is
+told of a display the background does not match, computed
+(docs/spec/console.md C5), and the console taking the description of
+each of the keyboard, the mouse and the tablet, the tablet's with its
+axes' range. Then, sent through QMP, QEMU's monitor
 protocol, the tablet moves, each of three buttons is clicked, the wheel
 turns up and down and the mouse moves, and the console must report
 each; no position sent may appear in a line of the console or an input
@@ -67,8 +70,10 @@ specimen drawn; then QMP's screendump, kept at SCREEN.ppm if given,
 must equal pixel for pixel the screen design/text/specimen.py draws at
 its size with the nova-os fonts in FONTS. In every mode but chain, the
 kernel must also report the frames the boot screen's spinner started
-while it prepared the background: at least one, unless the preparation
-ended within the longest a turning spinner goes between frames.
+while the background was prepared, from the start of the kernel's
+drawing to the first process's startup report: at least one, unless
+the preparation ended within the longest a turning spinner goes
+between frames.
 Each --expect LINE, in T1's form, adds a line the boot must report,
 with the keys LINE gives. With a data disk, the boot must also report
 the file system service opening its pool and /data and /users
@@ -190,16 +195,19 @@ INPUT_LINES = [
 ]
 
 # The kernel draws the background offscreen while the boot screen's
-# spinner turns, and logs the frames the spinner started meanwhile and
-# how long the preparation took, in milliseconds to the tenth, rounded
-# down, as keys of its background line. A turning spinner starts a
-# frame at least every SPINNER_GAP_MS, the sum of its parts below;
-# another thread ready meanwhile delays the spinner by a slice and the
-# drawing as long. The bound takes the ticks to come on time, which under
-# TCG they need not, but there the preparation takes over ten times as
-# long. A preparation that may have
-# lasted longer than the bound must show MIN_SPINNER_FRAMES; one that
-# ended within it may show none.
+# spinner turns, hands it to the first process and waits for the
+# process's startup report, which follows the console's preparation of
+# its panel; it logs how long that preparation took, from the drawing's
+# start to the report, in milliseconds to the tenth, rounded down, and
+# the frames the spinner started over it, as keys of its background
+# line. A turning spinner starts a frame at least every SPINNER_GAP_MS,
+# the sum of its parts below, while one other thread is ready, the
+# drawing or the console's preparation; each further thread ready
+# meanwhile delays it by a slice more. The bound takes the ticks to come
+# on time, which under TCG they need not, but there the preparation
+# takes over ten times as long. A preparation that may have lasted
+# longer than the bound must show MIN_SPINNER_FRAMES; one that ended
+# within it may show none.
 BACKGROUND = Event("nova: background", prepare_ms=re.compile(r"\d+\.\d"),
                    spinner_frames=re.compile(r"\d+"))
 MIN_SPINNER_FRAMES = 1
@@ -207,20 +215,34 @@ TENTHS_PER_MS = 10
 # The bound's parts, each the kernel's: the spinner's next frame falls
 # due within FRAME_MS (kernel/main.c); its wait ends at the first timer
 # tick at or after that, and a tick comes every TICK_MS, at TIMER_HZ
-# (kernel/x86_64/arch.h); it then waits behind the drawing, which keeps
-# the processor for its TIME_SLICE_MS (kernel/sched/thread.h) and on to
-# the first tick after the slice ends. sched_timer_interrupt
-# (kernel/sched/thread.c) ends the wait and the slice at those ticks.
+# (kernel/x86_64/arch.h); it then waits behind the thread that is
+# ready, which keeps the processor for its TIME_SLICE_MS
+# (kernel/sched/thread.h) and on to the first tick after the slice
+# ends. sched_timer_interrupt (kernel/sched/thread.c) ends the wait and
+# the slice at those ticks.
 FRAME_MS = 33
 TICK_MS = 1
 TIME_SLICE_MS = 10
 SPINNER_GAP_MS = FRAME_MS + TICK_MS + TIME_SLICE_MS + TICK_MS
 
+# The console's lines on its panel's backdrop: on the system disk, its
+# line once it draws the panel, made from the kernel's background; on a
+# test disk, whose console the first process tells of a display a row
+# taller than the background (init/console.c, MISMATCH_ROWS), its
+# refusal of the background for that, and the panel's Limb computed at
+# the display.
+CONSOLE_DRAWN = {
+    False: [Event("nova-console: display backdrop=section",
+                  screen=ANY_VALUE)],
+    True: [Event('nova-console: background refused reason="another size"'),
+           Event("nova-console: display backdrop=computed",
+                 screen=ANY_VALUE)],
+}
+
 SYSTEM_LINES = [
     Event("nova-store: serving"),
     STARTUP_DONE,
     BACKGROUND,
-    Event("nova-console: display", screen=ANY_VALUE),
 ] + INPUT_LINES
 
 CHAIN_LINES = [STARTUP_DONE]
@@ -1443,7 +1465,8 @@ def boot(args, scratch, log, data_drive, data_lines, first):
     try:
         serial = Serial(qemu.stdout, log, report)
         lines = {"chain": CHAIN_LINES,
-                 "specimen": SPECIMEN_LINES}.get(args.mode, SYSTEM_LINES)
+                 "specimen": SPECIMEN_LINES}.get(
+                     args.mode, SYSTEM_LINES + CONSOLE_DRAWN[args.tests])
         if not args.tests:
             lines = [RANDOM_PASSED] + lines
         try:

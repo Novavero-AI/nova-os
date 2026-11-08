@@ -23,10 +23,15 @@ typedef struct {
 void *mapping_section(MAPPING *mapping, UINT32 section, UINT64 size,
                       UINT32 protection, UINT32 *status);
 
+/** Remove the size bytes mapped at address, which a call here mapped,
+    rounded up to whole pages, as each call rounds what it maps. The
+    address range is not mapped again. Returns process_unmap's status. */
+UINT32 mapping_unmap(MAPPING *mapping, const void *address, UINT64 size);
+
 /** Map size bytes of new zeroed memory, read-write, in sections of at
     most SECTION_MAX_SIZE. Returns where they lie, or 0 with the status
-    of the call that failed in *status; what was mapped before the
-    failure stays mapped. */
+    of the call that failed in *status and nothing of them left
+    mapped. */
 void *mapping_memory(MAPPING *mapping, UINT64 size, UINT32 *status);
 
 /** Map display's framebuffer, write-combining, through resource, an

@@ -24,6 +24,38 @@ fade's last frame is drawn, it closes its end of the first process's
 bootstrap channel and never draws again. The first process takes
 `PEER_CLOSED` on its endpoint as the display's release.
 
+The screen's first frame after the release is prepared before it,
+while the boot screen's spinner turns:
+
+1. The kernel starts the first process, draws Limb offscreen into
+   memory sections and hands them to the process on its bootstrap
+   channel, labelled with the background they hold and its size
+   ([boot-protocol.md](boot-protocol.md#startup-done)).
+2. The first process, its own startup done, takes the background and
+   sends it, with the display it is to give, to the console started by
+   then, on the console's control channel (C2).
+3. The console prepares its panel from the background where the label
+   matches that display (C5), closes the sections, and answers on the
+   control channel; where the label does not match, it answers at
+   once.
+4. The first process waits for the answer, or for the control channel
+   to close, and then reports its startup done.
+5. The kernel stops the spinner, fades the boot screen into Limb and
+   releases the display; the first process sends the display to the
+   console, whose first draw is a copy of its prepared panel.
+
+The kernel holds its handles to the sections until the fade's last
+frame. The first process holds its own from the kernel's message until
+it sends them on, and closes them at once where no console runs or the
+display goes to the type specimen. The console holds them until its
+panel's backdrop is made. No handle carries `WRITE`, and the console
+maps them only to read; once all three have let go, after the fade,
+the pages return to the page allocator, and a console restarted later
+computes its panel's Limb (C5).
+While a compositor runs, the first process holds the sections through
+the release and gives them to it as its wallpaper
+([display.md D2](display.md#d2-who-holds-the-display)).
+
 The bootstrap message's platform record describes the display in a
 `BOOTSTRAP_DISPLAY` (`include/native_abi.h`): the physical address of
 its first pixel, its width and height in pixels, its pixels per scan
@@ -53,7 +85,16 @@ panel, so nothing of the compositor's last frame stays.
   kernel and the first process and nothing else, and its close is a
   signal the first process can wait for, so the release needs no new
   message or object. The report and the release are two events because
-  the kernel draws the background and fades it in between them.
+  the kernel fades the background in between them.
+- **Why the kernel's image:** the kernel has drawn Limb for its fade,
+  which takes 3.6 s at 2880 x 1800 under QEMU's TCG, and computing the
+  part under the panel again takes the console 1.2 s more there, after
+  the release a screen of Limb with no panel. Handing the image on costs
+  a message.
+- **Why the report waits for the console:** the spinner says the system
+  is still preparing, and the console's panel is part of what it
+  prepares; with the panel prepared, the screen goes from the fade to
+  the panel in a copy.
 - **Why a narrowed resource:** a section holds at most
   `SECTION_MAX_SIZE` (2 MiB) and a 2560 x 1600 framebuffer is 16 MiB,
   so the console makes several; a resource covering the framebuffer is
@@ -64,11 +105,23 @@ panel, so nothing of the compositor's last frame stays.
   shows its owner a console to log in at, read the log and fix it.
 - **Cost:** the first process could draw over the console; it already
   holds the authority over every device (ipc.md I6, Cost). Programs a
-  session showed when the compositor was given up run on unseen.
+  session showed when the compositor was given up run on unseen. The
+  report waits on the console, so a console that never answers keeps
+  the spinner turning; one that ends closes its control channel, which
+  ends the wait. The kernel's image, 19.8 MiB at 2880 x 1800, lives
+  until the fade's end, and is taken while the first process starts,
+  so the two take from the page allocator at once: where it runs short,
+  the kernel fades in no image, or the first process's startup fails.
 - **Not taken:** a section over the framebuffer that the kernel creates
   and passes in the bootstrap message, as I6 planned for a compositor.
   Its cost is a size limit no framebuffer of a modern display fits, and
   a handle the first process holds before the kernel stops drawing.
+  The kernel drawing the background before it starts the first process,
+  and queueing it behind the bootstrap message: its cost is the drawing's
+  seconds ahead of the process's startup, where they otherwise overlap
+  whatever the process waits on. Only the pixels under the panel: their
+  cost is a kernel that lays out the console's panel, and an image no
+  compositor can take as its wallpaper.
 
 ## C2. Starting the console
 
@@ -86,20 +139,28 @@ process with `MAP`, so that it can map sections for its buffers and the
 framebuffer, and its end of a control channel whose other end the first
 process keeps.
 
-On the control channel the first process sends two kinds of message,
-each a `CONSOLE_SETUP` of 8 bytes, a transaction ID of 0 and a kind,
-with one handle:
+On the control channel the first process sends three kinds of
+message, each a `CONSOLE_SETUP` of 8 bytes, a transaction ID of 0 and a
+kind, with the handles the kind gives:
 
-| Kind | Bytes after the setup | Handle |
+| Kind | Bytes after the setup | Handles |
 |---|---|---|
 | `CONSOLE_SETUP_DISPLAY` (1) | The `BOOTSTRAP_DISPLAY` | An MMIO resource covering the framebuffer (C1) |
 | `CONSOLE_SETUP_SESSION` (2) | None | The console's end of a session (C4), with `READ`, `WRITE` and `WAIT` |
+| `CONSOLE_SETUP_BACKGROUND` (3) | The `BOOTSTRAP_DISPLAY` of the display it is to be given, then the kernel's `BOOTSTRAP_BACKGROUND` label | The background's sections, with `READ` alone (C5) |
 
-The display comes once, after the release; a console restarted after it
-gets it once it has started. Until it comes the console draws nothing,
-but serves its sessions and keeps what they write, and draws it all
-when it does; on a screen too narrow for 80 columns, lines written
-before then are cut at its width.
+The console answers the background, once its panel is prepared or the
+background refused, on the same channel: `CONSOLE_PREPARED_SIZE` (4)
+bytes, a transaction ID of 0, and no handles. Its end of the control
+channel carries `READ`, `WRITE` and `WAIT`.
+
+The background comes once, before the release, to a console started
+before it, and the display once, after the release; a console
+restarted after the release gets the display once it has started, and
+no background. Until the display comes the console draws nothing, but
+serves its sessions and keeps what they write, and draws it all when
+it does; on a screen too narrow for 80 columns, lines written before
+then are cut at its width.
 
 A program gets a session from the first process: it creates a channel
 of `CONSOLE_SESSION_CAPACITY` messages, sends one end to the console and
@@ -281,8 +342,32 @@ panel with rounded corners, and in it the text in the console font,
 with a caret that blinks while a read waits. It keeps the last 1,024 lines it has shown, for
 Page Up. The panel's colour mixes with the background in linear light,
 as the boot screen mixes ink with black, so nothing of the background
-is read back from the framebuffer: the console draws Limb's pixels
-under the panel itself, with `gfx/limb.c`.
+is read back from the framebuffer: the console reads Limb's pixels
+under the panel from the kernel's background, or computes them with
+`gfx/limb.c`, into its backdrop, which it makes once.
+
+**The kernel's background** (C1) holds Limb as the fade leaves it on
+the screen: the screen's width by height pixels, in its pixel format,
+in read-only sections ([boot-protocol.md](boot-protocol.md#startup-done)).
+The console takes it only where its label is `BOOTSTRAP_BACKGROUND_LIMB`,
+in `PIXEL_RGB` or `PIXEL_BGR`, at the width and height of the display
+the first process says it will give, which Limb and the panel's layout
+take, and where the sections are the ones an image that size takes.
+Then, before the release, it maps the sections to read, one after
+another, makes its backdrop from the pixels under the panel, unmaps and
+closes them, and renders its font's masks and its inks' tables; once
+the display comes, it copies the backdrop to the screen. Otherwise it closes the sections and
+logs `nova-console: background refused` with the reason, and computes
+its backdrop once the display comes, as a console restarted after the
+release, which gets no background, does. Both give the same pixels,
+since the kernel's image is Limb exactly (`tools/check-backdrop.c`).
+The display's line, `nova-console: display`, names which with
+`backdrop=section` or `backdrop=computed`, and gives the preparation's
+`prepare_ms` and the drawing's `draw_ms`.
+
+On a test disk ([disk-layout.md](disk-layout.md#files)) the first
+process tells the console of a display a row taller than the one it
+gives, so that the background does not match it.
 
 The font is the wordmark's strokes made a typeface
 ([design/font](../../design/font/README.md)): each printable ASCII glyph
@@ -296,8 +381,26 @@ tall as it is wide, and its width is the screen's height divided by
   screens of 1280 x 800 pixels and less; a 2560 x 1600 screen is
   usually the same panel at twice the density, where 16 x 32 shows the
   same text at the same size.
+- **Why the label decides:** an image of another background or another
+  size is not the panel's Limb, and a console restarted after the
+  release, a display resized
+  ([display.md D18](display.md#d18-the-gpu-path)) or a background
+  customized have no image that is, so computing stays the path that
+  always works and the image only spares it.
+- **Why the test disk's mismatch:** every boot CI makes of the test
+  disk, on three processor models and under KVM, then draws its panel
+  by computing, and every boot of the system disk from the image; each
+  screen of both is matched against the same render of `ci/screens.c`,
+  and `ci/boot.py` checks each boot's `backdrop`, with no disk or boot
+  job more.
 - **Cost:** the boot protocol passes no physical size, so a large
-  screen of low density shows larger text than it needs.
+  screen of low density shows larger text than it needs. The test
+  disk's console never takes the image, so only the system disk's boots
+  check that path, and on the test disk the panel comes after the fade
+  as long as computing takes.
+- **Not taken:** a marker file of its own, on a disk of its own, that
+  asks for the mismatch. Its cost is a disk image and a boot job more
+  for the check the test disk already makes.
 
 ## C6. The pointer
 
@@ -339,8 +442,8 @@ report. The console draws no pointer.
   (`kernel/x86_64/serial.c`, `debug_write`), and a moving pointer ends
   each motion with a `SYN_REPORT` of its own (evdev, `EV_SYN`), so a
   line a report would hold up the console and fill the log.
-- **Why no pointer drawn:** the console computes Limb's pixels only
-  under its panel (C5), and a pointer drawn outside it would need the
+- **Why no pointer drawn:** the console keeps Limb's pixels only under
+  its panel (C5), and a pointer drawn outside it would need the
   background beneath, read back from the framebuffer, which the console
-  never reads, or computed for the whole screen.
+  never reads, or kept for the whole screen.
 - **Cost:** the log shows that the pointer moved, not where.

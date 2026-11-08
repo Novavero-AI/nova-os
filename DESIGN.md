@@ -126,9 +126,9 @@ CI checks every pull request and every push to main:
 - **Lint** checks that tracked text is ASCII and that clang's `-Wall
   -Wextra -pedantic -Wshadow` find nothing in any C source, built with
   its `compile_flags.txt`; it runs `tools/check-masks.c`,
-  `tools/check-fade.c`, `tools/check-pointer.c`, `tools/check-text.c`
-  and `design/backgrounds/check-limb.sh`, and actionlint over the
-  workflows.
+  `tools/check-fade.c`, `tools/check-pointer.c`, `tools/check-text.c`,
+  `tools/check-backdrop.c` and `design/backgrounds/check-limb.sh`, and
+  actionlint over the workflows.
 - **Boot** boots the reproduced disks under QEMU with Ubuntu 24.04's
   OVMF, with a copy of `data.img` as the data disk: `disk.img`, the
   system's disk, on QEMU's default processor, and `test.img`, the test
@@ -144,9 +144,10 @@ CI checks every pull request and every push to main:
   runs `whoami`; the session then fills the console's panel, and the
   wheel scrolls it back and forward, each screen checked equal to the
   one `ci/screens.c` draws on the host with the console's own drawing
-  code. A boot of the test disk boots the same data disk again, logs in
-  with that account, which it must still hold, and its data disk's
-  check reads back what the first boot wrote. Other boots of `disk.img`
+  code, the panel made from the kernel's background on `disk.img` and
+  computed on `test.img`. A boot of the test disk boots the same data
+  disk again, logs in with that account, which it must still hold, and
+  its data disk's check reads back what the first boot wrote. Other boots of `disk.img`
   corrupt the data disk's GPT, and the log must show the file system
   service refusing the disk. A boot of `specimen.img` takes QMP's
   screendump once the type specimen has drawn, which must equal its

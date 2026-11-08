@@ -91,6 +91,14 @@ jobs:
             console/keys.c console/view.c
           "$RUNNER_TEMP/check-text"
 
+      - name: The console's panel from the kernel's background is the one it computes
+        run: |
+          cc -std=c11 -Wall -Wextra -pedantic -Werror -I include -I gfx \
+            -I console -o "$RUNNER_TEMP/check-backdrop" \
+            tools/check-backdrop.c console/panel.c console/text.c gfx/gfx.c \
+            gfx/font.c gfx/raster.c gfx/limb.c
+          "$RUNNER_TEMP/check-backdrop"
+
       - name: gfx/limb.c draws Limb as its prototype does
         run: design/backgrounds/check-limb.sh
 

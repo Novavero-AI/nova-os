@@ -12,11 +12,11 @@
    the timer; seeds the random number generator; starts a thread that
    keeps the boot screen's spinner turning and a startup thread that, on
    a test disk, tests the kernel's objects and threads, then starts the
-   first user process and, once it reports that its startup is done,
-   draws the desktop background offscreen, stops the spinner, fades the
-   boot screen into the background and releases the display to the
-   process, then logs the process's end if it ever comes; and becomes the
-   idle thread. */
+   first user process, draws the desktop background offscreen and hands
+   it to the process, and, once the process reports that its startup is
+   done, stops the spinner, fades the boot screen into the background
+   and releases the display to the process, then logs the process's end
+   if it ever comes; and becomes the idle thread. */
 
 #include "background.h"
 #include "boot_info.h"
@@ -116,31 +116,43 @@ static void stop_spinner(void)
              &observed);
 }
 
-/* Prepare the background while the spinner turns, measuring how long
-   that took, in *took, and how many frames the spinner started
-   meanwhile, in *frames, which background_show logs and ci/boot.py
-   checks against the longest a turning spinner goes between frames. The
-   count is read before the clock at the start and after it at the end,
-   so that it covers all the time logged. */
-static void prepare_while_spinning(const BOOT_INFO *info,
-                                   BACKGROUND *background, UINT64 *took,
-                                   UINT64 *frames)
+/* Draw the background offscreen and hand it to the first process, then
+   wait for the process's startup report, all while the spinner turns:
+   the drawing takes seconds under emulation on a large screen, and the
+   process prepares what it shows first meanwhile (docs/spec/console.md
+   C1). Measures, in *preparation, how long the drawing took, how long
+   from its start to the report, and how many frames the spinner started
+   over that, which background_show logs and ci/boot.py checks against
+   the longest a turning spinner goes between frames. The count is read
+   before the clock at the start and after it at the end, so that it
+   covers all the time logged. Returns whether the process reported. */
+static int prepare_while_spinning(const BOOT_INFO *info,
+                                  BACKGROUND *background,
+                                  PREPARATION *preparation)
 {
+    BOOTSTRAP_BACKGROUND label;
     UINT64 first, start;
+    UINT32 handed_on;
+    int reported;
 
     first = spinner_frames;
     start = clock_monotonic();
     background_prepare(info, background);
-    *took = clock_monotonic() - start;
-    *frames = spinner_frames - first;
+    preparation->drawn = clock_monotonic() - start;
+    handed_on = background_label(info, background, &label);
+    first_process_give_background(&label, background->image.bands,
+                                  handed_on);
+    reported = first_process_reported();
+    preparation->prepared = clock_monotonic() - start;
+    preparation->spinner_frames = spinner_frames - first;
+    return reported;
 }
 
-/* Test the kernel's objects and threads and start the first process.
-   Once it has reported that its startup is done, draw the desktop
-   background offscreen while the spinner still turns, since the drawing
-   takes seconds under emulation on a large screen; then stop the spinner
-   and, once its thread has ended so that nothing else draws, fade into
-   the background and release the display, after which the kernel never
+/* Test the kernel's objects and threads, start the first process, and
+   prepare the desktop background while the spinner turns. Once the
+   process has reported that its startup is done, stop the spinner and,
+   once its thread has ended so that nothing else draws, fade into the
+   background and release the display, after which the kernel never
    draws (docs/spec/console.md C1). If it closed its bootstrap channel
    without the report, stop the spinner and leave the boot screen. The
    first process then runs on as the supervisor (docs/spec/ipc.md I10),
@@ -151,22 +163,24 @@ static void prepare_while_spinning(const BOOT_INFO *info,
    since the processes it starts run on. */
 static void startup(void *argument)
 {
+    /* Its lists of bands are more than a thread's stack is meant for. */
+    static BACKGROUND background;
     BOOT_INFO *info = argument;
-    BACKGROUND background;
-    UINT64 prepared, frames;
+    PREPARATION preparation;
 
     if (selftest_runs(SELFTEST_OBJECT))
         object_self_test(info);
     if (selftest_runs(SELFTEST_THREAD))
         sched_self_test(&spinner_thread);
     selftest_end();
-    if (first_process_start(info)) {
-        prepare_while_spinning(info, &background, &prepared, &frames);
+    first_process_start(info);
+    if (prepare_while_spinning(info, &background, &preparation)) {
         stop_spinner();
-        background_show(info, &background, prepared, frames);
+        background_show(info, &background, &preparation);
         first_process_release_display();
     } else {
         stop_spinner();
+        background_discard(&background);
     }
     first_process_wait();
 }

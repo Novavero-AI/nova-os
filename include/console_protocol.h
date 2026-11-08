@@ -77,25 +77,37 @@ _Static_assert(sizeof(CONSOLE_REQUEST) + CONSOLE_WRITE_MAX <=
 
 /** @name The control channel
     Messages on the control channel, from the first process: a
-    CONSOLE_SETUP of CONSOLE_SETUP_SIZE bytes, its kind saying what the one
-    handle it carries is. CONSOLE_SETUP_DISPLAY carries an MMIO resource
-    covering the framebuffer's pages, followed by the display's
-    BOOTSTRAP_DISPLAY; CONSOLE_SETUP_SESSION carries the console's end of a
-    session, with CHANNEL_RIGHT_READ, CHANNEL_RIGHT_WRITE and RIGHT_WAIT.
-    The channel queues the display and a session for each the console
-    serves.
+    CONSOLE_SETUP of CONSOLE_SETUP_SIZE bytes, its kind saying what
+    follows it and what handles it carries. CONSOLE_SETUP_DISPLAY carries
+    an MMIO resource covering the framebuffer's pages, followed by the
+    display's BOOTSTRAP_DISPLAY; CONSOLE_SETUP_SESSION carries the
+    console's end of a session, with CHANNEL_RIGHT_READ,
+    CHANNEL_RIGHT_WRITE and RIGHT_WAIT; CONSOLE_SETUP_BACKGROUND, before
+    the display, is a CONSOLE_SETUP_BACKGROUND_MESSAGE and carries the
+    kernel's background's sections, each with SECTION_RIGHT_READ alone.
+    The console answers every CONSOLE_SETUP_BACKGROUND, once its panel is
+    prepared from it or it is refused, with CONSOLE_PREPARED_SIZE bytes
+    on the same channel, a transaction ID of 0 and no handles, so its end
+    carries CHANNEL_RIGHT_WRITE as well as CHANNEL_RIGHT_READ and
+    RIGHT_WAIT. The channel queues the background, the display and a
+    session for each the console serves.
     @{ */
-#define CONSOLE_SETUP_DISPLAY 1 /**< the display */
-#define CONSOLE_SETUP_SESSION 2 /**< a session */
-#define CONSOLE_SETUP_SIZE 8    /**< the bytes of a setup */
+#define CONSOLE_SETUP_DISPLAY 1    /**< the display */
+#define CONSOLE_SETUP_SESSION 2    /**< a session */
+#define CONSOLE_SETUP_BACKGROUND 3 /**< the kernel's background */
+#define CONSOLE_SETUP_SIZE 8       /**< the bytes of a setup */
+/** the bytes of the answer to CONSOLE_SETUP_BACKGROUND */
+#define CONSOLE_PREPARED_SIZE 4
 /** the messages the control channel queues */
-#define CONSOLE_CONTROL_CAPACITY (CONSOLE_SESSIONS + 1)
+#define CONSOLE_CONTROL_CAPACITY (CONSOLE_SESSIONS + 2)
 /** @} */
 
 /** A message on the control channel. */
 typedef struct {
     UINT32 transaction; /**< 0 */
-    UINT32 kind;        /**< CONSOLE_SETUP_DISPLAY or CONSOLE_SETUP_SESSION */
+    /** CONSOLE_SETUP_DISPLAY, CONSOLE_SETUP_SESSION or
+        CONSOLE_SETUP_BACKGROUND */
+    UINT32 kind;
 } CONSOLE_SETUP;
 
 /** The setup that hands the console the display. */
@@ -104,7 +116,19 @@ typedef struct {
     BOOTSTRAP_DISPLAY display; /**< the display, as nova-boot drew on it */
 } CONSOLE_SETUP_DISPLAY_MESSAGE;
 
+/** The setup that offers the console the kernel's background, to
+    prepare its panel from before the display comes (console.md C5). */
+typedef struct {
+    CONSOLE_SETUP setup; /**< CONSOLE_SETUP_BACKGROUND */
+    /** the display the console is to be given */
+    BOOTSTRAP_DISPLAY display;
+    /** what the sections hold, as the kernel labelled them */
+    BOOTSTRAP_BACKGROUND background;
+} CONSOLE_SETUP_BACKGROUND_MESSAGE;
+
 _Static_assert(sizeof(CONSOLE_SETUP) == CONSOLE_SETUP_SIZE,
+               "one layout on every target");
+_Static_assert(sizeof(CONSOLE_SETUP_BACKGROUND_MESSAGE) == 48,
                "one layout on every target");
 
 /** A client's end of a session: it writes requests and reads replies,

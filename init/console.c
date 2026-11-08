@@ -2,30 +2,45 @@
    input client (platform.c), which starts it and asks this file for its
    bootstrap message, so each start of the console, the first and every
    restart, gets a control channel of its own; the end init keeps is the
-   one the next display and sessions go to. The display goes only after
-   the kernel has released it, so a console started before the release
-   gets it from console_start, and one started after from
-   console_started, which also gives login a session on it
-   (login_start.c); login's first session comes with its own start. */
+   one the background, the next display and sessions go to. The kernel's
+   background goes to a console started before the release, which
+   prepares its panel from it and answers before init reports its
+   startup done (console_prepare). The display goes only after the
+   kernel has released it, so a console started before the release gets
+   it from console_start, and one started after from console_started,
+   which also gives login a session on it (login_start.c); login's first
+   session comes with its own start. */
 
 #include "console.h"
 #include "console_protocol.h"
 #include "init.h"
 #include "input_protocol.h"
 #include "login_start.h"
+#include "tests.h"
 
 #define PIXEL_BYTES 4
 
 /* The rights each handle the console gets travels with: the debug log
    to write to it, its process to map memory, its control channel to read
-   from, its end of a session to serve it, and the framebuffer's resource
-   to make sections over it; none to pass on. */
+   from and answer the background on, its end of a session to serve it,
+   the framebuffer's resource to make sections over it, and the
+   background's sections to map them to read; none to pass on. */
 #define CONSOLE_LOG_RIGHTS RESOURCE_RIGHT_USE
 #define CONSOLE_SELF_RIGHTS PROCESS_RIGHT_MAP
-#define CONSOLE_CONTROL_RIGHTS (CHANNEL_RIGHT_READ | RIGHT_WAIT)
+#define CONSOLE_CONTROL_RIGHTS                                            \
+    (CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT)
 #define CONSOLE_END_RIGHTS                                                \
     (CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT)
 #define FRAMEBUFFER_RIGHTS RESOURCE_RIGHT_USE
+#define BACKGROUND_RIGHTS SECTION_RIGHT_READ
+
+/* On a test disk the console is told of a display MISMATCH_ROWS taller
+   than the one it is given, so that the kernel's background does not
+   match it and the console computes its panel's Limb at the display, as
+   a restarted console does (console.md C5); ci/boot.py checks that every
+   test disk's boot takes that path and draws the screen the system
+   disk's boot draws from the background. */
+#define MISMATCH_ROWS 1
 
 static UINT32 control = HANDLE_INVALID;
 static int released;
@@ -75,6 +90,48 @@ static void send_display(const PLATFORM *platform)
         close_handles(&framebuffer, 1);
         say_status("display send failed", status);
     }
+}
+
+void console_prepare(const PLATFORM *platform, BOOT_BACKGROUND *background)
+{
+    CONSOLE_SETUP_BACKGROUND_MESSAGE message;
+    HANDLE_TRANSFER sections[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
+    RECEIVED_HANDLE handle;
+    UINT32 answer = 0, byte_count = 0, handle_count, observed, i, status;
+
+    if (control == HANDLE_INVALID) {
+        boot_background_close(background);
+        return;
+    }
+    message.setup.transaction = 0;
+    message.setup.kind = CONSOLE_SETUP_BACKGROUND;
+    message.display = platform->boot->display;
+    if (tests_enabled())
+        message.display.height += MISMATCH_ROWS;
+    message.background = background->label;
+    for (i = 0; i < background->count; i++) {
+        sections[i].handle = background->sections[i];
+        sections[i].rights = BACKGROUND_RIGHTS;
+    }
+    status = channel_write(control, &message, sizeof message, sections,
+                           background->count);
+    if (status != OK) {
+        boot_background_close(background);
+        if (status != ERR_PEER_CLOSED)
+            say_status("background send failed", status);
+        return;
+    }
+    background->count = 0;
+    status = object_wait_one(control, CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
+                             DEADLINE_INFINITE, &observed);
+    if (status == OK)
+        status = channel_read(control, &answer, sizeof answer, &handle, 0,
+                              &byte_count, &handle_count);
+    if (status != OK && status != ERR_PEER_CLOSED)
+        say_status("console answer failed", status);
+    else if (status == OK &&
+             (byte_count != CONSOLE_PREPARED_SIZE || answer != 0))
+        say("nova-init: console answer refused reason=malformed\r\n");
 }
 
 UINT32 console_session(void)
