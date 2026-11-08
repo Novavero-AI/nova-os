@@ -85,28 +85,33 @@ The system disk, `disk.img`, holds:
 \NOVA\NTDLL.DLL          ntdll for 32-bit processes
 \NOVA\VIRTBLK.EXE        the virtio block driver
 \NOVA\VIRTINP.EXE        the virtio input driver
-\NOVA\CONSOLE.EXE        the console, the input drivers' client
+\NOVA\COMPOSE.EXE        the compositor, the input drivers' client while it runs
+\NOVA\CONSOLE.EXE        the console, the input drivers' client otherwise
 \NOVA\STORE.IMG          the store image
 \NOVA\FS.EXE             the file system service, for a data disk
 ```
 
-The test disk, `test.img`, holds the system disk's files and two more:
+The test disk, `test.img`, holds the system disk's files and three more:
 
 ```
 \NOVA\FSTEST.EXE         the data disk's check
 \NOVA\TESTS              an empty file, which makes the disk a test disk
+\NOVA\NOMOTION           an empty file: nothing blinks or moves on a timer
 ```
 
 A disk whose `\NOVA\` holds a file named `TESTS`, whatever it holds, is
 a test disk: the kernel and the first process run their tests on it and
 report them in KTAP ([log.md T2](log.md#t2-test-reports)), and the boot
-then goes on as the system's does. Two more disks hold the test disk's
+then goes on as the system's does. A flag file other than `TESTS` acts
+only on a test disk ([display.md D19](display.md#d19-the-build-plan)).
+Three more disks hold the test disk's
 files and add their own:
 
 | Disk | Adds | Its boot |
 |---|---|---|
 | The specimen disk, `specimen.img` | `\NOVA\SPECIMEN`, an empty file | The first process gives the display to the type specimen from `/store` in the console's place ([console.md C1](console.md#c1-the-display-handoff)) |
 | The chain disk, `chain.img` | The inputs of the bootstrap check, the chain the first process runs from the seed | The first process runs the chain ([compat.md C4](compat.md#c4-files)) |
+| The fallback disk, `fallback.img` | `\NOVA\COMPFAIL`, an empty file | The compositor exits once it has shown the console's window, each time it starts, so the console takes the display after it ([display.md D19](display.md#d19-the-build-plan), the phase 3 arrangement) |
 
 The chain disk's inputs:
 

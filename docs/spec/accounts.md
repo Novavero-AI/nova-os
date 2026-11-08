@@ -324,7 +324,8 @@ process, with `INSPECT` and `WAIT`, by which the shell waits for its
 end and reads its exit code. A program run so gets none of the
 session's handles.
 
-While a compositor runs, login also mints the session's display
+From display.md's phase 4, while a compositor runs, login also mints
+the session's display
 connection at each login, starts the session's HUD, with a shell of its
 own in values mode ([ui.md U11](ui.md#u11-the-hud)), its powerbox and
 its notification service, each in a job of its own
@@ -334,7 +335,9 @@ terminal, a console in window mode, on `LAUNCHER_TERMINAL`
 At logout it closes the session's connection, its network control
 channel and every display grant and notification channel, so every
 window, connection, capture and notification of the session goes at
-once. Login waits on one port for
+once, and ends each job it made for the session's programs with
+`task_kill` ([objects.md O7](objects.md#o7-jobs)), so none of them
+runs on into the next session with its handles. Login waits on one port for
 every channel it serves and blocks on none of them, so it answers the
 secure attention key while a password is checked.
 
@@ -508,6 +511,12 @@ next, so:
 | The console | The console's restart, and a new session for login, which carries on, a session in progress included |
 | The compositor | A new compositor, in the attention state, and a new connection for login, which shows its screen again before it answers the session's grant channels, through which the session's programs reconnect ([display.md D3](display.md#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)); a session that was locked stays locked |
 | The network service | A new network control channel for login, on which it makes each open session's channel again; a program running when the service ended is without the network until it is started again ([network.md N5](network.md#n5-supervision)) |
+
+Until display.md's phase 4, login keeps its console session while the
+compositor runs and gets no display connection, as
+[display.md D19](display.md#d19-the-build-plan)'s phase 3 arrangement
+gives; there the compositor's restart and its give-up leave login's
+session as it was, and the console's restart is as the table gives.
 
 - **Why:** a crashed login or service must come back, or the console
   sits with no one to log in. Handing channels over, as the first

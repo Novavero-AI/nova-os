@@ -55,7 +55,7 @@ C1 gives, and login asks for a name on it.
 
 | Part | What it is | What it holds |
 |---|---|---|
-| The compositor, `compositor.exe` | The user-mode service that owns the display while it runs: it composes windows, routes input and draws the strip ([D8](#d8-composition)) | The framebuffer's resource, or later a channel to the GPU driver ([D18](#d18-the-gpu-path)); every input driver's endpoint; a control channel from the first process; its closure in `/store`, read only, for its fonts; the system's settings, for its theme and reserved keys; its own process with `MAP`; the debug log |
+| The compositor, `compose.exe` | The user-mode service that owns the display while it runs: it composes windows, routes input and draws the strip ([D8](#d8-composition)) | The framebuffer's resource, or later a channel to the GPU driver ([D18](#d18-the-gpu-path)); every input driver's endpoint; a control channel from the first process; its closure in `/store`, read only, for its fonts; the system's settings, for its theme and reserved keys; its own process with `MAP`; the debug log |
 | The console, `console.exe` | The text console of [console.md](console.md), in two roles: the fallback owner of the framebuffer when no compositor runs ([D4](#d4-the-console-in-a-window-and-as-the-fallback)), and the terminal, its panel in a window | What [console.md C2](console.md#c2-starting-the-console) gives it, or a display connection in place of the framebuffer |
 | Login, `login.exe` | The program that asks who is there and starts sessions and every program in them ([accounts.md A1](accounts.md#a1-the-parts)), drawing on the system layer | What [accounts.md A1](accounts.md#a1-the-parts) gives it, the sessions' job with `CREATE_JOB` ([accounts.md A7](accounts.md#a7-the-session)), and the connection that carries `SYSTEM` and `ATTENTION` ([D5](#d5-connections-labels-and-layers)) |
 | The powerbox, `powerbox.exe` | The session's trusted file chooser, share picker and consent ([D16](#d16-trusted-interface-and-the-powerbox)) | A `TRUSTED` connection; the session's view, to grant from; a channel from login, on which consent is asked |
@@ -126,7 +126,9 @@ a time:
 3. It starts in the attention state
    ([D12](#d12-the-secure-attention-key-and-global-keys)), draws the
    strip, serves login's connection, and login shows its screen
-   ([D13](#d13-the-graphical-login)).
+   ([D13](#d13-the-graphical-login)). Until phase 4 builds these, the
+   compositor runs as [D19](#d19-the-build-plan)'s phase 3 arrangement
+   gives.
 4. The first process gives the console no display while the compositor
    runs. The platform driver hands every input driver's endpoint to the
    compositor, which is the input drivers' client in the console's place
@@ -204,6 +206,10 @@ When the compositor is given up:
    can show a window again; a program that asks for a connection is
    refused.
 
+Until phase 4, while the console runs beside the compositor, rule 9 of
+[D19](#d19-the-build-plan)'s phase 3 arrangement takes the place of
+rules 5 and 6.
+
 When a client ends, its window channels close and its windows go; the
 compositor composes what lay beneath. Login, which started it, reads
 its exit from the process handle it holds
@@ -223,8 +229,8 @@ its exit from the process handle it holds
   still lets its owner log in, read the log and fix it.
 - **Cost:** a restart loses every window's place, and a program that
   does not handle `PEER_CLOSED` on its connection loses its windows for
-  good. A program shown when the compositor is given up runs on unseen,
-  since the kernel has no call to end it
+  good. A program shown when the compositor is given up runs on unseen
+  until logout ends it
   ([accounts.md A7](accounts.md#a7-the-session)). Between the
   compositor's end and its successor's first frame, the screen shows a
   stale frame.
@@ -290,9 +296,9 @@ its issuer gave it, and nothing on the connection can change that:
 | Field | What it is |
 |---|---|
 | Label | UTF-8 text of at most `DISPLAY_LABEL_MAX` (64) bytes, a longer name cut at a character's boundary: the program's name, taken by login from its store path, as the powerbox names a program in [shell.md L18](shell.md#l18-asking-for-more-the-powerbox). The compositor shows it on the frame of every `APP` window of the connection and in the strip |
-| Mark | Whether the compositor draws the system's mark before the label: set for the system's own programs, the console, the HUD, the powerbox and the notification service, and never for a program a user runs |
+| Mark | Whether the compositor draws the system's mark before the label: set for the system's own programs that show only what the system says, login, the HUD, the powerbox and the notification service, and never for a terminal, which shows what any program run in it writes, or for a program a user runs |
 | Layers | Which of `APP`, `NOTIFICATION`, `OVERLAY`, `TRUSTED` and `SYSTEM` its windows may be on ([D8](#d8-composition)) |
-| Rights | `MINT`: issue connections with the layers `APP`, `NOTIFICATION`, `OVERLAY` and `TRUSTED`, the mark and `ACTIVATE`, none beyond its own. `ATTENTION`: receive the secure attention key ([D12](#d12-the-secure-attention-key-and-global-keys)). `CAPTURE`: make captures ([D15](#d15-capture-copy-and-paste)). `ACTIVATE`: its first window may take the focus ([D11](#d11-routing-input)) |
+| Rights | `MINT`: issue connections, each with layers among its own other than `SYSTEM`, with or without the mark, and with any of `MINT` and `ACTIVATE`. `ATTENTION`: receive the secure attention key ([D12](#d12-the-secure-attention-key-and-global-keys)). `CAPTURE`: make captures ([D15](#d15-capture-copy-and-paste)). `ACTIVATE`: its first window may take the focus ([D11](#d11-routing-input)) |
 | Issuer | The connection it was issued from |
 
 `SYSTEM`, `ATTENTION` and `CAPTURE` cannot be minted: the first process
@@ -307,24 +313,26 @@ Connections are issued down a chain:
 | The session's | The powerbox's | `powerbox`, marked | `TRUSTED` | none |
 | The session's | The HUD's | `hud`, marked | `OVERLAY` | none |
 | The session's | The notification service's | `notify`, marked | `NOTIFICATION` | none |
-| The session's | A terminal's, the console in window mode, from the store path `terminal` ([D4](#d4-the-console-in-a-window-and-as-the-fallback)) | `terminal`, marked | `APP` | `ACTIVATE` |
+| The session's | A terminal's, the console in window mode, from the store path `terminal` ([D4](#d4-the-console-in-a-window-and-as-the-fallback)) | `terminal` | `APP` | `ACTIVATE` |
 | The session's, for a program the session runs whose recipe declares the display | The program's | Its name | `APP` | `ACTIVATE` |
 
 A connection request is `DISPLAY_CONNECT` on a connection that carries
-`MINT`: the label, the mark, the layers and rights asked for, and the
-compositor's end of a channel the requester created. A request for
+`MINT`, or `COMPOSITOR_CONNECT` on the compositor's control channel:
+the label, the mark, the layers and rights asked for, and the
+compositor's end of a channel the requester created. On the control
+channel a closing is `COMPOSITOR_CLOSED`. A request for
 more than the connection may mint fails with `ERR_ACCESS_DENIED`. A
-connection makes at most `CONNECTION_WINDOWS_MAX` (64) windows.
+connection makes at most `CONNECTION_WINDOWS_MAX` (64) windows, its
+popups and child windows counted with them.
 
 **Revocation.** When a connection closes, the compositor closes every
 connection issued from it, and every window and capture of each, and
 tells the issuer with `DISPLAY_CLOSED` and the number it gave the
 connection. At logout login closes the session's connection, so every
-window, connection and capture of the session goes at once; the
-session's processes run on, since the kernel has no call to end
-them ([accounts.md A7](accounts.md#a7-the-session)), but none can show
-anything. If login ends, its own connection closes and everything it
-issued goes with it.
+window, connection and capture of the session goes at once, and ends
+the session's programs with `task_kill` on the jobs it made for them
+([accounts.md A7](accounts.md#a7-the-session)). If login ends, its own
+connection closes and everything it issued goes with it.
 
 **Reconnecting.** Each program login starts with a connection also gets
 a display grant channel to login, on which it can ask for one thing: a
@@ -372,7 +380,9 @@ display, and its label is its name, whatever it calls itself.
   directory protocol's ([objects.md O8](objects.md#o8-the-namespace));
   the kernel enforces only the channel's.
 - **Cost:** login is trusted to label programs truthfully and to mark
-  only the system's own; a program that wants a second label, for a
+  only the system's own; a terminal carries no mark, so the strip shows
+  it as it shows any program, since a prompt in it may be any program's;
+  a program that wants a second label, for a
   helper process, cannot make one; a program's windows vanish at logout
   while the program runs on. A label on a frame can still be imitated:
   a program can draw inside its window a picture of another window,
@@ -389,15 +399,46 @@ display, and its label is its name, whatever it calls itself.
 
 **Decided.**
 
+**The screen.** The compositor's first message on every connection is
+`DISPLAY_SCREEN`: the screen's width and height in pixels and its
+scale in quarters ([D7](#d7-presenting-and-pacing), rule 5). It sends
+it again whenever any of them changes
+([D18](#d18-the-gpu-path)). A program sizes what it draws from it; it
+still learns nothing of where its windows are
+([D11](#d11-routing-input), rule 6).
+
 A window is a channel. To make one, a client creates a
 channel of `WINDOW_CAPACITY` (64) messages and sends one end in a
-`DISPLAY_WINDOW` request on its connection, with the size it wants;
+`DISPLAY_WINDOW` request on its connection, with the size it wants,
+the layer it asks for among its connection's, and its surface;
 the compositor answers on the connection with a status, and serves the
 window on the channel from then on. The client's end is the window: it
 can pass it to another process with `TRANSFER`, and closing it closes
 the window. A connection makes at most `CONNECTION_WINDOWS_MAX` (64)
 windows, and a window's title, which `WINDOW_TITLE` sets, is at most
 `WINDOW_TITLE_MAX` (128) bytes of UTF-8.
+
+**Surfaces.** A window's surface is one of the theme's, named in
+[look.md V4](look.md#v4-surfaces-edges-and-shadows): `WINDOW`, `RAISED`
+or `PANEL`. Its material, its corners' radius and its shadow are that
+surface's ([D8](#d8-composition)); an `APP` window's frame is the
+compositor's whatever its surface. A client chooses only among the
+theme's surfaces, so every window still looks like the system's.
+
+**Placement.** The compositor places each new window within the area
+below the strip, the whole screen while no strip is drawn. With the
+screen `W` x `H` pixels, the strip `S` deep and the window `w` x `h`,
+in integers rounded down: its left is `(W - w) / 2`, and its top is
+`S + (H - S) * 40 / 100 - h / 2`, raised to at least `S` and lowered
+to at most `H - h` where that is not below `S`. Each further `APP`
+window opened while another of its connection's is shown goes one
+title bar's depth ([look.md V11](look.md#v11-windows)) right of and
+below the last one placed, and back to the first place when it would
+cross the area's right or bottom edge. A window is at most the area's
+size in each dimension, and no move or resize takes it into the strip
+([D8](#d8-composition)). The 40 percent is the console's panel's
+([console.md C5](console.md#c5-the-panel)), so a console in a window
+stands where it stands on its own.
 
 Two kinds of window are made on a parent's channel rather than a
 connection:
@@ -464,10 +505,16 @@ screen's order, `PIXEL_RGB` or `PIXEL_BGR`, as it writes.
 - **Why bands of sections:** `section_create` makes at most 2 MiB, the
   pages one page of the kernel's page list holds (`native_abi.h`), and
   mapped one after another the bands are one buffer to both sides, with
-  no kernel change.
+  no change to sections.
 - **Cost:** a buffer at 2880 x 1800 is ten handles to send and ten
   mappings on each side; a window's memory is the client's even while
-  the compositor reads it.
+  the compositor reads it. The compositor holds a channel end for each
+  window and a mapping for each section of each buffer it maps: ten
+  windows of two buffers at 2880 x 1800 are 200 mappings. So a
+  process's handles and mappings are bounded by its job's quota alone
+  ([objects.md O3](objects.md#o3-handles) and
+  [O6](objects.md#o6-no-ambient-authority)), not by a fixed table, which phase 5
+  needs ([D19](#d19-the-build-plan)).
 - **Not taken:** buffers the compositor allocates and lends to clients.
   Its cost is the compositor's memory, and its job's quota, filled by
   whichever client asks for the most windows. `section_create` raised
@@ -503,9 +550,10 @@ it stopped reading. A client draws only into a released buffer.
    sends the window one `WINDOW_FRAME`, with the time, and a client that
    animates draws its next frame on it.
 4. **Configure.** The compositor tells a window its size, scale and
-   state with `WINDOW_CONFIGURE`, with a serial; the client's next
-   present at that size answers it. Until then the compositor shows the
-   old buffer, cut or padded with the window's material.
+   state with `WINDOW_CONFIGURE`, with a serial that rises with each;
+   a present names the serial of the configure its buffer was drawn
+   for, and answers it. Until then the compositor shows the old buffer,
+   cut or padded with the window's material.
 5. **The scale** is the screen's height over 800, rounded to the nearest
    quarter: 1 at 1280 x 800, 2 at 2560 x 1600 and 2.25 at 2880 x 1800.
    The system setting `display.scale` overrides it. A program draws at
@@ -561,7 +609,11 @@ The compositor composes, bottom to top:
 | 7 | Pointer | The pointer's image ([D10](#d10-the-pointer)) | The compositor |
 | 8 | Strip | A band along the top of the screen, always shown, at least `STRIP_MIN` deep, a screen's height over 100, and as deep as the system's theme makes it. At its left, the wordmark, then the marks and the focused window's label ([D16](#d16-trusted-interface-and-the-powerbox)), then the session's `APP` windows by label, the focused one marked, each a button that gives its window the focus; in its centre, a search field that opens the HUD; at its right, the compositor's notices, the clock and the user ([look.md V9](look.md#v9-the-bar)) | The compositor |
 
-No window of any layer covers the strip. A window's shadow and corners
+No window of any layer covers the strip or lies in its band: placement,
+moves and resizes keep every window below it
+([D6](#d6-windows-and-buffers)), since the strip has no fill of its own
+([look.md V9](look.md#v9-the-bar)) and a window beneath its type would
+show between its marks. A window's shadow and corners
 are the compositor's, drawn from the theme
 ([ui.md U9](ui.md#u9-theming-from-tokens)), and so are an `APP`
 window's frame and the mark of its focus, with its label and the title
@@ -659,7 +711,11 @@ of its fade, from CI run 42404427121 at commit `efd8296` on GitHub's
 `ubuntu-24.04` runners at 1280 x 800, compiled by TinyCC: a fade frame
 reads Limb, makes three table lookups for each pixel and writes the
 whole screen write-combining, the work of a material over the
-wallpaper.
+wallpaper. At that commit the line's `draw_ms` timed Limb's drawing
+alone; it now times Limb's setup, its bands' allocation and the drawing
+together, 87.3 ms under KVM in CI run 42448319244 at `825db58`, where a
+fade frame took 2.6 ms. Phase 3's own lines replace these figures as
+the baseline.
 
 | Measured at 1280 x 800 | KVM, one boot | QEMU's TCG, ten boots on QEMU's default processor, Skylake-Client and `-cpu max` |
 |---|---|---|
@@ -674,9 +730,11 @@ wallpaper.
 
 The larger sizes are scaled by the count of pixels and not measured; a
 fade frame at 2880 x 1800 under TCG has been seen to take about 150 ms,
-within the scaled range. The measured path is a material's: it leaves
-out the decode, mix and encode of a pixel of partial cover, and the
-second write that composing in a band and copying it adds
+within the scaled range. The measured path is nearly all a material's:
+only the boot screen's strokes, a small share of the screen, are mixed
+at partial cover, so it leaves out nearly all the decode, mix and
+encode of a pixel of partial cover, and all of the second write that
+composing in a band and copying it adds
 ([D7](#d7-presenting-and-pacing)), both of which the console's window
 meets at every glyph's edge; phase 3 measures them.
 
@@ -684,7 +742,7 @@ The budgets, at 60 Hz, a frame of 16.7 ms:
 
 | Change | Pixels composed at 2880 x 1800 | Budget, KVM or hardware | Under TCG |
 |---|---|---|---|
-| The pointer moves | Two pointer images, a 24-pixel pointer at scale 2.25: 2 x 54 x 54 | 0.1 ms | Within a frame |
+| The pointer moves | Two pointer images, the 22-point arrow with its edge ([look.md V15](look.md#v15-the-pointer)) at scale 2.25: 2 x 36 x 52 | 0.1 ms | Within a frame |
 | A key typed into a field | One line of text, about 1,600 x 54 | 0.5 ms | Within a frame |
 | A window of 1440 x 900 dragged | Its old and new places, at most 2 x 1,296,000 | 8 ms | 10 to 20 frames a second |
 | The whole screen | 5,184,000 | 16 ms, one frame | 5 to 10 frames a second |
@@ -843,7 +901,9 @@ channel, and to no other:
    `WINDOW_DROPPED`, to treat its key state as unknown, as evdev's
    `SYN_DROPPED` tells a client (evdev, `EV_SYN`). Configures, releases
    and frame messages are state, not events: the compositor keeps each
-   window's latest and sends it when the channel has room, so none is
+   window's latest configure and frame, and the set of its buffers
+   released since it last told the window, which one `WINDOW_RELEASED`
+   names whole, and sends them when the channel has room, so none is
    lost. A window whose channel stays full for `WINDOW_STALL_NS`
    (2 seconds) is closed, and the log says so. Replies on a connection
    wait the same way, at most `CONNECTION_PENDING_MAX` (16), past which
@@ -917,8 +977,10 @@ however many presses come. This is the attention state. Login then
 shows its secure screen: in a session, lock, log out and back, or, at
 the login screen, the login screen afresh. The state lasts until login
 ends it on its connection, through a restart of login, whose new
-connection takes the state over, and every compositor starts in it
-([D3](#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)).
+connection takes the state over, and from phase 4 every compositor
+starts in it
+([D3](#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows);
+[D19](#d19-the-build-plan)'s phase 3 arrangement, rule 3).
 While it lasts, nothing a session program draws is shown and nothing
 typed reaches one. The console in direct mode does the same with its
 keyboard: it never gives the key to a read, and gives login's session
@@ -1043,7 +1105,7 @@ pass:
 | Keep its windows after logout | Logout closes the session's connection, and every connection, window and capture issued from it ([D5](#d5-connections-labels-and-layers)) |
 | Read another program's pixels | It holds no other program's sections and no resource over the framebuffer; captures need a granted handle ([D15](#d15-capture-copy-and-paste)) |
 | Read another program's input | Each event goes to one window's channel ([D11](#d11-routing-input)) |
-| Read what another program copied | The clipboard is given only on a paste that follows the user's act in the window ([D15](#d15-capture-copy-and-paste)) |
+| Read what another program copied | The clipboard is its session's, given only on a paste that follows the user's act in the window, and emptied at logout, at a lock and at the secure attention key ([D15](#d15-capture-copy-and-paste)) |
 | See the secure attention key | The compositor never routes it ([D12](#d12-the-secure-attention-key-and-global-keys)) |
 | Take the focus by itself | Only a user action, or `ACTIVATE` once, gives it ([D11](#d11-routing-input)) |
 | Learn where its windows are | Positions are relative to the window ([D11](#d11-routing-input)), except that a drag held to the screen's edge shows how far the window lies from it |
@@ -1091,15 +1153,20 @@ that connection closes, as at logout
 ([D5](#d5-connections-labels-and-layers)), or at the secure attention
 key.
 
-**Copy and paste.** The compositor holds one clipboard: text, or a value
-in the shell's encoding ([shell.md L7](shell.md#l7-pipelines)), carried
-in messages of at most `CHANNEL_MAX_BYTES` and `CLIPBOARD_MAX` (1 MiB)
-in all. A window puts its selection there with `WINDOW_COPY` and asks
-for it with `WINDOW_PASTE`, and the compositor honours each only within
-`USER_ACT_NS` (1 second) of a key or click it delivered to that window,
-so data moves between programs only on the user's act there. A paste
-into a window of another connection than the copy's is logged with both
-labels, never the content.
+**Copy and paste.** The compositor holds a clipboard for each session:
+for the session's connection, shared by every connection issued from
+it. Login's own connection has one of its own. A clipboard holds text,
+or a value in the shell's encoding ([shell.md L7](shell.md#l7-pipelines)),
+carried in messages of at most `CHANNEL_MAX_BYTES` and `CLIPBOARD_MAX`
+(1 MiB) in all. A window puts its selection in its session's clipboard
+with `WINDOW_COPY` and asks for it with `WINDOW_PASTE`, and the
+compositor honours each only within `USER_ACT_NS` (1 second) of a key
+or click it delivered to that window, so data moves between programs
+only on the user's act there. The compositor empties a clipboard when
+its session's connection closes, at logout, and at the secure attention
+key, which a lock follows, so nothing copied in one session reaches
+another or outlasts a lock. A paste into a window of another connection
+than the copy's is logged with both labels, never the content.
 
 - **Why a granted capture:** what is on a screen is everything a user
   is working on, so reading it is a power the user grants for one
@@ -1108,9 +1175,15 @@ labels, never the content.
   read at will is a channel between every pair of programs. EWS holds
   that "No communication may occur between applications through the
   display server unless we can demonstrate an authorizing user action"
-  ([EWS](README.md#display-and-interface-design-references), 2.1), and
-  Qubes' clipboard between domains "is fully controlled by the user"
-  ([Qubes](README.md#display-and-interface-design-references)).
+  ([EWS](README.md#display-and-interface-design-references), 2.1).
+  Wayland gives the clipboard to the client the user is typing in: its
+  selection "is sent to a client immediately before receiving keyboard
+  focus and when a new selection is set while the client has keyboard
+  focus" ([Wayland](README.md#display-and-interface-design-references),
+  `wayland.xml`, `wl_data_device.selection`).
+- **Why a clipboard for each session:** a clipboard kept across logout
+  hands what one user copied, a password among it, to the next user's
+  programs; one kept across a lock hands it to whoever unlocks.
 - **Cost:** a program cannot make its own screenshots, and the shell has
   no command for one or for moving the focus, which principle 3 asks
   for, until the launcher protocol gains them, its commands made by the
@@ -1118,9 +1191,16 @@ labels, never the content.
   ([shell.md L24](shell.md#l24-settings-and-service-commands)); a recorded
   program cannot take a capture, since its buffers are written by the
   compositor, outside the recording
-  ([replay.md](replay.md#shared-memory)); a clipboard holds at most
-  1 MiB, and
+  ([replay.md](replay.md#shared-memory)); a window the user is typing
+  in can read the clipboard at any key, without the user pressing
+  paste, as a Wayland client with the keyboard's focus can; a copy does
+  not outlast a lock; a clipboard holds at most 1 MiB, and
   dragging between windows is not specified.
+- **Not taken:** a paste honoured only after the paste key the
+  compositor sees, as Qubes moves its clipboard between domains only on
+  keys its trusted side traps
+  ([Qubes](README.md#display-and-interface-design-references)). Its
+  cost is a menu's Paste that needs the key as well.
 - **Not taken:** frames as channel messages. Its cost is a frame of
   2880 x 1800 in 317 messages of 64 KiB.
 
@@ -1188,8 +1268,10 @@ fails the launch with `launch`.
    focus, over that window; a request from a program none of whose
    windows has the focus waits until one does. A consent, for a program
    that has no window yet, is shown when the user asks for the launch.
-2. For `PROMPT_GUARD_NS` (500 ms) after a dialog appears it takes no key
-   and no click, so keys the user was typing elsewhere grant nothing.
+2. It takes no key and no click until `PROMPT_GUARD_NS` (500 ms) has
+   passed both since it appeared and since the last key pressed or
+   repeated, so keys the user was typing elsewhere grant nothing,
+   however long they run on.
 3. A program has at most one request outstanding; a second is refused
    at once.
 
@@ -1222,7 +1304,8 @@ the reason's text or a file's contents.
   not login's `SYSTEM`.
 - **Cost:** a process for each session, and a `TRUSTED` connection login
   hands to it; a program cannot draw its own file dialog with access to
-  anything it was not granted; dimming the rest composes the whole
+  anything it was not granted; a dialog takes no key until the user has
+  paused for half a second; dimming the rest composes the whole
   screen when the trusted interface opens and again when it closes
   ([D9](#d9-budgets)).
 - **Not taken:** a file dialog drawn by the program itself, from a
@@ -1258,7 +1341,8 @@ the reason's text or a file's contents.
    messages, which are recorded.
 5. **The log.** The compositor writes a line for each connection it
    issues (label, layers, rights), each capture made and ended (holder,
-   target), each secure attention key (its time), each restart notice,
+   target), each secure attention key (its time on `clock_monotonic`),
+   each restart notice,
    and each window it closes for a protocol error (the label and the
    error). Login and the powerbox log their own decisions
    ([D16](#d16-trusted-interface-and-the-powerbox)). No log line holds
@@ -1341,30 +1425,213 @@ the account names, the text typed, and `ci/boot.py` compares the
 SHA-256 of each `screendump` with it. No image is kept in the
 repository. A boot under test sets `ui.reduce-motion`, so the caret
 does not blink, transitions end at once and a spinner holds still
-([ui.md U10](ui.md#u10-accessibility)): through a flag file in the
-system disk's `\NOVA\`, as `FSLOOP` is one, until the settings service
-holds the setting. After each step, a key typed or the pointer moved,
-the check takes the screen until it matches or `SCREEN_TIMEOUT` (60
-seconds) passes. The KVM boot also runs at 2560 x 1600 and at
-2880 x 1800, with `-vga none -device VGA,edid=on,xres=2880,yres=1800,vgamem_mb=32`
-for the latter: its 20,736,000 bytes pass the default 16 MiB of video
-memory, and without `vgamem_mb` the firmware offers 800 x 600, as a
-boot under QEMU 11.1.3 with its bundled EDK II showed.
+([ui.md U10](ui.md#u10-accessibility)). Until the settings service
+holds the setting, the test disk carries it as `\NOVA\NOMOTION`, an
+empty file, as the specimen disk carries `\NOVA\SPECIMEN`
+([disk-layout.md](disk-layout.md#files)); the first process honours it
+only on a test disk and passes it on in the console's and the
+compositor's setup. The system disk carries no flag file, and a check
+on it takes the caret in either phase of its blink. After each step, a
+key typed or the pointer moved, the check takes the screen until it
+matches or `SCREEN_TIMEOUT` (60 seconds) passes. The KVM boot also runs
+at 2560 x 1600 and at 2880 x 1800, each with
+`-vga none -device VGA,edid=on,xres=W,yres=H,vgamem_mb=32` for its
+width and height: 2880 x 1800's 20,736,000 bytes pass the default
+16 MiB of video memory, and without `vgamem_mb` the firmware offers
+800 x 600, as a boot under QEMU 11.1.3 with its bundled EDK II showed.
+Each of these boots fails unless the display line names the size it
+asked for, which also checks the recipe under the QEMU and EDK2
+releases CI boots with.
 
 | Phase | Ships | Needs first | CI checks |
 |---|---|---|---|
 | 1. The pointer | `virtio-tablet-pci` in the README and CI; one input driver per function; pointer reports ([D10](#d10-the-pointer)); the wheel scrolls the console's panel | | QMP `input-send-event` moves the tablet and turns the wheel; the console's panel shows the earlier lines, matched against the host's render |
 | 2. Outlines and fonts | The outline rasterizer, Inter converted at build time, text layout ([ui.md U2 to U4](ui.md#u2-the-rasterizer)) | | The host check of the C port against its prototype, byte for byte, on a reference sheet and on the specimen at several sizes, and the text's distance from FreeType's; in the guest a test program from `/store` draws the specimen in the console's place on a disk that asks for it, and `ci/boot.py` compares its `screendump` with the prototype's render pixel for pixel |
-| 3. The compositor with one surface | `compositor.exe` takes the display; the console runs in window mode, its one window; the software pointer; materials; budgets logged ([D2](#d2-who-holds-the-display) to [D9](#d9-budgets)) | | The login prompt in the console's window, with the pointer, matched against the host's render; the first frame after the handoff equals the kernel's last; a boot with a flag file that makes the compositor exit twice shows the console's fallback, Limb over the whole screen, and logs in on it |
-| 4. The graphical login | Login's window, `ACCOUNTS_LIST`, the strip, the attention state and the secure attention key, the session's connection and logout ([D5](#d5-connections-labels-and-layers), [D12](#d12-the-secure-attention-key-and-global-keys), [D13](#d13-the-graphical-login)) | | The login screen with its list matched; the account created and logged into by QMP keys; the secure attention key from the shell shows login's secure screen, and keys typed after it reach no session program; after logout the screen is the login screen again; the password appears nowhere in the log |
-| 5. Windows | Many windows, popups and children, frames and labels, focus, stacking, damage and release, copy and paste ([D5](#d5-connections-labels-and-layers) to [D7](#d7-presenting-and-pacing), [D11](#d11-routing-input), [D15](#d15-capture-copy-and-paste)) | | A test program opens two windows with known patterns; QMP drags one and clicks the other; screens matched; the program logs which window got which key, and a key typed at one never reaches the other; a popup asked for from a window without the focus is refused |
-| 6. The HUD | The HUD and its key, launching, finding, settings and nvo commands ([ui.md U11](ui.md#u11-the-hud)) | The nvo interpreter and a session in values mode ([shell.md L7](shell.md#l7-pipelines), rule 7); the settings service ([shell.md L24](shell.md#l24-settings-and-service-commands)) | The HUD key opens it; a typed command's table matched against the host's render; a program launched from it gets the focus |
-| 7. Files, Settings and the terminal | The renderer, `uihost.exe`, and the first programs drawn through it; the terminal, in values mode; the powerbox, with consent; the notification service; capture ([D15](#d15-capture-copy-and-paste), [D16](#d16-trusted-interface-and-the-powerbox), [D20](#d20-notifications), [ui.md U6](ui.md#u6-the-renderer), [ui.md U12](ui.md#u12-the-first-programs)) | The shell's commands for files and settings, built-ins and programs ([shell.md L25](shell.md#l25-built-ins)); a job for each program, with `CREATE_JOB` for login | Each program's first window matched; the terminal runs `whoami` and the file commands as the system boot does; a powerbox grant by QMP keys and the log's line for it; a program from outside the profile shows consent, and Escape fails its launch; a test program's notification shows under its label; the secure attention key with a powerbox dialog open shows login's screen alone |
+| 3. The compositor with one surface | `compose.exe` takes the display; the console in a window, its one client; the software pointer; materials; budgets logged ([D2](#d2-who-holds-the-display) to [D9](#d9-budgets)); all as the phase 3 arrangement below gives | The interface description language and its generator ([interface.md](interface.md)); the pointer's image ([look.md V15](look.md#v15-the-pointer)) | The login prompt in the console's window, with the pointer, matched against the host's render at every size the boots run; on the system disk the compositor's display line says `wallpaper=section`, and the composer's host check shows that a frame of the wallpaper alone writes the wallpaper's pixels, so the first frame changes nothing on the screen; the fallback boot shows the console's fallback, Limb over the whole screen and the panel, matched, and logs in on it; the budget lines at each size |
+| 4. The graphical login | Login's window, `ACCOUNTS_LIST`, the strip, the attention state and the secure attention key, the session's connection and logout ([D5](#d5-connections-labels-and-layers), [D12](#d12-the-secure-attention-key-and-global-keys), [D13](#d13-the-graphical-login)); a terminal at each login, the console in window mode with its shell in text, without a frame until phase 5, until the HUD can ask for one | `task_kill` on a job ([objects.md O7](objects.md#o7-jobs)), so logout ends the session's programs; the toolkit's widgets and layout login's screen uses ([ui.md U7](ui.md#u7-widgets), [U8](ui.md#u8-layout)), drawn with the system theme's defaults ([ui.md U9](ui.md#u9-theming-from-tokens)); the secure screen and the secure and system marks ([look.md](look.md#not-designed)) | The login screen with its list matched; the account created and logged into by QMP keys; the secure attention key from the session's terminal shows login's secure screen, and keys typed after it reach no session program; after logout the screen is the login screen again; the password appears nowhere in the log |
+| 5. Windows | Many windows, popups and children, frames and labels, focus, stacking, damage and release, copy and paste ([D5](#d5-connections-labels-and-layers) to [D7](#d7-presenting-and-pacing), [D11](#d11-routing-input), [D15](#d15-capture-copy-and-paste)) | A process's handles and mappings bounded by its job's quota alone, not by fixed tables ([objects.md O3](objects.md#o3-handles), [D6](#d6-windows-and-buffers)); popups and menus ([look.md](look.md#not-designed)) | A test program opens two windows with known patterns; QMP drags one and clicks the other; screens matched; the program logs which window got which key, and a key typed at one never reaches the other; a popup asked for from a window without the focus is refused |
+| 6. The HUD | The HUD and its key, launching, finding, settings and nvo commands ([ui.md U11](ui.md#u11-the-hud)) | The nvo interpreter and a session in values mode ([shell.md L7](shell.md#l7-pipelines), rule 7); the settings service ([shell.md L24](shell.md#l24-settings-and-service-commands)); the store's registrations, from which the launcher reads a program's declarations ([storage.md F8](storage.md#f8-the-store-volume)) | The HUD key opens it; a typed command's table matched against the host's render; a program launched from it gets the focus |
+| 7. Files, Settings and the terminal | The renderer, `uihost.exe`, and the first programs drawn through it; the terminal, in values mode; the powerbox, with consent; the notification service; capture ([D15](#d15-capture-copy-and-paste), [D16](#d16-trusted-interface-and-the-powerbox), [D20](#d20-notifications), [ui.md U6](ui.md#u6-the-renderer), [ui.md U12](ui.md#u12-the-first-programs)) | The shell's commands for files and settings, built-ins and programs ([shell.md L25](shell.md#l25-built-ins)); a job for each program, with `CREATE_JOB` for login; profiles, which say which programs ask consent ([storage.md F13](storage.md#f13-profiles-system-and-garbage-collection)) | Each program's first window matched; the terminal runs `whoami` and the file commands as the system boot does; a powerbox grant by QMP keys and the log's line for it; a program from outside the profile shows consent, and Escape fails its launch; a test program's notification shows under its label; the secure attention key with a powerbox dialog open shows login's screen alone |
+
+**The phase 3 arrangement.** Phase 3 builds the compositor before
+login has a window, so its one client is the console, which keeps
+login's session as it does on its own
+([console.md C2](console.md#c2-starting-the-console)). Until phase 4:
+
+1. **Where the code lives.** The compositor is `\nova\compose.exe`, an
+   8.3 name as the boot disk's names are
+   ([disk-layout.md](disk-layout.md#files)), built by `build.sh` from
+   `compositor/`, as the console is from `console/`; it logs as
+   `nova-compositor` and the platform driver names it `compositor`, as
+   `virtinp.exe` logs as `nova-virtio-input`. What it computes without
+   a call, composing bands, materials, corners and the pointer's image,
+   is `lib/compose.c`, which
+   `tools/check-compose.c` checks on the host, in CI beside
+   `tools/check-masks.c`. The console's keymap moves from
+   `console/keys.c` to `lib/keymap.c`, and the console's cell rule,
+   `height / CELLS_PER_HEIGHT` within `FONT_WIDTH_MIN` and
+   `FONT_WIDTH_MAX`, moves from `console/panel.c` to `gfx/font.h`; the
+   console and the compositor both use them ([D11](#d11-routing-input),
+   rule 2). The compositor's bootstrap, its control channel, its
+   connections and its windows are one interface description,
+   `interfaces/display.desc` ([interface.md](interface.md)), which gives
+   every message phase 3 uses, byte by byte, and its theme's defaults;
+   `include/display_protocol.h` is generated from it and tracked
+   ([interface.md P16](interface.md#p16-where-the-header-lives)).
+2. **Starting,** on every disk but the specimen disk, where the
+   specimen takes the display as before and no compositor starts:
+   1. The first process reports its startup done
+      ([console.md C1](console.md#c1-the-display-handoff)) without
+      waiting for the console, since no background goes to the console,
+      and holds the kernel's background until step 3.
+   2. Once the kernel has released the display, the platform driver
+      starts the compositor in the root job, on a client channel of its
+      own, and hands it each input endpoint, those reported before it
+      started first ([input.md K3](input.md#k3-the-report-and-the-client)).
+      It then starts the console on the channel it keeps to it, and
+      hands it no endpoint while the compositor runs.
+   3. The first process sends the compositor `COMPOSITOR_SETUP_OPTIONS`,
+      its bits 0 but those a test disk's flag files set; then
+      `COMPOSITOR_SETUP_BACKGROUND`, labelled on a test disk for a
+      display a row taller, as console.md C5 labels the console's, so
+      test disks check the computed Limb and the system disk the
+      kernel's; then `COMPOSITOR_SETUP_DISPLAY`. It waits for no answer
+      between them.
+   4. It sends the console `CONSOLE_SETUP_OPTIONS` and login's session,
+      as it does now, whatever follows. It sends `COMPOSITOR_CONNECT`
+      for the console: the label `console`, no mark, `SYSTEM` alone and
+      no rights; and waits for `connected`, or for the control channel
+      to close, when the compositor has ended and rule 9 follows. With
+      `OK` it sends the console `CONSOLE_SETUP_CONNECTION`
+      ([console.md C2](console.md#c2-starting-the-console)). With any
+      other status it logs `nova-init: connection refused status=N`, and
+      the console has no display until the compositor is given up.
+3. **No attention state and no strip.** The compositor starts out of
+   the attention state and draws no strip, so the area below the strip
+   is the whole screen ([D6](#d6-windows-and-buffers)). It reserves the
+   secure attention key alone: it routes it to no window and logs it
+   (rule 8), since no connection carries `ATTENTION` yet. Every other
+   key reaches the window with the focus.
+4. **One window.** The compositor serves one window: a second, on any
+   connection, it refuses with `ERR_NO_RESOURCES`; a layer outside the
+   connection's with `ERR_ACCESS_DENIED`; and a surface other than
+   `PANEL` with `ERR_NOT_SUPPORTED`. A size beyond the area it gives the
+   window smaller (D6). The console's window is on `SYSTEM`, so it has
+   no frame and holds the focus while shown
+   ([D11](#d11-routing-input), rule 1), on the `PANEL` surface
+   ([look.md V4](look.md#v4-surfaces-edges-and-shadows)), of its
+   panel's box's size, which D6's placement puts where the panel stands
+   in direct mode. Its corners' radius is five quarters of the cell
+   `gfx/font.h`'s rule gives for the screen, and a corner pixel's cover
+   is `lib/outline.c`'s exact area of the window's rounded rectangle
+   (`outline_rounded_rect`). Its pixels are those
+   [console.md C2](console.md#c2-starting-the-console) gives for a
+   window.
+5. **A window's first frame.** The compositor answers `DISPLAY_WINDOW`
+   with `window_made` and then sends `WINDOW_CONFIGURE`: serial 1, the
+   size it gives the window, the screen's scale, and
+   `WINDOW_STATE_FOCUSED` where the window takes the focus. The client
+   gives its buffers and presents one naming serial 1; nothing of the
+   window shows before that present. A buffer whose stride is below its
+   width, or whose sections do not hold `stride` x `height` x 4 bytes
+   as D6 bands them, and a present of a buffer never given, close the
+   window; a damage rectangle is cut to its buffer.
+6. **Input.** A key event carries `lib/keymap.c`'s text. The pointer,
+   its buttons and the wheel go to the window under it, the wheel in
+   120ths of a detent ([D10](#d10-the-pointer), rule 5), and the
+   console scrolls its panel three lines a detent as it does in direct
+   mode. Relative motion moves no pointer yet (D10, rule 6).
+7. **The pointer** is not drawn until the first absolute report, and
+   then with its hotspot on the top left corner of the pixel the
+   position rounds down to, from
+   [look.md V15](look.md#v15-the-pointer)'s contours at the screen's
+   scale. A motion damages the image's old and new boxes.
+8. **The log,** in [log.md T1](log.md#t1-lines)'s form, each line as
+   given and its keys in this order:
+   - `nova-compositor: display screen=2880x1800 wallpaper=section
+     prepare_ms=0.4 first_frame_ms=31.2`: `wallpaper=computed` where it
+     computes Limb; `prepare_ms`, the time to map or compute the
+     wallpaper; `first_frame_ms`, from its start to its first frame's
+     `SFENCE`. On a test disk
+     `nova-compositor: background refused reason="another size"` comes
+     before it, as the console's does.
+   - `nova-compositor: connection issued number=1 label=console mark=no
+     layers=system rights=none`, for each connection issued (D17, rule
+     5): the layers and the rights each a comma-joined list of their
+     names in lower case, or `none`.
+   - `nova-compositor: connection closed number=1 label=console
+     reason=malformed`, and `nova-compositor: window closed
+     label=console reason=malformed`, for each the compositor closes:
+     `malformed` for a message its description refuses, `buffer` and
+     `present` for rule 5's, `stalled` for D11's rule 7. A connection or
+     window its holder closes is not logged.
+   - `nova-compositor: attention at_ms=1234.5`, for each secure
+     attention key, at its time on `clock_monotonic`.
+   - [console.md C6](console.md#c6-the-pointer)'s input and pointer
+     lines, with `nova-compositor:` for `nova-console:` and the same
+     rules. A console in a window logs none, and logs
+     `nova-console: window screen=2880x1800 size=1484x1116` each time it
+     makes its window.
+   - On a test disk, `nova-compositor: budget change=pointer frames=16
+     pixels=3744 total_ms=0.9 max_ms=0.1` for frames the pointer's
+     motion alone damaged, and `change=present` for frames a window's
+     present damaged: `pixels` the most composed in one of them, each
+     frame timed from its first band to its `SFENCE`. Each is written
+     once `BUDGET_FRAMES` (16) frames of its kind have been composed
+     since its last. `ci/boot.py` moves the pointer and types keys
+     until both lines have come or `SCREEN_TIMEOUT` passes, and prints
+     them. It fails no boot for a figure over [D9](#d9-budgets)'s
+     budget, since a shared runner's time varies; such a figure is a
+     defect to fix or a budget to change there.
+9. **Restarts and the fallback.** The console in a window never ends
+   because its connection closed (console.md C2).
+   - **The console ends:** the platform driver starts it again as it
+     does now, and the first process gives login a session on it, as
+     [accounts.md A10](accounts.md#a10-supervision) gives, and issues a
+     new `console` connection for it as in rule 2; the compositor closed
+     the old connection's window when its channel closed.
+   - **The compositor ends** and is started again: the platform driver
+     starts every input driver again for the new compositor, without
+     counting a restart (input.md K4), and the first process issues a
+     new `console` connection and sends it to the console, which makes
+     its window again.
+   - **The compositor is given up:** the first process sends the
+     console `CONSOLE_SETUP_DISPLAY_AFTER` with a new resource over the
+     framebuffer; the console draws Limb over the whole screen and then
+     its panel, and the platform driver starts every input driver again
+     for it, without counting a restart. Login's session is the
+     console's throughout, so login sees no change.
+
+   On a test disk that carries `\NOVA\COMPFAIL`, the first process sets
+   `COMPOSITOR_OPTION_EXIT_TEST` at every start, and the compositor exits
+   with `COMPOSITOR_EXIT_TEST` just after the first frame that shows a
+   window's present, so the console's window has been made and shown
+   once before each exit; it is restarted once and then given up
+   ([D3](#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)).
+   `fallback.img` is the test disk with `\NOVA\COMPFAIL` added. Its CI
+   boot accepts exactly these failure lines and fails on any other:
+   `nova-init: child restarted name=compositor` once,
+   `nova-init: child given up name=compositor` once, and each input
+   driver's `nova-init: child restarted` with
+   `reason="its client restarted"` or `reason="its client changed"`,
+   the reason the platform driver gives for a driver started again for
+   the compositor's successor and for the console.
+10. **What phase 4 removes:** the `console` connection, the console's
+    window beside the compositor, and a secure attention key that does
+    nothing. `CONSOLE_SETUP_CONNECTION`, `CONSOLE_SETUP_DISPLAY_AFTER`
+    and the fallback stay, for the terminal and for a compositor given
+    up.
 
 - **Why this order:** each phase uses what the ones before it built and
   what its row needs first, and each leaves the system working: the
   console draws every screen until phase 3, and remains the fallback
   after it.
+- **Why the phase 3 arrangement:** the console already draws every
+  screen login needs, so the compositor arrives with a client whose
+  pixels and keys are known and checked, and every boot after it still
+  logs in. A console that keeps login's session through the
+  compositor's restart and give-up needs no reconnecting before login
+  has a connection to reconnect.
 - **Why expected screens from the host:** the drawing code is integer
   arithmetic with no machine dependence (`gfx/raster.h`), so the host
   computes the guest's pixels exactly, and a check against a kept image
@@ -1372,9 +1639,16 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
 - **Cost:** CI's QEMU, Ubuntu 24.04's, must give the tablet QEMU 11.1's
   configuration; its version's source, 8.2.2, does when the tablet's
   `wheel-axis` property is on, its default; screens that depend on
-  time need the reduced-motion setting.
+  time need the reduced-motion setting. Phase 3's arrangement is a
+  connection the first process issues that phase 4 removes, and its
+  screens are phase 2's with a pointer, so its work shows in the log,
+  the fallback and the host checks more than on the screen.
 - **Not taken:** comparing screens by eye, or within a tolerance. Its
-  cost is regressions in a pixel or a colour that pass.
+  cost is regressions in a pixel or a colour that pass. Phases 3 and 4
+  as one, the compositor arriving with login's window; its cost is the
+  window protocol, the pointer, materials, the strip, login's window
+  and the toolkit it draws with in one step, with no working system
+  between.
 
 ## D20. Notifications
 
@@ -1435,8 +1709,8 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
 |---|---|---|
 | nitpicker | A small server; buffers the client provides; focus chosen only by the user; keys reserved to the server; labels the client cannot set; the rest dimmed | X-ray mode toggled by the user, in place of a strip always shown |
 | EWS | Windows made through a session capability; read-only client bitmaps; frames drawn by the server; a band of the screen reserved for labels; other windows overlaid while a trusted session's is active; a forged dialog holds no capability | |
-| Qubes | Frames and title prefixes drawn outside the program; input only to the domain whose window has the focus; a clipboard between domains moved only by keys the trusted side traps | Colour as the only mark |
-| Wayland | Shared memory the client provides; damage in the buffer's coordinates; release and frame callbacks; input in surface coordinates | |
+| Qubes | Frames and title prefixes drawn outside the program; input only to the domain whose window has the focus | Colour as the only mark; a clipboard moved only by keys the trusted side traps |
+| Wayland | Shared memory the client provides; damage in the buffer's coordinates; release and frame callbacks; input in surface coordinates; the clipboard given to the client with the keyboard's focus | One socket every client connects to alike, with how far to trust each left to the compositor; buffers passed as file descriptors |
 | X11 | | Input any client can select on any window; the keyboard's state to any client that asks |
 | Windows | Ctrl+Alt+Delete before a password, as a trusted path | Input injection into every program at the same integrity level |
 | Fullscreen | Spoofing in full screen named as the risk | An overlay as the only defence |

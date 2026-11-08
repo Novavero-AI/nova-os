@@ -180,7 +180,11 @@ console's place ([display.md D2](display.md#d2-who-holds-the-display)):
 the platform driver starts no console, and hands the compositor each
 endpoint a driver reports, on the channel it keeps to the compositor,
 as it hands them to the console; an endpoint reported before the
-compositor starts waits in the platform driver until it does.
+compositor starts waits in the platform driver until it does. Until
+display.md's phase 4, the platform driver starts the console beside
+the compositor and hands it no endpoint while the compositor runs, as
+[display.md D19](display.md#d19-the-build-plan)'s phase 3 arrangement
+gives.
 
 - **Why the driver creates the endpoint:** it is the driver's service,
   passed to clients through its supervisor, as
@@ -230,7 +234,12 @@ makes the console the client instead
 ([display.md D3](display.md#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)):
 it starts the console in direct mode and starts every input driver
 again for it, without counting a restart, so the console takes a fresh
-endpoint from each (K3). Here the client is replaced, not lost.
+endpoint from each (K3). Here the client is replaced, not lost. Until
+display.md's phase 4 the console already runs, beside the compositor,
+and is made the client as
+[display.md D19](display.md#d19-the-build-plan)'s phase 3 arrangement
+gives; a driver started again for a new client logs
+`reason="its client changed"`.
 
 - **Why:** a driver can fail at any time, not only while it starts;
   unsupervised, one that died after startup would leave its device

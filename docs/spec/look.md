@@ -208,8 +208,16 @@ whatever window lies between.
 
 | Surface | Tint | Weight | Over the sky | Over the horizon's peak |
 |---|---|---|---|---|
-| Window | `#151A24` | 0.99 | `#151A24` | `#24272F` |
-| Raised: the HUD, a notification, a system box | `#1B2130` | 0.99 | `#1B2130` | `#292D39` |
+| Window, `WINDOW` | `#151A24` | 0.99 | `#151A24` | `#24272F` |
+| Raised, `RAISED`: the HUD, a notification, a system box | `#1B2130` | 0.99 | `#1B2130` | `#292D39` |
+| Panel, `PANEL`: the console's panel in a window ([console.md C5](console.md#c5-the-panel)) | `#121620` | 0.68 | | |
+
+The names in capitals are the surfaces a window asks for
+([display.md D6](display.md#d6-windows-and-buffers)). The panel is the
+console's own, its tint and weight `console/panel.c`'s, so a console in
+a window looks as it does on the screen alone. Its corners' radius is
+five quarters of the console's cell, as `panel_layout` gives, and it
+has no edge, sheen or shadow.
 
 Over a surface, mixed in linear light:
 
@@ -892,6 +900,88 @@ and run", primary, with Enter.
   decides. Login drawing consent; its cost is a request a recipe shapes
   parsed in the process that holds `SYSTEM`.
 
+## V15. The pointer
+
+**Decided.** The pointer is the arrow of the design screens (screen
+4b), 22 points tall, white with a dark edge, its hotspot at its tip.
+Its points are in points from the hotspot, x to the right and y down.
+
+**The body** is one contour of straight sides, filled with `#F2F2F6`,
+the interface's ink, at full strength:
+
+    (0, 0), (0, 17.16), (4.62, 13.2), (7.92, 20.68), (11, 19.36),
+    (7.7, 12.1), (13.64, 12.1)
+
+**The edge** is the body grown by 1 point all round: each side moved
+out by 1 point, each convex corner rounded by an arc of radius 1 point
+about it, and the two concave corners where their moved sides meet.
+Each arc is a cubic for each quarter turn or less, its handles
+`4/3 tan(sweep / 4)` of the radius from its ends:
+
+    move  (0.664, -0.748)
+    cubic (0.369, -1.009), (-0.051, -1.073), (-0.410, -0.912)
+    cubic (-0.769, -0.751), (-1.000, -0.394), (-1.000, 0)
+    line  (-1.000, 17.160)
+    cubic (-1.000, 17.551), (-0.773, 17.905), (-0.418, 18.069)
+    cubic (-0.063, 18.232), (0.354, 18.173), (0.651, 17.919)
+    line  (4.249, 14.835)
+    line  (7.005, 21.084)
+    cubic (7.226, 21.585), (7.810, 21.815), (8.314, 21.599)
+    line  (11.394, 20.279)
+    cubic (11.641, 20.173), (11.835, 19.972), (11.932, 19.721)
+    cubic (12.030, 19.470), (12.022, 19.191), (11.910, 18.946)
+    line  (9.253, 13.100)
+    line  (13.640, 13.100)
+    cubic (14.055, 13.100), (14.427, 12.843), (14.575, 12.455)
+    cubic (14.722, 12.067), (14.614, 11.628), (14.304, 11.352)
+    line  (0.664, -0.748)
+
+It is filled first, with `#000000` at 85 percent, and the body over
+it, each by `lib/outline.c`'s exact area under the nonzero rule and
+mixed in linear light ([ui.md U2](ui.md#u2-the-rasterizer)). There is
+no shadow. The contours, inks and opacity are the theme's
+`theme.pointer.body`, `theme.pointer.edge`, `theme.pointer.body-ink`,
+`theme.pointer.edge-ink` and `theme.pointer.edge-opacity`
+([ui.md U9](ui.md#u9-theming-from-tokens)), whose defaults these are,
+held in 256ths of a point, each the nearest to the exact geometry the
+values here are rounded from: the body's points are the mockups' unit
+polygon times 22, and the edge is that polygon offset by 1 point
+([interface.md P12](interface.md#p12-settings)).
+
+The hotspot lies on a pixel's top left corner
+([display.md D19](display.md#d19-the-build-plan), the phase 3
+arrangement, rule 7), so the arrow covers the same pixels wherever it
+is:
+
+| Scale | Pixels the arrow covers |
+|---|---|
+| 1 | 16 x 23 |
+| 2 | 32 x 46 |
+| 2.25 | 36 x 52 |
+
+At 2.25 it fits the GPU's 64 x 64 cursor
+([display.md D18](display.md#d18-the-gpu-path), rule 2).
+
+- **Why:** the body, inks, size and hotspot are the design screens'.
+  Their edge was the body's polygon grown 16 percent about one point,
+  which gives the sides edges of 0 to 1.46 points; the base and the
+  tail's left side get at most 0.11, so over Limb's bright horizon the
+  white body runs into the white band and the notch disappears. An edge
+  of 1 point all round keeps a dark line between the body and that
+  band: checked every half pixel along each side for the "contrast
+  ratio of at least 3:1 against adjacent color(s)" WCAG 1.4.11 asks of
+  a graphical object, the grown
+  polygon misses 67 to 77 places at each scale over the horizon, and
+  the even edge 3 at scale 2.25 and 4 at scale 2.
+- **Cost:** at scale 1 over the horizon a 1-pixel edge still falls under
+  3:1 at 19 places, where its anti-aliasing splits a diagonal line over
+  two pixels; the arrow differs from the design screens' by its edge's
+  even width.
+- **Not taken:** the design screens' grown polygon. Its cost is the
+  arrow lost against the horizon. An edge of 1.5 points, which passes
+  every place at scales 2 and 2.25; its cost is a heavier, rounder
+  halo than the design screens show.
+
 ## Not designed
 
 The design screens are login, the desktop at rest, the HUD in five
@@ -903,8 +993,9 @@ show these, which are designed before they are built:
   ([display.md D12](display.md#d12-the-secure-attention-key-and-global-keys));
   how the secure mark, the system's mark and the compositor's notices
   look ([V9](#v9-the-bar));
-- the pointer's shapes ([display.md D10](display.md#d10-the-pointer),
-  rule 7), and every pointer state but close under the pointer:
+- the pointer's shapes but the arrow ([V15](#v15-the-pointer);
+  [display.md D10](display.md#d10-the-pointer), rule 7), and every
+  pointer state but close under the pointer:
   pressed, dragging, resizing, selecting text;
 - popups and menus ([display.md D6](display.md#d6-windows-and-buffers)),
   a destructive button and a scroll's bar

@@ -1,0 +1,576 @@
+# The display's protocols (docs/spec/display.md): the compositor's
+# bootstrap and its control channel from the first process (D2, D19's
+# phase 3 arrangement); a connection, on which a program makes windows
+# (D5, D6); and a window, on which it gives its buffers and presents
+# them, and the compositor sends its frames, configures and input (D6,
+# D7, D10, D11). It holds the messages phase 3 uses; later phases add
+# theirs after them. Every field is little-endian.
+interface display
+
+import native_abi.h
+  const BOOTSTRAP_BACKGROUND_SECTIONS_MAX 64
+  struct BOOTSTRAP_DISPLAY 24
+  struct BOOTSTRAP_BACKGROUND 16
+end
+
+import input_protocol.h
+  const INPUT_KEY_RELEASED 0
+  const INPUT_KEY_PRESSED 1
+  const INPUT_KEY_REPEATED 2
+  const INPUT_REPORT_BUTTONS 8
+  struct INPUT_BUTTON 4
+end
+
+# ---------------------------------------------------------------------
+# Limits.
+
+# The most bytes of a connection's label, UTF-8 (D5).
+const DISPLAY_LABEL_MAX 64
+# The most windows a connection makes, its popups and child windows
+# counted with them (D5, D6).
+const CONNECTION_WINDOWS_MAX 64
+# The messages a connection's channel queues.
+const CONNECTION_CAPACITY 64
+# How long after a connection's issue ACTIVATE lets its first window take
+# the focus, in nanoseconds (D5).
+const ACTIVATE_NS 10000000000
+# The messages a window's channel queues (D6).
+const WINDOW_CAPACITY 64
+# The most bytes of a window's title, UTF-8 (D6).
+const WINDOW_TITLE_MAX 128
+# The buffers a window holds at once, numbered from 0 (D6).
+const WINDOW_BUFFERS_MAX 3
+# The last buffer's number.
+const WINDOW_BUFFER_LAST WINDOW_BUFFERS_MAX - 1
+# Every buffer a release can name: bit n for buffer n.
+const WINDOW_BUFFERS_ALL 0x7
+# The widest window, in pixels (D6).
+const WINDOW_WIDTH_MAX 7680
+# The tallest window, in pixels (D6).
+const WINDOW_HEIGHT_MAX 4320
+# The most rectangles a present names (D7).
+const WINDOW_DAMAGE_MAX 16
+# The rows of a band the compositor composes in (D7).
+const TILE_ROWS 16
+# The least time between two frames the compositor composes, in
+# nanoseconds (D7).
+const FRAME_NS 16666667
+# How deep popups nest (D11).
+const POPUP_DEPTH_MAX 8
+# The input events that wait in the compositor for a window's channel
+# (D11).
+const WINDOW_BACKLOG 64
+# How long a window's channel may stay full before the compositor closes
+# the window, in nanoseconds (D11).
+const WINDOW_STALL_NS 2000000000
+# The replies that wait in the compositor for a connection's channel
+# (D11).
+const CONNECTION_PENDING_MAX 16
+# The most bytes of the text one key event carries.
+const WINDOW_KEY_TEXT_MAX 16
+# The messages the compositor's control channel queues.
+const COMPOSITOR_CONTROL_CAPACITY 16
+
+# ---------------------------------------------------------------------
+# Units.
+
+# A position's units to a pixel: 256ths (D10, rule 4).
+const DISPLAY_POSITION_ONE 256
+# The wheel's units to a detent: 120ths (D10, rule 5).
+const DISPLAY_WHEEL_DETENT 120
+# The scale's units to 1: quarters (D6, D7 rule 5).
+const DISPLAY_SCALE_ONE 4
+
+# ---------------------------------------------------------------------
+# Layers (D5, D8), each a bit, so a connection's layers are a mask and a
+# window's layer is one of them.
+
+# Programs' windows (D8, order 2).
+const DISPLAY_LAYER_APP 0x1
+# Notifications (D8, order 3).
+const DISPLAY_LAYER_NOTIFICATION 0x2
+# The HUD (D8, order 4).
+const DISPLAY_LAYER_OVERLAY 0x4
+# The powerbox's dialogs (D8, order 5).
+const DISPLAY_LAYER_TRUSTED 0x8
+# Login's screens (D8, order 6).
+const DISPLAY_LAYER_SYSTEM 0x10
+# Every layer.
+const DISPLAY_LAYERS DISPLAY_LAYER_APP | DISPLAY_LAYER_NOTIFICATION | DISPLAY_LAYER_OVERLAY | DISPLAY_LAYER_TRUSTED | DISPLAY_LAYER_SYSTEM
+
+# A connection's rights in the compositor's record (D5), each a bit.
+
+# Issue connections.
+const DISPLAY_RIGHT_MINT 0x1
+# Receive the secure attention key.
+const DISPLAY_RIGHT_ATTENTION 0x2
+# Make captures.
+const DISPLAY_RIGHT_CAPTURE 0x4
+# Its first window may take the focus once.
+const DISPLAY_RIGHT_ACTIVATE 0x8
+# Every right.
+const DISPLAY_RIGHTS DISPLAY_RIGHT_MINT | DISPLAY_RIGHT_ATTENTION | DISPLAY_RIGHT_CAPTURE | DISPLAY_RIGHT_ACTIVATE
+
+# The theme's surfaces a window is drawn on (D6; look.md V4).
+
+# The window surface.
+const DISPLAY_SURFACE_WINDOW 1
+# The raised surface: the HUD, a notification, a system box.
+const DISPLAY_SURFACE_RAISED 2
+# The console's panel.
+const DISPLAY_SURFACE_PANEL 3
+
+# The modifiers a key event carries as held (D11, rule 2).
+
+# Either Shift.
+const DISPLAY_MODIFIER_SHIFT 0x1
+# Either Ctrl.
+const DISPLAY_MODIFIER_CONTROL 0x2
+# Either Alt.
+const DISPLAY_MODIFIER_ALT 0x4
+# Either Super.
+const DISPLAY_MODIFIER_SUPER 0x8
+# Every modifier.
+const DISPLAY_MODIFIERS DISPLAY_MODIFIER_SHIFT | DISPLAY_MODIFIER_CONTROL | DISPLAY_MODIFIER_ALT | DISPLAY_MODIFIER_SUPER
+
+# A window's states, which a configure carries (D7, rule 4); later
+# phases add theirs.
+
+# The window has the focus (D11, rule 1).
+const WINDOW_STATE_FOCUSED 0x1
+# Every state.
+const WINDOW_STATES WINDOW_STATE_FOCUSED
+
+# The compositor's options, which the first process sets from flag files
+# on a test disk alone (D19).
+
+# ui.reduce-motion: nothing blinks or moves on a timer.
+const COMPOSITOR_OPTION_REDUCE_MOTION 0x1
+# Exit just after the first frame that shows a window's present (D19's
+# phase 3 arrangement, rule 9).
+const COMPOSITOR_OPTION_EXIT_TEST 0x2
+# Every option.
+const COMPOSITOR_OPTIONS COMPOSITOR_OPTION_REDUCE_MOTION | COMPOSITOR_OPTION_EXIT_TEST
+
+# How the compositor ends.
+
+# Its supervisor closed its control channel.
+const COMPOSITOR_EXIT_DONE 100
+# It could not start or go on.
+const COMPOSITOR_EXIT_FAILED 101
+# COMPOSITOR_OPTION_EXIT_TEST made it end.
+const COMPOSITOR_EXIT_TEST 102
+
+# A client's end of a display connection (D5).
+rights DISPLAY_CONNECTION_RIGHTS channel read write wait transfer
+
+# ---------------------------------------------------------------------
+# Layouts of the compositor's control channel.
+
+# A message on the control channel.
+struct COMPOSITOR_SETUP
+  # the request's, other than 0 where it has a reply, which echoes it;
+  # 0 on a request with no reply and on an event
+  u32 transaction
+  u32 kind         # the message's kind
+end
+
+# The setup that hands the compositor the display.
+struct COMPOSITOR_SETUP_DISPLAY_MESSAGE
+  COMPOSITOR_SETUP setup     # COMPOSITOR_SETUP_DISPLAY
+  BOOTSTRAP_DISPLAY display  # the display, as nova-boot drew on it
+end
+
+# The setup that hands the compositor the kernel's background, before
+# the display.
+struct COMPOSITOR_SETUP_BACKGROUND_MESSAGE
+  COMPOSITOR_SETUP setup  # COMPOSITOR_SETUP_BACKGROUND
+  # the display the compositor is to be given
+  BOOTSTRAP_DISPLAY display
+  # what the sections hold, as the kernel labelled them
+  BOOTSTRAP_BACKGROUND background
+end
+
+# The setup that gives the compositor its options, before the display.
+struct COMPOSITOR_SETUP_OPTIONS_MESSAGE
+  COMPOSITOR_SETUP setup                  # COMPOSITOR_SETUP_OPTIONS
+  u32 options mask COMPOSITOR_OPTIONS     # COMPOSITOR_OPTION_ bits
+end
+
+# A connection issued (D5): its record, then its label.
+struct COMPOSITOR_CONNECT_REQUEST
+  COMPOSITOR_SETUP setup                  # COMPOSITOR_CONNECT
+  u32 mark in 0 1                         # 1 to draw the system's mark before its label
+  u32 layers mask DISPLAY_LAYERS          # the layers its windows may be on
+  u32 rights mask DISPLAY_RIGHTS          # its DISPLAY_RIGHT_ bits
+  u32 label_length                        # the label's bytes, which follow
+end
+
+# The answer to a connection issued.
+struct COMPOSITOR_CONNECTED_REPLY
+  u32 transaction  # the request's
+  u32 status       # a status of syscalls.md S7
+  u32 connection   # its number, which a closing names; 0 where status is not OK
+end
+
+# A connection issued from this channel has closed (D5, Revocation).
+struct COMPOSITOR_CLOSED_EVENT
+  COMPOSITOR_SETUP setup  # COMPOSITOR_CLOSED, transaction 0
+  u32 connection          # the number its answer gave
+end
+
+# ---------------------------------------------------------------------
+# Layouts of a connection and a window.
+
+# The start of every message on a connection or a window but a reply.
+struct DISPLAY_HEADER
+  u32 transaction  # the request's, which its reply echoes; 0 for an event
+  u32 kind         # the message's kind
+end
+
+# The screen a connection's windows are on (D6, The screen).
+struct DISPLAY_SCREEN_EVENT
+  DISPLAY_HEADER header  # DISPLAY_SCREEN
+  u32 width min 1        # the screen's width in pixels
+  u32 height min 1       # the screen's height in pixels
+  u32 scale min 1        # the scale, in DISPLAY_SCALE_ONE units
+end
+
+# A window asked for (D6).
+struct DISPLAY_WINDOW_REQUEST
+  DISPLAY_HEADER header                   # DISPLAY_WINDOW
+  u32 width min 1 max WINDOW_WIDTH_MAX    # the width wanted, in pixels
+  u32 height min 1 max WINDOW_HEIGHT_MAX  # the height wanted, in pixels
+  # the layer asked for, one of the connection's
+  u32 layer in DISPLAY_LAYER_APP DISPLAY_LAYER_NOTIFICATION DISPLAY_LAYER_OVERLAY DISPLAY_LAYER_TRUSTED DISPLAY_LAYER_SYSTEM
+  # the theme's surface the window is drawn on
+  u32 surface in DISPLAY_SURFACE_WINDOW DISPLAY_SURFACE_RAISED DISPLAY_SURFACE_PANEL
+end
+
+# The answer to a window asked for.
+struct DISPLAY_WINDOW_REPLY
+  u32 transaction  # the request's
+  u32 status       # a status of syscalls.md S7
+  u32 window       # its number on the connection, from 1; 0 where status is not OK
+end
+
+# A buffer given to a window (D6).
+struct WINDOW_BUFFER_REQUEST
+  DISPLAY_HEADER header                   # WINDOW_BUFFER
+  u32 buffer max WINDOW_BUFFER_LAST       # its number
+  u32 width min 1 max WINDOW_WIDTH_MAX    # its width in pixels
+  u32 height min 1 max WINDOW_HEIGHT_MAX  # its height in pixels
+  u32 stride min 1                        # its pixels from one row to the next, at least width
+end
+
+# A rectangle of a buffer, in the buffer's pixels (D7).
+struct WINDOW_RECT
+  u32 x             # its left edge
+  u32 y             # its top edge
+  u32 width min 1   # its width
+  u32 height min 1  # its height
+end
+
+# A frame shown (D7).
+struct WINDOW_PRESENT_REQUEST
+  DISPLAY_HEADER header              # WINDOW_PRESENT
+  u32 buffer max WINDOW_BUFFER_LAST  # the buffer presented
+  u32 serial                         # the configure the buffer was drawn for, 0 before any (D7, rule 4)
+  u32 rectangles                     # the damaged rectangles that follow; 0 for the whole buffer
+end
+
+# Buffers the compositor stopped reading (D7; D11, rule 7).
+struct WINDOW_RELEASED_EVENT
+  DISPLAY_HEADER header                # WINDOW_RELEASED
+  u32 buffers mask WINDOW_BUFFERS_ALL  # bit n for buffer n, each released since the last such event
+end
+
+# A frame that showed the window's present (D7, rule 3).
+struct WINDOW_FRAME_EVENT
+  DISPLAY_HEADER header  # WINDOW_FRAME
+  u64 time               # when the frame showed, on clock_monotonic, in nanoseconds
+end
+
+# The window's size, scale and state (D7, rule 4).
+struct WINDOW_CONFIGURE_EVENT
+  DISPLAY_HEADER header         # WINDOW_CONFIGURE
+  u32 serial min 1              # this configure's, from 1, rising
+  u32 width min 1               # the size, in pixels
+  u32 height min 1              # the size, in pixels
+  u32 scale min 1               # the scale, in DISPLAY_SCALE_ONE units
+  u32 state mask WINDOW_STATES  # WINDOW_STATE_ bits
+end
+
+# A key (D11, rule 2).
+struct WINDOW_KEY_EVENT
+  DISPLAY_HEADER header  # WINDOW_KEY
+  u16 code               # the evdev key code
+  u16 reserved = 0       # 0
+  # INPUT_KEY_RELEASED, INPUT_KEY_PRESSED or INPUT_KEY_REPEATED
+  u32 value in INPUT_KEY_RELEASED INPUT_KEY_PRESSED INPUT_KEY_REPEATED
+  u32 modifiers mask DISPLAY_MODIFIERS  # the DISPLAY_MODIFIER_ bits held
+  u32 text_length        # the bytes of text that follow, the key's under the keymap
+  u64 time               # when the driver took the key, as INPUT_EVENT's
+end
+
+# The pointer's motion, buttons and wheel over the window (D10; D11,
+# rules 3 and 6).
+struct WINDOW_POINTER_EVENT
+  DISPLAY_HEADER header  # WINDOW_POINTER
+  i32 x                  # across from the window's left, in DISPLAY_POSITION_ONE units
+  i32 y                  # down from the window's top, in DISPLAY_POSITION_ONE units
+  i32 wheel              # the wheel's turn, in DISPLAY_WHEEL_DETENT units, up positive
+  u32 buttons            # how many of button it holds
+  INPUT_BUTTON button array INPUT_REPORT_BUTTONS count buttons  # the buttons changed
+  u64 time               # when the driver took the report's end, as INPUT_POINTER's
+end
+
+# The pointer entering the window (D11, rule 3).
+struct WINDOW_ENTER_EVENT
+  DISPLAY_HEADER header  # WINDOW_ENTER
+  i32 x                  # across from the window's left, in DISPLAY_POSITION_ONE units
+  i32 y                  # down from the window's top, in DISPLAY_POSITION_ONE units
+  u64 time               # when, on clock_monotonic, in nanoseconds
+end
+
+# ---------------------------------------------------------------------
+
+# The channel the platform driver keeps to the input drivers' client
+# (input.md K3), as the compositor takes it: its bootstrap message, then
+# one input endpoint a message.
+channel bootstrap
+  invalid client exit
+
+  # The compositor's bootstrap message: a transaction ID of 0 and these
+  # handles in this order.
+  event start
+    body transaction
+    first
+    # the debug log's resource
+    handle resource travels use needs none index COMPOSITOR_BOOTSTRAP_DEBUG_LOG
+    # its process, with MAP
+    handle process travels map needs map index COMPOSITOR_BOOTSTRAP_SELF
+    # its end of the control channel
+    handle channel travels read write wait needs read write wait index COMPOSITOR_BOOTSTRAP_CONTROL
+    handles COMPOSITOR_BOOTSTRAP_HANDLES  # how many handles it carries
+  end
+
+  # An endpoint to read a description and then key events or pointer
+  # reports from, as a driver reported it (input_protocol.h).
+  event endpoint
+    body transaction
+    handle channel travels read wait needs read wait  # the endpoint
+  end
+end
+
+# The control channel, from the first process: a COMPOSITOR_SETUP, its
+# kind saying what follows it and what handles it carries. The
+# compositor answers a background and a connection issued, and tells of
+# a connection closed, so its end carries CHANNEL_RIGHT_WRITE as well as
+# CHANNEL_RIGHT_READ and RIGHT_WAIT.
+channel control
+  capacity COMPOSITOR_CONTROL_CAPACITY
+  select kind
+  invalid server drop
+  invalid client drop
+
+  # The display (D2, rule 1).
+  request display COMPOSITOR_SETUP_DISPLAY 1
+    body COMPOSITOR_SETUP_DISPLAY_MESSAGE
+    # an MMIO resource covering the framebuffer's pages
+    handle resource travels use needs none
+  end
+
+  # The kernel's background, before the display (D2, rules 1 and 2).
+  request background COMPOSITOR_SETUP_BACKGROUND 2
+    body COMPOSITOR_SETUP_BACKGROUND_MESSAGE
+    # the background's sections, mapped one after another
+    handle section min 0 max BOOTSTRAP_BACKGROUND_SECTIONS_MAX travels read needs read
+    reply prepared
+  end
+
+  # The answer to a background, once the wallpaper is mapped from it or
+  # it is refused: the background's transaction and no handles.
+  reply prepared
+    body transaction
+  end
+
+  # The options, once, before the background and the display.
+  request options COMPOSITOR_SETUP_OPTIONS 3
+    body COMPOSITOR_SETUP_OPTIONS_MESSAGE
+  end
+
+  # Issue a connection (D5): its record and label, and the compositor's
+  # end of a channel of CONNECTION_CAPACITY messages the first process
+  # created, whose other end it gives the connection's holder with
+  # DISPLAY_CONNECTION_RIGHTS.
+  request connect COMPOSITOR_CONNECT 4
+    body COMPOSITOR_CONNECT_REQUEST
+    tail label text count label_length max DISPLAY_LABEL_MAX  # the label
+    # the compositor's end of the connection
+    handle channel travels read write wait needs read write wait
+    reply connected
+  end
+
+  # Whether the connection was issued, and its number.
+  reply connected
+    body COMPOSITOR_CONNECTED_REPLY
+    status status
+  end
+
+  # A connection issued here has closed, with every one issued from it.
+  event closed COMPOSITOR_CLOSED 0x100
+    body COMPOSITOR_CLOSED_EVENT
+  end
+end
+
+# A display connection (D5). The compositor's first message on it is
+# DISPLAY_SCREEN (D6). A message its description refuses closes the
+# connection, every window of it and every connection issued from it,
+# and the compositor logs the label and the error (D17, rule 5).
+channel connection
+  capacity CONNECTION_CAPACITY
+  select kind
+  invalid server close
+  invalid client close
+
+  # Make a window: the size wanted, the layer and the surface, and the
+  # compositor's end of a channel of WINDOW_CAPACITY messages the client
+  # created, whose other end is the window (D6).
+  request window DISPLAY_WINDOW 1
+    body DISPLAY_WINDOW_REQUEST
+    # the compositor's end of the window's channel
+    handle channel travels read write wait needs read write wait
+    reply window_made
+  end
+
+  # Whether the window was made, and its number.
+  reply window_made
+    body DISPLAY_WINDOW_REPLY
+    status status
+  end
+
+  # The screen: sent first on every connection, and again whenever its
+  # size or scale changes (D6).
+  event screen DISPLAY_SCREEN 0x100
+    body DISPLAY_SCREEN_EVENT
+  end
+end
+
+# A window (D6): a channel of WINDOW_CAPACITY messages; the client's end
+# is the window. A message its description refuses closes the window,
+# and the compositor logs the label and the error (D17, rule 5).
+channel window
+  capacity WINDOW_CAPACITY
+  select kind
+  invalid server close
+  invalid client close
+
+  # A buffer: its number, size and stride, and a duplicate of each of
+  # its sections, with READ alone, in order (D6).
+  request buffer WINDOW_BUFFER 1
+    body WINDOW_BUFFER_REQUEST
+    # the buffer's sections, every one SECTION_MAX_SIZE but the last
+    handle section min 1 max CHANNEL_MAX_HANDLES travels read needs read
+  end
+
+  # Show a buffer, with up to WINDOW_DAMAGE_MAX rectangles that differ
+  # from the buffer presented before it; none means the whole buffer
+  # (D7).
+  request present WINDOW_PRESENT 2
+    body WINDOW_PRESENT_REQUEST
+    tail damage WINDOW_RECT count rectangles max WINDOW_DAMAGE_MAX  # the damaged rectangles
+  end
+
+  # Buffers the compositor has stopped reading (D7; D11, rule 7).
+  event released WINDOW_RELEASED 0x100
+    body WINDOW_RELEASED_EVENT
+  end
+
+  # A frame showed the window's present (D7, rule 3).
+  event frame WINDOW_FRAME 0x101
+    body WINDOW_FRAME_EVENT
+  end
+
+  # The window's size, scale and state (D7, rule 4).
+  event configure WINDOW_CONFIGURE 0x102
+    body WINDOW_CONFIGURE_EVENT
+  end
+
+  # Input events were dropped: treat the key state as unknown (D11,
+  # rule 7).
+  event dropped WINDOW_DROPPED 0x103
+    body DISPLAY_HEADER
+  end
+
+  # A key, with the text it gives under the keymap (D11, rule 2).
+  event key WINDOW_KEY 0x104
+    body WINDOW_KEY_EVENT
+    tail characters text count text_length max WINDOW_KEY_TEXT_MAX  # the key's text
+  end
+
+  # The pointer moved, a button changed or the wheel turned over the
+  # window (D11, rule 3).
+  event pointer WINDOW_POINTER 0x105
+    body WINDOW_POINTER_EVENT
+  end
+
+  # The pointer entered the window (D11, rule 3).
+  event enter WINDOW_ENTER 0x106
+    body WINDOW_ENTER_EVENT
+  end
+
+  # The pointer left the window (D11, rule 3).
+  event leave WINDOW_LEAVE 0x107
+    body DISPLAY_HEADER
+  end
+end
+
+# ---------------------------------------------------------------------
+# The system theme's settings phase 3 reads (ui.md U9; look.md V4 and
+# V15), which the compositor draws with until the settings service
+# serves them.
+
+# The WINDOW surface's material: Limb under its tint (look.md V4).
+setting theme.material.window material
+  default 0x151A24 99
+end
+
+# The RAISED surface's material (look.md V4).
+setting theme.material.raised material
+  default 0x1B2130 99
+end
+
+# The PANEL surface's material: the console's panel's tint at its
+# weight (look.md V4; console/panel.c).
+setting theme.material.panel material
+  default 0x121620 68
+end
+
+# The pointer's body, its hotspot at the origin (look.md V15).
+setting theme.pointer.body outline
+  contour 0,0 0,4393 1183,3379 2028,5294 2816,4956 1971,3098 3492,3098
+end
+
+# The pointer's edge, 1 point round its body (look.md V15).
+setting theme.pointer.edge outline
+  contour 170,-192 c 95,-258 c -13,-275 -105,-233 c -197,-192 c -256,-101 -256,0 -256,4393 c -256,4493 c -198,4584 -107,4626 c -16,4667 c 91,4652 167,4587 1088,3798 1793,5397 c 1850,5526 c 1999,5585 2128,5529 2917,5191 c 2980,5164 c 3030,5113 3055,5049 c 3080,4984 c 3078,4913 3049,4850 2369,3354 3492,3354 c 3598,3354 c 3693,3288 3731,3188 c 3769,3089 c 3741,2977 3662,2906
+end
+
+# The pointer body's ink (look.md V15).
+setting theme.pointer.body-ink colour
+  default 0xF2F2F6
+end
+
+# The pointer edge's ink (look.md V15).
+setting theme.pointer.edge-ink colour
+  default 0x000000
+end
+
+# How much of the edge's ink is mixed over what lies beneath, in percent
+# (look.md V15).
+setting theme.pointer.edge-opacity int
+  min 0
+  max 100
+  default 85
+end

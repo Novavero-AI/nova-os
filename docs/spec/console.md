@@ -44,6 +44,12 @@ while the boot screen's spinner turns:
    releases the display; the first process sends the display to the
    console, whose first draw is a copy of its prepared panel.
 
+Where a compositor runs, the background and the display go to it
+instead, after the release, and steps 2 to 4 send the console
+nothing: the first process reports its startup done without waiting,
+as [display.md D19](display.md#d19-the-build-plan)'s phase 3
+arrangement gives, rule 2.
+
 The kernel holds its handles to the sections until the fade's last
 frame. The first process holds its own from the kernel's message until
 it sends them on, and closes them at once where no console runs or the
@@ -176,26 +182,68 @@ first process starts no console, and login is the compositor's first
 client instead
 ([display.md D13](display.md#d13-the-graphical-login)); when the first
 process gives the compositor up it starts the console in direct mode,
-gives it the display, and gives login a session on it, as after a
-console's restart.
+gives it the display after the compositor, and gives login a session
+on it, as after a console's restart. Until display.md's phase 4 builds
+login's window, the console instead runs beside the compositor in a
+window and keeps login's session, as
+[display.md D19](display.md#d19-the-build-plan)'s phase 3 arrangement
+gives.
 
-**Window mode.** A console that login starts as a terminal
+The first process sends three more kinds on the control channel, each
+with the bytes after the setup and the handles below:
+
+| Kind | Bytes after the setup | Handles |
+|---|---|---|
+| `CONSOLE_SETUP_CONNECTION` (4) | None | The console's end of a display connection ([display.md D5](display.md#d5-connections-labels-and-layers)), with `READ`, `WRITE`, `WAIT` and `TRANSFER` |
+| `CONSOLE_SETUP_DISPLAY_AFTER` (5) | The `BOOTSTRAP_DISPLAY` | An MMIO resource covering the framebuffer, as for `CONSOLE_SETUP_DISPLAY` |
+| `CONSOLE_SETUP_OPTIONS` (6) | A `UINT32` of option bits: `CONSOLE_OPTION_REDUCE_MOTION` (0x1), from `\NOVA\NOMOTION` on a test disk ([display.md D19](display.md#d19-the-build-plan)) | None |
+
+`CONSOLE_SETUP_DISPLAY_AFTER` is the display after another writer, a
+compositor, whose last frame the screen still shows: the console draws
+Limb over the whole screen, computed at the display's size, and then
+its panel, where `CONSOLE_SETUP_DISPLAY` follows the kernel's release
+and draws the panel alone over the kernel's Limb. A console in window
+mode that gets it leaves window mode. The options come once, before
+the display or the connection; with `CONSOLE_OPTION_REDUCE_MOTION` the
+caret does not blink ([ui.md U10](ui.md#u10-accessibility)).
+The control channel queues `CONSOLE_CONTROL_CAPACITY` messages,
+`CONSOLE_SESSIONS` + 3: the options, the background or a connection,
+the display or the display after a compositor, and a session for each
+the console serves.
+
+**Window mode.** A console given a display connection, by login as a
+terminal
 ([display.md D4](display.md#d4-the-console-in-a-window-and-as-the-fallback))
-is given a display connection in place of the framebuffer's resource,
-in a `CONSOLE_SETUP` of its own kind (`include/console_protocol.h`), and
-makes on it one window holding its panel; it takes keys from its
-window's channel rather than from an input driver's endpoint. Its
+or by the first process in phase 3, makes on it one window holding its
+panel; it takes keys from its window's channel rather than from an
+input driver's endpoint. It lays its panel out as in direct mode, for
+the screen `DISPLAY_SCREEN` gives
+([display.md D6](display.md#d6-windows-and-buffers)), and asks for a
+window of the panel's box's size on the `PANEL` surface. When its
+connection closes it does not end: it keeps its sessions and what they
+write, and waits on the control channel for a new connection or for
+the display after the compositor. Its
 sessions, keys, panel and font are those of direct mode, the mode in
-which it holds the framebuffer, except that its shell's session is in
-values mode ([shell.md L7](shell.md#l7-pipelines), rule 7): the console
-draws the values the shell answers as structure, tables and records
-([look.md V11](look.md#v11-windows)), where in direct mode the shell
-renders them as text. In a window the panel's translucency is
+which it holds the framebuffer, except that a terminal's shell may ask
+for its session in values mode ([shell.md L7](shell.md#l7-pipelines),
+rule 7), once the shell has its interpreter: the console then draws
+the values the shell answers as structure, tables and records
+([look.md V11](look.md#v11-windows)), where otherwise the shell
+renders them as text. Login's session in phase 3, and a terminal's
+until the interpreter, are text. In a window the panel's translucency is
 the window's material
 ([display.md D8](display.md#d8-composition)): the console writes each
 pixel of a glyph, the caret or a value's rule in the ink's colour with
 its coverage as its cover, and the rest of the panel with a cover of
-0.
+0. A mask's coverage, 0 to 16 (`gfx/raster.h`), is the cover
+`(coverage * 255 + 8) / 16`, rounded down. Where the caret's stroke
+overlaps a glyph, the pixel is the two inks as one: its cover is
+`g + c - g * c / 255` for the glyph's cover `g` and the caret's `c`,
+and its colour is the caret's ink mixed over the glyph's, in linear
+light as `gfx/raster.c` mixes, by `c` over that cover. One function in
+`console/panel.c` makes these pixels, and the host's render calls it
+too. A panel in a window need not match one drawn directly: each is
+matched against the host's render of its own path.
 
 - **Why the keyboard's client:** the console is where keys are typed,
   and the platform driver already supervises the client and hands it a
