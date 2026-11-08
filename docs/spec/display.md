@@ -58,8 +58,9 @@ C1 gives, and login asks for a name on it.
 | The compositor, `compositor.exe` | The user-mode service that owns the display while it runs: it composes windows, routes input and draws the strip ([D8](#d8-composition)) | The framebuffer's resource, or later a channel to the GPU driver ([D18](#d18-the-gpu-path)); every input driver's endpoint; a control channel from the first process; its closure in `/store`, read only, for its fonts; the system's settings, for its theme and reserved keys; its own process with `MAP`; the debug log |
 | The console, `console.exe` | The text console of [console.md](console.md), in two roles: the fallback owner of the framebuffer when no compositor runs ([D4](#d4-the-console-in-a-window-and-as-the-fallback)), and the terminal, its panel in a window | What [console.md C2](console.md#c2-starting-the-console) gives it, or a display connection in place of the framebuffer |
 | Login, `login.exe` | The program that asks who is there and starts sessions and every program in them ([accounts.md A1](accounts.md#a1-the-parts)), drawing on the system layer | What [accounts.md A1](accounts.md#a1-the-parts) gives it, the sessions' job with `CREATE_JOB` ([Changes elsewhere](#changes-elsewhere)), and the connection that carries `SYSTEM` and `ATTENTION` ([D5](#d5-connections-labels-and-layers)) |
-| The powerbox, `powerbox.exe` | The session's trusted file chooser and share picker ([D16](#d16-trusted-interface-and-the-powerbox)) | A `TRUSTED` connection; the session's view, to grant from |
+| The powerbox, `powerbox.exe` | The session's trusted file chooser, share picker and consent ([D16](#d16-trusted-interface-and-the-powerbox)) | A `TRUSTED` connection; the session's view, to grant from; a channel from login, on which consent is asked |
 | The HUD, `hud.exe` | The session's command bar ([ui.md U11](ui.md#u11-the-hud)) | An `OVERLAY` connection; a shell in values mode, which login starts for it |
+| The notification service, `notify.exe` | The session's notifications, each drawn under its sender's label ([D20](#d20-notifications)) | A `NOTIFICATION` connection; a control channel from login, on which login asks for each program's notification channel; the service's end of each such channel |
 | The renderer, `uihost.exe` | One for each program that declares an interface, drawing it from values ([ui.md U6](ui.md#u6-the-renderer)) | The program's connection, and its end of the program's UI channel |
 | The input drivers, `virtinp.exe` | One process for each virtio input function, keyboard or tablet ([D10](#d10-the-pointer)) | As [input.md K1](input.md#k1-the-driver) gives |
 | Programs | Programs whose recipe declares the display | A connection labelled with their name, from login, or a UI channel to their renderer |
@@ -220,7 +221,10 @@ its exit from the process handle it holds
 
 ## D4. The console in a window and as the fallback
 
-**Decided.** The console keeps its session protocol
+**Decided** (by the owner): the terminal's shell in values mode.
+**Decided:** the rest.
+
+The console keeps its session protocol
 ([console.md C4](console.md#c4-sessions)), its keys, its panel and its
 font, and gains a second place to draw:
 
@@ -233,22 +237,26 @@ A console in window mode is the terminal: each terminal window is a
 console process with its own sessions, started by login when the
 session asks for one with a new launcher request, `LAUNCHER_TERMINAL`
 ([ui.md U12](ui.md#u12-the-first-programs)). The
-shell runs in it unchanged, since a session is the same protocol in
-either mode.
+shell runs in it with a session in values mode, as the HUD's does
+([shell.md L7](shell.md#l7-pipelines), rule 7), and the console draws
+the values it answers as structure, tables and records
+([look.md V11](look.md#v11-windows)); in direct mode the session is
+plain text.
 
 In window mode the panel's translucency is the window's material
-([D8](#d8-composition)): the console writes each pixel of a glyph or
-the caret in the ink's colour with the glyph's coverage as its cover,
-and the rest of the panel with a cover of 0, and the compositor mixes
-the ink over Limb under the panel's tint, as the console mixes them
-itself in direct mode.
+([D8](#d8-composition)): the console writes each pixel of a glyph, the
+caret or a value's rule in the ink's colour with its coverage as its
+cover, and the rest of the panel with a cover of 0, and the compositor
+mixes the ink over Limb under the panel's tint, as the console mixes
+them itself in direct mode.
 
 - **Why:** the console is the one program that can show text with no
   compositor, and the shell's whole interface is its session protocol;
   keeping one program for both modes keeps one font, one line editor and
   one set of keys, and the fallback is code that runs every day.
-- **Cost:** two drawing paths in the console; a console in direct mode
-  knows no pointer beyond what [D10](#d10-the-pointer) gives it.
+- **Cost:** two drawing paths in the console, the window's drawing
+  values as well as text; a console in direct mode knows no pointer
+  beyond what [D10](#d10-the-pointer) gives it.
 - **Not taken:** a separate terminal program that reimplements the
   session protocol on the toolkit. Its cost is a second line editor that
   would drift from the console's, and a fallback path no one runs.
@@ -263,9 +271,9 @@ its issuer gave it, and nothing on the connection can change that:
 | Field | What it is |
 |---|---|
 | Label | UTF-8 text of at most `DISPLAY_LABEL_MAX` (64) bytes, a longer name cut at a character's boundary: the program's name, taken by login from its store path, as the powerbox names a program in [shell.md L18](shell.md#l18-asking-for-more-the-powerbox). The compositor shows it on every window of the connection and in the strip |
-| Mark | Whether the compositor draws the system's mark before the label: set for the system's own programs, the console, the HUD and the powerbox, and never for a program a user runs |
-| Layers | Which of `APP`, `OVERLAY`, `TRUSTED` and `SYSTEM` its windows may be on ([D8](#d8-composition)) |
-| Rights | `MINT`: issue connections with the layers `APP`, `OVERLAY` and `TRUSTED`, the mark and `ACTIVATE`, none beyond its own. `ATTENTION`: receive the secure attention key ([D12](#d12-the-secure-attention-key-and-global-keys)). `CAPTURE`: make captures ([D15](#d15-capture-copy-and-paste)). `ACTIVATE`: its first window may take the focus ([D11](#d11-routing-input)) |
+| Mark | Whether the compositor draws the system's mark before the label: set for the system's own programs, the console, the HUD, the powerbox and the notification service, and never for a program a user runs |
+| Layers | Which of `APP`, `NOTIFICATION`, `OVERLAY`, `TRUSTED` and `SYSTEM` its windows may be on ([D8](#d8-composition)) |
+| Rights | `MINT`: issue connections with the layers `APP`, `NOTIFICATION`, `OVERLAY` and `TRUSTED`, the mark and `ACTIVATE`, none beyond its own. `ATTENTION`: receive the secure attention key ([D12](#d12-the-secure-attention-key-and-global-keys)). `CAPTURE`: make captures ([D15](#d15-capture-copy-and-paste)). `ACTIVATE`: its first window may take the focus ([D11](#d11-routing-input)) |
 | Issuer | The connection it was issued from |
 
 `SYSTEM`, `ATTENTION` and `CAPTURE` cannot be minted: the first process
@@ -275,10 +283,11 @@ Connections are issued down a chain:
 
 | Issuer | Connection | Label | Layers | Rights |
 |---|---|---|---|---|
-| The first process, on the control channel | Login's | `login`, marked | `SYSTEM`, `TRUSTED`, `OVERLAY`, `APP` | `MINT`, `ATTENTION`, `CAPTURE` |
-| Login, at each login | The session's, which login keeps and makes no window on | The account's name | `TRUSTED`, `OVERLAY`, `APP` | `MINT` |
+| The first process, on the control channel | Login's | `login`, marked | `SYSTEM`, `TRUSTED`, `OVERLAY`, `NOTIFICATION`, `APP` | `MINT`, `ATTENTION`, `CAPTURE` |
+| Login, at each login | The session's, which login keeps and makes no window on | The account's name | `TRUSTED`, `OVERLAY`, `NOTIFICATION`, `APP` | `MINT` |
 | The session's | The powerbox's | `powerbox`, marked | `TRUSTED` | none |
 | The session's | The HUD's | `hud`, marked | `OVERLAY` | none |
+| The session's | The notification service's | `notify`, marked | `NOTIFICATION` | none |
 | The session's | A terminal's, the console in window mode | `console`, marked | `APP` | `ACTIVATE` |
 | The session's, for a program the session runs whose recipe declares the display | The program's | Its name | `APP` | `ACTIVATE` |
 
@@ -517,8 +526,11 @@ it stopped reading. A client draws only into a released buffer.
 
 **Decided** (by the owner): the strip is always shown, and true full
 screen waits until a game needs it, when it comes with a system
-overlay; the compositor draws every window's frame and label.
-**Decided:** the rest.
+overlay; the compositor draws every window's frame and label; the
+strip runs along the top and holds the window list, the search field,
+the notices, the clock and the user
+([look.md V9](look.md#v9-the-bar)); notifications have a layer of their
+own ([D20](#d20-notifications)). **Decided:** the rest.
 
 Translucency is over a static wallpaper, precomputed, and
 there is no full-screen blur, since all drawing is on the CPU, as the
@@ -530,11 +542,12 @@ The compositor composes, bottom to top:
 |---|---|---|---|
 | 1 | Wallpaper | Limb, or another background `gfx/` computes that the system's settings name | The compositor |
 | 2 | `APP` | Programs' windows, their popups and children, most recently raised on top | Their programs |
-| 3 | `OVERLAY` | The HUD | The session's own programs |
-| 4 | `TRUSTED` | The powerbox's dialogs | The powerbox |
-| 5 | `SYSTEM` | Login's screens: the login screen, the secure screen | Login |
-| 6 | Pointer | The pointer's image ([D10](#d10-the-pointer)) | The compositor |
-| 7 | Strip | A band along the top of the screen, always shown, at least `STRIP_MIN` deep, a screen's height over 100, and as deep as the system's theme makes it ([look.md V9](look.md#v9-the-bar)): the focused window's label and marks ([D16](#d16-trusted-interface-and-the-powerbox)), and the compositor's notices | The compositor |
+| 3 | `NOTIFICATION` | Notifications ([D20](#d20-notifications)) | The notification service |
+| 4 | `OVERLAY` | The HUD | The session's own programs |
+| 5 | `TRUSTED` | The powerbox's dialogs | The powerbox |
+| 6 | `SYSTEM` | Login's screens: the login screen, the secure screen | Login |
+| 7 | Pointer | The pointer's image ([D10](#d10-the-pointer)) | The compositor |
+| 8 | Strip | A band along the top of the screen, always shown, at least `STRIP_MIN` deep, a screen's height over 100, and as deep as the system's theme makes it. At its left, the marks and the focused window's label ([D16](#d16-trusted-interface-and-the-powerbox)), then the session's `APP` windows by label, each a button that gives its window the focus; in its centre, a search field that opens the HUD; at its right, the compositor's notices, the clock and the user ([look.md V9](look.md#v9-the-bar)) | The compositor |
 
 No window of any layer covers the strip. A window's frame, its shadow,
 its corners and the mark of its focus are the compositor's, drawn from
@@ -769,12 +782,14 @@ change.
 channel, and to no other:
 
 1. **The keyboard** goes to the window with the focus. A window takes
-   the focus when the user clicks it or switches to it with the
-   keyboard, or once by `ACTIVATE` ([D5](#d5-connections-labels-and-layers));
+   the focus when the user clicks it or its name in the strip, or
+   switches to it with the keyboard, or once by `ACTIVATE`
+   ([D5](#d5-connections-labels-and-layers));
    a `SYSTEM` window takes it while shown, a `TRUSTED` window as
    [D16](#d16-trusted-interface-and-the-powerbox) gives, and the HUD
-   while open. Any other new window opens without the focus, stacked
-   below the window that has it, and the strip says it wants attention.
+   while open. A `NOTIFICATION` window never takes it. Any other new
+   window opens without the focus, stacked below the window that has
+   it, and the strip says it wants attention.
 2. **A key event** carries the evdev code, the value (pressed, released
    or repeated, as [input.md
    K2](input.md#k2-key-events-and-pointer-reports) gives), the modifiers
@@ -849,7 +864,8 @@ channel, and to no other:
 
 **Decided** (by the owner): the secure attention key is Ctrl+Alt+Delete,
 the keypad's Delete included; the HUD key is Super tapped alone and
-Alt+Space, both settings. **Decided:** the rest.
+Alt+Space, both settings; Super with 1 to 9, W, Up and Down are the
+system's window keys. **Decided:** the rest.
 
 Some keys belong to the system and never reach a window:
 
@@ -858,6 +874,9 @@ Some keys belong to the system and never reach a window:
 | Ctrl+Alt+Delete: either Ctrl, either Alt, and Delete (`KEY_DELETE`) or the keypad's Delete (`KEY_KPDOT`) | The secure attention key | No |
 | Super (`KEY_LEFTMETA` or `KEY_RIGHTMETA`) tapped alone, pressed and released with no key between, and Alt+Space | Opens and closes the HUD | A system setting, `desktop.hud-keys`, which holds both |
 | Alt+Tab, Alt+Shift+Tab | Moves the focus through the session's windows | A system setting |
+| Super+1 to Super+9 | Gives the focus to the first to ninth window the strip names | A system setting |
+| Super+W | Closes the window with the focus | A system setting |
+| Super+Up, Super+Down | Maximises, or minimises, the window with the focus | A system setting |
 | Print Screen | Takes a screenshot ([D15](#d15-capture-copy-and-paste)) | A system setting |
 
 The compositor matches them on key events before routing, and sends a
@@ -870,11 +889,12 @@ be a key that gives text, or Enter, Tab or Escape.
 
 **The secure attention key.** On it the compositor, at once and before
 any other event: ends any hold of the pointer, any popup and any
-pointer lock; ends every capture; hides every `APP`, `OVERLAY` and
-`TRUSTED` window; gives the keyboard and pointer to the windows of the
-connection that carries `ATTENTION`, login's, alone; shows the secure
-mark in the strip; and sets that connection's attention flag, which it
-sends as `DISPLAY_ATTENTION` as soon as the channel has room, once
+pointer lock; ends every capture; hides every `APP`, `NOTIFICATION`,
+`OVERLAY` and `TRUSTED` window; gives the keyboard and pointer to the
+windows of the connection that carries `ATTENTION`, login's, alone;
+shows the secure mark in the strip; and sets that connection's
+attention flag, which it sends as `DISPLAY_ATTENTION` as soon as the
+channel has room, once
 however many presses come. This is the attention state. Login then
 shows its secure screen: in a session, lock, log out and back, or, at
 the login screen, the login screen afresh. The state lasts until login
@@ -911,6 +931,10 @@ the keyboard.
   no text and completes no other combination; Alt+Space opens the HUD
   on a keyboard without Super, or under a host that keeps Super for its
   own shortcuts.
+- **Why Super for the window keys:** it is the key desktops give the
+  system, and with Super held a key gives no text
+  ([console.md C3](console.md#c3-keys)), so the window keys take
+  nothing a program types.
 - **Why reserved keys in the system's settings:** a session that could
   rebind Print Screen to Enter would take a screenshot at every Enter.
 - **Cost:** a program cannot use the keys reserved; a keyboard with no
@@ -924,7 +948,9 @@ the keyboard.
   for the secure attention key; its cost is a key a keyboard without it
   cannot press at all. Ctrl+Space for the HUD; its cost is a third
   combination taken from every program, for keyboards Alt+Space already
-  serves.
+  serves. Super's combinations left to programs; their cost is windows
+  switched, closed, maximised and minimised by the pointer and Alt+Tab
+  alone.
 
 ## D13. The graphical login
 
@@ -952,17 +978,20 @@ the keyboard.
    comes after the service's delay, and three in a row clear the field
    and the selection, as [accounts.md A5](accounts.md#a5-checking-a-password)
    ends an attempt.
-5. After a login, login mints the session's connection, starts the HUD
-   and the powerbox with theirs ([D5](#d5-connections-labels-and-layers)),
-   ends the attention state and hides its window, and the session
-   begins; the secure attention key brings the window back over it
+5. After a login, login mints the session's connection, starts the
+   HUD, the powerbox and the notification service with theirs
+   ([D5](#d5-connections-labels-and-layers)), ends the attention state
+   and hides its window, and the session begins; the secure attention
+   key brings the window back over it
    ([D12](#d12-the-secure-attention-key-and-global-keys)). Logout
-   closes the session's connection and its grant channels.
+   closes the session's connection and its grant and notification
+   channels.
 6. Login waits on one port for every channel it serves, its connection,
-   the accounts service, its relays and the session's launcher and
-   grant channels, and blocks on none of them, so it can answer the
-   secure attention key while a password is being checked, which takes
-   seconds ([accounts.md A4](accounts.md#a4-hashing-passwords)).
+   the accounts service, its relays, the session's launcher and grant
+   channels, and the powerbox's and the notification service's, and
+   blocks on none of them, so it can answer the secure attention key
+   while a password is being checked, which takes seconds
+   ([accounts.md A4](accounts.md#a4-hashing-passwords)).
 
 [accounts.md A5](accounts.md#a5-checking-a-password) checks a name
 with no record against a stand-in account, so that a reply's timing
@@ -993,6 +1022,7 @@ pass:
 | Draw over another program's window | Placement and stacking are the compositor's; a window is raised by the user, a new window opens below the focused one, and a popup opens only from a focused window and stays above its parent only ([D11](#d11-routing-input)) |
 | Draw over the trusted interface or the strip | Its connection carries `APP` alone, beneath `TRUSTED` and `SYSTEM`, and no window covers the strip ([D8](#d8-composition)) |
 | Change what its windows say it is | The label and the mark are its issuer's ([D5](#d5-connections-labels-and-layers)) |
+| Post a notification under another's name | The notification service draws the label login gave the channel ([D20](#d20-notifications)) |
 | Keep its windows after logout | Logout closes the session's connection, and every connection, window and capture issued from it ([D5](#d5-connections-labels-and-layers)) |
 | Read another program's pixels | It holds no other program's sections and no resource over the framebuffer; captures need a granted handle ([D15](#d15-capture-copy-and-paste)) |
 | Read another program's input | Each event goes to one window's channel ([D11](#d11-routing-input)) |
@@ -1079,25 +1109,31 @@ labels, never the content.
 
 ## D16. Trusted interface and the powerbox
 
-**Decided.** The trusted interface is what `SYSTEM` and `TRUSTED`
+**Decided** (by the owner): the strip's marks at its left, rule 1, and
+consent shown by the powerbox. **Decided:** the rest.
+
+The trusted interface is what `SYSTEM` and `TRUSTED`
 windows show: login's screens on `SYSTEM`, which only login's
 connection reaches, and the powerbox's dialogs on `TRUSTED`. Four things
 tell them apart from a program's windows, and a program can forge none
 of the first three:
 
-1. **The strip** shows the secure mark while a `SYSTEM` window has the
-   focus; the system's mark and `powerbox`, then the asking program's
-   label, while a powerbox dialog has it; and a program's label alone
-   while one of its windows does. No program draws in it, and its marks
-   are the compositor's own, not a theme's ([D8](#d8-composition)).
+1. **The strip** shows at its left the secure mark while a `SYSTEM`
+   window has the focus; the system's mark and `powerbox`, then the
+   asking program's label, while a powerbox dialog has it; and a
+   program's label alone while one of its windows does. No program
+   draws in it, and its marks are the compositor's own, not a theme's
+   ([D8](#d8-composition)).
 2. **The secure attention key** brings up login's windows and no
    other's ([D12](#d12-the-secure-attention-key-and-global-keys)).
-3. **Nothing is over it:** no `APP` or `OVERLAY` window lies above a
-   `TRUSTED` one, nothing lies above `SYSTEM`, and the keyboard is the
-   trusted window's while it has the focus.
+3. **Nothing is over it:** no `APP`, `NOTIFICATION` or `OVERLAY` window
+   lies above a `TRUSTED` one, nothing lies above `SYSTEM`, and the
+   keyboard is the trusted window's while it has the focus.
 4. **The rest is dimmed:** while a `SYSTEM` or `TRUSTED` window has the
    focus, the compositor draws every other window darkened by the
-   system's dimming table. EWS overlays all other windows "with a red
+   system's dimming table, and while a `TRUSTED` window has it, the
+   wallpaper too ([look.md V14](look.md#v14-the-system-asking) gives the
+   level). EWS overlays all other windows "with a red
    alpha-blended overlay" while a trusted session's window is active,
    and marks its reserved band
    ([EWS](README.md#display-and-interface-design-references), 7.3);
@@ -1122,9 +1158,20 @@ L18](shell.md#l18-asking-for-more-the-powerbox)); programs with windows
 get it to the powerbox. The same channel carries
 [D15](#d15-capture-copy-and-paste)'s request to share.
 
+The powerbox also shows the consent of [shell.md
+L20](shell.md#l20-the-recipe-and-the-command-line), rule 3, in a
+graphical session. Where the shell would ask whether a program from a
+store path in no profile, or a script, may have what it declares, it
+asks through login, its launcher, and the powerbox shows the program's
+label or the script's name, its store path or file, each declaration
+as a grant, and the SHA-256 the answer is kept for. Enter allows and
+Escape refuses; the shell keeps the answer as L20 gives, and a refusal
+fails the launch with `launch`.
+
 1. A dialog is shown only while a window of the asking program has the
    focus, over that window; a request from a program none of whose
-   windows has the focus waits until one does.
+   windows has the focus waits until one does. A consent, for a program
+   that has no window yet, is shown when the user asks for the launch.
 2. For `PROMPT_GUARD_NS` (500 ms) after a dialog appears it takes no key
    and no click, so keys the user was typing elsewhere grant nothing.
 3. A program has at most one request outstanding; a second is refused
@@ -1153,6 +1200,10 @@ the reason's text or a file's contents.
   appearance of a SaveAs dialog, but cannot forge possession of the
   necessary file system capability" (EWS, 7.3). The marks protect what
   a user types, a password; the handles protect what a program gets.
+- **Why the powerbox for consent:** the HUD's and the terminal's shells
+  parse everything typed, and consent is shown where no program draws;
+  the powerbox already shows grants, and a flaw in it gains `TRUSTED`,
+  not login's `SYSTEM`.
 - **Cost:** a process for each session, and a `TRUSTED` connection login
   hands to it; a program cannot draw its own file dialog with access to
   anything it was not granted; dimming the rest composes the whole
@@ -1161,7 +1212,10 @@ the reason's text or a file's contents.
 - **Not taken:** a file dialog drawn by the program itself, from a
   library in its process. Its cost is a program that sees the user's
   whole tree to draw the chooser, which is the authority the powerbox
-  exists to withhold.
+  exists to withhold. Consent for declared services alone; its cost is
+  paths and the console a program declares given without the asking
+  L20 rule 3 decides. Login drawing consent; its cost is a request a
+  program's recipe shapes parsed in the process that holds `SYSTEM`.
 
 ## D17. Replay and audit
 
@@ -1270,7 +1324,7 @@ renders each expected screen from the same inputs, the screen's size,
 the account names, the text typed, and `ci/boot.py` compares the
 SHA-256 of each `screendump` with it. No image is kept in the
 repository. A boot under test sets `ui.reduce-motion`, so the caret
-does not blink and transitions end at once
+does not blink, transitions end at once and a spinner holds still
 ([ui.md U10](ui.md#u10-accessibility)): through a flag file in the
 system disk's `\NOVA\`, as `FSLOOP` is one, until the settings service
 holds the setting. After each step, a key typed or the pointer moved,
@@ -1289,7 +1343,7 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
 | 4. The graphical login | Login's window, `ACCOUNTS_LIST`, the strip, the attention state and the secure attention key, the session's connection and logout ([D5](#d5-connections-labels-and-layers), [D12](#d12-the-secure-attention-key-and-global-keys), [D13](#d13-the-graphical-login)) | | The login screen with its list matched; the account created and logged into by QMP keys; the secure attention key from the shell shows login's secure screen, and keys typed after it reach no session program; after logout the screen is the login screen again; the password appears nowhere in the log |
 | 5. Windows | Many windows, popups and children, frames and labels, focus, stacking, damage and release, copy and paste ([D5](#d5-connections-labels-and-layers) to [D7](#d7-presenting-and-pacing), [D11](#d11-routing-input), [D15](#d15-capture-copy-and-paste)) | | A test program opens two windows with known patterns; QMP drags one and clicks the other; screens matched; the program logs which window got which key, and a key typed at one never reaches the other; a popup asked for from a window without the focus is refused |
 | 6. The HUD | The HUD and its key, launching, finding, settings and nvo commands ([ui.md U11](ui.md#u11-the-hud)) | The nvo interpreter and a session in values mode ([shell.md L7](shell.md#l7-pipelines), rule 7); the settings service ([shell.md L24](shell.md#l24-settings-and-service-commands)) | The HUD key opens it; a typed command's table matched against the host's render; a program launched from it gets the focus |
-| 7. Files, Settings and the terminal | The renderer, `uihost.exe`, and the first programs drawn through it; the terminal; the powerbox; capture ([D15](#d15-capture-copy-and-paste), [D16](#d16-trusted-interface-and-the-powerbox), [ui.md U6](ui.md#u6-the-renderer), [ui.md U12](ui.md#u12-the-first-programs)) | The shell's commands for files and settings, built-ins and programs ([shell.md L25](shell.md#l25-built-ins)); a job for each program, with `CREATE_JOB` for login | Each program's first window matched; the terminal runs `whoami` and the file commands as the system boot does; a powerbox grant by QMP keys and the log's line for it; the secure attention key with a powerbox dialog open shows login's screen alone |
+| 7. Files, Settings and the terminal | The renderer, `uihost.exe`, and the first programs drawn through it; the terminal, in values mode; the powerbox, with consent; the notification service; capture ([D15](#d15-capture-copy-and-paste), [D16](#d16-trusted-interface-and-the-powerbox), [D20](#d20-notifications), [ui.md U6](ui.md#u6-the-renderer), [ui.md U12](ui.md#u12-the-first-programs)) | The shell's commands for files and settings, built-ins and programs ([shell.md L25](shell.md#l25-built-ins)); a job for each program, with `CREATE_JOB` for login | Each program's first window matched; the terminal runs `whoami` and the file commands as the system boot does; a powerbox grant by QMP keys and the log's line for it; a program from outside the profile shows consent, and Escape fails its launch; a test program's notification shows under its label; the secure attention key with a powerbox dialog open shows login's screen alone |
 
 - **Why this order:** each phase uses what the ones before it built and
   what its row needs first, and each leaves the system working: the
@@ -1305,6 +1359,62 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
   time need the reduced-motion setting.
 - **Not taken:** comparing screens by eye, or within a tolerance. Its
   cost is regressions in a pixel or a colour that pass.
+
+## D20. Notifications
+
+**Decided** (by the owner): a notification service of its own,
+drawing on a layer between `APP` and `OVERLAY`, each notification under
+the label of the channel it came on, never a name its sender gives.
+**Decided:** the rest.
+
+1. **The service.** `notify.exe` is the session's, started by login in
+   a job of its own with a `NOTIFICATION` connection, `notify`, marked,
+   minted from the session's ([D5](#d5-connections-labels-and-layers)).
+   It draws each notification in a window of its own on that layer, as
+   [look.md V13](look.md#v13-notifications) lays it out; the window
+   never takes the keyboard ([D11](#d11-routing-input)), and the
+   pointer over it reaches the service.
+2. **Channels.** A program whose recipe declares notifications gets,
+   from login at its start, a notification channel: login asks the
+   service for one on the service's control channel, naming the
+   program's label, which it takes from the program's store path as
+   for a display connection
+   ([D5](#d5-connections-labels-and-layers)). The service keeps the
+   label with the channel, and draws it on every notification that
+   comes on the channel.
+3. **The request.** `NOTIFY_POST` carries a title of at most
+   `NOTIFY_TITLE_MAX` (128) bytes, a body of at most `NOTIFY_BODY_MAX`
+   (512) bytes, both UTF-8, and up to `NOTIFY_ACTIONS_MAX` (2) actions,
+   each a label of at most `NOTIFY_ACTION_MAX` (32) bytes; a post past a
+   limit is refused with `ERR_INVALID_ARGS`. The service answers
+   `NOTIFY_SHOWN` with the notification's number once it is shown, then
+   `NOTIFY_ACTION` with the number and the action's index when the user
+   activates one, or `NOTIFY_GONE` with the number when it leaves
+   without one.
+4. **Limits.** Notifications are shown one at a time, in the order they
+   come. A channel has at most `NOTIFY_PENDING_MAX` (4) notifications
+   shown or waiting, and a post past it is refused with
+   `ERR_NO_RESOURCES`, so one program cannot hold the corner.
+5. **Ends.** When a channel closes its notifications go. At logout
+   login closes every notification channel of the session.
+6. **The log.** The service writes a line for each notification: the
+   label and the action taken, never the title, the body or an
+   action's text.
+
+- **Why a service of its own:** the compositor holds every pixel and
+  every key, so it is kept to composing and routing
+  ([D1](#d1-the-parts)); text and actions a program supplies are parsed
+  in a process that holds a `NOTIFICATION` connection and nothing else.
+- **Why the channel's label:** what a notification says about its
+  sender is what the user trusts, as for a window
+  ([D5](#d5-connections-labels-and-layers)), so the sender cannot
+  choose it.
+- **Cost:** a process for each session; a program notifies only if its
+  recipe declares it; a notification carries text and actions, no
+  image.
+- **Not taken:** the compositor drawing notifications. Its cost is
+  programs' text and actions laid out in the process that holds every
+  pixel and every key, which D1 keeps to composing and routing.
 
 ## Prior art
 
@@ -1334,8 +1444,9 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
   `init/platform.c`); makes it the input drivers' client while it runs
   and the console after it is given up; gives login the connection that
   carries `SYSTEM`, `ATTENTION` and `CAPTURE`, and the sessions' job
-  with `CREATE_JOB`, so that each program and its renderer, the HUD and
-  the powerbox run in jobs of their own (`init/login_start.c`); marks
+  with `CREATE_JOB`, so that each program and its renderer, the HUD, the
+  powerbox and the notification service run in jobs of their own
+  (`init/login_start.c`); marks
   login's accounts channel as the console's.
 - **[ipc.md](ipc.md):** I6, the framebuffer's resource goes to the
   compositor, and to the console only while no compositor runs.
@@ -1349,14 +1460,19 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
 - **[console.md](console.md):** C1 and C2, the console as the fallback
   owner of the display, drawing Limb over the whole screen when it
   takes the display from a compositor; window mode
-  ([D4](#d4-the-console-in-a-window-and-as-the-fallback)); C3, the
-  secure attention key, never given to a read, and the wheel.
+  ([D4](#d4-the-console-in-a-window-and-as-the-fallback)), its shell's
+  session in values mode and its values drawn as structure; C3, the
+  secure attention key, never given to a read, the wheel, and Super,
+  with which a key gives no text.
 - **[accounts.md](accounts.md):** A5 and A6, `ACCOUNTS_LIST` on a
   console login channel, and the stand-in's purpose; A7, login
   starting each program in a job of its own, with a connection and a
-  display grant channel when its recipe declares the display, the HUD
-  with a shell in values mode, and a terminal on `LAUNCHER_TERMINAL`,
-  closing the session's connection and grant channels at logout, and
+  display grant channel when its recipe declares the display, and a
+  notification channel when it declares notifications, the HUD with a
+  shell in values mode, the notification service
+  ([D20](#d20-notifications)), and a terminal on `LAUNCHER_TERMINAL`,
+  its shell in values mode, closing the session's connection, grant
+  channels and notification channels at logout, and
   waiting on one port without blocking where A7 has it wait with the
   shell; A10, login's new connection after a restart taking over the
   attention state.
@@ -1374,7 +1490,9 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
   pointer reports and the device's description; `accounts_protocol.h`,
   `ACCOUNTS_LIST`; `console_protocol.h`, the window mode's setup;
   `session.h`, the display connection, the grant channel and
-  `LAUNCHER_TERMINAL`.
+  `LAUNCHER_TERMINAL`; `notify_protocol.h`, new: `NOTIFY_POST` and its
+  answers, and the control channel's request for a program's channel
+  ([D20](#d20-notifications)).
 - **README.md and `ci/boot.py`:** `-device virtio-tablet-pci` in place
   of `-device qemu-xhci -device usb-tablet`; screens checked as
   [D19](#d19-the-build-plan) gives, at 1280 x 800, and under KVM at
@@ -1383,6 +1501,11 @@ boot under QEMU 11.1.3 with its bundled EDK II showed.
 - **[shell.md](shell.md):** L18's powerbox prompt has a graphical twin,
   the powerbox program, speaking the same protocol, and the share
   request joins it; L20's grants gain the display, which the launcher
-  gives from the session's connection; L24's system settings hold the
+  gives from the session's connection, and notifications, which it
+  gives through the notification service; L24's system settings hold the
   compositor's theme, the background and the reserved keys, declared in
-  the compositor's interface description.
+  the compositor's interface description; L7, rule 7, a terminal's
+  session in values mode; L20, rule 3, consent shown by the powerbox in
+  a graphical session ([D16](#d16-trusted-interface-and-the-powerbox)).
+- **nova-nix:** a derivation attribute that declares notifications
+  ([D20](#d20-notifications)).

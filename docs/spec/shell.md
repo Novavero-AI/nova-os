@@ -597,8 +597,8 @@ of a decimal fraction such as 1.1" (CBOR 3.4.4).
 
 ## L7. Pipelines
 
-**Decided** (by the owner): the value encoding, rule 9. **Decided:** the
-rest.
+**Decided** (by the owner): the value encoding, rule 9; values mode for
+the terminal, rule 7. **Decided:** the rest.
 
 1. **A stream is a sequence of values.** Built-ins and functions write
    values. An external program that speaks bytes contributes one `bytes`
@@ -651,12 +651,16 @@ rest.
    UTF-8, raising `type` if they are not, and strings joined by LF, with
    every trailing LF removed, as POSIX removes trailing newlines from a
    command substitution (POSIX 2.6.3).
-7. **At the prompt**, the values a statement outputs are rendered by the
-   shell (a table as columns, a record as two), and bytes are written as
-   they come. In a session in values mode, which login gives the shell
-   it starts for the HUD ([ui.md U11](ui.md#u11-the-hud)), each line
-   comes as a string and a statement's values go back unrendered, in the
-   value encoding (rule 9), for the HUD to draw.
+7. **At the prompt**, in a plain text session, the values a statement
+   outputs are rendered by the shell (a table as columns, a record as
+   two), and bytes are written as they come. In a session in values
+   mode, which login gives the shell it starts for the HUD
+   ([ui.md U11](ui.md#u11-the-hud)) and for each terminal
+   ([display.md D4](display.md#d4-the-console-in-a-window-and-as-the-fallback)),
+   each line comes as a string and a statement's values go back
+   unrendered, in the value encoding (rule 9), for the HUD or the
+   terminal to draw as structure; bytes still come as they come. The
+   console's sessions in direct mode are plain text.
 8. **`print`** writes its argument to the shell's own standard output
    at once, outside the pipeline, so a function can report progress
    without adding to its output.
@@ -1313,7 +1317,9 @@ def main(src: path, dest: path(write)) {
    is the service `date` reads, so a script that runs `date` needs it,
    and `settings` is the service
    [L24](#l24-settings-and-service-commands) reads. At the prompt the
-   shell shows them and asks once per SHA-256 of the file, so an edited
+   shell shows them, through the powerbox in a graphical session
+   ([L20](#l20-the-recipe-and-the-command-line), rule 3), and asks once
+   per SHA-256 of the file, so an edited
    script asks again, and keeps the answer as a setting; elsewhere an
    unapproved `needs` fails the launch
    ([L20](#l20-the-recipe-and-the-command-line), rule 3). A script
@@ -1387,10 +1393,12 @@ What an external program holds when it starts is the union of:
    is consent to what its derivation declares. A program run from a
    store path that is in no profile asks once per SHA-256 of its
    derivation, and a script once per SHA-256 of its file
-   ([L19](#l19-scripts)): the shell shows what it declares, and keeps the
-   answer as a setting, so the same derivation or file is not asked
-   about again. Outside an interactive session a declaration without
-   consent fails the launch with `launch`.
+   ([L19](#l19-scripts)): the shell shows what it declares, or in a
+   graphical session has the powerbox show it
+   ([display.md D16](display.md#d16-trusted-interface-and-the-powerbox)),
+   and keeps the answer as a setting, so the same derivation or file is
+   not asked about again. Outside an interactive session a declaration
+   without consent fails the launch with `launch`.
 4. `grants { command }` shows every row above for each program the
    command would start whose arguments are known without running
    anything; it runs no capture, and shows an argument that depends on
@@ -1437,7 +1445,8 @@ What an external program holds when it starts is the union of:
 
 ## L21. Interactive behaviour
 
-**Decided** (by the owner): Ctrl+L, rule 10. **Decided:** the rest.
+**Decided** (by the owner): Ctrl+L, rule 10; the prompt, rule 11.
+**Decided:** the rest.
 
 The console edits the line where it draws it
 ([console.md C4](console.md#c4-sessions)); the shell assists through the
@@ -1473,6 +1482,9 @@ console protocol:
    units, times in UTC until a time zone is a setting.
 10. **Ctrl+L** clears the panel, as `clear` does ([L25](#l25-built-ins)),
     and draws the line being edited again at its top.
+11. **The prompt** is `$cwd`, with the home written `~`, then ` > `:
+    `~/Documents > `, `/store > `. The console's theme colours the
+    directory and the `>` ([look.md V3](look.md#v3-colours)).
 
 - **Why:** fish's interactive defaults, on by default and not
   configurable: autosuggestions "based on command history, completions,
@@ -1489,9 +1501,15 @@ console protocol:
   protocol grows assisted reads, style spans, an interrupt key and a
   clear operation ([Changes elsewhere](#changes-elsewhere)); until the
   console draws UTF-8, names outside ASCII show as `?` (console.md C4).
+- **Why this prompt:** the directory is what a command's relative
+  paths, and so its grants, are read against, and `~` keeps the
+  user's own name out of every line.
 - **Not taken:** the shell editing the line itself in a raw key mode,
   which the console's design turns down: "editing that each client does
-  itself in a raw mode" (console.md C4).
+  itself in a raw mode" (console.md C4). Version 0's prompt, `name@nova`
+  and the directory ([accounts.md A8](accounts.md#a8-the-shell)); its
+  cost is the user's name, which the session already knows, before
+  every command.
 
 ## L22. History
 

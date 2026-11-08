@@ -180,7 +180,8 @@ takes a record ([accounts.md A3](accounts.md#a3-records)): the counts
 are checked once when the font is loaded, against the file's size, and
 every record against the counts and the records before it, and a glyph
 is then read with no length to follow.
-Instructions, `GSUB` and every `GPOS` feature but `kern` are left out.
+Instructions, `GSUB` but for [U4](#u4-text-layout)'s two alternates,
+rule 8, and every `GPOS` feature but `kern` are left out.
 
 The trade-offs:
 
@@ -218,7 +219,7 @@ be released under the OFL" (OFL FAQ 1.3).
 - **Cost:** a font a user brings needs converting in a build, through
   nova-nix, before it can be drawn; the converter is a TrueType and
   `GPOS` reader in C to write and keep; Inter's features beyond
-  kerning, tabular figures among them, need adding to the converter one
+  kerning and U4's two alternates need adding to the converter one
   by one.
 - **Why these characters and faces:** they are the scripts
   [U4](#u4-text-layout) can lay out, in whole blocks; the rest of Inter
@@ -227,8 +228,8 @@ be released under the OFL" (OFL FAQ 1.3).
   approved login's and desktop's key hints show. The six faces are the
   ones the approved login and desktop designs
   ([look.md V5](look.md#v5-type)) set type in: Inter for
-  text up to 40 pixels, and Inter Display for the large headings, names
-  and titles from 44. Each face is a converted file, and the variable
+  text up to 20 points, and Inter Display for the large headings, names
+  and titles from 22. Each face is a converted file, and the variable
   font's deltas would be a second outline format in the reader.
 - **Not taken:** a TrueType parser in the font library. Its cost is the
   table walk above in every graphical process, and either hinting's
@@ -243,7 +244,8 @@ be released under the OFL" (OFL FAQ 1.3).
 
 ## U4. Text layout
 
-**Decided.**
+**Decided** (by the owner): rule 8's two substitutions, fixed at build
+time. **Decided:** the rest.
 
 `lib/typeset.c` turns UTF-8 into positioned glyphs and lines, from a
 font `lib/typeface.c` reads:
@@ -279,19 +281,24 @@ font `lib/typeface.c` reads:
    size" (FreeType), by an amount set on the specimen phase 2 renders at
    1280 x 800 ([display.md D19](display.md#d19-the-build-plan)). At scale
    2 and above, neither.
+8. **Two alternates**, to come. Inter's `tnum`, its tabular figures,
+   and `cv05`, its l with a tail, are fixed at build time: the converter
+   writes each alternate as a glyph of its own, with a record of the
+   glyph it stands for ([font-format.md](font-format.md)), and a text's
+   style asks for either, so layout takes the recorded glyph and reads
+   no `GSUB` at run time.
 
 Out of scope: right-to-left and bidirectional text, for scripts "where
 the natural ordering of horizontal text in display is from right to
 left" (UAX #9, 1); shaping, which scripts such as Arabic need because
 they "require the selection of positional character shapes that depend
-on adjacent characters" (UAX #9, 3.5); every `GSUB` substitution and
-Inter's contextual alternates with it; `GPOS` mark attachment (lookup
-types 4 to 6), so combining marks draw unpositioned; line breaking by
-Unicode's rules; hyphenation;
-vertical text; other fonts for characters Inter lacks; colour glyphs;
-normalization, so text is drawn as its code points come, and a
-character written as a base and a combining mark shows the mark
-unpositioned.
+on adjacent characters" (UAX #9, 3.5); every `GSUB` substitution but
+rule 8's two, and Inter's contextual alternates with them; `GPOS` mark
+attachment (lookup types 4 to 6), so combining marks draw unpositioned;
+line breaking by Unicode's rules; hyphenation; vertical text; other
+fonts for characters Inter lacks; colour glyphs; normalization, so text
+is drawn as its code points come, and a character written as a base and
+a combining mark shows the mark unpositioned.
 
 - **Why:** left-to-right text in Latin, Greek and Cyrillic, written
   with precomposed characters, needs only advances and pair kerning,
@@ -302,14 +309,21 @@ unpositioned.
   small sizes; FreeType says stem darkening "should only be enabled when
   doing gamma correction, so ideally it should always be done", and that
   at twice the density "smaller, fully black pixels reign supreme".
+- **Why the two alternates:** figures line up in tables, clocks and
+  sizes, and code typed in Inter does not read `ls` as `Is`
+  ([look.md V5](look.md#v5-type)); fixed when the font is converted,
+  they cost layout a lookup and the reader no `GSUB`.
 - **Cost:** no Arabic, Hebrew or Indic text, and no languages written
   with combining marks, until shaping exists; glyphs at small sizes that
-  differ from their outlines by the snapping and the darkening.
+  differ from their outlines by the snapping and the darkening; the
+  alternates' glyphs in each face.
 - **Not taken:** a shaping engine from the start. Its cost is a large
   body of OpenType layout code before a single label is drawn. Nothing
   for small text, relying on screens of twice the density; its cost is
   thin text at scale 1, 1280 x 800 among the sizes. Snapping alone; its
-  cost is stems that stay thin in linear light.
+  cost is stems that stay thin in linear light. `tnum` alone; its cost
+  is `ls` read as `Is` in the HUD's input. Neither; its cost is figures
+  that do not line up in a column.
 
 ## U5. The interface as data
 
@@ -573,8 +587,9 @@ token changes every window the next time it draws.
    user runs. A `secret` field's text is never served: the service
    learns its role, its name and how many characters it holds.
 3. The setting `ui.text-scale` multiplies the type tokens;
-   `ui.reduce-motion` stops the caret's blink and makes every transition
-   end at once, which is also what CI sets
+   `ui.reduce-motion` stops the caret's blink, makes every transition
+   end at once and holds a spinner still on one frame, which is also
+   what CI sets
    ([display.md D19](display.md#d19-the-build-plan)); a high-contrast
    theme is a set of tokens.
 4. A canvas is opaque to all of it, beyond its label.
@@ -678,14 +693,15 @@ action it offers is an nvo command the shell can run.
 | Dear ImGui | | Immediate mode for interfaces for "the average end-user" |
 | Plan 9's draw | Drawing as messages written to a server, `/dev/draw` | Pixels and strings as the vocabulary |
 | FreeType | Linear-light blending; vertical-only snapping as the useful part of hinting | Hinting by the font's bytecode |
-| Inter | The typeface, its metrics and its kerning | Its hinting and its substitutions |
+| Inter | The typeface, its metrics, its kerning and two of its substitutions | Its hinting and its other substitutions |
 
 ## Changes elsewhere
 
 - **`lib/`:** `outline.c`, `typeface.c` and `typeset.c`
   ([U2](#u2-the-rasterizer) to [U4](#u4-text-layout)), then `value/`,
   `display/` and `ui/` ([U1](#u1-the-layers)).
-- **`tools/`:** `mkfont.c` ([U3](#u3-fonts)).
+- **`tools/`:** `mkfont.c` ([U3](#u3-fonts)), and the two alternates
+  of [U4](#u4-text-layout), rule 8.
 - **`include/`:** `font_format.h`; and `ui_protocol.h`, generated from
   the renderer's interface description, as a new service's header is
   ([shell.md L24](shell.md#l24-settings-and-service-commands)).
@@ -697,9 +713,10 @@ action it offers is an nvo command the shell can run.
   sessions' job, a job for each program and its renderer, and a shell
   in values mode for the HUD
   ([display.md, Changes elsewhere](display.md#changes-elsewhere)).
-- **[shell.md](shell.md):** a session in values mode, for the HUD
-  (L7, rule 7); the rendering of values (L7, rule 7) shared with
-  `lib/ui`; the forms L24's generic bridge makes, which Settings draws;
-  the transcript's annotations (L23), which the renderer adds to.
+- **[shell.md](shell.md):** a session in values mode, for the HUD and
+  the terminal (L7, rule 7); the rendering of values (L7, rule 7)
+  shared with `lib/ui`; the forms L24's generic bridge makes, which
+  Settings draws; the transcript's annotations (L23), which the renderer
+  adds to.
 - **nova-nix:** a derivation attribute that declares an interface, a
   raw window, or both.

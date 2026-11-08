@@ -161,8 +161,11 @@ ranges given that the font maps, in that order:
   before every glyph, and one right class when they kern alike after
   every glyph: the matrix holds each pair exactly.
 
-`GSUB` and every `GPOS` feature but `kern` are left out: no ligatures,
-contextual alternates or tabular figures.
+`GSUB` and every `GPOS` feature but `kern` are left out: no ligatures
+or contextual alternates. Two substitutions are to come, `tnum` and
+`cv05` ([ui.md U4](ui.md#u4-text-layout), rule 8): the converter is to
+write each alternate as a glyph of its own, with a record of the glyph
+it stands for, which this format does not yet hold.
 
 ## What nova-os ships
 
@@ -171,8 +174,8 @@ and checked by the SHA-256 `SHA256SUMS` gives, as follows.
 
 **Faces.** The six static faces the approved login and desktop designs
 ([look.md V5](look.md#v5-type)) set type in, and no other: Inter
-Regular, Medium and SemiBold for text up to 40 pixels, Inter Display
-Light, Regular and SemiBold for display sizes from 44 (the designs'
+Regular, Medium and SemiBold for text up to 20 points, Inter Display
+Light, Regular and SemiBold for display sizes from 22 (the designs'
 type scale: field values and body text, buttons and the bar, titles
 and labels; the login's names and titles, the account rows, headings).
 The static faces, not Inter's variable font, because a weight between

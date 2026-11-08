@@ -125,11 +125,16 @@ in a `CONSOLE_SETUP` of its own kind (`include/console_protocol.h`), and
 makes on it one window holding its panel; it takes keys from its
 window's channel rather than from an input driver's endpoint. Its
 sessions, keys, panel and font are those of direct mode, the mode in
-which it holds the framebuffer. In a window the panel's translucency is
+which it holds the framebuffer, except that its shell's session is in
+values mode ([shell.md L7](shell.md#l7-pipelines), rule 7): the console
+draws the values the shell answers as structure, tables and records
+([look.md V11](look.md#v11-windows)), where in direct mode the shell
+renders them as text. In a window the panel's translucency is
 the window's material
 ([display.md D8](display.md#d8-composition)): the console writes each
-pixel of a glyph or the caret in the ink's colour with the glyph's
-coverage as its cover, and the rest of the panel with a cover of 0.
+pixel of a glyph, the caret or a value's rule in the ink's colour with
+its coverage as its cover, and the rest of the panel with a cover of
+0.
 
 - **Why the keyboard's client:** the console is where keys are typed,
   and the platform driver already supervises the client and hands it a
@@ -160,8 +165,8 @@ the character a US keyboard gives: a key's name in the evdev header is
 its unshifted label, so `KEY_A` (30) gives `a` and `KEY_1` (2) gives
 `1`. Shift, either one, gives the shifted character; Caps Lock, which
 each press toggles, shifts the letters alone, and Shift with Caps Lock
-gives them unshifted. A repeat (value 2) acts as a press. With Control
-or Alt held a character key gives nothing; the editing keys still
+gives them unshifted. A repeat (value 2) acts as a press. With Control,
+Alt or Super held a character key gives nothing; the editing keys still
 edit.
 
 While a read waits (C4) the keys edit its line:

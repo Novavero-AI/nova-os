@@ -316,21 +316,25 @@ and, where it declares the display, a connection minted from the
 session's and a display grant channel to login
 ([display.md D5](display.md#d5-connections-labels-and-layers)), with
 its renderer in the same job where it declares an interface
-([ui.md U6](ui.md#u6-the-renderer)). Login answers with the program's
+([ui.md U6](ui.md#u6-the-renderer)); and, where it declares
+notifications, a notification channel made through the session's
+notification service
+([display.md D20](display.md#d20-notifications)). Login answers with the program's
 process, with `INSPECT` and `WAIT`, by which the shell waits for its
 end and reads its exit code. A program run so gets none of the
 session's handles.
 
 While a compositor runs, login also mints the session's display
 connection at each login, starts the session's HUD, with a shell of its
-own in values mode ([ui.md U11](ui.md#u11-the-hud)), and its powerbox,
-each in a job of its own
+own in values mode ([ui.md U11](ui.md#u11-the-hud)), its powerbox and
+its notification service, each in a job of its own
 ([display.md D13](display.md#d13-the-graphical-login)); and it starts a
 terminal, a console in window mode, on `LAUNCHER_TERMINAL`
 ([display.md D4](display.md#d4-the-console-in-a-window-and-as-the-fallback)).
 At logout it closes the session's connection, its network control
-channel and every display grant channel, so every window, connection
-and capture of the session goes at once. Login waits on one port for
+channel and every display grant and notification channel, so every
+window, connection, capture and notification of the session goes at
+once. Login waits on one port for
 every channel it serves and blocks on none of them, so it answers the
 secure attention key while a password is checked.
 
@@ -340,9 +344,9 @@ there and answers the shell with it, and ends the shell's session for
 any message the console would end one for
 ([console.md C4](console.md#c4-sessions)). While a compositor runs,
 login has no console session to relay: a terminal's shell has a
-session on the terminal's own console, which login starts with it, and
-the HUD's shell a session in values mode whose other end the HUD
-holds.
+session in values mode on the terminal's own console, which login
+starts with it, and the HUD's shell a session in values mode whose
+other end the HUD holds.
 
 - **Why these handles:** a user's shell reads and writes the user's
   files, reads what the store holds, talks to the console, and runs
