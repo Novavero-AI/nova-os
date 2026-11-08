@@ -105,13 +105,23 @@ jobs:
 
       # The job's shell is the seed-built busybox's, which runs build.sh
       # with its own applets for the commands it names, and cc and the
-      # programs it builds from the directories above.
+      # programs it builds from the directories above. The first build
+      # keeps each download in the download directory, with those
+      # applets, and the second takes each from there.
       - name: Build with build.sh and check against SHA256SUMS
         shell: busybox sh -e {0}
+        env:
+          NOVA_OS_DOWNLOAD_DIR: ${{ runner.temp }}/downloads
         run: |
           for tool in cc curl git python3; do command -v "$tool"; done
           cc -v
           ci/reproduce.sh "$RUNNER_TEMP/reproduce"
+
+      - name: Build again from the download directory and check against SHA256SUMS
+        shell: busybox sh -e {0}
+        env:
+          NOVA_OS_DOWNLOAD_DIR: ${{ runner.temp }}/downloads
+        run: ci/reproduce.sh "$RUNNER_TEMP/rebuild"
 
       - name: Upload what was built
         if: failure()

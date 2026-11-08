@@ -112,14 +112,17 @@ CI checks every pull request and every push to main:
   each host's compiler building TinyCC, and checks every file
   `SHA256SUMS` lists, so both hosts must give its bytes. It checks with
   `ci/check-downloads.py` that a download whose sha256 differs from
-  `SHA256SUMS` stops the build before use. It also builds with
-  `--werror`, TinyCC's `-Wall -Werror`, runs `design/text/check-text.sh`
-  on the fonts the build converted, and on Linux
-  `design/text/compare-freetype.sh`.
+  `SHA256SUMS` stops the build before use, and that a build whose
+  download directory holds every download succeeds with curl's every
+  connection refused. It also builds with `--werror`, TinyCC's `-Wall
+  -Werror`, runs `design/text/check-text.sh` on the fonts the build
+  converted, and on Linux `design/text/compare-freetype.sh`.
 - **Seed** runs `build.sh` on Windows, under busybox-w32's sh, with a
-  TinyCC and a busybox that nova-nix builds from stage0-pe32's seed,
-  and checks the same files. It runs on every push to main, weekly, and
-  on a pull request that changes the job or a script it runs.
+  TinyCC and a busybox that nova-nix builds from stage0-pe32's seed, and
+  checks the same files, then builds again from the downloads the first
+  build kept, and checks that build too. It runs on every push to main,
+  weekly, and on a pull request that changes the job or a script it
+  runs.
 - **Lint** checks that tracked text is ASCII and that clang's `-Wall
   -Wextra -pedantic -Wshadow` find nothing in any C source, built with
   its `compile_flags.txt`; it runs `tools/check-masks.c`,
