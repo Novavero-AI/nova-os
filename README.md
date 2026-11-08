@@ -4,9 +4,9 @@
 [![Seed](https://github.com/Novavero-AI/nova-os/actions/workflows/seed.yml/badge.svg)](https://github.com/Novavero-AI/nova-os/actions/workflows/seed.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-An operating system with NT's object model on a small kernel core,
-drivers in user mode, and disk images that rebuild byte for byte from a
-1,623-byte seed.
+An operating system modeled on Windows NT's object model, with a small
+kernel core, drivers in user mode, and disk images that rebuild byte for
+byte from a 1,623-byte seed.
 
 ![nova-os in QEMU on its first boot. Over the desktop background, a dark planet with a lit horizon, the console's panel shows login creating the administrator's account, ada, then the shell running whoami and help, which lists the shell's commands.](docs/images/first-boot.webp)
 
@@ -196,3 +196,6 @@ once its driver runs, keeps QEMU from capturing the mouse.
 ## License
 
 nova-os is licensed under the Apache License 2.0; see [LICENSE](LICENSE).
+
+Windows and Windows NT are trademarks of the Microsoft group of companies.
+nova-os is not affiliated with or endorsed by Microsoft.

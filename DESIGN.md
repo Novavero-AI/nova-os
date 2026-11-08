@@ -1,9 +1,9 @@
 # nova-os design
 
-nova-os is an operating system with NT's object model on a small kernel
-core, written in C and built entirely from source down to a 1,623-byte hex0
-seed, so that every byte of a release can be rebuilt from that seed and
-compared.
+nova-os is an operating system modeled on Windows NT's object model, with
+a small kernel core, written in C and built entirely from source down to a
+1,623-byte hex0 seed, so that every byte of a release can be rebuilt from
+that seed and compared.
 
 ## Principles
 
