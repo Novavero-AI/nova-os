@@ -523,22 +523,26 @@ check those screens.
 ## V9. The bar
 
 **Decided** (by the owner): a slim bar of type across the top, not a
-frosted menu bar and dock: at its left the marks and the focused
-window's label, as [display.md
+frosted menu bar and dock: at its left the wordmark, then the marks and
+the focused window's label, as [display.md
 D16](display.md#d16-trusted-interface-and-the-powerbox), rule 1, gives,
-then the window list; in its centre the search field; at its right the
-compositor's notices, the clock and the user. **Decided:** the rest.
+then the window list, with the focused window's entry marked there too;
+in its centre the search field; at its right the compositor's notices,
+the clock and the user. **Decided:** the rest.
 
 The bar is [display.md D8](display.md#d8-composition)'s strip, along
 the top of the screen: the compositor draws it, no window covers it and
 nothing dims it. It is 36 tall across the top with no fill, type on the
 sky over Limb untouched, its text centred on its middle.
 
-- **Left,** inset 24: the mark and the focused window's label in the
-  Bar style in the ink, as D16 rule 1 gives them; then, 20 after, the
-  window list, each `APP` window's label in the Bar style, 20 apart, the
-  focused window's in the ink over a short rim line
-  ([V7](#v7-focus-the-horizon)), the others in the tertiary ink.
+- **Left,** inset 24: the wordmark, the boot screen's letters at an
+  x-height of 9, in the ink at 92 percent. From 96, the mark and the
+  focused window's label in the Bar style in the ink, as D16 rule 1
+  gives them; then, 20 after, the window list, each `APP` window's
+  label in the Bar style, 20 apart, the focused window's in the ink
+  over a short rim line ([V7](#v7-focus-the-horizon)), the others in
+  the tertiary ink. The terminal's entry reads `terminal`, its label
+  ([display.md D4](display.md#d4-the-console-in-a-window-and-as-the-fallback)).
 - **Centre:** the search field, 280 x 24, fully round, white at 1.2
   percent with an edge of white at 7 percent, the edge the accent at 55
   percent while the HUD is open; an 11-point magnifier 8 from its left
@@ -551,7 +555,8 @@ sky over Limb untouched, its text centred on its middle.
   user, the name in the secondary ink with a 16-point monogram 6 before
   it; and 20 before the user the compositor's notices.
 
-At login the bar holds the secure mark, the notices and the clock. While
+At login the bar holds the wordmark, the secure mark, the notices and
+the clock. While
 the system asks ([V14](#v14-the-system-asking)), its left holds what
 D16 rule 1 gives for a powerbox dialog, and its centre, in the search
 field's place, an 18-point shield in the accent and, 8 after it, "paint
@@ -569,14 +574,18 @@ points once a minute.
 - **Why:** keyboard first: the HUD launches and the bar's list
   switches, where a dock would repeat both for the pointer. Trust: no
   window overlaps the bar and no request dims it, so it is where the
-  system speaks for itself, and the mark that proves the trusted
-  interface comes first, where the strip starts. Limb: a dock at the
+  system speaks for itself; the wordmark opens it on every screen, and
+  the mark that proves the trusted interface follows at once, where the
+  strip starts. The focused window's label is in the mark block and in
+  the list, as macOS shows the active app in its menu bar and its Dock:
+  the block says who holds the focus, which no program can draw, and
+  the list is where the user switches. Limb: a dock at the
   bottom sits on the planet under the arc, where a top strip of type
   leaves the horizon untouched. It is one static strip, redrawn for the
   clock, the notices and when windows open or close.
 - **Cost:** no one-click launching with the pointer; the strip takes 36
-  points of every screen; the focused window's label shows twice, by
-  the mark and in the list.
+  points of every screen; the focused window's label takes its room
+  twice.
 - **Not taken:** a frosted menu bar 32 tall with menus and a centred
   dock of 52-point tiles ([V1](#v1-the-direction)); its cost is a blur
   under two strips always on screen, and launching and switching
@@ -585,7 +594,11 @@ points once a minute.
   a desktop with no window list, no pointer's way to the HUD and no
   clock. The approved screens' bar with the marks at its right edge;
   its cost is the proof of the trusted interface placed among the
-  clock and the notices, which change, rather than first.
+  clock and the notices, which change, rather than at the strip's
+  start. The bar without the wordmark, the trust mark first; its cost
+  is a strip whose start changes with every focus, with nothing fixed
+  where the eye begins. The focused window in the mark block alone;
+  its cost is a list that leaves out the window the user is in.
 
 ## V10. Login
 
@@ -633,15 +646,18 @@ goes to the chosen account's field.
 
 ## V11. Windows
 
-**Decided** (by the owner): a title bar shows the window's label, then
-the title its client sets, as [display.md D8](display.md#d8-composition)
-gives; the window keys are reserved
+**Decided** (by the owner): `APP` windows alone have frames, and a
+title bar shows the window's label, then the title its client sets, as
+[display.md D8](display.md#d8-composition) gives; the terminal's label
+is `terminal`; the window keys are reserved
 ([display.md D12](display.md#d12-the-secure-attention-key-and-global-keys));
 the terminal draws values as structure. **Decided:** the rest.
 
-**The frame** is the compositor's: radius 12, the window's surface,
-edge, sheen and shadow ([V4](#v4-surfaces-edges-and-shadows)), and the
-focused window's light ([V7](#v7-focus-the-horizon)). The title bar is
+**The frame** of an `APP` window is the compositor's; the HUD, the
+powerbox's boxes and notifications have none. Radius 12, the window's
+surface, edge, sheen and shadow
+([V4](#v4-surfaces-edges-and-shadows)), and the focused window's light
+([V7](#v7-focus-the-horizon)). The title bar is
 40 tall: the window's label in the Title style 20 from the left edge,
 or 20 past a sidebar, after the system's mark where its connection
 carries one ([display.md D5](display.md#d5-connections-labels-and-layers)),
@@ -666,26 +682,27 @@ focused window, and the name in the Body style 8 after it.
 
 A window maximised fills the work area, the screen below the bar.
 
-**The terminal** is the console in window mode
-([display.md D4](display.md#d4-the-console-in-a-window-and-as-the-fallback)),
-its shell's session in values mode
-([shell.md L7](shell.md#l7-pipelines), rule 7): nvo in the console
-font at the console's cell, the window 80 columns and an inset of 20
-on each side wide. The prompt is [shell.md
+**The terminal** is the console in window mode ([display.md
+D4](display.md#d4-the-console-in-a-window-and-as-the-fallback)), its
+shell's session in values mode ([shell.md L7](shell.md#l7-pipelines),
+rule 7): nvo in the console font at the console's cell, the window 80
+columns and an inset of 20 on each side wide. Its title bar reads the
+system's mark, its label `terminal`, and its title, the directory:
+`terminal ~/Documents`. The prompt is [shell.md
 L21](shell.md#l21-interactive-behaviour)'s, rule 11, the directory in
 the accent and ` > ` in the tertiary ink; a command takes its styles'
 colours ([V3](#v3-colours)). The console draws the values the shell
 answers as structure: a rule of white at 12 percent, 1 point, beside
 each value; a record as two columns, its values coloured by type; a
 table with its header in capitals in the tertiary ink and a hairline of
-white at 10 percent under it, sizes right-aligned, and no stripes,
-since a white stripe is what a selection looks like in a window without
-the focus; and the value's type on the line after it in the tertiary
-ink, `table<name: string, ...>`. Bytes a program writes are drawn as
-text. A path the next command will grant is underlined in the accent
-before Enter, as L21, rule 3, asks, and the line under the input says
-what the program gets ("gzip gets read ./report.csv, its closure, its
-streams"). Times are UTC (rule 9).
+white at 10 percent under it, sizes right-aligned, and no stripes, since
+a white stripe is what a selection looks like in a window without the
+focus; and the value's type on the line after it in the tertiary ink,
+`table<name: string, ...>`. Bytes a program writes are drawn as text. A
+path the next command will grant is underlined in the accent before
+Enter, as L21, rule 3, asks, and the line under the input says what the
+program gets ("gzip gets read ./report.csv, its closure, its streams").
+Times are UTC (rule 9).
 
 **Files** lists the records `ls` gives, in its order: rows 32 tall, a
 16-point glyph (the accent for a folder), the name in the Body style 24
@@ -712,17 +729,23 @@ row horizon under its name, and its description,
 
 - **Why:** the system draws the frame, so a program draws nothing
   outside its content, and every window, the unfocused ones included,
-  shows which program owns it. Values drawn as structure read as the
+  shows which program owns it. The terminal is labelled `terminal`, the
+  word people know on every platform, macOS's Terminal and Windows
+  Terminal among them. Values drawn as structure read as the
   data they are, and Files and Settings show what a session holds and
   the command behind each change, as DESIGN.md's principle 3 asks.
 - **Cost:** a label in every title bar; the console decodes values and
   lays out tables and records in its window.
 - **Not taken:** the client's title alone; its cost is an unfocused
-  window whose owner is not shown. Window keys left to programs; their
-  cost is windows switched, closed and sized by the pointer and Alt+Tab
-  alone. Plain text in the terminal; its cost is values drawn as
-  characters, tables as aligned columns of text. Stripes in tables;
-  their cost is rows that look selected in a window without the focus.
+  window whose owner is not shown. The terminal labelled `console`; it
+  needs no new store path, but it reads as the fallback screen. Frames
+  on every window; their cost is a title bar on the system's own
+  surfaces naming what the strip already proves, which macOS, Windows
+  and GNOME also leave off. Window keys left to programs; their cost is
+  windows switched, closed and sized by the pointer and Alt+Tab alone.
+  Plain text in the terminal; its cost is values drawn as characters,
+  tables as aligned columns of text. Stripes in tables; their cost is
+  rows that look selected in a window without the focus.
 
 ## V12. The HUD
 

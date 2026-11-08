@@ -221,8 +221,8 @@ its exit from the process handle it holds
 
 ## D4. The console in a window and as the fallback
 
-**Decided** (by the owner): the terminal's shell in values mode.
-**Decided:** the rest.
+**Decided** (by the owner): the terminal's shell in values mode; the
+terminal's label, `terminal`. **Decided:** the rest.
 
 The console keeps its session protocol
 ([console.md C4](console.md#c4-sessions)), its keys, its panel and its
@@ -236,7 +236,10 @@ font, and gains a second place to draw:
 A console in window mode is the terminal: each terminal window is a
 console process with its own sessions, started by login when the
 session asks for one with a new launcher request, `LAUNCHER_TERMINAL`
-([ui.md U12](ui.md#u12-the-first-programs)). The
+([ui.md U12](ui.md#u12-the-first-programs)). Login starts it from a
+store path named `terminal`, which holds the console program, so its
+connection's label is `terminal` by [D5](#d5-connections-labels-and-layers)'s
+rule, with no special case. The
 shell runs in it with a session in values mode, as the HUD's does
 ([shell.md L7](shell.md#l7-pipelines), rule 7), and the console draws
 the values it answers as structure, tables and records
@@ -257,9 +260,13 @@ them itself in direct mode.
 - **Cost:** two drawing paths in the console, the window's drawing
   values as well as text; a console in direct mode knows no pointer
   beyond what [D10](#d10-the-pointer) gives it.
+- **Why `terminal`:** it is the word people know for this window on
+  every platform, macOS's Terminal and Windows Terminal among them.
 - **Not taken:** a separate terminal program that reimplements the
   session protocol on the toolkit. Its cost is a second line editor that
-  would drift from the console's, and a fallback path no one runs.
+  would drift from the console's, and a fallback path no one runs. The
+  label `console`, the console's own store path; it needs no new store
+  path, but it reads as the fallback screen.
 
 ## D5. Connections, labels and layers
 
@@ -270,7 +277,7 @@ its issuer gave it, and nothing on the connection can change that:
 
 | Field | What it is |
 |---|---|
-| Label | UTF-8 text of at most `DISPLAY_LABEL_MAX` (64) bytes, a longer name cut at a character's boundary: the program's name, taken by login from its store path, as the powerbox names a program in [shell.md L18](shell.md#l18-asking-for-more-the-powerbox). The compositor shows it on every window of the connection and in the strip |
+| Label | UTF-8 text of at most `DISPLAY_LABEL_MAX` (64) bytes, a longer name cut at a character's boundary: the program's name, taken by login from its store path, as the powerbox names a program in [shell.md L18](shell.md#l18-asking-for-more-the-powerbox). The compositor shows it on the frame of every `APP` window of the connection and in the strip |
 | Mark | Whether the compositor draws the system's mark before the label: set for the system's own programs, the console, the HUD, the powerbox and the notification service, and never for a program a user runs |
 | Layers | Which of `APP`, `NOTIFICATION`, `OVERLAY`, `TRUSTED` and `SYSTEM` its windows may be on ([D8](#d8-composition)) |
 | Rights | `MINT`: issue connections with the layers `APP`, `NOTIFICATION`, `OVERLAY` and `TRUSTED`, the mark and `ACTIVATE`, none beyond its own. `ATTENTION`: receive the secure attention key ([D12](#d12-the-secure-attention-key-and-global-keys)). `CAPTURE`: make captures ([D15](#d15-capture-copy-and-paste)). `ACTIVATE`: its first window may take the focus ([D11](#d11-routing-input)) |
@@ -288,7 +295,7 @@ Connections are issued down a chain:
 | The session's | The powerbox's | `powerbox`, marked | `TRUSTED` | none |
 | The session's | The HUD's | `hud`, marked | `OVERLAY` | none |
 | The session's | The notification service's | `notify`, marked | `NOTIFICATION` | none |
-| The session's | A terminal's, the console in window mode | `console`, marked | `APP` | `ACTIVATE` |
+| The session's | A terminal's, the console in window mode, from the store path `terminal` ([D4](#d4-the-console-in-a-window-and-as-the-fallback)) | `terminal`, marked | `APP` | `ACTIVATE` |
 | The session's, for a program the session runs whose recipe declares the display | The program's | Its name | `APP` | `ACTIVATE` |
 
 A connection request is `DISPLAY_CONNECT` on a connection that carries
@@ -342,7 +349,7 @@ display, and its label is its name, whatever it calls itself.
   other AppVM or dom0"
   ([Qubes](README.md#display-and-interface-design-references)). The
   mark, not the label's text, tells the system's programs apart, since
-  a program's author chooses its name, `console` included.
+  a program's author chooses its name, `terminal` included.
 - **Why a tree:** a session's hold on the screen must end with the
   session, and the kernel revokes nothing: access a holder might lose
   "is given through a server that can cut it off"
@@ -526,9 +533,10 @@ it stopped reading. A client draws only into a released buffer.
 
 **Decided** (by the owner): the strip is always shown, and true full
 screen waits until a game needs it, when it comes with a system
-overlay; the compositor draws every window's frame and label; the
-strip runs along the top and holds the window list, the search field,
-the notices, the clock and the user
+overlay; the compositor draws the frame and label of every `APP`
+window, and windows of the other layers have none; the strip runs
+along the top and holds the wordmark, the marks, the window list, the
+search field, the notices, the clock and the user
 ([look.md V9](look.md#v9-the-bar)); notifications have a layer of their
 own ([D20](#d20-notifications)). **Decided:** the rest.
 
@@ -547,12 +555,14 @@ The compositor composes, bottom to top:
 | 5 | `TRUSTED` | The powerbox's dialogs | The powerbox |
 | 6 | `SYSTEM` | Login's screens: the login screen, the secure screen | Login |
 | 7 | Pointer | The pointer's image ([D10](#d10-the-pointer)) | The compositor |
-| 8 | Strip | A band along the top of the screen, always shown, at least `STRIP_MIN` deep, a screen's height over 100, and as deep as the system's theme makes it. At its left, the marks and the focused window's label ([D16](#d16-trusted-interface-and-the-powerbox)), then the session's `APP` windows by label, each a button that gives its window the focus; in its centre, a search field that opens the HUD; at its right, the compositor's notices, the clock and the user ([look.md V9](look.md#v9-the-bar)) | The compositor |
+| 8 | Strip | A band along the top of the screen, always shown, at least `STRIP_MIN` deep, a screen's height over 100, and as deep as the system's theme makes it. At its left, the wordmark, then the marks and the focused window's label ([D16](#d16-trusted-interface-and-the-powerbox)), then the session's `APP` windows by label, the focused one marked, each a button that gives its window the focus; in its centre, a search field that opens the HUD; at its right, the compositor's notices, the clock and the user ([look.md V9](look.md#v9-the-bar)) | The compositor |
 
-No window of any layer covers the strip. A window's frame, its shadow,
-its corners and the mark of its focus are the compositor's, drawn from
-the theme ([ui.md U9](ui.md#u9-theming-from-tokens)), with its label and
-the title the client sets after it. The compositor's theme is the
+No window of any layer covers the strip. A window's shadow and corners
+are the compositor's, drawn from the theme
+([ui.md U9](ui.md#u9-theming-from-tokens)), and so are an `APP`
+window's frame and the mark of its focus, with its label and the title
+the client sets after it. A window on `NOTIFICATION`, `OVERLAY`,
+`TRUSTED` or `SYSTEM` has no frame. The compositor's theme is the
 system's, read from the system's settings, never a session's, and the
 strip's marks and least depth are the compositor's own, not tokens; so
 login's screen is drawn the same before any session, and no session can
@@ -610,6 +620,12 @@ does.
   and in Qubes by the trusted domain's decorator
   ([Qubes](README.md#display-and-interface-design-references)). A
   program that wants a different look draws it inside its window.
+- **Why frames on `APP` windows only:** the HUD, the powerbox's boxes,
+  notifications and login's screens sit on layers no program can draw
+  on, and the strip shows the secure or the system's mark while they
+  hold the focus, so a frame there would identify nothing a program
+  could fake. macOS, Windows and GNOME likewise draw their system
+  surfaces without window frames.
 - **Cost:** a translucent panel over another window shows the
   wallpaper, not the window, which a user may read as the window not
   being there; a program cannot draw its own title bar; a window's
@@ -628,7 +644,8 @@ does.
   program cannot draw. Frames each program draws, the compositor drawing
   only a label; their cost is a focus mark the program draws, which can
   claim a focus it lacks, and windows that each move and close their
-  own way.
+  own way. Frames on every window; their cost is a title bar on the
+  system's own surfaces naming what the strip already proves.
 
 ## D9. Budgets
 
@@ -1509,3 +1526,6 @@ the label of the channel it came on, never a name its sender gives.
   a graphical session ([D16](#d16-trusted-interface-and-the-powerbox)).
 - **nova-nix:** a derivation attribute that declares notifications
   ([D20](#d20-notifications)).
+- **The build:** a store path named `terminal` that holds the console
+  program, from which login starts terminals
+  ([D4](#d4-the-console-in-a-window-and-as-the-fallback)).
