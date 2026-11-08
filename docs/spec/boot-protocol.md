@@ -211,12 +211,34 @@ alignments of 4096 and 512 bytes, without `-shared`.
 
 ### Startup done
 
-The kernel keeps the boot screen's spinner turning until the first
-process reports that its startup is done and the kernel has drawn the
-desktop background offscreen, then stops it, fades the boot screen into
-the background (`kernel/main.c`) and releases the display. The first
+Once it has started the first process, the kernel draws the desktop
+background offscreen and hands it to the process, and keeps the boot
+screen's spinner turning until the process reports that its startup is
+done; then it stops the spinner, fades the boot screen into the
+background (`kernel/main.c`) and releases the display. The first
 process does not end there: it stays as the supervisor of the drivers
 it started ([ipc.md I10](ipc.md#i10-driver-failure-and-restart)).
+
+The background is the second message on the bootstrap channel, which
+the kernel writes once it has drawn it, whether or not the process has
+read the first: a `BOOTSTRAP_BACKGROUND_MESSAGE` of 20 bytes, a
+transaction ID of 0 and a label, and the image's sections
+(`include/native_abi.h`). The label names the background,
+`BOOTSTRAP_BACKGROUND_LIMB` (1), and its width, height and pixel
+format, the screen's. The image is the pixels the fade's last frame
+leaves on the screen, row after row with no gap between rows, 4 bytes
+each, held as a window's buffer is
+([display.md D6](display.md#d6-windows-and-buffers)): in sections of
+`SECTION_MAX_SIZE` each but the last, mapped one after another, each
+handle with `READ`, `DUPLICATE` and `TRANSFER` of a section's rights.
+Where the kernel has no image, for lack of memory or for a screen Limb
+does not take, or one of more than `BOOTSTRAP_BACKGROUND_SECTIONS_MAX`
+(64) sections, a message's handles, which it keeps for its fade alone,
+the label is `BOOTSTRAP_BACKGROUND_NONE` (0) with every other field 0,
+and no section comes. The kernel writes none of the image's sections
+after its drawing and keeps its own handles until the fade's last
+frame; what the first process does with them is
+[console.md C1](console.md#c1-the-display-handoff)'s.
 
 The report is one message on the first process's bootstrap channel:
 `BOOTSTRAP_DONE_SIZE` (4) bytes, a transaction ID of 0, and no handles
@@ -235,11 +257,16 @@ logs it, stops the spinner and leaves the boot screen. Either way it
 logs the process's end and exit code if they come.
 
 - **Why the bootstrap channel:** it already joins the kernel and the
-  first process and nothing else, so the report needs no new object or
-  call, and the authority to make it is the handle's, which the kernel
-  confines by leaving out `TRANSFER`. A driver reports to its supervisor
-  on its bootstrap channel the same way
+  first process and nothing else, so the report and the background need
+  no new object or call, and the authority to make the report is the
+  handle's, which the kernel confines by leaving out `TRANSFER`. A
+  driver reports to its supervisor on its bootstrap channel the same way
   ([input.md K3](input.md#k3-the-report-and-the-client)).
+- **Why the background before the report:** the kernel draws while the
+  first process starts, so the two overlap wherever the process waits,
+  and the process has the image in time to have the console prepare its
+  panel from it before it reports
+  ([console.md C1](console.md#c1-the-display-handoff)).
 - **Cost:** the kernel holds its end of the channel, a page, until the
   fade ends, and a first process that closes its endpoint before it
   reports gets no fade.

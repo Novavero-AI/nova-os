@@ -11,12 +11,13 @@
    disk's check (data.c), a test program from /store (store.c),
    stage0-pe32's chain from its seed as 32-bit processes when the boot
    volume holds the chain's inputs (chain.c), and the virtio block
-   driver's read of the boot disk (platform.c). Then it reports to the
-   kernel on its bootstrap channel that its startup is done
-   (docs/spec/boot-protocol.md, Startup done), hands the display to the
-   console once the kernel releases it (console.c), or to the type
-   specimen from /store on a boot disk that asks for it
-   (specimen_start.c), starts the accounts service and login
+   driver's read of the boot disk (platform.c). Then it takes the desktop
+   background the kernel drew from its bootstrap channel, gives it to
+   the console to prepare its panel from (console.c), reports to the
+   kernel there that its startup is done (docs/spec/boot-protocol.md,
+   Startup done), hands the display to the console once the kernel
+   releases it, or to the type specimen from /store on a boot disk that
+   asks for it (specimen_start.c), starts the accounts service and login
    (login_start.c), and runs on as the supervisor of the drivers, the
    console and those two (ipc.md I10). The store service and the
    namespace server run on after startup, and init keeps its channels
@@ -186,10 +187,10 @@ static void take_section(const RECEIVED_HANDLE *handle,
 /* Take the debug log's resource, the process's own handle, the root job,
    the root device resources, the store image and the boot files from the
    bootstrap message, checking that a buffer too small for its handles
-   leaves it queued and reports how much it holds; that read whole it
+   leaves it queued and reports how much it holds, and that read whole it
    holds them in that order, with the platform record and a name and size
-   for the store image and each file; and that once it is read the queue
-   is empty and the kernel's end still open, for the startup report. */
+   for the store image and each file. The kernel's background follows it
+   on the channel, whenever the kernel has drawn it (take_background). */
 static UINT32 read_bootstrap(UINT32 bootstrap)
 {
     BOOTSTRAP_FILE *names = bytes.names;
@@ -232,11 +233,63 @@ static UINT32 read_bootstrap(UINT32 bootstrap)
     for (i = BOOTSTRAP_FIRST_FILE; i < handle_count; i++)
         take_section(&handles[i], &names[i - BOOTSTRAP_FIRST_FILE],
                      &files[file_count++]);
-    check(channel_read(bootstrap, &bytes, sizeof bytes, handles,
-                       BOOTSTRAP_HANDLES, &byte_count,
+    return handles[BOOTSTRAP_JOB].handle;
+}
+
+void boot_background_close(BOOT_BACKGROUND *background)
+{
+    UINT32 i;
+
+    for (i = 0; i < background->count; i++)
+        handle_close(background->sections[i]);
+    background->count = 0;
+}
+
+/* Whether label is one native_abi.h gives for an image of sections
+   sections: Limb, with as many as its size takes, or none, with every
+   field 0 and no section. */
+static int background_label_valid(const BOOTSTRAP_BACKGROUND *label,
+                                  UINT32 sections)
+{
+    if (label->background == BOOTSTRAP_BACKGROUND_NONE)
+        return label->width == 0 && label->height == 0 &&
+               label->format == 0 && sections == 0;
+    return label->background == BOOTSTRAP_BACKGROUND_LIMB &&
+           sections ==
+               bootstrap_background_sections(label->width, label->height);
+}
+
+/* Wait for the kernel's background on the bootstrap channel and take it
+   into *background, checking that it is the message native_abi.h gives,
+   with each section read-only, and that once it is read the queue is
+   empty and the kernel's end still open, for the startup report. */
+static void take_background(UINT32 bootstrap, BOOT_BACKGROUND *background)
+{
+    BOOTSTRAP_BACKGROUND_MESSAGE message;
+    RECEIVED_HANDLE handles[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
+    UINT32 byte_count = 0, handle_count = 0, observed, i;
+
+    check(object_wait_one(bootstrap, CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
+                          DEADLINE_INFINITE, &observed) == OK &&
+              channel_read(bootstrap, &message, sizeof message, handles,
+                           BOOTSTRAP_BACKGROUND_SECTIONS_MAX, &byte_count,
+                           &handle_count) == OK,
+          "the kernel gave no background");
+    background->count = handle_count;
+    for (i = 0; i < handle_count; i++)
+        background->sections[i] = handles[i].handle;
+    check(byte_count == sizeof message && message.transaction == 0 &&
+              background_label_valid(&message.background, handle_count),
+          "the kernel's background is not one native_abi.h gives");
+    for (i = 0; i < handle_count; i++)
+        check(handles[i].type == TYPE_SECTION &&
+                  handles[i].rights == BOOT_SECTION_RIGHTS,
+              "a background section is not a read-only section");
+    background->label = message.background;
+    check(channel_read(bootstrap, &message, sizeof message, handles,
+                       BOOTSTRAP_BACKGROUND_SECTIONS_MAX, &byte_count,
                        &handle_count) == ERR_SHOULD_WAIT,
           "a drained bootstrap channel is not empty and open");
-    return handles[BOOTSTRAP_JOB].handle;
 }
 
 /* Each call checks its handle's value, type and rights in that order
@@ -407,9 +460,15 @@ static void report_startup_done(UINT32 bootstrap)
           "the kernel took no startup report");
 }
 
+/* The console's panel is prepared before the report, so that the
+   display shows it as soon as the kernel releases it (console.md C1);
+   the specimen, which draws in the console's place, takes no
+   background. */
 _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
 {
+    BOOT_BACKGROUND background;
     UINT32 job, status;
+    int specimen;
 
     (void)argument;
     job = read_bootstrap(bootstrap);
@@ -422,8 +481,14 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     chain_run(job);
     check(platform_start(&platform), "the platform driver's startup failed");
     tests_end();
+    take_background(bootstrap, &background);
+    specimen = boot_file(SPECIMEN_MARKER) != 0;
+    if (specimen)
+        boot_background_close(&background);
+    else
+        console_prepare(&platform, &background);
     report_startup_done(bootstrap);
-    if (boot_file(SPECIMEN_MARKER))
+    if (specimen)
         specimen_start(&platform, &services, bootstrap);
     else
         console_start(&platform, bootstrap);

@@ -10,6 +10,7 @@
 #define NOVA_PANEL_H
 
 #include "gfx.h"
+#include "native_abi.h"
 #include "view.h"
 
 /* The lines the panel shows. */
@@ -66,11 +67,24 @@ int panel_layout(LAYOUT *layout, INT64 width, INT64 height);
 UINT64 panel_backdrop_size(const LAYOUT *layout);
 
 /* The panel's pixels without text, row by row as 0x00RRGGBB: Limb, as
-   the kernel drew it on the width x height screen, under the panel's
-   tint. Returns 0, writing nothing, if Limb has no size for the screen
-   (limb.h). */
+   the kernel drew it on the width x height screen, computed, under the
+   panel's tint. Returns 0, writing nothing, if Limb has no size for the
+   screen (limb.h). */
 int panel_backdrop(const LAYOUT *layout, INT64 width, INT64 height,
                    UINT32 *backdrop);
+
+/* Why the kernel's background, as background labels it, cannot give the
+   panel its backdrop on display, a short phrase for the log; or 0 if it
+   can: Limb, in a pixel format the panel reads, at the display's size,
+   which Limb and the panel's layout take (console.md C5). */
+const char *panel_background_refusal(const BOOTSTRAP_BACKGROUND *background,
+                                     const BOOTSTRAP_DISPLAY *display);
+
+/* panel_backdrop's pixels, read from image, the kernel's background on a
+   screen width pixels wide in format, PIXEL_RGB or PIXEL_BGR, row after
+   row with no gap between rows, for which layout was made. */
+void panel_backdrop_image(const LAYOUT *layout, const UINT32 *image,
+                          INT64 width, UINT32 format, UINT32 *backdrop);
 
 void panel_inks(INKS *inks);
 

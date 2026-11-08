@@ -1,11 +1,13 @@
 /* init's part in the console (docs/spec/console.md C1, C2): the
-   console's bootstrap message and control channel, the display's
-   handoff once the kernel releases it, and sessions. */
+   console's bootstrap message and control channel, the kernel's
+   background before the release, the display's handoff once the kernel
+   releases it, and sessions. */
 
 #ifndef NOVA_INIT_CONSOLE_H
 #define NOVA_INIT_CONSOLE_H
 
 #include "console_protocol.h"
+#include "init.h"
 #include "platform.h"
 
 /* Write the console's bootstrap message on channel, the end the platform
@@ -16,6 +18,16 @@
    left open, or OK. */
 UINT32 console_bootstrap(const PLATFORM *platform, UINT32 process,
                          UINT32 channel);
+
+/* Give the console, if one runs, the kernel's background, with the
+   display it is to be given, and wait until it answers that its panel
+   is prepared or its control channel closes (C1, C5); on a test disk,
+   with the display described MISMATCH_ROWS taller (console.c). The
+   background's sections leave init either way. A console that has
+   ended, whose end the supervisor logs, closes the channel; any other
+   failure to send or to read the answer, and an answer that is not the
+   one console_protocol.h gives, is logged. */
+void console_prepare(const PLATFORM *platform, BOOT_BACKGROUND *background);
 
 /* The console console_bootstrap wrote for has started: once the display
    is released, send it on the control channel and give login, if it

@@ -1,23 +1,24 @@
-/* The desktop background's arrival. Limb is drawn once into memory from
-   the page allocator while the boot screen's spinner still turns, since
-   the drawing takes seconds under emulation on a large screen and a
-   spinner standing still for that long looks like a hang. Once the
-   spinner has stopped, the part of the screen the boot screen drew on is
-   saved; then each frame mixes the two images in linear light, as the
-   boot screen's anti-aliasing mixes ink with black, by a step of the
-   fade's schedule (fade.h). A frame shows the step due when it will be
-   done, judged by the longest frame so far: where a frame and a timer
-   tick fit in a step, every step is shown, and where they do not, steps
-   are skipped to keep to the fade's length. The last step, Limb alone, is
-   always drawn. Judged by the longest, a frame runs past its step only
-   when it is the slowest yet, and after a slow frame the rest of the fade
-   comes early by up to as much. */
+/* The desktop background's arrival. Limb is drawn once into memory
+   sections while the boot screen's spinner still turns, since the
+   drawing takes seconds under emulation on a large screen and a spinner
+   standing still for that long looks like a hang; the kernel then hands
+   the sections on to the first process where a message carries them all
+   (first_process.c), and keeps its own handles to them for the fade.
+   Once the spinner has stopped, the part of the screen the boot screen
+   drew on is saved; then each frame mixes the two images in linear
+   light, as the boot screen's anti-aliasing mixes ink with black, by a
+   step of the fade's schedule (fade.h). A frame shows the step due when
+   it will be done, judged by the longest frame so far: where a frame and
+   a timer tick fit in a step, every step is shown, and where they do
+   not, steps are skipped to keep to the fade's length. The last step,
+   Limb alone, is always drawn. Judged by the longest, a frame runs past
+   its step only when it is the slowest yet, and after a slow frame the
+   rest of the fade comes early by up to as much. */
 
 #include "background.h"
 #include "fade.h"
 #include "limb.h"
 #include "memory_layout.h"
-#include "mm/page.h"
 #include "sched/wait.h"
 #include "x86_64/clock.h"
 #include "x86_64/serial.h"
@@ -31,63 +32,71 @@
 #define CODES 256
 
 /* ------------------------------------------------------------------------
-   Offscreen images. The page allocator hands out one page at a time, not
-   necessarily next to the one before, so an image is a chain of pages,
-   filled and read in order, row after row. */
+   Offscreen images. An image is bands of memory sections, every one
+   SECTION_MAX_SIZE bytes but the last, whose pages are filled and read
+   in order, row after row with no gap between rows: the layout the
+   first process maps them in (native_abi.h). */
 
-#define PAGE_PIXELS \
-    ((INT64)((PAGE_SIZE - sizeof(PIXEL_PAGE *)) / sizeof(UINT32)))
+#define PAGE_PIXELS ((INT64)(PAGE_SIZE / sizeof(UINT32)))
+#define BAND_PAGES (SECTION_MAX_SIZE / PAGE_SIZE)
+#define BAND_PIXELS (SECTION_MAX_SIZE / sizeof(UINT32))
 
-struct PIXEL_PAGE {
-    PIXEL_PAGE *next;
-    UINT32 pixels[PAGE_PIXELS];
-};
-
-_Static_assert(sizeof(PIXEL_PAGE) == PAGE_SIZE, "a pixel page fills a page");
-
-static void chain_free(PIXEL_PAGE *page)
+static void bands_close(BANDS *image)
 {
-    while (page) {
-        PIXEL_PAGE *next = page->next;
+    UINT32 i;
 
-        page_free((UINT64)page - DIRECT_MAP_BASE);
-        page = next;
-    }
+    for (i = 0; i < image->count; i++)
+        object_close(&image->bands[i]->object);
+    image->count = 0;
+    image->pages = 0;
 }
 
-/* Allocate a chain of pages for count pixels into *chain. Returns 0, with
-   every page it took freed, if the allocator runs out. A page reads as
-   zero when allocated, so its next is 0 until the page after it is
-   linked. */
-static int chain_alloc(INT64 count, PIXEL_PAGE **chain)
+/* Take bands for count pixels, no more than a screen limb_init takes
+   holds, into *image. Returns 0, with every band it took closed, if the
+   allocator runs out. */
+static int bands_alloc(UINT64 count, BANDS *image)
 {
-    PIXEL_PAGE **link = chain;
-    INT64 held;
+    UINT64 at;
 
-    *chain = 0;
-    for (held = 0; held < count; held += PAGE_PIXELS) {
-        UINT64 physical = page_alloc();
+    image->count = 0;
+    image->pages = 0;
+    for (at = 0; at < count; at += BAND_PIXELS) {
+        UINT64 pixels = count - at < BAND_PIXELS ? count - at : BAND_PIXELS;
 
-        if (!physical) {
-            chain_free(*chain);
-            *chain = 0;
+        if (section_create(pixels * sizeof(UINT32),
+                           &image->bands[image->count]) != OK) {
+            bands_close(image);
             return 0;
         }
-        *link = direct_map(physical);
-        link = &(*link)->next;
+        image->count++;
     }
+    image->pages = (count * sizeof(UINT32) + PAGE_SIZE - 1) / PAGE_SIZE;
     return 1;
 }
 
-/* A place in a chain: the next pixel is page->pixels[index]. */
+/* Page page of image, through the direct map, or 0 past its last. */
+static UINT32 *band_page(const BANDS *image, UINT64 page)
+{
+    if (page >= image->pages)
+        return 0;
+    return direct_map(
+        section_page(image->bands[page / BAND_PAGES], page % BAND_PAGES));
+}
+
+/* A place in an image: the next pixel is pixels[index], on the image's
+   page page. */
 typedef struct {
-    PIXEL_PAGE *page;
+    const BANDS *image;
+    UINT64 page;
+    UINT32 *pixels;
     INT64 index;
 } CURSOR;
 
-static void cursor_start(CURSOR *c, PIXEL_PAGE *chain)
+static void cursor_start(CURSOR *c, const BANDS *image)
 {
-    c->page = chain;
+    c->image = image;
+    c->page = 0;
+    c->pixels = band_page(image, 0);
     c->index = 0;
 }
 
@@ -101,7 +110,7 @@ static INT64 cursor_run(const CURSOR *c, INT64 limit)
 
 static UINT32 *cursor_at(const CURSOR *c)
 {
-    return c->page->pixels + c->index;
+    return c->pixels + c->index;
 }
 
 /* Move c past count pixels, no more than cursor_run gave. */
@@ -109,7 +118,8 @@ static void cursor_advance(CURSOR *c, INT64 count)
 {
     c->index += count;
     if (c->index == PAGE_PIXELS) {
-        c->page = c->page->next;
+        c->page++;
+        c->pixels = band_page(c->image, c->page);
         c->index = 0;
     }
 }
@@ -123,9 +133,9 @@ static UINT32 screen_pixel(const SCREEN *screen, UINT32 rgb)
                      rgb >> CHANNEL_BITS & CHANNEL_MASK, rgb & CHANNEL_MASK);
 }
 
-/* Draw Limb into image, a chain the size of the screen. */
+/* Draw Limb into image, bands the size of the screen. */
 static void draw_offscreen(const SCREEN *screen, const LIMB *limb,
-                           PIXEL_PAGE *image)
+                           const BANDS *image)
 {
     CURSOR c;
     INT64 x, y;
@@ -153,8 +163,8 @@ static void draw_onscreen(const SCREEN *screen, const LIMB *limb)
                 screen_pixel(screen, limb_pixel(limb, x, y));
 }
 
-/* Copy the screen's pixels in box into saved, a chain the size of box. */
-static void save(const SCREEN *screen, const RECT *box, PIXEL_PAGE *saved)
+/* Copy the screen's pixels in box into saved, bands the size of box. */
+static void save(const SCREEN *screen, const RECT *box, const BANDS *saved)
 {
     CURSOR c;
     INT64 x, y;
@@ -246,7 +256,7 @@ static void fade_span(const MIX *mix, CURSOR *limb, CURSOR *boot,
 }
 
 static void fade_frame(const SCREEN *screen, const RECT *box,
-                       PIXEL_PAGE *image, PIXEL_PAGE *saved, INT64 weight)
+                       const BANDS *image, const BANDS *saved, INT64 weight)
 {
     MIX mix;
     CURSOR limb, boot;
@@ -282,15 +292,16 @@ typedef struct {
     UINT64 faded, busy, busiest, frames;
 } TIMES;
 
-static void report(UINT64 prepared, UINT64 spinner_frames,
-                   const TIMES *times)
+static void report(const PREPARATION *preparation, const TIMES *times)
 {
     UINT64 flags = serial_lock();
 
-    serial_write("nova: background prepare_ms=");
-    serial_ms(prepared);
+    serial_write("nova: background draw_ms=");
+    serial_ms(preparation->drawn);
+    serial_write(" prepare_ms=");
+    serial_ms(preparation->prepared);
     serial_write(" spinner_frames=");
-    serial_number(spinner_frames);
+    serial_number(preparation->spinner_frames);
     serial_write(" fade_frames=");
     serial_number(times->frames);
     serial_write(" fade_ms=");
@@ -306,8 +317,8 @@ static void report(UINT64 prepared, UINT64 spinner_frames,
 /* Draw frames until one shows the last step, each started and given its
    step by the schedule. The first, with no frame before it, is judged to
    take no time. */
-static void fade(const SCREEN *screen, const RECT *box, PIXEL_PAGE *image,
-                 PIXEL_PAGE *saved, TIMES *times)
+static void fade(const SCREEN *screen, const RECT *box, const BANDS *image,
+                 const BANDS *saved, TIMES *times)
 {
     FADE_SCHEDULE schedule;
     UINT64 began = clock_monotonic();
@@ -340,6 +351,8 @@ void background_prepare(const BOOT_INFO *info, BACKGROUND *background)
     const SCREEN *screen = &info->screen;
     const RECT *box = &background->box;
 
+    background->image.count = 0;
+    background->saved.count = 0;
     if (!limb_init(&background->limb, screen->width, screen->height)) {
         background->state = BACKGROUND_NO_SIZE;
         return;
@@ -347,28 +360,55 @@ void background_prepare(const BOOT_INFO *info, BACKGROUND *background)
     /* The spinner's thread changes only its head, which the bounds do not
        depend on. */
     gfx_boot_bounds(screen, &info->spinner, &background->box);
-    if (!chain_alloc(screen->width * screen->height, &background->image) ||
-        !chain_alloc((box->right - box->left) * (box->bottom - box->top),
+    if (!bands_alloc((UINT64)(screen->width * screen->height),
+                     &background->image) ||
+        !bands_alloc((UINT64)((box->right - box->left) *
+                              (box->bottom - box->top)),
                      &background->saved)) {
-        chain_free(background->image);
+        bands_close(&background->image);
         background->state = BACKGROUND_NO_MEMORY;
         return;
     }
-    draw_offscreen(screen, &background->limb, background->image);
+    draw_offscreen(screen, &background->limb, &background->image);
     background->state = BACKGROUND_READY;
 }
 
+UINT32 background_label(const BOOT_INFO *info, const BACKGROUND *background,
+                        BOOTSTRAP_BACKGROUND *label)
+{
+    const SCREEN *screen = &info->screen;
+
+    if (background->state != BACKGROUND_READY ||
+        background->image.count > BOOTSTRAP_BACKGROUND_SECTIONS_MAX) {
+        label->background = BOOTSTRAP_BACKGROUND_NONE;
+        label->width = 0;
+        label->height = 0;
+        label->format = 0;
+        return 0;
+    }
+    label->background = BOOTSTRAP_BACKGROUND_LIMB;
+    label->width = (UINT32)screen->width;
+    label->height = (UINT32)screen->height;
+    label->format = screen->format;
+    return background->image.count;
+}
+
+void background_discard(BACKGROUND *background)
+{
+    bands_close(&background->image);
+    bands_close(&background->saved);
+}
+
 static void fade_in(const SCREEN *screen, BACKGROUND *background,
-                    UINT64 prepared, UINT64 spinner_frames)
+                    const PREPARATION *preparation)
 {
     TIMES times;
 
-    save(screen, &background->box, background->saved);
-    fade(screen, &background->box, background->image, background->saved,
+    save(screen, &background->box, &background->saved);
+    fade(screen, &background->box, &background->image, &background->saved,
          &times);
-    chain_free(background->image);
-    chain_free(background->saved);
-    report(prepared, spinner_frames, &times);
+    background_discard(background);
+    report(preparation, &times);
 }
 
 static void draw_unfaded(const SCREEN *screen, const LIMB *limb)
@@ -385,13 +425,13 @@ static void draw_unfaded(const SCREEN *screen, const LIMB *limb)
 }
 
 void background_show(const BOOT_INFO *info, BACKGROUND *background,
-                     UINT64 prepared, UINT64 spinner_frames)
+                     const PREPARATION *preparation)
 {
     UINT64 flags;
 
     switch (background->state) {
     case BACKGROUND_READY:
-        fade_in(&info->screen, background, prepared, spinner_frames);
+        fade_in(&info->screen, background, preparation);
         break;
     case BACKGROUND_NO_MEMORY:
         draw_unfaded(&info->screen, &background->limb);

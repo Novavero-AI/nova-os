@@ -1,8 +1,8 @@
 /* What init's parts share: its debug log (log.h), the files nova-boot
    read from \nova\ and the store image, which the kernel passed as
-   read-only sections, the mapping of sections into init's own address
-   space, and the window init lays out the programs it starts through
-   (program.h). */
+   read-only sections, the desktop background the kernel passed the same
+   way, the mapping of sections into init's own address space, and the
+   window init lays out the programs it starts through (program.h). */
 
 #ifndef NOVA_INIT_H
 #define NOVA_INIT_H
@@ -31,6 +31,18 @@ typedef struct {
     UINT64 size;
     const UINT8 *data;
 } BOOT_FILE_VIEW;
+
+/* The desktop background the kernel drew, as init holds it until it
+   passes it on or closes it (native_abi.h): its label, and its count
+   sections, each read-only. */
+typedef struct {
+    BOOTSTRAP_BACKGROUND label;
+    UINT32 sections[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
+    UINT32 count;
+} BOOT_BACKGROUND;
+
+/* Close every section of background, which then holds none. */
+void boot_background_close(BOOT_BACKGROUND *background);
 
 /* Log nova-init: followed by event and status's number as its status
    key (docs/spec/log.md T1); event ends with failed for a failure. */

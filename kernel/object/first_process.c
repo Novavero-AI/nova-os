@@ -1,7 +1,8 @@
 /* The first process: the program nova-boot read from \nova\init.exe
    (docs/spec/boot-protocol.md), started in the root job with one
-   bootstrap handle, a channel endpoint whose one message carries what
-   the kernel gives it (docs/spec/ipc.md I6, objects.md O6):
+   bootstrap handle, a channel endpoint whose first message carries
+   what the kernel gives it at the start (docs/spec/ipc.md I6, objects.md
+   O6):
 
    1. the root system resource, whose USE right lets it write to the
       kernel's debug log;
@@ -26,10 +27,13 @@
    the right for it to pass on, and no mapping of its own may be writable
    and executable (O5).
 
-   The kernel keeps its own end of the channel until the process reports
-   on it that its startup is done, or closes its end without reporting
-   (docs/spec/boot-protocol.md, Startup done); after a report, until the
-   fade into the desktop has drawn its last frame, when closing it
+   Once the kernel has drawn the desktop background offscreen it writes
+   a second message on the channel, the background: its label and the
+   image's sections, which the process may only read
+   (docs/spec/boot-protocol.md, Startup done). The kernel keeps its own
+   end of the channel until the process reports on it that its startup
+   is done, or closes its end without reporting; after a report, until
+   the fade into the desktop has drawn its last frame, when closing it
    releases the display (docs/spec/console.md C1). The process's
    endpoint lacks TRANSFER, so no other process can ever hold it and
    report in the first process's place. Later the kernel waits for the
@@ -59,6 +63,11 @@
 
 #define BOOTSTRAP_HANDLES (BOOTSTRAP_FIRST_FILE + BOOT_FILES_MAX)
 
+/* The kernel's messages the process's end queues: the bootstrap message
+   and the background, which may come before the process has read the
+   first. */
+#define BOOTSTRAP_CAPACITY 2
+
 /* The image the kernel runs, among the boot files. FAT matches names
    without regard to case, and the firmware reports the name as stored. */
 #define INIT_NAME "init.exe"
@@ -82,7 +91,10 @@ typedef struct {
      RIGHT_TRANSFER | RIGHT_WAIT)
 #define BOOTSTRAP_ENDPOINT_RIGHTS                                     \
     (CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT)
-#define FILE_RIGHTS (SECTION_RIGHT_READ | RIGHT_DUPLICATE | RIGHT_TRANSFER)
+/* The rights of each memory section the kernel passes, a boot file's
+   or one of the background's: read, and pass on, never write. */
+#define PASSED_SECTION_RIGHTS                                         \
+    (SECTION_RIGHT_READ | RIGHT_DUPLICATE | RIGHT_TRANSFER)
 
 _Static_assert(BOOTSTRAP_HANDLES <= CHANNEL_MAX_HANDLES,
                "the bootstrap message holds every handle");
@@ -94,7 +106,8 @@ _Static_assert(offsetof(BOOTSTRAP_BYTES, files) ==
 
 /* The first process, held from its start until it has ended, and the
    kernel's end of its bootstrap channel, held from its start until the
-   display is released, or 0. */
+   display is released or the process's end closes without a report, or
+   0. */
 static PROCESS *first;
 static ENDPOINT *bootstrap;
 
@@ -263,7 +276,7 @@ static void send_bootstrap(PROCESS *process, JOB *job, ENDPOINT *kernel_end,
     for (i = 0; i < info->file_count; i++) {
         handles[count].object =
             &file_section(&info->files[i], &bytes.files[i])->object;
-        handles[count].rights = FILE_RIGHTS;
+        handles[count].rights = PASSED_SECTION_RIGHTS;
         count++;
     }
     check(channel_write_kernel(kernel_end, (const UINT8 *)&bytes,
@@ -300,7 +313,7 @@ static void say_line(const char *line)
     serial_unlock(flags);
 }
 
-int first_process_start(void *boot_info)
+void first_process_start(void *boot_info)
 {
     const BOOT_INFO *info = boot_info;
     const BOOT_FILE *init = boot_file_find(info, INIT_NAME);
@@ -310,7 +323,6 @@ int first_process_start(void *boot_info)
     ENDPOINT *kernel_end, *process_end;
     IMAGE image;
     UINT64 stack;
-    UINT32 observed;
 
     if (!init)
         fail("no \\nova\\init.exe among the boot files", ERR_INVALID_ARGS);
@@ -324,7 +336,7 @@ int first_process_start(void *boot_info)
     stack = map_stack(process);
     check(process_thread_create(process, &thread),
           "no memory for the first thread");
-    check(channel_create(1, &kernel_end, &process_end),
+    check(channel_create(BOOTSTRAP_CAPACITY, &kernel_end, &process_end),
           "no memory for the bootstrap channel");
     send_bootstrap(process, job, kernel_end, info);
     check(process_start(process, thread, image.entry, stack,
@@ -332,15 +344,50 @@ int first_process_start(void *boot_info)
           "the process did not start");
     object_close(&thread->object);
     first = process;
+    bootstrap = kernel_end;
     say_started(&image, stack);
-    wait_one(&kernel_end->waitable, CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
+}
+
+/* Each band passes with a handle of its own, so the caller keeps its
+   handles. A process that has closed its end takes no message, and
+   first_process_reported finds the close. */
+void first_process_give_background(const BOOTSTRAP_BACKGROUND *label,
+                                   SECTION *const *bands, UINT32 count)
+{
+    BOOTSTRAP_BACKGROUND_MESSAGE message;
+    CARRIED_HANDLE handles[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
+    STATUS status;
+    UINT32 i;
+
+    message.transaction = 0;
+    message.background = *label;
+    for (i = 0; i < count; i++) {
+        object_add_handle(&bands[i]->object);
+        handles[i].object = &bands[i]->object;
+        handles[i].rights = PASSED_SECTION_RIGHTS;
+    }
+    status = channel_write_kernel(bootstrap, (const UINT8 *)&message,
+                                  sizeof message, handles, count);
+    if (status == OK)
+        return;
+    for (i = 0; i < count; i++)
+        object_close(&bands[i]->object);
+    if (status != ERR_PEER_CLOSED)
+        fail("the background message was refused", status);
+}
+
+int first_process_reported(void)
+{
+    UINT32 observed;
+
+    wait_one(&bootstrap->waitable, CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
              DEADLINE_INFINITE, &observed);
     if (observed & CHANNEL_READABLE) {
-        bootstrap = kernel_end;
         say_line("nova: startup done\r\n");
         return 1;
     }
-    object_close(&kernel_end->object);
+    object_close(&bootstrap->object);
+    bootstrap = 0;
     say_line("nova: startup failed reason=\"no report\"\r\n");
     return 0;
 }

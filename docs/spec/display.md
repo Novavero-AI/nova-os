@@ -38,9 +38,9 @@ names given there.
 
 The kernel fades the boot screen into Limb and releases the display
 ([console.md C1](console.md#c1-the-display-handoff)). The first process
-gives the framebuffer to the compositor, a user-mode service, which
-computes Limb into its own memory, so its first frame changes no pixel,
-and starts showing windows. Login is its first client: a window on the
+gives the framebuffer to the compositor, a user-mode service, with the
+kernel's image of Limb as its wallpaper, so its first frame changes no
+pixel, and it starts showing windows. Login is its first client: a window on the
 system layer that lists the accounts. After a login, the session's
 programs get windows through login, each window's owner named by the
 compositor in a band of the screen no program can draw in, and logout
@@ -103,16 +103,26 @@ a time:
    the display, in the root job, and sends it, on its control channel,
    the `BOOTSTRAP_DISPLAY` and a resource covering exactly the
    framebuffer's pages, as [console.md C2](console.md#c2-starting-the-console)
-   has it send the console. The compositor is then the only process
-   holding a resource over the framebuffer.
+   has it send the console, and the kernel's background, its label and
+   its sections ([boot-protocol.md](boot-protocol.md#startup-done)),
+   which the first process holds from the kernel's message until then.
+   The compositor is then the only process holding a resource over the
+   framebuffer.
 2. The compositor maps the framebuffer write-combining, in sections of
-   at most `SECTION_MAX_SIZE`, and computes Limb into its own memory
-   with `gfx/limb.c`, as the console computes the part under its panel
-   ([console.md C5](console.md#c5-the-panel)). Limb's pixels are a
-   function of the screen's size alone, and the fade's last step is
-   Limb exactly, since `gfx_cross_fade` at full weight encodes the light
-   it decodes; so the compositor's first frame, Limb alone, writes the
-   pixels the kernel left there, and the handoff shows nothing.
+   at most `SECTION_MAX_SIZE`, and maps the background's sections to
+   read, one after another, as its wallpaper, where the label is the
+   wallpaper it shows, Limb, at the screen's size, as the console takes
+   it for its panel ([console.md C5](console.md#c5-the-panel)). It
+   holds them while the wallpaper stays that, and closes them when it
+   computes another: a wallpaper the settings name, or a screen of a
+   new size ([D18](#d18-the-gpu-path)). Where the label does not match,
+   and in a compositor started again ([D3](#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)),
+   which gets no background, it computes Limb into its own memory with
+   `gfx/limb.c`. Limb's pixels are a function of the screen's size
+   alone, and the fade's last step is Limb exactly, since
+   `gfx_cross_fade` at full weight encodes the light it decodes; so the
+   compositor's first frame, Limb alone, writes the pixels the kernel
+   left there, and the handoff shows nothing.
 3. It starts in the attention state
    ([D12](#d12-the-secure-attention-key-and-global-keys)), draws the
    strip, serves login's connection, and login shows its screen
@@ -128,19 +138,24 @@ a time:
   kernel's part end at a known moment, and a resource the first process
   narrows to the framebuffer is the authority to write it and nothing
   else ([console.md C1](console.md#c1-the-display-handoff)).
-- **Why recompute Limb:** the compositor never reads the framebuffer.
-  WC memory is not cacheable (SDM 14.3, Table 14-2), so every read of
-  it goes to the device; computing Limb costs 51.5 ms at 1280 x 800
-  under KVM, measured ([D9](#d9-budgets)), and gives the same bytes
-  every time.
-- **Cost:** the time to compute Limb at the compositor's start, during
-  which the screen shows the kernel's Limb and nothing responds; Limb's
-  image held in the compositor's memory for its life, 3.9 MiB at
-  1280 x 800 and 19.8 MiB at 2880 x 1800.
-- **Not taken:** the kernel passing its Limb image to the first process
-  in a section. Its cost is a section in the bootstrap message the
-  kernel builds after the first process has started, and a kernel that
-  draws for a user-mode service.
+- **Why the kernel's image:** the compositor never reads the
+  framebuffer. WC memory is not cacheable (SDM 14.3, Table 14-2), so
+  every read of it goes to the device, and the wallpaper comes from
+  memory. The kernel has drawn Limb for its fade, and the image costs
+  it a message to give away, where computing Limb costs 51.5 ms at
+  1280 x 800 under KVM, measured ([D9](#d9-budgets)), and 3.6 s at
+  2880 x 1800 under TCG, during which the screen shows the kernel's
+  Limb and nothing responds. The kernel draws only what it fades in
+  and never interprets a wallpaper; the label lets each receiver keep
+  the computing path that a setting, a resize and a restart need.
+- **Cost:** Limb's image held for the compositor's life, 3.9 MiB at
+  1280 x 800 and 19.8 MiB at 2880 x 1800, and by the first process from
+  the kernel's message to the compositor's start; a restarted
+  compositor computes Limb, during which the screen shows the last
+  frame.
+- **Not taken:** the compositor computing Limb into its own memory at
+  every start. Its cost is the time above at the first start, with the
+  screen frozen meanwhile, for an image the kernel has drawn already.
 
 ## D3. The compositor's supervision, its restart and what a crash shows
 

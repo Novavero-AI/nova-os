@@ -34,10 +34,12 @@ for source in $(git ls-files '*.c'); do
   standard=
   case $source in
     # These are C11, as the build lines in their headers say, because
-    # include/cpu.h and include/input_protocol.h are;
-    # tools/compile_flags.txt gives the C99 the other tools are written
-    # in. Drop this once they have a compile_flags.txt of their own.
-    tools/check-masks.c | tools/check-pointer.c | tools/check-text.c)
+    # include/cpu.h, include/input_protocol.h and include/native_abi.h
+    # are; tools/compile_flags.txt gives the C99 the other tools are
+    # written in. Drop this once they have a compile_flags.txt of their
+    # own.
+    tools/check-masks.c | tools/check-pointer.c | tools/check-text.c | \
+      tools/check-backdrop.c)
       standard=-std=c11 ;;
   esac
   # shellcheck disable=SC2086
