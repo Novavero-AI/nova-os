@@ -6,7 +6,8 @@
 # system's boot disk, the test disk, the specimen disk, the chain disk
 # and an empty data disk (docs/spec/disk-layout.md).
 # SHA256SUMS gives the sha256 of every file in OUT that a build must
-# reproduce.
+# reproduce, and the build checks each file it downloads against its
+# line there before anything reads it.
 #
 # Usage: ./build.sh [--werror] OUT
 #
@@ -73,6 +74,53 @@ mkdir -p -- "$1"
 out=$(CDPATH='' cd -- "$1" && pwd)
 tcc_dir=$out/tinycc-$TINYCC_REV
 
+# The host's tools, C99 with only the standard library, built from the
+# tree alone before anything is downloaded: sha256 prints a file's
+# sha256, mknar writes a store path as nova-nix exports one, mkstore the
+# store image (docs/spec/store-image.md), mkfont a TrueType font as a
+# nova-os font (docs/spec/font-format.md), mkimage a boot disk as a raw
+# image and as a VHDX file (docs/spec/disk-layout.md), mkdata a data
+# disk holding an empty pool (docs/spec/pool-format.md).
+cd -- "$src"
+cc "$HOST_OPTIMIZATION" -o "$out/sha256" -I include -I kernel/random \
+  tools/sha256.c kernel/random/sha256.c
+cc "$HOST_OPTIMIZATION" -o "$out/mknar" -I include -I kernel/random \
+  tools/mknar.c tools/store_path.c kernel/random/sha256.c
+cc "$HOST_OPTIMIZATION" -o "$out/mkstore" -I include -I kernel/random \
+  tools/mkstore.c tools/store_path.c kernel/random/sha256.c
+cc "$HOST_OPTIMIZATION" -o "$out/mkfont" -I include tools/mkfont.c
+cc "$HOST_OPTIMIZATION" -o "$out/mkimage" tools/mkimage.c
+cc "$HOST_OPTIMIZATION" -o "$out/mkdata" -I include -I kernel/random -I fs \
+  tools/mkdata.c fs/pool.c kernel/random/sha256.c
+
+# pinned NAME: the sha256 SHA256SUMS gives for NAME.
+pinned() {
+  while read -r sum file; do
+    if [ "$file" = "$1" ]; then
+      echo "$sum"
+      return
+    fi
+  done < "$src/SHA256SUMS"
+  echo "$0: SHA256SUMS gives no sha256 for $1" >&2
+  exit 1
+}
+
+# fetch NAME URL: writes URL's file as OUT/NAME once its sha256 is the
+# one SHA256SUMS gives for NAME. Fetched bytes with any other sha256
+# stop the build, and are removed, before anything reads them.
+fetch() {
+  pin=$(pinned "$1")
+  part=$out/$1.part
+  curl -fsSL -o "$part" "$2"
+  fetched=$("$out/sha256" "$part")
+  if [ "$fetched" != "$pin" ]; then
+    rm -f -- "$part"
+    echo "$0: $1 from $2 has sha256 $fetched; SHA256SUMS gives $pin" >&2
+    exit 1
+  fi
+  mv -f -- "$part" "$out/$1"
+}
+
 # TinyCC as two cross compilers, one writing x86-64 PE and one writing
 # i386 PE for ntdll. tcc.h includes config.h, which TinyCC's configure
 # writes; configure does not run here, so an empty one stands in and
@@ -84,35 +132,18 @@ cross_compiler() {
 }
 
 cd -- "$out"
-curl -fsSL -o tinycc.tar.gz "$TINYCC_ARCHIVE"
+fetch tinycc.tar.gz "$TINYCC_ARCHIVE"
 tar -xzf tinycc.tar.gz
 mkdir -p cfg
 : > cfg/config.h
 cross_compiler x86_64 X86_64
 cross_compiler i386 I386
 
-# The host's tools, C99 with only the standard library: mknar writes a
-# store path as nova-nix exports one, mkstore the store image
-# (docs/spec/store-image.md), mkfont a TrueType font as a nova-os font
-# (docs/spec/font-format.md), mkimage a boot disk as a raw image and as
-# a VHDX file (docs/spec/disk-layout.md), mkdata a data disk holding an
-# empty pool (docs/spec/pool-format.md).
-cd -- "$src"
-cc "$HOST_OPTIMIZATION" -o "$out/mknar" -I include -I kernel/random \
-  tools/mknar.c tools/store_path.c kernel/random/sha256.c
-cc "$HOST_OPTIMIZATION" -o "$out/mkstore" -I include -I kernel/random \
-  tools/mkstore.c tools/store_path.c kernel/random/sha256.c
-cc "$HOST_OPTIMIZATION" -o "$out/mkfont" -I include tools/mkfont.c
-cc "$HOST_OPTIMIZATION" -o "$out/mkimage" tools/mkimage.c
-cc "$HOST_OPTIMIZATION" -o "$out/mkdata" -I include -I kernel/random -I fs \
-  tools/mkdata.c fs/pool.c kernel/random/sha256.c
-
 # The store paths the test program and the type specimen record, so
 # they are written before either is linked: greeting, a file, and
 # Inter's faces as nova-os fonts beside its licence.
-cd -- "$out"
 greeting=$(./mknar greeting greeting file . "$src/test/greeting.txt")
-curl -fsSL -o "Inter-$INTER_VERSION.zip" "$INTER_ARCHIVE"
+fetch "Inter-$INTER_VERSION.zip" "$INTER_ARCHIVE"
 set --
 for face in $INTER_FACES; do
   set -- "$@" "extras/ttf/$face.ttf"
@@ -278,7 +309,7 @@ set -- "$@" fstest.exe TESTS
 # bootstrap check reads.
 mkdir -p chain
 while read -r name url; do
-  curl -fsSL -o "chain/$name" "$url"
+  fetch "chain/$name" "$url"
   set -- "$@" "chain/$name"
 done <<EOF
 hex0seed.exe $STAGE0/bootstrap-seeds/PE32/i386/hex0-seed.exe

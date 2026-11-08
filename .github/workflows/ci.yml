@@ -159,6 +159,9 @@ jobs:
       - name: Build with build.sh and check against SHA256SUMS
         run: ci/reproduce.sh "$RUNNER_TEMP/reproduce"
 
+      - name: A download with other bytes than its pin stops the build before use
+        run: python3 -I ci/check-downloads.py "$RUNNER_TEMP/check-downloads"
+
       - name: TinyCC gives no warning
         run: ./build.sh --werror "$RUNNER_TEMP/warnings"
 
