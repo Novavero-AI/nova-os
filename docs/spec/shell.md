@@ -16,8 +16,9 @@ of the same services the graphical interface uses (DESIGN.md, principle
 3); it gives each program it runs what the program's recipe declares
 (principle 7) and what the user designates for that run, the paths its
 arguments name, and nothing else; and every effect it has goes through a
-handle or a message (principle 8). Principle 7 names only the recipe's
-part; [Changes elsewhere](#changes-elsewhere) adds the user's.
+handle or a message (principle 8). Principle 7 names the recipe's part;
+[L15](#l15-grants-from-arguments) to
+[L18](#l18-asking-for-more-the-powerbox) give the user's.
 
 Each item gives the design, why, what it costs, and the main alternative
 not taken. Every item is **Decided**.
@@ -540,8 +541,9 @@ of a decimal fraction such as 1.1" (CBOR 3.4.4).
   storage.md F1 does for listings.
 - **Cost:** a program that does its own matching, such as a package
   query, needs its pattern quoted; there is no character class; a glob
-  over a large tree grants a handle per match, each an entry in the
-  launcher's request ([Changes elsewhere](#changes-elsewhere)).
+  over a large tree grants a handle per match, each an entry in the run
+  request the shell sends the launcher
+  ([accounts.md A7](accounts.md#a7-the-session)).
 - **Not taken:** POSIX's rule that a pattern matching nothing "shall be
   left unchanged", and its sorting by "the collating sequence in effect
   in the current locale" (POSIX 2.14.3), which rc keeps for the first
@@ -626,8 +628,8 @@ the terminal, rule 7. **Decided:** the rest.
    input of the next command" (POSIX 2.9.2).
 
    A stream carries data, not authority. Every stream channel the shell
-   creates is one that refuses handles
-   ([Changes elsewhere](#changes-elsewhere)), so a program cannot pass a
+   creates refuses a write that carries a handle
+   ([ipc.md I1](ipc.md#i1-channels)), so a program cannot pass a
    handle to the program it is piped to, or to the shell. It can still
    act for that program, reading what it holds and writing the bytes,
    for as long as it runs; the pipe the user wrote is that path. A path
@@ -674,8 +676,7 @@ the terminal, rule 7. **Decided:** the rest.
    4.2.1) and a record's order is its own. A program that speaks only
    text exchanges JSON with `to json` and `from json`
    ([L25](#l25-built-ins)). The stream's framing in channel messages of
-   up to 65,536 bytes is the value protocol's to specify
-   ([Changes elsewhere](#changes-elsewhere)).
+   up to 65,536 bytes is the value protocol's to specify.
 
 - **Why:** records and tables make a pipeline's data addressable by
   name, which PowerShell built its pipeline on ("Instead of processing
@@ -922,9 +923,10 @@ An error is a value with these fields:
    ([L7](#l7-pipelines), rule 6): a `grep` port maps 0 to `true` and 1
    to `false`, and 2 stays an error.
 2. A program that ended on a fault raises `fault`; one the shell
-   stopped because the user interrupted raises `interrupted`. Telling
-   these from an exit needs `process_info` to report how a process ended
-   ([Changes elsewhere](#changes-elsewhere)).
+   stopped because the user interrupted raises `interrupted`. The shell
+   tells these from an exit by how `process_info` reports the process
+   ended: an exit, a fault and its vector, or a kill
+   ([syscalls.md S8](syscalls.md#s8-the-first-calls)).
 3. Every stage of a pipeline runs to its end. If one failed, its error
    is raised with `stage` set; if several did, `pipeline` is raised with
    all of them in `errors`, as Elvish throws "a 'composite exception',
@@ -981,12 +983,13 @@ is a symbolic link into `/store`, as the entries of a Nix user
 environment are, the shell follows it on the client side, as every link
 is followed ([storage.md F3](storage.md#f3-symbolic-links)), and hands
 the launcher the store path it reaches, so the program's closure and
-declarations are its own derivation's, not the profile's. Following it
-needs the profile's closure in the shell's view
-([Changes elsewhere](#changes-elsewhere)). Resolution happens at every
-run, so a profile switch takes effect at the next command. `which name`
-reports where a name resolves and, for a program, its store path and
-signature.
+declarations are its own derivation's, not the profile's. The link's
+target is in the shell's view: the profile's closure joins the shell's
+`/store` closure directory, as the system's does
+([storage.md F5](storage.md#f5-per-process-views)). Resolution happens
+at every run, so a profile switch takes effect at the next command.
+`which name` reports where a name resolves and, for a program, its
+store path and signature.
 
 - **Why:** no list of directories held in a string decides what runs,
   and the current directory is never searched, so a file planted in a
@@ -1117,7 +1120,7 @@ settings and no network reach it unless one of these names them.
   before the program starts. A grant names a node, so a program that
   expects to find siblings of a file it was given does not; and granting
   one file needs view entries that name a single file
-  ([Changes elsewhere](#changes-elsewhere)).
+  ([storage.md F5](storage.md#f5-per-process-views)).
 - **Not taken:** giving every program the user's whole view, which is
   what every Unix shell does. Its cost is ambient authority: "because it
   acts with the full power of the user", a program processing untrusted
@@ -1243,7 +1246,7 @@ the write before Enter. **Decided:** the rest.
    Enter grants; Escape refuses, and the program gets `denied`. While the
    prompt is shown the console gives the keyboard to the shell's read
    before any other session's, and draws the prompt over any session a
-   program holds ([Changes elsewhere](#changes-elsewhere)).
+   program holds ([console.md C4](console.md#c4-sessions)).
 3. The shell grants as [L15](#l15-grants-from-arguments) does, bounded
    by its own view, and replies with the handle and the absolute path,
    which the program's native layer adds to its view. A handle a program
@@ -1267,8 +1270,8 @@ the write before Enter. **Decided:** the rest.
   driven "with UI behaviors, such as Powerboxes (file dialogues running
   with ambient authority)" (Capsicum, 7, p. 15).
 - **Cost:** the prompt needs a style a program's output cannot imitate,
-  and keys and drawing the console gives the shell first
-  ([Changes elsewhere](#changes-elsewhere)). A grant cannot be taken back
+  and keys and drawing the console gives the shell first (rule 2;
+  [console.md C4](console.md#c4-sessions)). A grant cannot be taken back
   while the program runs: the kernel revokes nothing, and access that
   must be revocable "is given through a server that can cut it off"
   ([objects.md O10](objects.md#o10-object-lifetime)), which the file
@@ -1371,7 +1374,9 @@ What an external program holds when it starts is the union of:
    its build wrote. They count only if that derivation's outputs,
    computed from it as nova-nix computes them, include the program's
    path, so whoever supplies a registration cannot attach another
-   derivation's declarations ([Changes elsewhere](#changes-elsewhere)).
+   derivation's declarations; the store keeps a registration's deriver
+   only on that condition
+   ([storage.md F12](storage.md#f12-builds-and-substitution)).
    The launcher reads them, since the deriver is outside the shell's
    closure. A path with no deriver, such as a source, has none and gets
    only its closure, its arguments and its streams.
@@ -1497,9 +1502,9 @@ console protocol:
   all programs" (fish, Design, "Configurability is the root of all
   evil"). Showing grants before Enter makes the authority a command gets
   visible at the moment the user decides.
-- **Cost:** a round trip to the shell for every edit; the console
-  protocol grows assisted reads, style spans, an interrupt key and a
-  clear operation ([Changes elsewhere](#changes-elsewhere)); until the
+- **Cost:** a round trip to the shell for every edit; assisted reads,
+  style spans, an interrupt key and a clear operation in the console's
+  session protocol ([console.md C4](console.md#c4-sessions)); until the
   console draws UTF-8, names outside ASCII show as `?` (console.md C4).
 - **Why this prompt:** the directory is what a command's relative
   paths, and so its grants, are read against, and `~` keeps the
@@ -1598,8 +1603,7 @@ setting watch desktop.background        # one record per change, until interrupt
    A script asks for them in `needs` as the service `settings`
    ([L19](#l19-scripts)).
 4. **The generic bridge.** Each service describes its interface once, in
-   the interface description language ([Changes
-   elsewhere](#changes-elsewhere)): its requests and replies, its
+   the interface description language: its requests and replies, its
    settings with their schemas, and what each is for. From that one text
    the generator makes the service's C protocol header, the nvo commands
    that speak its protocol, the Settings window's form for each of its
@@ -1724,68 +1728,6 @@ programs in `/store`, confined like any other.
 | Capsicum | No global namespaces; lookups under a held directory (2.1); the pipeline shell as the confining point (4.3) | Entering a sandbox from ambient authority: nova-os starts without it (objects.md O6) |
 | Nix | Running from the store without installing; environments from a recipe | Flake references and registries |
 | Plan 9 | Per-process name spaces, "a per-process attribute" (Plan 9 names), as views (storage.md F5) | Union directories (storage.md F4) |
-
-## Changes elsewhere
-
-What this design needs outside this document:
-
-- **DESIGN.md, principle 7:** a program's creator passes it what its
-  derivation declares and what the user designates for one run (its
-  arguments, `grant`, the powerbox), and nothing else.
-- **storage.md:**
-  - view entries that name one file or one slot, whose handle answers
-    opens of that one name, so a program can open a granted file more
-    than once and create a granted name that did not exist
-    ([F5](storage.md#f5-per-process-views)); a slot open in the
-    directory protocol ([F1](storage.md#f1-the-directory-protocol));
-  - F5 rule 2 for a launcher that acts for a requester: it grants what
-    the requester sends, which can only be what the requester's view
-    holds;
-  - the profile's closure joined to the `/store` closure directory of
-    the user's programs, as the system's is (F5), so a profile's links
-    resolve;
-  - a registration's deriver kept only if the derivation's computed
-    outputs include the path
-    ([F12](storage.md#f12-builds-and-substitution));
-  - a way to look registrations up by name, for `which` and completion
-    of store paths outside the shell's closure.
-- **The launcher's protocol:** a run request that carries the view
-  entries and their handles, the standard streams and whether each
-  speaks bytes or values, the working directory as text, the
-  environment, and a powerbox channel and console session where
-  declared, within the 64 handles a message carries
-  ([ipc.md I1](ipc.md#i1-channels)) or across several messages; a reply
-  whose process handle also carries `TERMINATE`, so an interrupt can
-  stop the program; a request that returns a store path's declarations
-  and signature, read from its deriver; and a request that opens a store
-  path's closure directory for the shell to hold.
-- **The substituter:** a request to fetch a store path, from a session
-  that holds a channel to it.
-- **ipc.md and syscalls.md:** a channel created to refuse handles, on
-  which a write that carries one fails, for pipes
-  ([I1](ipc.md#i1-channels), [I2](ipc.md#i2-handle-transfer));
-  `process_info` reports how a process ended (an exit, a fault and its
-  vector, or a kill) beside its code
-  ([S8](syscalls.md#s8-the-first-calls)).
-- **console.md:** assisted reads ([L21](#l21-interactive-behaviour));
-  writes with style spans by role, and a style that only the shell's own
-  session may use, for its prompts; an interrupt key reported to the
-  session; UTF-8 text; a session the shell can give a program that
-  declares the console; while the shell shows a powerbox prompt, the
-  keyboard given to the shell's read first and the prompt drawn over
-  every other session; and a clear operation, which `clear` and Ctrl+L
-  use ([L21](#l21-interactive-behaviour), [L25](#l25-built-ins)).
-- **replay.md:** annotations a recorded process adds to its recording,
-  which replay skips ([L23](#l23-replay)).
-- **nova-nix:** derivation attributes for a program's declared grants,
-  working directory, console and powerbox, and its signature: parameters,
-  stream kinds and exit statuses.
-- **New specifications:** the value protocol, the CBOR tags and framing
-  of [L7](#l7-pipelines) and the session in values mode; the settings
-  service and its schemas ([L24](#l24-settings-and-service-commands));
-  the interface description language and its generator
-  ([L24](#l24-settings-and-service-commands)); the powerbox protocol
-  ([L18](#l18-asking-for-more-the-powerbox)).
 
 ## References
 

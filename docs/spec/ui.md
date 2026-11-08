@@ -414,9 +414,10 @@ the same library, and the system has no immediate-mode library.
    session's theme from the settings service and the debug log; it gives
    the program the other end of a UI channel instead of a display
    connection. A program that declares a raw window gets the connection
-   itself. Login needs `CREATE_JOB` on the sessions' job for this, and
-   ending the job needs `task_kill`, which the kernel lacks
-   ([display.md, Changes elsewhere](display.md#changes-elsewhere)).
+   itself. Login holds the sessions' job with `CREATE_JOB` for this
+   ([accounts.md A1](accounts.md#a1-the-parts)), and `task_kill` on the
+   job ends the program and its renderer together
+   ([syscalls.md S8](syscalls.md#s8-the-first-calls)).
 2. **The protocol** (`include/ui_protocol.h`) carries values in the
    shell's value encoding, CBOR with the core deterministic encoding
    ([shell.md L7](shell.md#l7-pipelines), rule 9), a value larger than
@@ -694,29 +695,3 @@ action it offers is an nvo command the shell can run.
 | Plan 9's draw | Drawing as messages written to a server, `/dev/draw` | Pixels and strings as the vocabulary |
 | FreeType | Linear-light blending; vertical-only snapping as the useful part of hinting | Hinting by the font's bytecode |
 | Inter | The typeface, its metrics, its kerning and two of its substitutions | Its hinting and its other substitutions |
-
-## Changes elsewhere
-
-- **`lib/`:** `outline.c`, `typeface.c` and `typeset.c`
-  ([U2](#u2-the-rasterizer) to [U4](#u4-text-layout)), then `value/`,
-  `display/` and `ui/` ([U1](#u1-the-layers)).
-- **`tools/`:** `mkfont.c` ([U3](#u3-fonts)), and the two alternates
-  of [U4](#u4-text-layout), rule 8.
-- **`include/`:** `font_format.h`; and `ui_protocol.h`, generated from
-  the renderer's interface description, as a new service's header is
-  ([shell.md L24](shell.md#l24-settings-and-service-commands)).
-- **`design/`:** `text/`, the prototypes of the outlines and the text
-  and their checks.
-- **build.sh:** the build fetches Inter's release by its SHA-256 and
-  converts it; the font's store path carries Inter's licence.
-- **accounts.md and the first process:** login with `CREATE_JOB` on the
-  sessions' job, a job for each program and its renderer, and a shell
-  in values mode for the HUD
-  ([display.md, Changes elsewhere](display.md#changes-elsewhere)).
-- **[shell.md](shell.md):** a session in values mode, for the HUD and
-  the terminal (L7, rule 7); the rendering of values (L7, rule 7)
-  shared with `lib/ui`; the forms L24's generic bridge makes, which
-  Settings draws; the transcript's annotations (L23), which the renderer
-  adds to.
-- **nova-nix:** a derivation attribute that declares an interface, a
-  raw window, or both.

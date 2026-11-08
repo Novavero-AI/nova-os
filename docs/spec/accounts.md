@@ -529,17 +529,3 @@ next, so:
   unit. Its cost is a second service writing `/data/accounts` beside
   the first, which runs on until the last channel to it closes, since
   the kernel has no call that ends a process from outside.
-
-## Changes elsewhere
-
-- **Kernel:** `random_read` (call 42), for the salt
-  ([syscalls.md S8](syscalls.md#s8-the-first-calls)).
-- **The first process:** starts and supervises the service and login
-  (`init/login_start.c`, A10) after the console and the writable file
-  system, which give it console sessions and `/data` and `/users`. The
-  store service and the namespace server run on after its startup, and
-  it keeps its channels to them, through which login reaches `/store`.
-  Login is the console's program
-  ([console.md C2](console.md#c2-starting-the-console)).
-- **The store service:** a control channel opens another through an
-  open of the empty path, so that each start of login gets its own.

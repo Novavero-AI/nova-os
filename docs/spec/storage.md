@@ -1232,28 +1232,6 @@ and the data disk as a VHDX file.
   trusts, which can disagree with the tree it describes; walking the tree
   costs a longer open and cannot.
 
-## Changes elsewhere
-
-What this design needs outside this document:
-
-- **Kernel:** a read-only section over the store image nova-boot loaded,
-  given to the first process ([F16](#f16-the-first-milestone)); a query
-  whether any handle, mapping or pin can still write a section
-  ([F15](#f15-store-reads-and-replay)).
-- **Boot protocol:** the store image's place in `BOOT_INFO`
-  ([F16](#f16-the-first-milestone)); a kernel, first process and boot
-  image per system generation, and a boot menu
-  ([F13](#f13-profiles-system-and-garbage-collection)).
-- **Disk layout:** the pool partition's identifiers
-  ([F6](#f6-pools-volumes-and-the-commit),
-  [F11](#f11-reproducible-images)); its type GUID is
-  [pool-format.md](pool-format.md)'s.
-- **nova-os components:** a FAT writer for the ESP alone
-  ([F13](#f13-profiles-system-and-garbage-collection)).
-- **nova-nix:** NAR export with references ([F16](#f16-the-first-milestone)),
-  a store backend that speaks the store service's protocol, and a build
-  runner role ([F12](#f12-builds-and-substitution)).
-
 ## References
 
 Microsoft Learn, with the date each page shows as its last update:

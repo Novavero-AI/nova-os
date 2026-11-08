@@ -57,7 +57,7 @@ C1 gives, and login asks for a name on it.
 |---|---|---|
 | The compositor, `compositor.exe` | The user-mode service that owns the display while it runs: it composes windows, routes input and draws the strip ([D8](#d8-composition)) | The framebuffer's resource, or later a channel to the GPU driver ([D18](#d18-the-gpu-path)); every input driver's endpoint; a control channel from the first process; its closure in `/store`, read only, for its fonts; the system's settings, for its theme and reserved keys; its own process with `MAP`; the debug log |
 | The console, `console.exe` | The text console of [console.md](console.md), in two roles: the fallback owner of the framebuffer when no compositor runs ([D4](#d4-the-console-in-a-window-and-as-the-fallback)), and the terminal, its panel in a window | What [console.md C2](console.md#c2-starting-the-console) gives it, or a display connection in place of the framebuffer |
-| Login, `login.exe` | The program that asks who is there and starts sessions and every program in them ([accounts.md A1](accounts.md#a1-the-parts)), drawing on the system layer | What [accounts.md A1](accounts.md#a1-the-parts) gives it, the sessions' job with `CREATE_JOB` ([Changes elsewhere](#changes-elsewhere)), and the connection that carries `SYSTEM` and `ATTENTION` ([D5](#d5-connections-labels-and-layers)) |
+| Login, `login.exe` | The program that asks who is there and starts sessions and every program in them ([accounts.md A1](accounts.md#a1-the-parts)), drawing on the system layer | What [accounts.md A1](accounts.md#a1-the-parts) gives it, the sessions' job with `CREATE_JOB` ([accounts.md A7](accounts.md#a7-the-session)), and the connection that carries `SYSTEM` and `ATTENTION` ([D5](#d5-connections-labels-and-layers)) |
 | The powerbox, `powerbox.exe` | The session's trusted file chooser, share picker and consent ([D16](#d16-trusted-interface-and-the-powerbox)) | A `TRUSTED` connection; the session's view, to grant from; a channel from login, on which consent is asked |
 | The HUD, `hud.exe` | The session's command bar ([ui.md U11](ui.md#u11-the-hud)) | An `OVERLAY` connection; a shell in values mode, which login starts for it |
 | The notification service, `notify.exe` | The session's notifications, each drawn under its sender's label ([D20](#d20-notifications)) | A `NOTIFICATION` connection; a control channel from login, on which login asks for each program's notification channel; the service's end of each such channel |
@@ -1446,86 +1446,3 @@ the label of the channel it came on, never a name its sender gives.
 | Fullscreen | Spoofing in full screen named as the risk | An overlay as the only defence |
 | Plan 9's rio | A window system as an ordinary file server, each window with its own `cons`, `mouse` and `cursor` | Drawing it does not mediate, "rio places windows but does not mediate programs' access to the display device", and every window's image readable as a file |
 | Scenic | Composition as a service; input "in their view's coordinate system"; no view sees "the graphical content of any other View" | A GPU scene graph from the start |
-
-## Changes elsewhere
-
-- **Kernel:** none for phases 1 to 7. Ending a session's processes at
-  logout needs `task_kill`, which the kernel lacks
-  ([accounts.md A7](accounts.md#a7-the-session)); the display's
-  revocation does not ([D5](#d5-connections-labels-and-layers)). The
-  replay rule below needs the query
-  [storage.md F15](storage.md#f15-store-reads-and-replay) asks for,
-  whether any handle, mapping or pin can still write a section.
-- **The first process:** starts and supervises the compositor after the
-  release and gives it the display (`init/console.c`,
-  `init/platform.c`); makes it the input drivers' client while it runs
-  and the console after it is given up; gives login the connection that
-  carries `SYSTEM`, `ATTENTION` and `CAPTURE`, and the sessions' job
-  with `CREATE_JOB`, so that each program and its renderer, the HUD, the
-  powerbox and the notification service run in jobs of their own
-  (`init/login_start.c`); marks
-  login's accounts channel as the console's.
-- **[ipc.md](ipc.md):** I6, the framebuffer's resource goes to the
-  compositor, and to the console only while no compositor runs.
-- **[input.md](input.md):** K1, a driver for every virtio input
-  function; K2, pointer reports up to each `SYN_REPORT`, and
-  `SYN_DROPPED` honoured, beside key events; K3, a first message on
-  each client endpoint that describes the device and its axes' ranges,
-  and the compositor as the client; K4, the console made the client
-  when the compositor is given up, its drivers started again for it
-  ([D10](#d10-the-pointer)).
-- **[console.md](console.md):** C1 and C2, the console as the fallback
-  owner of the display, drawing Limb over the whole screen when it
-  takes the display from a compositor; window mode
-  ([D4](#d4-the-console-in-a-window-and-as-the-fallback)), its shell's
-  session in values mode and its values drawn as structure; C3, the
-  secure attention key, never given to a read, the wheel, and Super,
-  with which a key gives no text.
-- **[accounts.md](accounts.md):** A5 and A6, `ACCOUNTS_LIST` on a
-  console login channel, and the stand-in's purpose; A7, login
-  starting each program in a job of its own, with a connection and a
-  display grant channel when its recipe declares the display, and a
-  notification channel when it declares notifications, the HUD with a
-  shell in values mode, the notification service
-  ([D20](#d20-notifications)), and a terminal on `LAUNCHER_TERMINAL`,
-  its shell in values mode, closing the session's connection, grant
-  channels and notification channels at logout, and
-  waiting on one port without blocking where A7 has it wait with the
-  shell; A10, login's new connection after a restart taking over the
-  attention state.
-- **[replay.md](replay.md):** Shared memory: a recorded process
-  cannot map a section that a process outside the recording can write,
-  through a handle with `WRITE`, a writable mapping or a pin; a section
-  it writes and others only read is its output. Then the compositor at
-  its message boundary, windows' sections as outputs, captures not
-  recordable ([D17](#d17-replay-and-audit)).
-- **`include/`:** `display_protocol.h`, new: connections, windows,
-  children and popups, buffers, presents, configures, events, captures
-  and the clipboard, generated from the compositor's interface
-  description, as a new service's header is ([shell.md
-  L24](shell.md#l24-settings-and-service-commands)); `input_protocol.h`,
-  pointer reports and the device's description; `accounts_protocol.h`,
-  `ACCOUNTS_LIST`; `console_protocol.h`, the window mode's setup;
-  `session.h`, the display connection, the grant channel and
-  `LAUNCHER_TERMINAL`; `notify_protocol.h`, new: `NOTIFY_POST` and its
-  answers, and the control channel's request for a program's channel
-  ([D20](#d20-notifications)).
-- **README.md and `ci/boot.py`:** `-device virtio-tablet-pci` in place
-  of `-device qemu-xhci -device usb-tablet`; screens checked as
-  [D19](#d19-the-build-plan) gives, at 1280 x 800, and under KVM at
-  2560 x 1600 and 2880 x 1800; a run at 2880 x 1800 needs more memory
-  than 256 MiB once windows open ([D9](#d9-budgets)).
-- **[shell.md](shell.md):** L18's powerbox prompt has a graphical twin,
-  the powerbox program, speaking the same protocol, and the share
-  request joins it; L20's grants gain the display, which the launcher
-  gives from the session's connection, and notifications, which it
-  gives through the notification service; L24's system settings hold the
-  compositor's theme, the background and the reserved keys, declared in
-  the compositor's interface description; L7, rule 7, a terminal's
-  session in values mode; L20, rule 3, consent shown by the powerbox in
-  a graphical session ([D16](#d16-trusted-interface-and-the-powerbox)).
-- **nova-nix:** a derivation attribute that declares notifications
-  ([D20](#d20-notifications)).
-- **The build:** a store path named `terminal` that holds the console
-  program, from which login starts terminals
-  ([D4](#d4-the-console-in-a-window-and-as-the-fallback)).

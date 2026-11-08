@@ -951,28 +951,3 @@ show these, which are designed before they are built:
   ([shell.md L21](shell.md#l21-interactive-behaviour), rule 2);
 - each glyph's strokes, each app tile's gradient, and how a program's
   tile is chosen.
-
-## Changes elsewhere
-
-- **[ui.md](ui.md):** U9 decides Horizon and points here for its
-  values; U3 and U4, rule 8, admit `tnum` and `cv05` as glyphs the
-  converter writes.
-- **[font-format.md](font-format.md) and `tools/mkfont.c`:** a record
-  of each alternate glyph and the glyph it stands for, to come.
-- **[display.md](display.md):** D8's strip along the top, with the
-  window list, the search field, the notices, the clock and the user,
-  and D16, rule 1, the marks at its left; the `NOTIFICATION` layer and
-  the notification service, D1, D5, D8, D11 and D20; D12, the window
-  keys; D4, the terminal in values mode; D16, consent.
-- **[console.md](console.md):** C3, no text with Super held; window
-  mode, values drawn as structure. `console/keys.c` knows no Super yet.
-- **[shell.md](shell.md):** L7, rule 7, values mode for the terminal;
-  L19 and L20, rule 3, consent through the powerbox; L21, rule 11, the
-  prompt.
-- **[accounts.md](accounts.md):** A7, the notification service, each
-  program's notification channel, and the terminal's shell in values
-  mode.
-- **A wall-clock service,** for the bar's time and date.
-- **`ci/screens.c`:** the expected screens
-  [display.md D19](display.md#d19-the-build-plan) checks are drawn from
-  these values.
