@@ -24,6 +24,7 @@ sha256 identifies the exact copy the pin was taken from.
 | [pool-format.md](pool-format.md) | A data disk's pool: its partition, superblock rings, block pointers, node table and directories, and its commit |
 | [accounts.md](accounts.md) | Users' accounts and records, password hashing, login, the session a login opens, the shell and the first boot |
 | [shell.md](shell.md) | nvo, the shell's language: its grammar, values, pipelines and errors, how a command is found and run from `/store`, the handles the shell grants a command, interactive behaviour, replay and settings |
+| [interface.md](interface.md) | The interface description language: its grammar, layouts, messages, handles and rights, malformed messages, numbering, settings and their defaults, the C header its generator writes and where it lives, and the console's description |
 | [display.md](display.md) | Who holds the display from boot to the desktop, the compositor, windows and their buffers, composition, the pointer, routing input, the secure attention key, capture, the trusted interface, replay, the GPU path, the build plan and notifications |
 | [ui.md](ui.md) | The toolkit: the rasterizer's outlines, the font and its format, text layout, the interface as data and its renderer, widgets, layout, themes, accessibility, the HUD and the first programs |
 | [look.md](look.md) | The visual design, Horizon: how sizes follow the scale, the theme's colours, surfaces and type, controls, the focus marks and motion, and the layout of the bar, login, windows, the HUD, notifications and the system's requests |
@@ -1127,7 +1128,7 @@ and Ctrl+L in other shells, with the version or date each shows.
 ## Display and interface design references
 
 Systems, papers and standards [display.md](display.md),
-[ui.md](ui.md) and [look.md](look.md) compare nova-os with, cited by
+[ui.md](ui.md), [look.md](look.md) and [interface.md](interface.md) compare nova-os with, cited by
 the name in each heading.
 Web pages were fetched on November 7, 2026; a page with no version is
 identified by its date and sha256, and a later copy may differ.

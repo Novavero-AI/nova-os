@@ -1593,7 +1593,7 @@ setting watch desktop.background        # one record per change, until interrupt
    A script asks for them in `needs` as the service `settings`
    ([L19](#l19-scripts)).
 4. **The generic bridge.** Each service describes its interface once, in
-   the interface description language: its requests and replies, its
+   the interface description language ([interface.md](interface.md)): its requests and replies, its
    settings with their schemas, and what each is for. From that one text
    the generator makes the service's C protocol header, the nvo commands
    that speak its protocol, the Settings window's form for each of its
@@ -1607,10 +1607,11 @@ setting watch desktop.background        # one record per change, until interrupt
    commands, with signatures as [L9](#l9-functions-and-signatures)
    gives, so they are checked, completed and described as any command
    is. How the shell finds them and reaches the service through a handle
-   the session holds is the interface description language's
-   specification to give.
+   the session holds is decided with the emitter that makes them, in
+   [interface.md P13](interface.md#p13-descriptions-commands-and-the-later-outputs).
 7. A new service is described this way from its start. An existing
-   protocol keeps its hand-written header until it moves over.
+   protocol keeps its hand-written header until it moves over; the
+   console's moves first ([interface.md P17](interface.md#p17-the-console-first)).
 
 - **Why:** one protocol behind both interfaces is principle 3's
   guarantee, and typed keys with descriptions make settings
