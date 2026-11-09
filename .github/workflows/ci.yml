@@ -142,6 +142,22 @@ jobs:
             console/text.c gfx/gfx.c gfx/font.c gfx/raster.c gfx/limb.c -lm
           "$RUNNER_TEMP/check-window"
 
+      - name: The pointer's place and what a window is sent for a report are as display.md D10 and D11 give them
+        run: |
+          cc -std=c11 -Wall -Wextra -pedantic -Werror \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -I include -I lib -I gfx -o "$RUNNER_TEMP/check-route" \
+            tools/check-route.c lib/route.c lib/backlog.c
+          "$RUNNER_TEMP/check-route"
+
+      - name: What waits for a window's channel is as display.md D11 gives it
+        run: |
+          cc -std=c11 -Wall -Wextra -pedantic -Werror \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -I include -I lib -I gfx -o "$RUNNER_TEMP/check-backlog" \
+            tools/check-backlog.c lib/backlog.c
+          "$RUNNER_TEMP/check-backlog"
+
       - name: gfx/limb.c draws Limb as its prototype does
         run: design/backgrounds/check-limb.sh
 

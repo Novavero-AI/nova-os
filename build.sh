@@ -349,6 +349,16 @@ program window-library.exe window_open -I lib -I gfx lib/window.c \
   lib/compose.c lib/outline.c gfx/gfx.c gfx/flush.c gfx/raster.c gfx/limb.c
 rm -f -- "$out/window-library.exe"
 
+# The routing of a pointer's reports to the window, lib/route.c, and the
+# backlog of what a window's channel cannot take, lib/backlog.c, are in no
+# program yet. Linking each alone, with --werror's -Wall -Werror, checks
+# that it builds for the guest with TinyCC and leaves no symbol undefined;
+# no program is built from them and the results are not kept.
+program route-library.exe route_report -I lib -I gfx lib/route.c
+rm -f -- "$out/route-library.exe"
+program backlog-library.exe backlog_flush -I lib -I gfx lib/backlog.c
+rm -f -- "$out/backlog-library.exe"
+
 # The store image's paths: nova-services, the programs the image's
 # header names for the first process to start; greeting; hello, the
 # test program, which refers to the greeting and links to it;
