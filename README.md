@@ -184,8 +184,9 @@ once its driver runs, keeps QEMU from capturing the mouse.
   the compositor take the display and end at each start, until it is
   given up and the console takes the display after it.
 - `out/window.img` in place of `out/disk.img` runs the tests and has
-  the compositor show a test client's window over Limb and send it the
-  keys typed; the console runs but draws nothing.
+  the compositor show a test client's window over Limb with the pointer
+  drawn over it, and send it the pointer's events and the keys typed; the
+  console runs but draws nothing.
 - `out/specimen.img` in place of `out/disk.img` runs the tests and shows
   the type specimen over Limb; the console runs but draws nothing.
 - `out/chain.img` in place of `out/disk.img` runs the tests and the

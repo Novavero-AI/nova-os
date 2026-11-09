@@ -104,6 +104,17 @@ typedef struct {
     so none overtakes another. */
 void backlog_push(BACKLOG *backlog, const WINDOW_INPUT *event);
 
+/** Lay message out as the message the window's channel carries, by the
+    generated encoder of its kind (display.desc), in bytes, which is
+    aligned to 8 bytes and holds at least
+    DISPLAY_WINDOW_TO_CLIENT_BYTES_MAX. Returns OK with *size set to the
+    message's size, or the encoder's status, ERR_INVALID_ARGS, with *size 0
+    if the message breaks its description or is of a kind the window's
+    channel does not carry: backlog_flush's send function calls it for each
+    message it is given. */
+UINT32 backlog_encode(const BACKLOG_MESSAGE *message, void *bytes,
+                      UINT32 *size);
+
 /** Keep configure as the window's latest, in place of one not yet sent. */
 void backlog_configure(BACKLOG *backlog,
                        const WINDOW_CONFIGURE_EVENT *configure);

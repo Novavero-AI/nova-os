@@ -10,8 +10,12 @@
    with lib/endpoint.c and logged as the console logs them (D19, rule 8),
    and each key event goes through lib/keyroute.c: the secure attention
    key is logged and sent to no window, and every other key is queued for
-   the window with the focus (D11, rule 1, D12 and D19's rule 3). A
-   pointer report is logged and sent to no window.
+   the window with the focus (D11, rule 1, D12 and D19's rule 3). Each
+   pointer report goes through lib/route.c, which keeps the one pointer
+   every pointing device moves and says what the window is sent, and what
+   it says is queued for the window with the keys (D10, D11 rule 3 and
+   D19's rule 6); where the pointer is, once it has a place, is drawn over
+   every frame (D19, rule 7, lib/compose.c).
 
    Every wait is one object_wait_many on the channels and the time of the
    next frame or the channel's stall, so the compositor never waits for a
@@ -33,6 +37,7 @@
 #include "log.h"
 #include "native.h"
 #include "outline.h"
+#include "route.h"
 #include "timing.h"
 #include "window.h"
 
@@ -120,10 +125,12 @@ static CONNECTION connection;
 static WINDOW window;
 static UINT32 issued;
 
-/* What the keyboards have done, as one keyboard, and the pointer line
-   logged last, for all the pointers. */
+/* What the keyboards have done, as one keyboard, the one pointer every
+   pointing device moves, and the pointer line logged last, for all the
+   pointers. */
 static INPUT inputs[INPUT_DEVICES_MAX];
 static KEYROUTE keyboards;
+static ROUTE route;
 static ENDPOINT_NOTES pointer_notes;
 
 /* The area windows are placed in and the corners every window of this
@@ -136,6 +143,27 @@ static UINT32 scale;
 static COMPOSE_CORNERS corners;
 static COMPOSE_MATERIAL material;
 static OUTLINE outline_work;
+
+/* The pointer's image: the theme's arrow, its default (look.md V15), and
+   the cursor frames draw it by, which has a place once both of the
+   pointer's axes have been set, by the reports of one device or of
+   several (D10, rule 4). */
+static const INT32 pointer_body_points[] = THEME_POINTER_BODY_DEFAULT_POINTS;
+static const UINT8 pointer_body_flags[] = THEME_POINTER_BODY_DEFAULT_FLAGS;
+static const UINT32 pointer_body_ends[] = THEME_POINTER_BODY_DEFAULT_ENDS;
+static const INT32 pointer_edge_points[] = THEME_POINTER_EDGE_DEFAULT_POINTS;
+static const UINT8 pointer_edge_flags[] = THEME_POINTER_EDGE_DEFAULT_FLAGS;
+static const UINT32 pointer_edge_ends[] = THEME_POINTER_EDGE_DEFAULT_ENDS;
+static const COMPOSE_POINTER pointer_image = {
+    {pointer_body_points, pointer_body_flags, pointer_body_ends,
+     THEME_POINTER_BODY_DEFAULT_POINT_COUNT,
+     THEME_POINTER_BODY_DEFAULT_CONTOURS},
+    {pointer_edge_points, pointer_edge_flags, pointer_edge_ends,
+     THEME_POINTER_EDGE_DEFAULT_POINT_COUNT,
+     THEME_POINTER_EDGE_DEFAULT_CONTOURS},
+    THEME_POINTER_BODY_INK_DEFAULT, THEME_POINTER_EDGE_INK_DEFAULT,
+    THEME_POINTER_EDGE_OPACITY_DEFAULT};
+static COMPOSE_CURSOR cursor;
 
 /* What is to be composed at the next frame, and when that may be. */
 static RECT damage;
@@ -206,49 +234,19 @@ static UINT32 send_outgoing(UINT32 channel, UINT32 size)
 }
 
 /* A message a backlog gives the window's channel (backlog.h): what the
-   channel took, refused as full or found closed. */
+   channel took, refused as full or found closed. A message that its
+   encoder refuses was made by the compositor, which has failed, and not
+   by the window: the compositor ends. */
 static UINT32 send_to_window(void *context, const BACKLOG_MESSAGE *message)
 {
-    UINT32 size = 0, status;
+    UINT32 size = 0, status = backlog_encode(message, outgoing.bytes, &size);
 
     (void)context;
-    switch (message->kind) {
-    case WINDOW_CONFIGURE:
-        status = display_window_configure_encode(&message->body.configure,
-                                                 outgoing.bytes, &size);
-        break;
-    case WINDOW_RELEASED:
-        status = display_window_released_encode(&message->body.released,
-                                                outgoing.bytes, &size);
-        break;
-    case WINDOW_FRAME:
-        status = display_window_frame_encode(&message->body.frame,
-                                             outgoing.bytes, &size);
-        break;
-    case WINDOW_DROPPED: {
-        DISPLAY_HEADER header;
-
-        header.transaction = 0;
-        header.kind = 0;
-        status = display_window_dropped_encode(&header, outgoing.bytes, &size);
-        break;
+    if (status != OK) {
+        compositor_say_status("window message encode failed", status);
+        process_exit(COMPOSITOR_EXIT_FAILED);
     }
-    case WINDOW_KEY: {
-        const WINDOW_INPUT *key = &message->body.input;
-
-        status = display_window_key_encode(&key->body.key.event,
-                                           key->body.key.text,
-                                           key->body.key.event.text_length,
-                                           outgoing.bytes, &size);
-        break;
-    }
-    default:
-        /* A pointer's events are routed to no window, so the backlog
-           holds none. */
-        return BACKLOG_SEND_TAKEN;
-    }
-    if (status == OK)
-        status = send_outgoing(window.channel, size);
+    status = send_outgoing(window.channel, size);
     if (status == OK)
         return BACKLOG_SEND_TAKEN;
     return status == ERR_PEER_CLOSED ? BACKLOG_SEND_CLOSED
@@ -271,6 +269,80 @@ static void tell_closed(UINT32 number)
         status = send_outgoing(host->control, size);
     if (status != OK && status != ERR_PEER_CLOSED)
         compositor_say_status("closed event send failed", status);
+}
+
+/* ------------------------------------------------------------------------
+   The pointer. */
+
+/* The window the pointer may be over, as lib/route.c takes it: 0 where
+   there is none. */
+static const WINDOW_RECORD *route_window(void)
+{
+    return window.channel != HANDLE_INVALID ? &window.record : 0;
+}
+
+/* Queue what lib/route.c decided the window is sent. It decides nothing
+   where there is no window, so no event waits for one. */
+static void send_routed(const ROUTED *routed)
+{
+    UINT32 i;
+
+    for (i = 0; i < routed->count; i++)
+        backlog_push(&window.backlog, &routed->event[i]);
+}
+
+/* Move the pointer's image to the pixel the pointer's position rounds
+   down to, once the pointer has a place, and damage what that changes
+   (D19, rule 7). */
+static void move_cursor(void)
+{
+    RECT boxes[2];
+    UINT32 count, i;
+
+    if (!route_placed(&route))
+        return;
+    count = compose_cursor_move(&cursor, host->screen,
+                                route.x / DISPLAY_POSITION_ONE,
+                                route.y / DISPLAY_POSITION_ONE, boxes);
+    for (i = 0; i < count; i++)
+        window_damage_join(&damage, &boxes[i]);
+}
+
+/* A pointer report of input's endpoint: what the window is sent, and the
+   pointer's image moved (D19, rule 6). Each endpoint is a source of
+   buttons by its place, which a later endpoint takes over only after the
+   close that lets go its buttons (close_input). */
+static void take_report(const INPUT *input, const INPUT_POINTER *report)
+{
+    ROUTED routed;
+
+    route_report(&route, (UINT32)(input - inputs), &input->device,
+                 (UINT32)host->screen->width, (UINT32)host->screen->height,
+                 route_window(), report, &routed);
+    send_routed(&routed);
+    move_cursor();
+}
+
+/* The pointing device of input's endpoint has gone: the window is sent the
+   releases of the buttons it held (D11, rule 3). */
+static void pointer_gone(const INPUT *input)
+{
+    ROUTED routed;
+
+    route_source_gone(&route, (UINT32)(input - inputs), route_window(),
+                      timing_now(), &routed);
+    send_routed(&routed);
+}
+
+/* A present of the window is shown for the first time under a pointer that
+   has not moved since: the window has the pointer if the pointer is over
+   it (D11, rule 3). */
+static void settle_pointer(void)
+{
+    ROUTED routed;
+
+    route_settle(&route, route_window(), timing_now(), &routed);
+    send_routed(&routed);
 }
 
 /* ------------------------------------------------------------------------
@@ -298,10 +370,11 @@ static void unmap_buffer(UINT32 number)
     }
 }
 
-/* Close the window: its channel, and its buffers' mappings, and the
-   record of the keys it was sent. What it showed is composed over at the
-   next frame. A window closed for reason, one of rule 8's, is logged; one
-   whose holder closed it, with reason 0, is not. */
+/* Close the window: its channel, and its buffers' mappings, the record of
+   the keys and buttons it was sent, and the pointer's entry and button
+   hold. What it showed is composed over at the next frame. A window closed
+   for reason, one of rule 8's, is logged; one whose holder closed it, with
+   reason 0, is not. */
 static void close_window(const char *reason)
 {
     UINT32 i;
@@ -326,6 +399,7 @@ static void close_window(const char *reason)
     zero(&window, sizeof window);
     window.channel = HANDLE_INVALID;
     keyroute_window_gone(&keyboards);
+    route_window_closed(&route);
 }
 
 /* Close the connection and, with it, its window, which are logged as
@@ -410,6 +484,7 @@ static const char *take_present(void)
     const WINDOW_PRESENT_REQUEST *request =
         (const WINDOW_PRESENT_REQUEST *)incoming.bytes;
     WINDOW_PRESENTED presented;
+    UINT32 hidden = window.record.shown == WINDOW_NO_BUFFER;
     UINT32 i;
 
     if (window_present(&window.record, host->screen, request,
@@ -421,6 +496,8 @@ static const char *take_present(void)
         window.frame_owed = 1;
         for (i = 0; i < presented.count; i++)
             window_damage_join(&damage, &presented.damage[i]);
+        if (hidden)
+            settle_pointer();
     }
     return 0;
 }
@@ -702,7 +779,7 @@ static void take_key(INPUT *input, const INPUT_EVENT *event)
 
 /* Take the byte_count bytes in incoming as the next message of input's
    endpoint (input.md K3). Returns 0 if the endpoint may not send it. A
-   pointer report is logged as C6 gives and sent to no window. */
+   pointer report is logged as C6 gives, and then routed. */
 static int take_input(INPUT *input, UINT32 byte_count)
 {
     switch (endpoint_take(&input->device, incoming.bytes, byte_count)) {
@@ -715,6 +792,7 @@ static int take_input(INPUT *input, UINT32 byte_count)
     case ENDPOINT_REPORT:
         endpoint_pointer(&pointer_notes, LOG_COMPONENT,
                          (const INPUT_POINTER *)incoming.bytes, say);
+        take_report(input, (const INPUT_POINTER *)incoming.bytes);
         return 1;
     default:
         return 0;
@@ -723,12 +801,14 @@ static int take_input(INPUT *input, UINT32 byte_count)
 
 /* Close input's endpoint and free its place. A keyboard that sent keys
    leaves no modifier held and no press waiting for its release
-   (keyroute_gone). */
+   (keyroute_gone), and a pointing device no button held (pointer_gone). */
 static void close_input(INPUT *input)
 {
     handle_close(input->endpoint);
     if (input->keys)
         keyroute_gone(&keyboards);
+    if (input->device.kind == INPUT_DEVICE_POINTER)
+        pointer_gone(input);
     zero(input, sizeof *input);
     input->endpoint = HANDLE_INVALID;
 }
@@ -848,7 +928,7 @@ static void frame(void)
         count = 1;
     }
     compose_frame(host->screen, host->wallpaper, &shown, count, &damage,
-                  host->band, TILE_ROWS);
+                  host->band, TILE_ROWS, &cursor);
     gfx_flush();
     time = timing_now();
     next_frame = begun + FRAME_NS;
@@ -930,9 +1010,13 @@ static void wait_for_work(void)
 
 /* Make what every window of this screen shares: the area, the scale, the
    PANEL surface's material and the corners of the panel's radius
-   (D19's phase 3 arrangement, rule 4). Ends the compositor, FAILED, if
-   the corners cannot be made, which only a radius past COMPOSE_REACH_MAX
-   causes: a screen taller than any D7 names. */
+   (D19's phase 3 arrangement, rule 4), and the pointer's cursor at the
+   screen's scale (rule 7). Ends the compositor, FAILED, if the corners
+   cannot be made, which only a radius past COMPOSE_REACH_MAX causes. The
+   arrow is traced at a scale far inside the outline rasterizer's reach,
+   for the screens mapping_display accepts, so that compose_cursor_move
+   never refuses it (tools/check-compose.c checks the greatest scale such a
+   screen gives). */
 static void prepare_windows(void)
 {
     INT64 radius = font_panel_radius(font_cell_width(host->screen->height));
@@ -948,6 +1032,9 @@ static void prepare_windows(void)
             "\r\n");
         process_exit(COMPOSITOR_EXIT_FAILED);
     }
+    cursor.image = &pointer_image;
+    cursor.quarters = scale;
+    cursor.work = &outline_work;
 }
 
 _Noreturn void serve(const SERVE *context)

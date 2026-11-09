@@ -12,6 +12,16 @@ lines of the other boots, which a display after the compositor is not;
 the lines of the window boot, each of which it requires, and a failure
 line of the test client, which fails it; the compositor's refusals of an
 endpoint's message and the console's lines for an endpoint, which fail it;
+where boot.py puts the window boot's pointer places on the screens the boots
+run, against places worked out by hand here from display.md D6, D10 and
+D11, and the steps taken through them: the lines the client must log for
+each, which PointerScript reads in order, so that a line lost, doubled,
+swapped, changed in a field or without its time, a time that falls, a line
+after the last, and a pointer line of the compositor's that was not logged
+each fail the boot, and so does a pointer line of the client while the
+keys are typed; the three screens the steps must match, the last held; the
+window line's keys, which Serial keeps, and the places' numbers, which the
+compositor's pointer lines must not hold;
 how boot.py's KeyScript reads a log of the keys the window boot sends: a
 client key line that is lost, doubled, out of order, with another code,
 value, modifier set or text, or without its time, an attention line that
@@ -203,6 +213,75 @@ def replay_keys(boot, lines):
     finally:
         serial.reader.join()
     return True
+
+# The screens the boots run, as the client's window line gives them, and
+# the window it asks for, half the screen across and down.
+WINDOW_SCREENS = [(800, 600), (1280, 800), (1366, 768), (2560, 1600),
+                  (2880, 1800)]
+CLIENT_TIME_STEP = 0.5
+
+
+def window_keys(width, height):
+    """The keys of the client's window line on a screen."""
+    return {"screen": "%dx%d" % (width, height),
+            "size": "%dx%d" % (width // 2, height // 2)}
+
+
+def event_line(event, time):
+    """The line the test client logs for an Event of pointer_steps, at time
+    ms: its keys as the Event has them, and a time where it asks for one."""
+    keys = "".join(" %s=%s" % (key, value) for key, value in event.keys.items()
+                   if key != "time_ms")
+    clock = " time_ms=%.1f" % time if "time_ms" in event.keys else ""
+    return "%s: %s%s%s" % (event.component, event.event, keys, clock)
+
+
+def pointer_log(boot, steps):
+    """The lines of the window boot's pointer, in the order the boot reads
+    them: the compositor's line for each of the pointer's events, which
+    comes first, and then the client's line for each of the steps' lines,
+    each CLIENT_TIME_STEP ms after the one before. Returns the lines, those
+    of the client and their times."""
+    compositor = [event.text for event in boot.pointer_lines(boot.COMPOSITOR)]
+    events = [line for step in steps for line in step.lines]
+    times = [CLIENT_TIME_STEP * (n + 1) for n in range(len(events))]
+    client = [event_line(event, time) for event, time in zip(events, times)]
+    return compositor + client, client, times
+
+
+def replay_pointer(boot, steps, lines):
+    """Whether Serial reads lines, as the window boot's, with the
+    PointerScript of steps set, finds the client's line for the last of the
+    steps' lines, and the script finishes, without failing the boot."""
+    script = boot.PointerScript(steps)
+    last = [line for step in steps for line in step.lines][-1]
+    stream = [(line + "\r\n").encode("ascii") for line in lines + [SENTINEL]]
+    serial = boot.Serial(stream, io.BytesIO(), None, None, WINDOW)
+    serial.script = script
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            serial.wait_for([last, boot.Event(SENTINEL)],
+                            time.monotonic() + REPLAY_SECONDS)
+        script.finish()
+    except boot.BootFailed:
+        return False
+    finally:
+        serial.reader.join()
+    return True
+
+
+def serial_after(boot, mode, lines):
+    """The Serial that has read lines, then the sentinel, in mode."""
+    stream = [(line + "\r\n").encode("ascii") for line in lines + [SENTINEL]]
+    serial = boot.Serial(stream, io.BytesIO(), None, None, mode)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            serial.wait_for([boot.Event(SENTINEL)],
+                            time.monotonic() + REPLAY_SECONDS)
+    finally:
+        serial.reader.join()
+    return serial
+
 
 def ppm(fill):
     """A binary PPM of SCREEN_WIDTH x SCREEN_HEIGHT pixels, each fill, a
@@ -593,6 +672,203 @@ def main():
                   % (number + 1, name),
                   lines[:position] + [attention_line(moved)]
                   + lines[position + 1:])
+
+    # The places the window boot sends the tablet to. The numbers for
+    # 1280 x 800 are worked out here by hand from D6, D10 and D11: a
+    # window of 640 x 400 has its left at (1280 - 640) / 2 = 320 and its
+    # top at 800 * 40 / 100 - 400 / 2 = 120; the tablet's value across is
+    # in 32768ths of the screen's width, so 15991 is 15991 * 1280 * 256 /
+    # 32768 = 159910 256ths of a pixel, the pixel 624, and 159910 - 320 *
+    # 256 = 77990 from the window's left; down it is 13003 * 800 * 256 /
+    # 32768 = 81268, the pixel 317, and 81268 - 120 * 256 = 50548 from the
+    # window's top.
+    geometry = boot.Geometry.of(window_keys(1280, 800))
+    expect("the window of 640 x 400 on 1280 x 800 is at 320, 120",
+           (geometry.left, geometry.top), (320, 120))
+    expect("the entry's place is the pixel 624, 317, and 77990 and 50548 "
+           "from the window's top left",
+           (geometry.pixel(boot.ENTRY), geometry.relative(boot.ENTRY)),
+           ((624, 317), (77990, 50548)))
+    expect("the entry's place is over the window and the places outside and "
+           "below it are not",
+           (geometry.over_window(boot.ENTRY),
+            geometry.over_window(boot.OUTSIDE),
+            geometry.over_window(boot.BELOW)), (True, False, False))
+    expect("a place below the window is more than its height down",
+           geometry.relative(boot.BELOW)[1] > 400 * 256, True)
+    expect("a place left of the window is less than 0 from its left",
+           geometry.relative(boot.OUTSIDE)[0] < 0, True)
+
+    # The window's edges, by hand: the window covers the columns 320 to 959
+    # and the rows 120 to 519, those of its left and top edges in and those
+    # of its right and bottom edges out. A tablet value across of 8192 is
+    # the column 8192 * 1280 / 32768 = 320 exactly, 8191 the column 319,
+    # 24576 the column 960 and 24575 the column 959; down, 4916 * 800 /
+    # 32768 is 120.02, the row 120, 4915 the row 119, 21300 the row 520 and
+    # 21299 the row 519.
+    for value, over in ((8191, False), (8192, True), (24575, True),
+                        (24576, False)):
+        expect("the column the tablet value %d gives is %sthe window's"
+               % (value, "" if over else "not "),
+               geometry.over_window({"x": value, "y": boot.LAST["y"]}), over)
+    for value, over in ((4915, False), (4916, True), (21299, True),
+                        (21300, False)):
+        expect("the row the tablet value %d gives is %sthe window's"
+               % (value, "" if over else "not "),
+               geometry.over_window({"x": boot.LAST["x"], "y": value}), over)
+
+    def placed(keys):
+        try:
+            boot.check_pointer_places(boot.Geometry.of(keys))
+        except boot.BootFailed:
+            return False
+        return True
+
+    for width, height in WINDOW_SCREENS:
+        expect("the pointer's places are where the steps want them on a "
+               "%dx%d screen" % (width, height),
+               placed(window_keys(width, height)), True)
+    expect("the places are refused for a window the entry's place is outside",
+           placed({"screen": "1280x800", "size": "100x100"}), False)
+    expect("the places are refused on a screen where two are one pixel, "
+           "though each is where it should be",
+           placed({"screen": "8x9", "size": "4x4"}), False)
+
+    # The steps: three screens, the last held, and the lines the window is
+    # sent, which are counted by hand: the entry; a motion; the three
+    # buttons, each pressed and released; the wheel up and down; the drag
+    # of a button out of the window, which is its motion, the press, the
+    # motion out and the release, and then the leave; the entry the release
+    # of a button pressed away from the window makes; and a last motion.
+    steps = boot.pointer_steps(geometry)
+    sent = [line for step in steps for line in step.lines]
+    used = {tuple(item["data"]["value"] for item in event)
+            for step in steps for events in step.events for event in [events]
+            if event and event[0]["type"] == "abs"}
+    expect("each place the steps move the tablet to is one of the places "
+           "the boot keeps out of the log",
+           used <= {(at["x"], at["y"]) for at in boot.POINTER_PLACES}, True)
+    # The lines for the places, by hand as above: the entry at 77990 and
+    # 50548; a motion at the place MOVED, 11971 * 10 - 320 * 256 = 37790 and
+    # 9007 * 6.25 - 120 * 256 = 56293 - 30720 = 25573, which a press, a
+    # release and a turn of the wheel of 120 are sent at too.
+    expect("the entry's line holds the place across and then down",
+           (sent[0].event, sent[0].keys["x_256ths"],
+            sent[0].keys["y_256ths"]), ("enter", "77990", "50548"))
+    expect("a motion's line holds the place across and then down, the wheel "
+           "and the buttons",
+           (sent[1].keys["x_256ths"], sent[1].keys["y_256ths"],
+            sent[1].keys["wheel_120ths"], sent[1].keys["buttons"],
+            sent[2].keys["buttons"], sent[8].keys["wheel_120ths"]),
+           ("37790", "25573", "0", "none", "left:pressed", "120"))
+    expect("the pointer steps match the screen where the pointer is placed, "
+           "where it enters and last, held, after the mouse moves",
+           [(step.screen, step.hold) for step in steps if step.screen],
+           [(boot.OUTSIDE, False), (boot.ENTRY, False), (boot.LAST, True)])
+    expect("the window is sent the seventeen lines counted by hand",
+           [line.event for line in sent],
+           ["enter"] + ["pointer"] * 13 + ["leave", "enter", "pointer"])
+    expect("the buttons the window is sent are each of the three pressed and "
+           "released, and the drag's",
+           [line.keys["buttons"] for line in sent if line.event == "pointer"],
+           ["none", "left:pressed", "left:released", "right:pressed",
+            "right:released", "middle:pressed", "middle:released", "none",
+            "none", "none", "left:pressed", "none", "left:released", "none"])
+    expect("the window is sent a turn of one detent up and one down, in "
+           "120ths of a detent",
+           [line.keys["wheel_120ths"] for line in sent
+            if line.event == "pointer"][7:9], ["120", "-120"])
+
+    # A log of the steps' own lines is read in order, and a line the window
+    # is not sent, or is sent wrongly, fails the boot.
+    pointed, client, client_times = pointer_log(boot, steps)
+    first = len(pointed) - len(client)
+
+    def pointing(name, changed, accepted=False):
+        expect(name, replay_pointer(boot, steps, changed), accepted)
+
+    pointing("a log of the pointer steps' lines is read in order", pointed,
+             True)
+    for index, line in enumerate(client):
+        position = first + index
+        name = "the window boot's pointer with the client's line %d (%s)" % (
+            index + 1, line[len("nova-wintest: "):56])
+        pointing(name + " lost", pointed[:position] + pointed[position + 1:])
+        pointing(name + " twice", pointed[:position + 1] + pointed[position:])
+        if index + 1 < len(client):
+            swapped = list(pointed)
+            swapped[position], swapped[position + 1] = (
+                pointed[position + 1], pointed[position])
+            pointing(name + " swapped with the next", swapped)
+        for field in ("x_256ths", "y_256ths", "wheel_120ths", "buttons"):
+            old = [word for word in line.split() if word.startswith(field
+                                                                    + "=")]
+            if old:
+                pointing(name + " with another " + field,
+                         pointed[:position]
+                         + [line.replace(old[0], field + "=7")]
+                         + pointed[position + 1:])
+        if " time_ms=" in line:
+            pointing(name + " with no time",
+                     pointed[:position] + [line[:line.index(" time_ms")]]
+                     + pointed[position + 1:])
+    pointing("the window boot's pointer with a line after the last",
+             pointed + [client[-1]])
+    pointing("the window boot's pointer with a time that falls",
+             pointed[:first + 2]
+             + [pointed[first + 2].replace("time_ms=%.1f" % client_times[2],
+                                            "time_ms=0.1")]
+             + pointed[first + 3:])
+    pointing("the window boot's pointer with the client's lines ahead of the "
+             "compositor's", pointed[first:] + pointed[:first], True)
+    for index in range(first):
+        pointing("the window boot's pointer without the compositor's line "
+                 "%d (%s)" % (index + 1,
+                              pointed[index][len("nova-compositor: "):]),
+                 pointed[:index] + pointed[index + 1:])
+
+    # A script that has read fewer lines than the steps send, or fewer of
+    # the compositor's, is not finished.
+    for read, name in ((0, "none"), (len(client) - 1, "all but the last")):
+        script = boot.PointerScript(steps)
+        for line in pointed[:first] + client[:read]:
+            script.take(boot.parse_line(line))
+        try:
+            script.finish()
+            finished = True
+        except boot.BootFailed:
+            finished = False
+        expect("a pointer script that has read %s of the client's lines "
+               "is not finished" % name, finished, False)
+
+    # The pointer does not move while the keys are typed, so a line the
+    # client logs for it then, wherever it comes, fails the boot.
+    for line in (client[0], client[1], "nova-wintest: leave"):
+        for where in (0, len(lines) // 2, len(lines)):
+            keyed("with the client's line %s at %d" % (line[:30], where),
+                  lines[:where] + [line] + lines[where:])
+
+    # The window line's keys are kept, and the numbers of the places, which
+    # the compositor's lines must not hold, are looked for in the window
+    # boot alone; the client's own lines are relative to its window and
+    # hold none of them.
+    serial = serial_after(boot, WINDOW, [WINDOW_MADE])
+    expect("the keys of the client's window line are kept", serial.window,
+           {"screen": "1280x800", "size": "640x400"})
+    for at in boot.POINTER_PLACES:
+        for axis, value in at.items():
+            leak = ("nova-compositor: pointer move mode=absolute axes=xy "
+                    "%s=%d" % (axis, value))
+            expect("the window boot finds the place %s %d in a line of the "
+                   "compositor's pointer" % (axis, value),
+                   bool(serial_after(boot, WINDOW, [leak]).leaked), True)
+            expect("the system boot does not find it, which sends no such "
+                   "place", bool(serial_after(boot, "system", [leak]).leaked),
+                   False)
+    expect("the window boot does not find a place in the client's line",
+           serial_after(boot, WINDOW, [
+               "nova-wintest: pointer x_256ths=15991 y_256ths=0 "
+               "wheel_120ths=0 buttons=none time_ms=1.0"]).leaked, set())
 
     # A screen is polled for until it is the wanted one, with the caret's
     # two phases as two wanted images, and given up on after the timeout.

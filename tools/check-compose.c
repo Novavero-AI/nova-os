@@ -33,8 +33,17 @@
      gives;
    - the pointer, against the arrow's polygon clipped to each pixel in
      floating point, against the pixels V15's table gives, against the
-     box the arrow's geometry gives, and for malformed shapes, which
-     must draw nothing.
+     box the arrow's geometry gives, at the greatest scale a screen gives
+     and far past it, and for malformed shapes, which must draw nothing;
+   - the pointer as a frame draws it (D19 rule 7): a frame of any
+     rectangle and band height, with the hotspot anywhere on or off the
+     screen, against the whole frame composed with the arrow drawn over it
+     as one band; a pointer with no place, and one whose image is refused,
+     drawn nowhere; and walks of the hotspot, of one to three moves between
+     frames, in which frames over only what the moves damage must leave the
+     screen as the whole frame composed with the arrow where the pointer is,
+     and each move must return and set the boxes the arrow's geometry and the
+     output's blocks give.
 
    The pointer's outlines, the surfaces' tints and amounts, the edge's
    opacity and TILE_ROWS are read from interfaces/display.desc, which
@@ -57,6 +66,7 @@
 #include "compose.h"
 #include "limb.h"
 #include "panel.h"
+#include "window.h"
 
 #define CHANNEL_BITS 8
 #define CHANNEL_MASK 0xFFu
@@ -691,24 +701,44 @@ static UINT32 *compose_rect(const COMPOSE_WALLPAPER *wallpaper,
    of OUTPUT_BLOCK_BYTES. */
 #define BLOCK_PIXELS (OUTPUT_BLOCK_BYTES / sizeof(UINT32))
 
+/* The rectangles and band heights the frames are composed in: the whole
+   screen, an inner rectangle, a pixel at each end, a row, a column, and
+   one that spans most of it. */
+static const RECT frame_rects[] = {{0, 0, SCENE_WIDTH, SCENE_HEIGHT},
+                                   {13, 9, 131, 71},
+                                   {0, 0, 1, 1},
+                                   {SCENE_WIDTH - 1, SCENE_HEIGHT - 1,
+                                    SCENE_WIDTH, SCENE_HEIGHT},
+                                   {20, 40, 100, 41},
+                                   {40, 0, 41, SCENE_HEIGHT},
+                                   {17, 3, 70, 99}};
+#define FRAME_RECTS (sizeof frame_rects / sizeof frame_rects[0])
+static const INT64 frame_rows[] = {1, 7, 16, SCENE_HEIGHT + 1};
+#define FRAME_ROWS (sizeof frame_rows / sizeof frame_rows[0])
+
 /* compose_frame of rect, over a screen that held SCREEN_BEFORE, in bands
-   of rows rows: in each row of rect, every pixel of every block that
-   holds a pixel of rect is the composed one in the screen's order with
-   its unused byte 0, and every other pixel is untouched, as is every
-   pixel in the other rows. all is the whole frame composed, as
-   0x00RRGGBB. */
-static void check_frame_rect(const SCREEN *screen, UINT32 *screen_memory,
+   of rows rows, drawing cursor if it is not 0: counts the pixels that are
+   not what a frame is. In each row of rect, every pixel of every block
+   that holds a pixel of rect is the one of all, the whole frame as
+   0x00RRGGBB, in the screen's order with its unused byte 0 (wrong counts
+   those that are not); every other pixel, in the other rows too, is
+   untouched (stray counts those that are not). */
+static void frame_difference(const SCREEN *screen, UINT32 *screen_memory,
                              const COMPOSE_WALLPAPER *wallpaper,
                              const COMPOSE_WINDOW *windows, const RECT *rect,
-                             INT64 rows, const UINT32 *all)
+                             INT64 rows, const COMPOSE_CURSOR *cursor,
+                             const UINT32 *all, INT64 *wrong, INT64 *stray)
 {
     INT64 band_pixels = (INT64)SCENE_WIDTH * (SCENE_HEIGHT + 1);
     UINT32 *band = malloc((size_t)band_pixels * sizeof(UINT32));
-    INT64 x, y, wrong = 0, stray = 0;
+    INT64 x, y;
 
+    *wrong = 0;
+    *stray = 0;
     for (x = 0; x < SCENE_WIDTH * SCENE_HEIGHT; x++)
         screen_memory[x] = SCREEN_BEFORE;
-    compose_frame(screen, wallpaper, windows, SCENE_WINDOWS, rect, band, rows);
+    compose_frame(screen, wallpaper, windows, SCENE_WINDOWS, rect, band, rows,
+                  cursor);
     for (y = 0; y < SCENE_HEIGHT; y++) {
         int in_rows = y >= rect->top && y < rect->bottom;
         INT64 first = (y * SCENE_WIDTH + rect->left) / (INT64)BLOCK_PIXELS;
@@ -723,11 +753,23 @@ static void check_frame_rect(const SCREEN *screen, UINT32 *screen_memory,
                                       colour & CHANNEL_MASK);
 
             if (in_rows && block >= first && block <= last)
-                wrong += got != wanted;
+                *wrong += got != wanted;
             else
-                stray += got != SCREEN_BEFORE;
+                *stray += got != SCREEN_BEFORE;
         }
     }
+    free(band);
+}
+
+static void check_frame_rect(const SCREEN *screen, UINT32 *screen_memory,
+                             const COMPOSE_WALLPAPER *wallpaper,
+                             const COMPOSE_WINDOW *windows, const RECT *rect,
+                             INT64 rows, const UINT32 *all)
+{
+    INT64 wrong, stray;
+
+    frame_difference(screen, screen_memory, wallpaper, windows, rect, rows, 0,
+                     all, &wrong, &stray);
     check(wrong == 0,
           "a frame of a rectangle writes the frame's pixels in every block "
           "of its rows that holds one of the rectangle's",
@@ -735,20 +777,10 @@ static void check_frame_rect(const SCREEN *screen, UINT32 *screen_memory,
     check(stray == 0,
           "a frame of a rectangle writes nothing else",
           rows, stray);
-    free(band);
 }
 
 static void check_frame_rects(const SCENE *scene)
 {
-    static const RECT rects[] = {{0, 0, SCENE_WIDTH, SCENE_HEIGHT},
-                                 {13, 9, 131, 71},
-                                 {0, 0, 1, 1},
-                                 {SCENE_WIDTH - 1, SCENE_HEIGHT - 1,
-                                  SCENE_WIDTH, SCENE_HEIGHT},
-                                 {20, 40, 100, 41},
-                                 {40, 0, 41, SCENE_HEIGHT},
-                                 {17, 3, 70, 99}};
-    static const INT64 rows_of[] = {1, 7, 16, SCENE_HEIGHT + 1};
     static const RECT nothing[] = {{10, 10, 10, 40}, {10, 40, 30, 40},
                                    {30, 10, 10, 40}, {10, 40, 30, 10}};
     COMPOSE_WINDOW windows[SCENE_WINDOWS];
@@ -770,15 +802,15 @@ static void check_frame_rects(const SCENE *scene)
                          formats[f]};
         INT64 i, written;
 
-        for (r = 0; r < sizeof rects / sizeof rects[0]; r++)
-            for (h = 0; h < sizeof rows_of / sizeof rows_of[0]; h++)
+        for (r = 0; r < FRAME_RECTS; r++)
+            for (h = 0; h < FRAME_ROWS; h++)
                 check_frame_rect(&screen, screen_memory, &wallpaper, windows,
-                                 &rects[r], rows_of[h], all);
+                                 &frame_rects[r], frame_rows[h], all);
         for (r = 0; r < sizeof nothing / sizeof nothing[0]; r++) {
             for (i = 0; i < SCENE_WIDTH * SCENE_HEIGHT; i++)
                 screen_memory[i] = SCREEN_BEFORE;
             compose_frame(&screen, &wallpaper, windows, SCENE_WINDOWS,
-                          &nothing[r], band, 16);
+                          &nothing[r], band, 16, 0);
             for (i = 0, written = 0; i < SCENE_WIDTH * SCENE_HEIGHT; i++)
                 written += screen_memory[i] != SCREEN_BEFORE;
             check(written == 0, "a frame of a rectangle with no pixel writes "
@@ -788,7 +820,7 @@ static void check_frame_rects(const SCENE *scene)
         for (i = 0; i < SCENE_WIDTH * SCENE_HEIGHT; i++)
             screen_memory[i] = SCREEN_BEFORE;
         compose_frame(&screen, &wallpaper, windows, SCENE_WINDOWS, &whole,
-                      band, 0);
+                      band, 0, 0);
         check(screen_memory[0] == SCREEN_BEFORE,
               "a frame in bands of no rows writes nothing", 0, 0);
         free(band);
@@ -2769,6 +2801,36 @@ static void check_pointer_limits(const THEME_POINTER *theme)
         }
 }
 
+/* The scales a screen the compositor draws on can give: its height is at
+   most LIMB_MAX_SIDE, the greatest side limb_init takes, which
+   mapping_display accepts a display by, and the scale is the height over
+   WINDOW_SCALE_HEIGHT, to the nearest quarter, halves up (D7, rule 5). The
+   arrow is traced at the greatest, with its hotspot at the screen's last
+   pixel, and at ten times it, so that the compositor, which traces it at
+   the screen's scale and never meets a refusal, has room to spare. */
+#define ARROW_MARGIN 10
+static void check_arrow_greatest_scale(const THEME_POINTER *theme)
+{
+    COMPOSE_POINTER pointer = pointer_of(theme);
+    UINT32 greatest =
+        (UINT32)(((INT64)LIMB_MAX_SIDE * DISPLAY_SCALE_ONE +
+                  WINDOW_SCALE_HEIGHT / 2) /
+                 WINDOW_SCALE_HEIGHT);
+    UINT32 quarters[] = {greatest, greatest * ARROW_MARGIN};
+    size_t i;
+
+    for (i = 0; i < sizeof quarters / sizeof quarters[0]; i++) {
+        RECT box;
+
+        check(compose_pointer_box(&work, &pointer, 0, 0, quarters[i], &box) &&
+                  compose_pointer_box(&work, &pointer, LIMB_MAX_SIDE - 1,
+                                      LIMB_MAX_SIDE - 1, quarters[i], &box),
+              "the arrow is traced at the greatest scale a screen gives, and "
+              "far past it, at the screen's corners",
+              quarters[i], 0);
+    }
+}
+
 /* The lines lib/outline.c is given, as integers: a shape's coordinates
    scaled and rounded once to the nearest 256th of a pixel, halves up, and
    moved to the hotspot. Pixel tolerances cannot see a 256th, so each line's
@@ -2883,6 +2945,397 @@ static void check_arrow(void)
     check_arrow_refusals(&theme);
     check_pointer_sentinels(&theme);
     check_pointer_limits(&theme);
+    check_arrow_greatest_scale(&theme);
+}
+
+/* ------------------------------------------------------------------------
+   The pointer as a frame draws it (display.md D19 rule 7), against the
+   scene: the whole frame composed, with the arrow drawn over it as one band
+   of the whole screen. Where the arrow is drawn is checked above
+   (check_arrow); here the frames and the damage of a move must agree with
+   it. */
+
+#define CURSOR_STEPS 90
+#define CURSOR_MOVES_MAX 3    /* moves between two frames, at most */
+#define CURSOR_NEAR 4         /* a move to a neighbour, in pixels, at most */
+#define CURSOR_OFF_SCREEN 30  /* how far past the screen a move may go */
+#define CURSOR_MOVE_KINDS 4
+
+/* Hotspots, in pixels: the screen's corners and middle, each edge cut
+   through, and well off the screen. */
+static const struct {
+    INT64 x, y;
+} cursor_places[] = {{0, 0},
+                     {30, 20},
+                     {80, 50},
+                     {SCENE_WIDTH - 1, SCENE_HEIGHT - 1},
+                     {150, 90},
+                     {-5, -8},
+                     {SCENE_WIDTH - 3, -4},
+                     {-3, SCENE_HEIGHT - 6},
+                     {SCENE_WIDTH + CURSOR_OFF_SCREEN,
+                      SCENE_HEIGHT + CURSOR_OFF_SCREEN},
+                     {65, 41},
+                     {17, 3}};
+#define CURSOR_PLACES (sizeof cursor_places / sizeof cursor_places[0])
+
+typedef struct {
+    SCREEN screen;
+    COMPOSE_WALLPAPER wallpaper;
+    COMPOSE_WINDOW windows[SCENE_WINDOWS];
+    COMPOSE_POINTER image;
+    UINT32 quarters;
+    UINT32 *all; /* the frame composed whole, 0x00RRGGBB, without the arrow */
+} CURSOR_RIG;
+
+/* The whole frame with the arrow's hotspot on the top left of pixel (x, y),
+   drawn over it. The caller frees it. */
+static UINT32 *with_arrow(const CURSOR_RIG *rig, INT64 x, INT64 y)
+{
+    size_t bytes = (size_t)SCENE_WIDTH * SCENE_HEIGHT * sizeof(UINT32);
+    UINT32 *drawn = malloc(bytes);
+    RECT whole = {0, 0, SCENE_WIDTH, SCENE_HEIGHT};
+    COMPOSE_BAND band;
+
+    memcpy(drawn, rig->all, bytes);
+    band.pixels = drawn;
+    band.stride = SCENE_WIDTH;
+    band.rect = whole;
+    compose_pointer(&work, &rig->image, &band, x, y, rig->quarters);
+    return drawn;
+}
+
+/* A frame over each rectangle, in bands of each height, with the hotspot
+   placed at each of the places, is the whole frame with the arrow drawn
+   over it in the blocks the rectangle holds, and writes nothing else. */
+static void check_cursor_frames(const CURSOR_RIG *rig, UINT32 *screen_memory)
+{
+    size_t p, r, h;
+
+    for (p = 0; p < CURSOR_PLACES; p++) {
+        COMPOSE_CURSOR cursor = {&rig->image, rig->quarters, &work, 1,
+                                 cursor_places[p].x, cursor_places[p].y};
+        UINT32 *drawn = with_arrow(rig, cursor.x, cursor.y);
+
+        for (r = 0; r < FRAME_RECTS; r++)
+            for (h = 0; h < FRAME_ROWS; h++) {
+                INT64 wrong, stray;
+
+                frame_difference(&rig->screen, screen_memory, &rig->wallpaper,
+                                 rig->windows, &frame_rects[r], frame_rows[h],
+                                 &cursor, drawn, &wrong, &stray);
+                check(wrong == 0,
+                      "a frame with the pointer placed is the whole frame "
+                      "with the arrow over it, in the blocks it writes",
+                      (long long)(p * FRAME_RECTS + r), wrong);
+                check(stray == 0, "a frame with the pointer placed writes "
+                                  "nothing else",
+                      (long long)(p * FRAME_RECTS + r), stray);
+            }
+        free(drawn);
+    }
+}
+
+/* A pointer with no place is drawn nowhere, whatever its x and y hold, and
+   one whose scale the image is refused at is drawn nowhere. */
+static void check_cursor_not_drawn(const CURSOR_RIG *rig, UINT32 *screen_memory)
+{
+    COMPOSE_CURSOR unplaced = {&rig->image, rig->quarters, &work, 0, 40, 40};
+    COMPOSE_CURSOR refused = {&rig->image, 0, &work, 1, 40, 40};
+    const COMPOSE_CURSOR *cursors[] = {&unplaced, &refused};
+    size_t c, r, h;
+
+    for (c = 0; c < sizeof cursors / sizeof cursors[0]; c++)
+        for (r = 0; r < FRAME_RECTS; r++)
+            for (h = 0; h < FRAME_ROWS; h++) {
+                INT64 wrong, stray;
+
+                frame_difference(&rig->screen, screen_memory, &rig->wallpaper,
+                                 rig->windows, &frame_rects[r], frame_rows[h],
+                                 cursors[c], rig->all, &wrong, &stray);
+                check(wrong == 0 && stray == 0,
+                      "a pointer with no place, or one the image is refused "
+                      "for, is drawn nowhere",
+                      (long long)c, wrong + stray);
+            }
+}
+
+/* The smallest rectangle holding both, as the compositor's damage grows. */
+static void join_rects(RECT *total, const RECT *rect)
+{
+    if (rect->left >= rect->right || rect->top >= rect->bottom)
+        return;
+    if (total->left >= total->right || total->top >= total->bottom) {
+        *total = *rect;
+        return;
+    }
+    total->left = rect->left < total->left ? rect->left : total->left;
+    total->top = rect->top < total->top ? rect->top : total->top;
+    total->right = rect->right > total->right ? rect->right : total->right;
+    total->bottom = rect->bottom > total->bottom ? rect->bottom : total->bottom;
+}
+
+static INT64 block_down(INT64 pixels)
+{
+    return pixels / (INT64)BLOCK_PIXELS * (INT64)BLOCK_PIXELS;
+}
+
+static INT64 block_up(INT64 pixels)
+{
+    return block_down(pixels + (INT64)BLOCK_PIXELS - 1);
+}
+
+static int has_pixels(const RECT *rect)
+{
+    return rect->left < rect->right && rect->top < rect->bottom;
+}
+
+/* What the pointer's hotspot at pixel (x, y) damages, from the arrow's
+   geometry (geometric_box) and the output's blocks, which start every row
+   of this scene: the arrow's box cut by the screen, with the columns widened
+   to whole blocks. Empty where the box is off the screen. */
+static RECT damage_of(const THEME_POINTER *theme, UINT32 quarters, INT64 x,
+                      INT64 y)
+{
+    RECT box, none = {0, 0, 0, 0};
+    INT64 left, right;
+
+    geometric_box(&theme->body, quarters, &box);
+    left = x + box.left < 0 ? 0 : x + box.left;
+    right = x + box.right > SCENE_WIDTH ? SCENE_WIDTH : x + box.right;
+    box.top = y + box.top < 0 ? 0 : y + box.top;
+    box.bottom = y + box.bottom > SCENE_HEIGHT ? SCENE_HEIGHT : y + box.bottom;
+    if (left >= right || box.top >= box.bottom)
+        return none;
+    box.left = block_down(left);
+    box.right = block_up(right);
+    return box;
+}
+
+/* Whether got is the damage wanted: the same rectangle, or no pixels where
+   wanted has none. */
+static int is_damage(const RECT *got, const RECT *wanted)
+{
+    if (!has_pixels(wanted))
+        return !has_pixels(got);
+    return got->left == wanted->left && got->top == wanted->top &&
+           got->right == wanted->right && got->bottom == wanted->bottom;
+}
+
+/* The pixel a step of a walk moves the hotspot to: where it is, a
+   neighbour, anywhere on the screen, or past its edges. */
+static void walk_place(const COMPOSE_CURSOR *cursor, INT64 *x, INT64 *y)
+{
+    INT64 span = 2 * CURSOR_NEAR + 1;
+
+    switch (random_below(CURSOR_MOVE_KINDS)) {
+    case 0:
+        *x = cursor->x;
+        *y = cursor->y;
+        break;
+    case 1:
+        *x = cursor->x + random_below(span) - CURSOR_NEAR;
+        *y = cursor->y + random_below(span) - CURSOR_NEAR;
+        break;
+    case 2:
+        *x = random_below(SCENE_WIDTH);
+        *y = random_below(SCENE_HEIGHT);
+        break;
+    default:
+        *x = random_below(SCENE_WIDTH + 2 * CURSOR_OFF_SCREEN) -
+             CURSOR_OFF_SCREEN;
+        *y = random_below(SCENE_HEIGHT + 2 * CURSOR_OFF_SCREEN) -
+             CURSOR_OFF_SCREEN;
+        break;
+    }
+}
+
+typedef struct {
+    INT64 counts; /* moves that returned other than 0, 1 or 2 as stated */
+    INT64 state;  /* moves that left the pointer other than where moved to */
+    INT64 boxes;  /* moves that set boxes other than the geometry's */
+} WALK_FAULTS;
+
+/* One move of the walk: its return, the pointer it leaves and the boxes it
+   sets are what the header says, and what it damages joins damage. */
+static void walk_move(const CURSOR_RIG *rig, const THEME_POINTER *theme,
+                      COMPOSE_CURSOR *cursor, RECT *damage,
+                      WALK_FAULTS *faults)
+{
+    RECT untouched = {7, 8, 9, 10}, boxes[2], old_box, new_box;
+    INT64 x, y, was_x = cursor->x, was_y = cursor->y;
+    int was_placed = cursor->placed != 0, same;
+    UINT32 wanted, got, i;
+
+    walk_place(cursor, &x, &y);
+    same = was_placed && x == was_x && y == was_y;
+    wanted = !was_placed ? 1 : same ? 0 : 2;
+    boxes[0] = untouched;
+    boxes[1] = untouched;
+    got = compose_cursor_move(cursor, &rig->screen, x, y, boxes);
+    faults->counts += got != wanted;
+    faults->state += cursor->placed == 0 || cursor->x != x || cursor->y != y;
+    old_box = damage_of(theme, rig->quarters, was_x, was_y);
+    new_box = damage_of(theme, rig->quarters, x, y);
+    if (wanted == 2)
+        faults->boxes += !is_damage(&boxes[0], &old_box) ||
+                         !is_damage(&boxes[1], &new_box);
+    else if (wanted == 1)
+        faults->boxes += !is_damage(&boxes[0], &new_box) ||
+                         boxes[1].left != untouched.left ||
+                         boxes[1].top != untouched.top;
+    else
+        faults->boxes += boxes[0].left != untouched.left ||
+                         boxes[0].top != untouched.top ||
+                         boxes[1].left != untouched.left ||
+                         boxes[1].top != untouched.top;
+    for (i = 0; i < got && i < 2; i++)
+        join_rects(damage, &boxes[i]);
+}
+
+/* The pixels of the screen's memory that are not colours (0x00RRGGBB) in
+   the screen's order. */
+static INT64 screen_wrong(const CURSOR_RIG *rig, const UINT32 *screen_memory,
+                          const UINT32 *colours)
+{
+    INT64 i, wrong = 0;
+
+    for (i = 0; i < SCENE_WIDTH * SCENE_HEIGHT; i++)
+        wrong += screen_memory[i] != gfx_pixel(&rig->screen,
+                                               colours[i] >> 16 & CHANNEL_MASK,
+                                               colours[i] >> 8 & CHANNEL_MASK,
+                                               colours[i] & CHANNEL_MASK);
+    return wrong;
+}
+
+/* A pointer that moves, and a frame composed over only what its moves
+   damage, leave the screen as the whole frame composed with the arrow where
+   the pointer is: after every step of CURSOR_STEPS, each of one to
+   CURSOR_MOVES_MAX moves between two frames, to the pixel it is on, a
+   neighbour, anywhere and off the screen. The moves return and set what the
+   geometry says. */
+static void check_cursor_walk(const CURSOR_RIG *rig, const THEME_POINTER *theme,
+                              UINT32 *screen_memory)
+{
+    COMPOSE_CURSOR cursor = {&rig->image, rig->quarters, &work, 0, 0, 0};
+    RECT whole = {0, 0, SCENE_WIDTH, SCENE_HEIGHT};
+    UINT32 *memory = malloc((size_t)SCENE_WIDTH * (SCENE_HEIGHT + 1) *
+                            sizeof(UINT32));
+    WALK_FAULTS faults = {0, 0, 0};
+    INT64 step, i;
+
+    for (i = 0; i < SCENE_WIDTH * SCENE_HEIGHT; i++)
+        screen_memory[i] = SCREEN_BEFORE;
+    compose_frame(&rig->screen, &rig->wallpaper, rig->windows, SCENE_WINDOWS,
+                  &whole, memory, SCENE_HEIGHT, &cursor);
+    check(screen_wrong(rig, screen_memory, rig->all) == 0,
+          "a screen composed before the pointer has a place shows no "
+          "pointer",
+          rig->quarters, 0);
+    for (step = 0; step < CURSOR_STEPS; step++) {
+        RECT damage = {0, 0, 0, 0};
+        INT64 moves = 1 + random_below(CURSOR_MOVES_MAX), m;
+        UINT32 *drawn;
+
+        for (m = 0; m < moves; m++)
+            walk_move(rig, theme, &cursor, &damage, &faults);
+        compose_frame(&rig->screen, &rig->wallpaper, rig->windows,
+                      SCENE_WINDOWS, &damage, memory,
+                      frame_rows[step % (INT64)FRAME_ROWS], &cursor);
+        drawn = with_arrow(rig, cursor.x, cursor.y);
+        check(screen_wrong(rig, screen_memory, drawn) == 0,
+              "frames over what the pointer's moves damage leave the screen "
+              "as the whole frame with the arrow where it is",
+              rig->quarters, step);
+        free(drawn);
+    }
+    check(faults.counts == 0,
+          "a move returns 1 for the first, 2 after, and 0 for the pixel the "
+          "pointer is on",
+          rig->quarters, faults.counts);
+    check(faults.state == 0, "a move leaves the pointer on the pixel moved to",
+          rig->quarters, faults.state);
+    check(faults.boxes == 0,
+          "a move sets the arrow's box at the old place and the new, cut by "
+          "the screen and in whole blocks",
+          rig->quarters, faults.boxes);
+    free(memory);
+}
+
+/* A move the image is refused at returns 0, sets no box and leaves the
+   pointer where it was. */
+static void check_cursor_refusals(const CURSOR_RIG *rig,
+                                  const THEME_POINTER *theme)
+{
+    COMPOSE_POINTER bad = pointer_of(theme);
+    COMPOSE_CURSOR cursor = {&rig->image, rig->quarters, &work, 1, 30, 20};
+    COMPOSE_CURSOR no_scale = {&rig->image, 0, &work, 1, 30, 20};
+    COMPOSE_CURSOR no_image = {&bad, rig->quarters, &work, 0, 0, 0};
+    RECT untouched = {7, 8, 9, 10}, boxes[2] = {{7, 8, 9, 10}, {7, 8, 9, 10}};
+
+    check(compose_cursor_move(&cursor, &rig->screen, COMPOSE_COORDINATE_MAX, 5,
+                              boxes) == 0 &&
+              cursor.placed && cursor.x == 30 && cursor.y == 20 &&
+              boxes[0].left == untouched.left,
+          "a move to a hotspot the arrow cannot be traced at is refused and "
+          "leaves the pointer",
+          rig->quarters, 0);
+    check(compose_cursor_move(&no_scale, &rig->screen, 31, 20, boxes) == 0 &&
+              no_scale.x == 30 && no_scale.y == 20 &&
+              boxes[0].left == untouched.left,
+          "a move at a scale of 0 is refused and leaves the pointer",
+          rig->quarters, 0);
+    bad.edge_percent = COMPOSE_PERCENT + 1;
+    check(compose_cursor_move(&no_image, &rig->screen, 31, 20, boxes) == 0 &&
+              no_image.placed == 0 && boxes[0].left == untouched.left,
+          "a move of an image that is refused leaves the pointer with no "
+          "place",
+          rig->quarters, 0);
+}
+
+/* The frames and the moves of the pointer, in each pixel format and at each
+   of V15's scales. */
+static void check_cursor(const SCENE *scene)
+{
+    static THEME_POINTER theme;
+    size_t f, q;
+
+    if (!read_pointer(&theme)) {
+        check(0, "the description has the pointer's settings", 0, 0);
+        return;
+    }
+    for (f = 0; f < FORMATS; f++) {
+        UINT32 *image = kernel_image(scene->canonical, SCENE_WIDTH,
+                                     SCENE_HEIGHT, formats[f]);
+        UINT32 *screen_memory = aligned_alloc(
+            OUTPUT_BLOCK_BYTES,
+            (size_t)SCENE_WIDTH * SCENE_HEIGHT * sizeof(UINT32));
+
+        for (q = 0; q < ARROW_SCALES; q++) {
+            static CURSOR_RIG rig;
+            RECT whole = {0, 0, SCENE_WIDTH, SCENE_HEIGHT};
+
+            windows_of(scene, rig.windows);
+            rig.screen.pixels = screen_memory;
+            rig.screen.width = SCENE_WIDTH;
+            rig.screen.height = SCENE_HEIGHT;
+            rig.screen.stride = SCENE_WIDTH;
+            rig.screen.format = formats[f];
+            rig.wallpaper.pixels = image;
+            rig.wallpaper.stride = SCENE_WIDTH;
+            rig.wallpaper.format = formats[f];
+            rig.image = pointer_of(&theme);
+            rig.quarters = arrow_table[q].quarters;
+            rig.all = compose_rect(&rig.wallpaper, rig.windows, &whole);
+            check_cursor_frames(&rig, screen_memory);
+            check_cursor_not_drawn(&rig, screen_memory);
+            check_cursor_walk(&rig, &theme, screen_memory);
+            check_cursor_refusals(&rig, &theme);
+            free(rig.all);
+        }
+        free(screen_memory);
+        free(image);
+    }
 }
 
 /* ------------------------------------------------------------------------ */
@@ -2909,6 +3362,7 @@ int main(int argc, char **argv)
         make_scene(&scene);
         check_frames(&scene);
         check_frame_rects(&scene);
+        check_cursor(&scene);
         free_scene(&scene);
     }
     check_blocks();

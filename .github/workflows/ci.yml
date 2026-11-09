@@ -123,7 +123,7 @@ jobs:
             lib/outline.c gfx/raster.c
           "$RUNNER_TEMP/check-outline"
 
-      - name: The composer's frames, output and pointer are as display.md D8 and look.md V15 give them
+      - name: The composer's frames, output, pointer and the pointer's damage are as display.md D8 and D19 and look.md V15 give them
         run: |
           cc -std=c11 -Wall -Wextra -pedantic -Werror -I include -I lib \
             -I gfx -I console -o "$RUNNER_TEMP/check-compose" \
@@ -159,7 +159,7 @@ jobs:
             tools/check-route.c lib/route.c lib/backlog.c
           "$RUNNER_TEMP/check-route"
 
-      - name: What waits for a window's channel is as display.md D11 gives it
+      - name: What waits for a window's channel, and the bytes it is sent, are as display.md D11 gives them
         run: |
           cc -std=c11 -Wall -Wextra -pedantic -Werror \
             -fsanitize=address,undefined -fno-sanitize-recover=all \
