@@ -341,6 +341,14 @@ program nvo-library.exe nvo_parse -I lib lib/nvo_decimal.c lib/nvo_syntax.c \
   lib/nvo_value.c
 rm -f -- "$out/nvo-library.exe"
 
+# The rules of a window, lib/window.c, are in no program yet. Linking them
+# alone with the composer they call, with --werror's -Wall -Werror, checks
+# that they build for the guest with TinyCC and leave no symbol undefined;
+# no program is built from them and the result is not kept.
+program window-library.exe window_open -I lib -I gfx lib/window.c \
+  lib/compose.c lib/outline.c gfx/gfx.c gfx/flush.c gfx/raster.c gfx/limb.c
+rm -f -- "$out/window-library.exe"
+
 # The store image's paths: nova-services, the programs the image's
 # header names for the first process to start; greeting; hello, the
 # test program, which refers to the greeting and links to it;
