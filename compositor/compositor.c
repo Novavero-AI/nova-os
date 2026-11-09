@@ -10,10 +10,16 @@
    where it does not and in a compositor started again, which gets none.
    The first frame is the wallpaper alone, written to the framebuffer in
    bands of TILE_ROWS (lib/compose.c): Limb as the kernel's fade left it,
-   so the screen shows no change. The compositor serves no window yet,
-   so that frame is the last it shows. */
+   so the screen shows no change. Then it serves connections and their
+   window (serve.c), until its channel from the first process closes.
 
-#include "compose.h"
+   A compositor that the options tell to exit for a test, a disk that
+   carries COMPFAIL, ends just after its first frame: the first process
+   issues no connection on such a disk until the console is a client of
+   the compositor, whose first shown present ends it then (display.md D19,
+   rule 9). */
+
+#include "compositor.h"
 #include "display_protocol.h"
 #include "limb.h"
 #include "log.h"
@@ -62,7 +68,13 @@ static UINT64 prepare_ns;
 
 static int has_display;
 
-static void say_status(const char *event, UINT32 status)
+/* The screen written, the wallpaper in the form a frame is composed from,
+   and memory for a band, which the display makes. */
+static SCREEN output;
+static COMPOSE_WALLPAPER wallpaper;
+static UINT32 *band;
+
+void compositor_say_status(const char *event, UINT32 status)
 {
     say("nova-compositor: ");
     say(event);
@@ -101,8 +113,7 @@ static void take_bootstrap(UINT32 bootstrap)
     process_exit(COMPOSITOR_EXIT_FAILED);
 }
 
-/* Close the count handles a message carried. */
-static void close_received(const RECEIVED_HANDLE *handles, UINT32 count)
+void compositor_close_received(const RECEIVED_HANDLE *handles, UINT32 count)
 {
     UINT32 i;
 
@@ -152,7 +163,7 @@ static void answer_background(UINT32 transaction)
     if (status == OK)
         status = channel_write(control, message.bytes, size, no_handles, 0);
     if (status != OK && status != ERR_PEER_CLOSED)
-        say_status("background answer failed", status);
+        compositor_say_status("background answer failed", status);
 }
 
 /* The kernel's background, offered before the display in the message
@@ -188,14 +199,14 @@ static void take_background(const COMPOSITOR_SETUP_BACKGROUND_MESSAGE *m,
             wallpaper_source = WALLPAPER_SECTION;
             prepare_ns = timing_now() - begun;
         } else {
-            say_status("background map failed", status);
+            compositor_say_status("background map failed", status);
         }
     } else {
         say("nova-compositor: background refused reason=");
         say_value(refusal);
         say("\r\n");
     }
-    close_received(handles, count);
+    compositor_close_received(handles, count);
     answer_background(transaction);
 }
 
@@ -208,10 +219,7 @@ static void take_background(const COMPOSITOR_SETUP_BACKGROUND_MESSAGE *m,
    mapped or there is no memory for the wallpaper or a band. */
 static void take_display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
 {
-    SCREEN screen;
-    COMPOSE_WALLPAPER wallpaper;
-    UINT32 status = mapping_display(&mapping, resource, d, &screen);
-    UINT32 *band = 0;
+    UINT32 status = mapping_display(&mapping, resource, d, &output);
     UINT64 first_frame_ns;
 
     handle_close(resource);
@@ -221,37 +229,37 @@ static void take_display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
         process_exit(COMPOSITOR_EXIT_FAILED);
     }
     if (status != OK) {
-        say_status("framebuffer map failed", status);
+        compositor_say_status("framebuffer map failed", status);
         process_exit(COMPOSITOR_EXIT_FAILED);
     }
     if (!image) {
         UINT64 begun = timing_now();
 
-        status = compute_wallpaper(&screen);
+        status = compute_wallpaper(&output);
         if (status != OK) {
-            say_status("wallpaper failed", status);
+            compositor_say_status("wallpaper failed", status);
             process_exit(COMPOSITOR_EXIT_FAILED);
         }
         wallpaper_source = WALLPAPER_COMPUTED;
         prepare_ns = timing_now() - begun;
     }
     band = mapping_memory(&mapping,
-                          (UINT64)screen.width * TILE_ROWS * PIXEL_BYTES,
+                          (UINT64)output.width * TILE_ROWS * PIXEL_BYTES,
                           &status);
     if (!band) {
-        say_status("band memory failed", status);
+        compositor_say_status("band memory failed", status);
         process_exit(COMPOSITOR_EXIT_FAILED);
     }
     wallpaper.pixels = image;
-    wallpaper.stride = screen.width;
+    wallpaper.stride = output.width;
     wallpaper.format = image_format;
-    compose_wallpaper_frame(&screen, &wallpaper, band, TILE_ROWS);
+    compose_wallpaper_frame(&output, &wallpaper, band, TILE_ROWS);
     gfx_flush();
     first_frame_ns = timing_now() - started;
     say("nova-compositor: display screen=");
-    say_number((UINT64)screen.width);
+    say_number((UINT64)output.width);
     say("x");
-    say_number((UINT64)screen.height);
+    say_number((UINT64)output.height);
     say(" wallpaper=");
     say(wallpaper_source);
     say(" prepare_ms=");
@@ -264,25 +272,21 @@ static void take_display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
 /* ------------------------------------------------------------------------
    The control channel. */
 
-/* Drop a message that came with status, the description's verdict, and
-   the count handles it carried: logged, and for a message the
-   description allows but this compositor does not serve, a connection,
-   with no status. */
-static void refuse(UINT32 status, const RECEIVED_HANDLE *handles,
-                   UINT32 count)
+void compositor_refuse(UINT32 status, const RECEIVED_HANDLE *handles,
+                       UINT32 count)
 {
     if (status == OK)
         say("nova-compositor: control message refused reason=unserved\r\n");
     else
-        say_status("control message refused", status);
-    close_received(handles, count);
+        compositor_say_status("control message refused", status);
+    compositor_close_received(handles, count);
 }
 
 /* Take the first process's messages as they come until the display's,
    the options and the background having come before it. A message the
    description does not allow is dropped with the handles it carried
-   closed, and one for a connection, which no window yet needs, is
-   dropped the same. The first process's close of the channel ends the
+   closed, and one for a connection, which the display must come before,
+   is dropped the same. The first process's close of the channel ends the
    compositor. */
 static void take_setup(void)
 {
@@ -304,7 +308,7 @@ static void take_setup(void)
         if (read_status == ERR_PEER_CLOSED)
             process_exit(COMPOSITOR_EXIT_DONE);
         if (read_status != OK) {
-            say_status("control read failed", read_status);
+            compositor_say_status("control read failed", read_status);
             process_exit(COMPOSITOR_EXIT_FAILED);
         }
         status = display_control_request_check(message.bytes, byte_count,
@@ -316,13 +320,13 @@ static void take_setup(void)
         else if (status == OK && which == COMPOSITOR_SETUP_DISPLAY)
             take_display(handles[0].handle, &message.display.display);
         else
-            refuse(status, handles, handle_count);
+            compositor_refuse(status, handles, handle_count);
     }
 }
 
 _Noreturn void compositor_main(UINT32 bootstrap_channel, UINT64 argument)
 {
-    UINT32 observed;
+    SERVE context;
 
     (void)argument;
     started = timing_now();
@@ -330,7 +334,10 @@ _Noreturn void compositor_main(UINT32 bootstrap_channel, UINT64 argument)
     take_setup();
     if (options & COMPOSITOR_OPTION_EXIT_TEST)
         process_exit(COMPOSITOR_EXIT_TEST);
-    object_wait_one(control, CHANNEL_PEER_CLOSED, DEADLINE_INFINITE,
-                    &observed);
-    process_exit(COMPOSITOR_EXIT_DONE);
+    context.mapping = &mapping;
+    context.control = control;
+    context.screen = &output;
+    context.wallpaper = &wallpaper;
+    context.band = band;
+    serve(&context);
 }

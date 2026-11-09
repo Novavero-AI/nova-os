@@ -1681,9 +1681,9 @@ login's session as it does on its own
 2. **Starting,** on every disk but the specimen disk, where the
    specimen takes the display as before and no compositor starts.
    Until the compositor serves the console's window (rule 4), only a
-   disk that carries `\NOVA\COMPFAIL` starts it, which then exits just
-   after its first frame, and the console draws every other disk as
-   before. The steps:
+   disk that carries `\NOVA\COMPFAIL`, which then exits just after its
+   first frame, or `\NOVA\WINDOW` (rule 11) starts it, and the console
+   draws every other disk as before. The steps:
    1. The first process reports its startup done
       ([console.md C1](console.md#c1-the-display-handoff)) without
       waiting for the console, since no background goes to the console,
@@ -1857,7 +1857,154 @@ login's session as it does on its own
     nothing. `CONSOLE_SETUP_CONNECTION`, `CONSOLE_SETUP_DISPLAY_AFTER`
     and the fallback stay, for the terminal and for a compositor given
     up.
+11. **The window test, until the console is the compositor's client.**
+    On a test disk that carries `\NOVA\WINDOW`, an empty file, a test
+    client, `\NOVA\WINTEST.EXE`, built from `test/wintest.c`, is the
+    compositor's client in the console's place; `window.img` is the test
+    disk with both added. The first process starts the compositor as rule
+    2 gives, with no option set, so that it does not exit, and starts the
+    client in the root job, keeping it running as it does login. For each
+    start of the client it issues a connection as rule 2's step 4 does,
+    with the label `wintest`, no mark, `SYSTEM` alone and no rights,
+    waits for `connected`, and gives the client its end in the client's
+    bootstrap message with `DISPLAY_CONNECTION_RIGHTS`
+    (`test/wintest.h`). The console runs beside the compositor as rule 2
+    gives, so it draws nothing and takes no key while the client holds
+    the window. The client:
+    - reads the screen from its connection, makes one window on `SYSTEM`
+      of the `PANEL` surface that asks for half the screen's width and
+      height, and waits for the first configure;
+    - gives the buffer 0 of the size the configure gives, each row 16
+      pixels longer than the window is wide, the extra pixels a colour no
+      window shows, and presents it whole naming the configure's serial;
+    - waits for the frame, gives the buffer 1, which differs from the
+      first in a square at the centre, a side of an eighth of the
+      shorter side, and presents it with that square as its one
+      rectangle; waits for the release of the buffer 0, and then for the
+      frame;
+    - holds the window until the compositor closes it or its connection.
 
+    Its pixels, from `test/wintest.h`: the top eighth of the window has
+    cover 0 over a colour the material must hide; the next eighth has half
+    cover, so that the colour is mixed over the material; the lower left
+    quarter is a checkerboard of squares of 8 pixels, black and white;
+    the rest is a gradient, red along each row and green down each column,
+    at full cover. It logs `nova-wintest: window screen=2880x1800
+    size=1440x900` once it has the configure, `nova-wintest: shown
+    frame=1`, `nova-wintest: released buffers=1` and `nova-wintest: shown
+    frame=2`; a step that fails ends it, logged as `nova-wintest: failed
+    step="window request" status=15`.
+
+    The CI boot of `window.img`, `ci/boot.py window`, requires, each once:
+    - the lines of the system boot up to the display's release, but for
+      the console's, which draws nothing;
+    - `nova-compositor: background refused reason="another size"`, and
+      `nova-compositor: display` with `wallpaper=computed`;
+    - `nova-compositor: connection issued number=1 label=wintest mark=no
+      layers=system rights=none`;
+    - the client's window, `shown frame=1`, `released buffers=1` and
+      `shown frame=2` lines;
+    - QMP's `screendump`, equal, within `SCREEN_TIMEOUT` of the line for
+      the second frame, to the `window` screen `ci/screens.c` draws for
+      its size.
+
+    It accepts no line that reports a failure, and neither
+    `nova-compositor: window closed` nor `nova-compositor: connection
+    closed`: the client holds its window and its connection for the whole
+    boot, and a close by their holder is not logged (rule 8), so a line
+    that says either is the compositor's. The window screen is drawn by
+    `lib/window.c` and `lib/compose.c`, which the compositor composes
+    with, from the screen's size alone. Its equality shows that the
+    compositor reads a buffer by its stride and not its width, places and
+    sizes the window, shows the covers the client sets, composes the
+    second frame's damage over the first, and gets the client's messages
+    whole; it does not show that those libraries are right, which
+    `tools/check-window.c` and `tools/check-compose.c` check on the host
+    against D6 to D8.
+
+- **Why a test client in the console's place:** the compositor must
+  serve a connection and a window before the console can be its client,
+  and a client whose every pixel the host knows tests what the
+  compositor does with it, where the console's text would test the
+  console too. Its pixels cover each way a window can differ from a
+  correct one: cover 0 shows the material and hides the colour, half
+  cover mixes, a checkerboard has an edge at every pixel, so that a
+  place off by one changes pixels, a gradient gives each column and row
+  a colour of its own, so that a window read from the wrong place or by
+  the wrong stride changes them, the row's extra pixels show if the
+  compositor reads a row at the window's width, and the second frame's
+  damage, composed over the first, shows if it is cut wrongly or never
+  composed. Its cost is a program, a disk and a boot, and a connection
+  the first process issues for it on a disk that carries `WINDOW`. The
+  names follow `COMPFAIL` and `fallback.img`: the flag file is the
+  behaviour, the disk the flag file added to the test disk's. Not taken:
+  the console as the first client, which is step 4's; its cost is that a
+  fault of the window protocol and a fault of the console look alike.
+- **Why the console draws nothing meanwhile:** rule 2 hands it no
+  endpoint and no display while the compositor runs, and the test client
+  is the compositor's one client, as the console is from step 4 on. Its
+  cost is a boot that logs in nowhere, so `window.img` makes no account
+  and `ci/boot.py window` types no key. Not taken: the console as a
+  second client; its cost is a second window, which rule 4 refuses.
+- **Why the compositor serves one connection at a time:** the
+  phase 3 arrangement has one window (rule 4), and a record for each of
+  many connections is state nothing reads. A connection issued while one
+  is served is answered `ERR_NO_RESOURCES`, the answer a second window
+  gets, and the first process logs `nova-init: connection refused`. A
+  connection is served again once the compositor has noticed the
+  holder's end of the last one close. Its cost is that a client's restart
+  must find the compositor has noticed the old connection's close
+  before it is issued a new one. Not taken: a record for each
+  connection; its cost is rules, which connection's layers a window
+  uses and in what order each closes, that one window never exercises.
+- **Why the damage between two frames is one rectangle:** a present
+  shown between two frames adds its rectangles to the damage, which
+  the next frame composes. The compositor keeps the smallest rectangle
+  that holds them all, so that its state is four numbers, and composes
+  the whole of it. Composing a pixel that has not changed writes what
+  is there, so the screen is the same as with the rectangles
+  composed alone. Its cost is composing what lies between
+  rectangles that are far apart: two corners of a window are the whole
+  window. Not taken: a list of the rectangles; its cost is a bound on
+  its length and a rule for a merge past it.
+- **Why the limit on a connection's windows counts those it holds
+  open:** D5 and D6 give a connection at most `CONNECTION_WINDOWS_MAX`
+  windows and do not say whether one it has closed counts. The limit
+  counts the windows a connection holds, so a connection that made a
+  window and closed it has not used it up, and the one window phase 3
+  serves (rule 4) never reaches it. A window's number, which
+  `window_made` answers with, is the count of windows the connection has
+  made, the first 1, so no window reuses a number and a number names one
+  window for the connection's life. Its cost is that the number is not
+  the count of windows held, which the compositor keeps apart from it
+  once it serves more than one. Not taken: a limit on every window the
+  connection has made; its cost is a client refused a window while it
+  holds none, for having made and closed `CONNECTION_WINDOWS_MAX` of
+  them.
+- **Why a scale half way between two quarters rounds up:** D7's rule 5
+  says to the nearest quarter and does not say which way a tie goes;
+  `window_scale` takes it up, as `compose_pointer` rounds a shape's
+  coordinates to the nearest 256th (`lib/compose.h`), so a screen of 900
+  rows has a scale of 1.25. Its least is one quarter, the least
+  `DISPLAY_SCREEN` and `WINDOW_CONFIGURE` give. Its cost is that a
+  screen whose height is exactly between two scales gets the larger.
+  Not taken: down; its cost is the mirror image, a screen that gets the
+  smaller. No screen the boots run is one.
+- **Why a reply that is not taken closes the connection:** D11's rule 7
+  has a reply wait in the compositor, at most `CONNECTION_PENDING_MAX`
+  of them, past which it closes the connection. Phase 3 sends each reply
+  at once on the connection's channel, which holds `CONNECTION_CAPACITY`
+  messages, and closes the connection with the reason `stalled` if the
+  channel does not take it. Its cost is that a client that sends
+  requests faster than it reads its replies is closed when the channel
+  is full, not when `CONNECTION_PENDING_MAX` replies wait. The queue
+  arrives with the windows that make it matter.
+- **Why `COMPOSITOR_OPTION_EXIT_TEST` still ends the compositor after
+  its first frame:** the console is not yet a client (rule 2, step 4),
+  so no window's present is shown on a disk that carries `COMPFAIL`, and
+  rule 9's exit after one is the exit after the first frame it gives
+  until then. The window test sets no option, so a boot of `window.img`
+  is of a compositor that runs.
 - **Why this order:** each phase uses what the ones before it built and
   what its row needs first, and each leaves the system working: the
   console draws every screen until phase 3, and remains the fallback

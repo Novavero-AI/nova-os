@@ -27,20 +27,43 @@
             panel also shows what came before, which the screen leaves
             blank, so it matches only where its view holds none of it.
 
+   window   Limb computed as the compositor computes its wallpaper, under
+            the window the test client (test/wintest.h) shows when it has
+            presented its second frame. It takes no INPUT. The window is
+            made, sized and placed by lib/window.c from the size the
+            client asks for on a screen this size, filled with the
+            client's pixels, and composed over the wallpaper by
+            lib/compose.c, as compositor/serve.c does. The screen is
+            therefore not an independent account of what a window looks
+            like: that is tools/check-compose.c's and tools/check-window.c's
+            to prove, against the specification. It checks that the
+            compositor wires those functions to the guest as the
+            specification says: that it reads a buffer by its stride and
+            not its width, shows the cover the client sets, places the
+            window and composes the damage of a second frame over the
+            first, and that the client's messages reach the compositor
+            whole. A mistake in lib/compose.c or lib/window.c shows on
+            both sides alike and goes unseen here.
+
    cc -std=c11 -O2 -Wall -Wextra -pedantic -I include -I gfx -I console \
-     -I lib -o screens ci/screens.c console/text.c console/view.c \
-     console/panel.c gfx/gfx.c gfx/font.c gfx/raster.c gfx/limb.c */
+     -I lib -I test -o screens ci/screens.c console/text.c console/view.c \
+     console/panel.c lib/compose.c lib/outline.c lib/window.c gfx/gfx.c \
+     gfx/font.c gfx/raster.c gfx/limb.c */
 
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "compose.h"
+#include "display_protocol.h"
 #include "font.h"
 #include "keymap.h"
 #include "limb.h"
 #include "panel.h"
 #include "view.h"
+#include "window.h"
+#include "wintest.h"
 
 #define EXIT_DRAWN 0
 #define EXIT_NOT_DRAWN 1
@@ -220,6 +243,133 @@ static int limb_screen(const SCREEN *screen, int count, char **inputs)
 }
 
 /* ------------------------------------------------------------------------
+   The window test client's window. */
+
+/* The frame whose pixels the screen shows: the client's second, which is
+   the last it presents. */
+#define WINDOW_LAST_FRAME WINTEST_FRAMES
+
+/* Limb for a screen as the compositor computes it, one pixel to a word, in
+   the screen's own format; 0 if Limb does not take the size. */
+static UINT32 *limb_wallpaper(const SCREEN *screen)
+{
+    UINT32 *pixels = malloc((size_t)screen->width * (size_t)screen->height *
+                            sizeof(UINT32));
+    LIMB limb;
+    INT64 x, y;
+
+    if (!pixels)
+        return 0;
+    if (!limb_init(&limb, screen->width, screen->height)) {
+        free(pixels);
+        return 0;
+    }
+    for (y = 0; y < screen->height; y++)
+        for (x = 0; x < screen->width; x++)
+            pixels[y * screen->width + x] = limb_pixel(&limb, x, y);
+    return pixels;
+}
+
+/* The pixels of the client's window of width x height, WINDOW_LAST_FRAME,
+   with no extra pixel at the end of a row; 0 if there is no memory. */
+static UINT32 *window_pixels(UINT32 width, UINT32 height)
+{
+    UINT32 *pixels = malloc((size_t)width * (size_t)height * sizeof(UINT32));
+    UINT32 x, y;
+
+    if (!pixels)
+        return 0;
+    for (y = 0; y < height; y++)
+        for (x = 0; x < width; x++)
+            pixels[(size_t)y * width + x] =
+                wintest_pixel(width, height, x, y, WINDOW_LAST_FRAME);
+    return pixels;
+}
+
+/* Compose the window over the wallpaper, the whole screen, with the panel
+   material and corners the compositor gives a window of the PANEL surface.
+   Returns 0 if the window cannot be made or there is no memory. */
+static int compose_window(const SCREEN *screen, const UINT32 *wallpaper)
+{
+    static COMPOSE_MATERIAL material;
+    static COMPOSE_CORNERS corners;
+    COMPOSE_WALLPAPER under;
+    COMPOSE_WINDOW placed;
+    DISPLAY_WINDOW_REQUEST request;
+    WINDOW_AREA area;
+    WINDOW_RECORD record;
+    RECT whole;
+    OUTLINE *work = malloc(sizeof *work);
+    UINT32 *memory = malloc((size_t)screen->width * TILE_ROWS *
+                            sizeof(UINT32));
+    UINT32 *pixels = 0;
+    INT64 radius = font_panel_radius(font_cell_width(screen->height));
+    int composed = 0;
+
+    area.screen_width = (UINT32)screen->width;
+    area.screen_height = (UINT32)screen->height;
+    area.strip = 0;
+    memset(&request, 0, sizeof request);
+    wintest_want(area.screen_width, area.screen_height, &request.width,
+                 &request.height);
+    request.layer = DISPLAY_LAYER_SYSTEM;
+    request.surface = DISPLAY_SURFACE_PANEL;
+    if (!work || !memory ||
+        !compose_material(&material, THEME_MATERIAL_PANEL_DEFAULT_TINT,
+                          THEME_MATERIAL_PANEL_DEFAULT_AMOUNT) ||
+        !compose_corners(work, &corners, radius * OUTLINE_ONE) ||
+        window_open(&area, (UINT32)corners.reach, DISPLAY_LAYER_SYSTEM, 0,
+                    &request, &record) != OK) {
+        fprintf(stderr, "screens: window: no window on a screen this size\n");
+    } else if ((pixels = window_pixels(record.width, record.height))) {
+        under.pixels = wallpaper;
+        under.stride = screen->width;
+        under.format = screen->format;
+        placed.pixels = pixels;
+        placed.stride = record.width;
+        placed.columns = record.width;
+        placed.rows = record.height;
+        placed.place.left = record.x;
+        placed.place.top = record.y;
+        placed.place.right = (INT64)record.x + record.width;
+        placed.place.bottom = (INT64)record.y + record.height;
+        placed.material = &material;
+        placed.corners = &corners;
+        whole.left = whole.top = 0;
+        whole.right = screen->width;
+        whole.bottom = screen->height;
+        compose_frame(screen, &under, &placed, 1, &whole, memory, TILE_ROWS);
+        composed = 1;
+    } else {
+        fprintf(stderr, "screens: window: no memory for the window\n");
+    }
+    free(pixels);
+    free(memory);
+    free(work);
+    return composed;
+}
+
+static int window_screen(const SCREEN *screen, int count, char **inputs)
+{
+    UINT32 *wallpaper;
+    int drawn = 0;
+
+    (void)inputs;
+    if (count != 0) {
+        fprintf(stderr, "screens: window: takes no input\n");
+        return 0;
+    }
+    wallpaper = limb_wallpaper(screen);
+    if (!wallpaper) {
+        fprintf(stderr, "screens: window: no Limb on a screen this size\n");
+        return 0;
+    }
+    drawn = compose_window(screen, wallpaper);
+    free(wallpaper);
+    return drawn;
+}
+
+/* ------------------------------------------------------------------------
    The screens and their output. */
 
 typedef struct {
@@ -230,6 +380,7 @@ typedef struct {
 static const SCREEN_KIND kinds[] = {
     {"console", console_screen},
     {"limb", limb_screen},
+    {"window", window_screen},
 };
 
 #define KINDS (sizeof kinds / sizeof kinds[0])

@@ -352,28 +352,41 @@ const char *compose_wallpaper_refusal(const BOOTSTRAP_BACKGROUND *background,
     return 0;
 }
 
-void compose_wallpaper_frame(const SCREEN *screen,
-                             const COMPOSE_WALLPAPER *wallpaper,
-                             UINT32 *memory, INT64 rows)
+void compose_frame(const SCREEN *screen, const COMPOSE_WALLPAPER *wallpaper,
+                   const COMPOSE_WINDOW *windows, UINT32 count,
+                   const RECT *rect, UINT32 *memory, INT64 rows)
 {
     INT64 top;
 
     if (rows < 1)
         return;
-    for (top = 0; top < screen->height; top += rows) {
+    for (top = rect->top; top < rect->bottom; top += rows) {
         RECT written;
         COMPOSE_BAND band;
 
-        written.left = 0;
+        written.left = rect->left;
         written.top = top;
-        written.right = screen->width;
-        written.bottom = smaller(top + rows, screen->height);
+        written.right = rect->right;
+        written.bottom = smaller(top + rows, rect->bottom);
         band.pixels = memory;
         band.stride = screen->width;
         band.rect = compose_blocks(screen, &written);
-        compose_band(&band, wallpaper, 0, 0);
+        compose_band(&band, wallpaper, windows, count);
         compose_write(&band, screen, &written);
     }
+}
+
+void compose_wallpaper_frame(const SCREEN *screen,
+                             const COMPOSE_WALLPAPER *wallpaper,
+                             UINT32 *memory, INT64 rows)
+{
+    RECT whole;
+
+    whole.left = 0;
+    whole.top = 0;
+    whole.right = screen->width;
+    whole.bottom = screen->height;
+    compose_frame(screen, wallpaper, 0, 0, &whole, memory, rows);
 }
 
 /* ------------------------------------------------------------------------

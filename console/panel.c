@@ -8,13 +8,11 @@
 #include "font.h"
 #include "limb.h"
 
-/* The padding around the text, and the corners' radius, in quarters of
-   a cell's width: the side padding is wider by the strokes' bearing, so
-   that the text's edges stand as far from the panel's on every side. */
-#define QUARTER 4
+/* The padding around the text, in quarters of a cell's width: the side
+   padding is wider by the strokes' bearing, so that the text's edges
+   stand as far from the panel's on every side. */
 #define SIDE_PADDING 5
 #define END_PADDING 4
-#define CORNER_RADIUS 5
 
 /* The panel's centre lies this far down the screen, so that it sits
    clear above the planet's edge, which Limb puts at 78 percent. */
@@ -42,8 +40,8 @@ static INT64 larger(INT64 a, INT64 b) { return a > b ? a : b; }
 int panel_layout(LAYOUT *layout, INT64 width, INT64 height)
 {
     INT64 cell = font_cell_width(height);
-    INT64 side = cell * SIDE_PADDING / QUARTER;
-    INT64 end = cell * END_PADDING / QUARTER;
+    INT64 side = cell * SIDE_PADDING / CELL_QUARTERS;
+    INT64 end = cell * END_PADDING / CELL_QUARTERS;
     INT64 line = font_height(cell);
     INT64 columns = smaller(TEXT_COLUMNS_MAX, (width - 2 * side) / cell);
     INT64 rows = smaller(PANEL_ROWS, (height - 2 * end) / line);
@@ -64,7 +62,7 @@ int panel_layout(LAYOUT *layout, INT64 width, INT64 height)
                               panel_height / 2));
     layout->box.right = layout->box.left + panel_width;
     layout->box.bottom = layout->box.top + panel_height;
-    layout->radius = cell * CORNER_RADIUS / QUARTER;
+    layout->radius = font_panel_radius(cell);
     layout->text_left = layout->box.left + side;
     layout->text_top = layout->box.top + end;
     return 1;

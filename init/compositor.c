@@ -29,16 +29,27 @@ _Static_assert(DISPLAY_BOOTSTRAP_TO_CLIENT_BYTES_MAX <=
 static const HANDLE_TRANSFER no_handles[1];
 
 /* A request that has a reply carries a transaction other than 0
-   (docs/spec/interface.md P7, rule 4). Init waits for no answer, so the
-   background, the only such request it sends, needs no particular one. */
+   (docs/spec/interface.md P7, rule 4). Init waits for no answer to the
+   background, so it needs no particular one; a connection's, which it
+   waits for, is told from other messages by its own, which rises. */
 #define BACKGROUND_TRANSACTION 1
+#define FIRST_CONNECT_TRANSACTION 2
+
+/* What the compositor sends init: its answers and its events, none of
+   which carries a handle. */
+static union {
+    UINT64 alignment;
+    UINT8 bytes[DISPLAY_CONTROL_TO_CLIENT_BYTES_MAX];
+} incoming;
 
 static UINT32 control = HANDLE_INVALID;
 static BOOT_BACKGROUND held;
+static UINT32 connect_transaction = FIRST_CONNECT_TRANSACTION;
 
 int compositor_wanted(void)
 {
-    return tests_flag(TEST_FLAG_COMPOSITOR_FAILS) &&
+    return (tests_flag(TEST_FLAG_COMPOSITOR_FAILS) ||
+            tests_flag(TEST_FLAG_WINDOW)) &&
            !boot_file(SPECIMEN_MARKER);
 }
 
@@ -74,7 +85,7 @@ void compositor_start(const PLATFORM *platform, UINT32 bootstrap)
 
 /* The options the compositor starts with (display_protocol.h), from the
    flag files a test disk holds: ui.reduce-motion for NOMOTION, and
-   leaving after its first frame for COMPFAIL. */
+   leaving after its first frame for COMPFAIL. WINDOW sets none. */
 static UINT32 options(void)
 {
     UINT32 bits = 0;
@@ -167,6 +178,98 @@ static void send_display(const PLATFORM *platform)
         say_status("display send failed", status);
     if (framebuffer.handle != HANDLE_INVALID)
         handle_close(framebuffer.handle);
+}
+
+/* Read the compositor's messages until its answer to the connection
+   issued as transaction, whose status and connection number are
+   *answer's. The answers and events that came before, a background's
+   prepared and a connection's closed, are not waited for and are passed
+   over. Returns OK, or the status of the read that failed, with
+   ERR_PEER_CLOSED for a compositor that has closed its end. */
+static UINT32 await_connected(UINT32 transaction,
+                              COMPOSITOR_CONNECTED_REPLY *answer)
+{
+    const COMPOSITOR_CONNECTED_REPLY *reply =
+        (const COMPOSITOR_CONNECTED_REPLY *)incoming.bytes;
+    RECEIVED_HANDLE handles[CHANNEL_MAX_HANDLES];
+    UINT32 byte_count, handle_count, observed, status, i;
+    int found;
+
+    for (;;) {
+        status = channel_read(control, incoming.bytes, sizeof incoming.bytes,
+                              handles, CHANNEL_MAX_HANDLES, &byte_count,
+                              &handle_count);
+        if (status == ERR_SHOULD_WAIT) {
+            object_wait_one(control,
+                            CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
+                            DEADLINE_INFINITE, &observed);
+            continue;
+        }
+        if (status != OK)
+            return status;
+        found = display_control_connected_check(incoming.bytes, byte_count,
+                                                handles, handle_count) == OK &&
+                reply->transaction == transaction;
+        for (i = 0; i < handle_count; i++)
+            handle_close(handles[i].handle);
+        if (found) {
+            answer->transaction = reply->transaction;
+            answer->status = reply->status;
+            answer->connection = reply->connection;
+            return OK;
+        }
+    }
+}
+
+UINT32 compositor_connect(const char *label, UINT32 layers, UINT32 rights,
+                          UINT32 *client)
+{
+    COMPOSITOR_CONNECT_REQUEST request;
+    COMPOSITOR_CONNECTED_REPLY answer;
+    HANDLE_TRANSFER transfer;
+    UINT32 mine = HANDLE_INVALID, theirs = HANDLE_INVALID, size, status;
+    UINT32 transaction = connect_transaction;
+    UINT32 length = 0;
+
+    *client = HANDLE_INVALID;
+    if (control == HANDLE_INVALID)
+        return ERR_BAD_STATE;
+    while (label[length])
+        length++;
+    request.setup.transaction = transaction;
+    request.setup.kind = 0;
+    request.mark = 0;
+    request.layers = layers;
+    request.rights = rights;
+    request.label_length = length;
+    status = channel_create(CONNECTION_CAPACITY, &mine, &theirs);
+    if (status == OK)
+        status = display_control_connect_encode(&request, (const UINT8 *)label,
+                                                length, &mine, 1, &transfer,
+                                                outgoing.bytes, &size);
+    if (status == OK)
+        status = channel_write(control, outgoing.bytes, size, &transfer, 1);
+    if (status != OK) {
+        if (mine != HANDLE_INVALID)
+            handle_close(mine);
+        if (theirs != HANDLE_INVALID)
+            handle_close(theirs);
+        if (status != ERR_PEER_CLOSED)
+            say_status("connection send failed", status);
+        return status;
+    }
+    connect_transaction++;
+    status = await_connected(transaction, &answer);
+    if (status == OK && answer.status != OK) {
+        say_status("connection refused", answer.status);
+        status = answer.status;
+    }
+    if (status != OK) {
+        handle_close(theirs);
+        return status;
+    }
+    *client = theirs;
+    return OK;
 }
 
 void compositor_started(const PLATFORM *platform)

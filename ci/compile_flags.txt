@@ -6,3 +6,4 @@
 -I../gfx
 -I../console
 -I../lib
+-I../test

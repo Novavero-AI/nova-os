@@ -11,3 +11,4 @@
 -I../gfx
 -I../kernel
 -I../drivers
+-I../native

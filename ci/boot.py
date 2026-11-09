@@ -5,7 +5,8 @@ Usage: python3 -I ci/boot.py --code CODE.fd --vars VARS.fd --log LOG
                              [--tests] [--data DATA [--corrupt-gpt KIND]]
                              [--size WIDTHxHEIGHT]
                              [--fonts FONTS [--screen SCREEN.ppm]]
-                             {system,fallback,persist,chain,specimen,logout} DISK
+                             {system,fallback,window,persist,chain,specimen,
+                              logout} DISK
                              [-- QEMU_ARG ...]
 
 Boots DISK with the machine and devices of README.md's Run section,
@@ -29,7 +30,7 @@ boot disk's read, the data disk's check with a data disk whose GPT is
 whole, and in chain mode the chain, each of its steps and each pinned
 link. Without --tests, a report anywhere in the log fails the boot, and
 the kernel must report its random number generator's self-test
-passing. chain, fallback and specimen take only a test disk, and
+passing. chain, fallback, window and specimen take only a test disk, and
 fallback and persist a whole data disk.
 
 In system mode, the boot must report the store service serving, startup
@@ -88,7 +89,23 @@ is not seen. Of the lines that report a failure the boot accepts only
 those of the first process and the drivers, each as often as it is
 reported and no more, and any other fails it; it then goes on as system
 mode does, matching the screen against the host's render and logging in
-on the console. In specimen mode, the boot of specimen.img
+on the console. In window mode, the boot of window.img, a
+test disk whose first process starts the compositor and a test client
+that makes a window on it (docs/spec/display.md D19, rules 2, 4, 5 and
+8), must report the compositor refusing the background and computing
+Limb, issuing the client's connection, and the client's window made,
+its first buffer shown, and its second shown with the first released;
+and then, within SCREEN_TIMEOUT of the client's report of the second,
+QMP's screendump must equal the screen ci/screens.c draws for the
+client's window, built with the host's C compiler, CC if set. That
+screen is made by the same library code the compositor composes with,
+so it shows that the compositor reads, places and composes what the
+client drew as the specification says, not that the library's rules
+are right, which tools/check-compose.c and tools/check-window.c check.
+The client holds its window and its connection for the whole boot, so a
+line that says the compositor closed either fails the boot. No console
+draws, no input is sent and no account is made. In specimen
+mode, the boot of specimen.img
 must report the display given to the type specimen from /store and the
 specimen drawn; then QMP's screendump, kept at SCREEN.ppm if given,
 must equal pixel for pixel the screen design/text/specimen.py draws at
@@ -371,11 +388,41 @@ FALLBACK_LINES = (
     + [INPUT_RESTARTED[0].repeated(INPUT_FUNCTIONS)]
     + [CONSOLE_AFTER])
 
-SYSTEM_LINES = [
+STARTUP_LINES = [
     Event("nova-store: serving"),
     STARTUP_DONE,
     BACKGROUND,
-] + INPUT_LINES
+]
+
+SYSTEM_LINES = STARTUP_LINES + INPUT_LINES
+
+# The window boot's lines (docs/spec/display.md D19, rules 2, 4, 5 and 8,
+# and test/wintest.h). The compositor, started on a test disk, refuses the
+# background for a display a row taller and computes Limb, as the fallback
+# boot's does. The first process issues the test client's connection on
+# the SYSTEM layer; the client names the screen it was told of and the
+# size of the window it was given, makes two buffers, and logs each frame
+# that shows a present, the second after the release of the first's
+# buffer, a bit of the mask of buffers. The window is on screen once the
+# client logs the second frame; the screen is then checked.
+WINDOW_SHOWN = Event("nova-wintest: shown frame=2")
+WINDOW_LINES = STARTUP_LINES + [
+    Event('nova-compositor: background refused reason="another size"'),
+    COMPOSITOR_DISPLAY,
+    Event("nova-compositor: connection issued number=1 label=wintest "
+          "mark=no layers=system rights=none"),
+    Event("nova-wintest: window", screen=SCREEN_SIZE, size=SCREEN_SIZE),
+    Event("nova-wintest: shown frame=1"),
+    Event("nova-wintest: released buffers=1"),
+    WINDOW_SHOWN,
+]
+
+# The lines the window boot refuses besides those that report a failure.
+# The client holds its window and its connection for the whole boot, and
+# a close by their holder logs nothing (docs/spec/display.md D19, rule 8),
+# so each is a close the compositor made.
+WINDOW_REFUSED = [Event("nova-compositor: window closed"),
+                  Event("nova-compositor: connection closed")]
 
 CHAIN_LINES = [STARTUP_DONE]
 
@@ -422,14 +469,16 @@ CHAIN_LINK_DATA = {"%s/%s.exe" % (CHAIN, link): "pinned " + link
 # show (docs/spec/display.md D19).
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 SCREENS_SOURCES = ["ci/screens.c", "console/text.c", "console/view.c",
-                   "console/panel.c", "gfx/gfx.c", "gfx/font.c",
+                   "console/panel.c", "lib/compose.c", "lib/outline.c",
+                   "lib/window.c", "gfx/gfx.c", "gfx/font.c",
                    "gfx/raster.c", "gfx/limb.c"]
-SCREENS_INCLUDES = ["include", "gfx", "console", "lib"]
+SCREENS_INCLUDES = ["include", "gfx", "console", "lib", "test"]
 SCREENS_FLAGS = ["-std=c11", "-O2", "-Wall", "-Wextra", "-pedantic",
                  "-Werror"]
 SCREENS_PROGRAM = "screens"
 CONSOLE_SCREEN = "console"
 LIMB_SCREEN = "limb"
+WINDOW_SCREEN = "window"
 TYPED_LINE = "line"
 WRITTEN = "write"
 WHEEL_TURNED = "wheel"
@@ -447,8 +496,9 @@ PPM_MAGIC = b"P6"
 PPM_MAXVAL = b"255"
 PPM_FIELDS = 4
 
-DEFAULT_TIMEOUTS = {"system": 300, "fallback": 300, "persist": 300,
-                    "chain": 2700, "specimen": 300, "logout": 300}
+DEFAULT_TIMEOUTS = {"system": 300, "fallback": 300, "window": 300,
+                    "persist": 300, "chain": 2700, "specimen": 300,
+                    "logout": 300}
 
 DATA_LINES = [
     Event("nova-fs: pool opened", lba=ANY_VALUE),
@@ -797,6 +847,12 @@ def accepted_failures(mode):
     return ACCEPTED_FAILURES if mode == "fallback" else []
 
 
+def refused_lines(mode):
+    """The lines, besides those that report a failure, that fail a boot
+    in mode: the window boot's WINDOW_REFUSED, and none in any other."""
+    return WINDOW_REFUSED if mode == "window" else []
+
+
 class Accepted:
     """The failure lines a boot may report, as ACCEPTED_FAILURES gives
     them, and none other: take a line, and it is accepted only the first
@@ -1097,18 +1153,20 @@ class Serial:
     a line holds of UNLOGGED is noted in leaked. With report, a Ktap,
     every line is read into it; without, a report's version line fails
     the boot. With size, a display line that names another size fails
-    it. A line that reports a failure fails the boot unless accepted, an
-    Accepted, takes it. Each of watches, pairs of an Event and a function
-    of no arguments, calls the function once, when the first line that
-    matches the Event is read."""
+    it. A line that reports a failure fails the boot unless the mode's
+    accepted_failures take it, and a line that matches one of the mode's
+    refused_lines fails it. Each of watches, pairs of an Event and a
+    function of no arguments, calls the function once, when the first
+    line that matches the Event is read."""
 
-    def __init__(self, stream, log, report, size, accepted, watches=()):
+    def __init__(self, stream, log, report, size, mode, watches=()):
         self.lines = queue.Queue()
         self.start = time.monotonic()
         self.leaked = set()
         self.report = report
         self.size = size
-        self.accepted = accepted
+        self.accepted = Accepted(accepted_failures(mode))
+        self.refused = refused_lines(mode)
         self.watches = list(watches)
         self.reader = threading.Thread(target=self.read, args=(stream, log))
         self.reader.start()
@@ -1158,6 +1216,10 @@ class Serial:
                 continue
             if reports_failure(parsed) and not self.accepted.take(parsed):
                 raise BootFailed("reported a failure: "
+                                 + line[LINE_START.search(line).start():])
+            if any(event.matches(parsed) for event in self.refused):
+                raise BootFailed("reported a close its holder does not "
+                                 "make: "
                                  + line[LINE_START.search(line).start():])
             if BACKGROUND.matches(parsed):
                 check_spinner(parsed[2], line)
@@ -1467,20 +1529,15 @@ def check_limb(qmp_path, scratch, screens):
           % (width, height, hashlib.sha256(pixels).hexdigest()), flush=True)
 
 
-def match_screen(qmp, scratch, screens, inputs, steady):
-    """Take QMP's screendump until its pixels' SHA-256 is that of the
-    console's screen screens draws at its size from inputs, or
-    SCREEN_TIMEOUT passes. The caret is in either phase of its blink,
-    which a screen with no caret in view draws alike; where it is
-    steady, it is lit, and the screen must then stay that one for
-    STEADY_SECONDS, since a blinking caret matches whenever it is lit."""
-    shot = os.path.abspath(os.path.join(scratch, SCREEN_COPY))
+def poll_screen(qmp, shot, draw):
+    """Take QMP's screendump, which it writes to shot, until its pixels'
+    SHA-256 is that of one of the images draw gives, a function of the
+    screen's width and height, or SCREEN_TIMEOUT passes. Returns the
+    images and their digests."""
     deadline = time.monotonic() + SCREEN_TIMEOUT
     qmp.execute("screendump", filename=shot)
     width, height, pixels = read_ppm(shot)
-    wanted = [draw_screen(screens, scratch, CONSOLE_SCREEN, width, height,
-                          inputs + [CARET, phase])
-              for phase in (CARET_STEADY if steady else CARET_PHASES)]
+    wanted = draw(width, height)
     digests = [hashlib.sha256(image).digest() for image in wanted]
     while hashlib.sha256(pixels).digest() not in digests:
         if time.monotonic() >= deadline:
@@ -1493,8 +1550,42 @@ def match_screen(qmp, scratch, screens, inputs, steady):
         _, _, pixels = read_ppm(shot)
     print("          the %dx%d screen equals ci/screens.c's, sha256 %s"
           % (width, height, hashlib.sha256(pixels).hexdigest()), flush=True)
+    return wanted, digests
+
+
+def match_screen(qmp, scratch, screens, inputs, steady):
+    """Take QMP's screendump until its pixels' SHA-256 is that of the
+    console's screen screens draws at its size from inputs, or
+    SCREEN_TIMEOUT passes. The caret is in either phase of its blink,
+    which a screen with no caret in view draws alike; where it is
+    steady, it is lit, and the screen must then stay that one for
+    STEADY_SECONDS, since a blinking caret matches whenever it is lit."""
+    shot = os.path.abspath(os.path.join(scratch, SCREEN_COPY))
+    wanted, digests = poll_screen(
+        qmp, shot,
+        lambda width, height: [
+            draw_screen(screens, scratch, CONSOLE_SCREEN, width, height,
+                        inputs + [CARET, phase])
+            for phase in (CARET_STEADY if steady else CARET_PHASES)])
     if steady:
         hold_screen(qmp, shot, wanted, digests)
+
+
+def check_window(qmp_path, scratch, screens):
+    """Take QMP's screendump until it equals the screen ci/screens.c
+    draws for the window test client's window at its size, or
+    SCREEN_TIMEOUT passes. The client has logged its second frame, which
+    the compositor has composed and flushed before it sends the frame's
+    event, but QEMU shows the guest's memory at its own refresh."""
+    shot = os.path.abspath(os.path.join(scratch, SCREEN_COPY))
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(QMP_TIMEOUT)
+        connection.connect(qmp_path)
+        with connection.makefile("rwb") as stream:
+            poll_screen(Qmp(stream), shot,
+                        lambda width, height: [
+                            draw_screen(screens, scratch, WINDOW_SCREEN,
+                                        width, height, [])])
 
 
 def hold_screen(qmp, shot, wanted, digests):
@@ -1827,17 +1918,19 @@ def report_problems(report, args):
 def boot(args, scratch, log, data_drive, data_lines, first):
     """Boot once with data_drive, the data disk's arguments, and check
     the boot's lines, and with --tests its test report; for the
-    specimen, check its screen; in system and persist modes, send the
+    specimen and the window, check its screen; in system and persist
+    modes, send the
     pointer's events, and with a data disk whose GPT is whole create the
     account if first or log in with it, and run whoami and the file
     commands."""
     vars_copy = os.path.join(scratch, "vars.fd")
     shutil.copyfile(args.vars, vars_copy)
     qmp_path = os.path.join(scratch, "qmp.sock")
-    accounts = (args.mode not in ("chain", "specimen") and data_drive
-                and not args.corrupt_gpt)
+    accounts = (args.mode not in ("chain", "specimen", "window")
+                and data_drive and not args.corrupt_gpt)
     screens = None
-    if accounts and args.mode in ("system", "fallback"):
+    if (accounts and args.mode in ("system", "fallback")
+            or args.mode == "window"):
         screens = build_screens(scratch)
     ready = []
     if accounts:
@@ -1863,10 +1956,14 @@ def boot(args, scratch, log, data_drive, data_lines, first):
         if args.mode == "fallback":
             watches = [(COMPOSITOR_DISPLAY,
                         lambda: check_limb(qmp_path, scratch, screens))]
-        serial = Serial(qemu.stdout, log, report, args.size,
-                        Accepted(accepted_failures(args.mode)), watches)
+        if args.mode == "window":
+            watches = [(WINDOW_SHOWN,
+                        lambda: check_window(qmp_path, scratch, screens))]
+        serial = Serial(qemu.stdout, log, report, args.size, args.mode,
+                        watches)
         lines = {"chain": CHAIN_LINES,
                  "specimen": SPECIMEN_LINES,
+                 "window": WINDOW_LINES,
                  "fallback": SYSTEM_LINES + FALLBACK_LINES}.get(
                      args.mode, SYSTEM_LINES + CONSOLE_DRAWN[args.tests])
         if not args.tests:
@@ -1946,7 +2043,8 @@ def main():
     if args.mode in ("fallback", "persist") and (not args.data
                                                  or args.corrupt_gpt):
         parser.error("%s needs --data, whole" % args.mode)
-    if args.mode in ("chain", "fallback", "specimen") and not args.tests:
+    if (args.mode in ("chain", "fallback", "specimen", "window")
+            and not args.tests):
         parser.error("%s takes only a test disk, with --tests" % args.mode)
     if args.mode == "logout" and (args.tests or not args.data
                                   or args.corrupt_gpt):
@@ -1955,8 +2053,10 @@ def main():
         parser.error("specimen needs --fonts, and only specimen takes it")
     if args.screen and args.mode != "specimen":
         parser.error("only specimen takes --screen")
-    if args.size and args.mode not in ("system", "fallback", "persist"):
-        parser.error("only system, fallback and persist take --size")
+    if args.size and args.mode not in ("system", "fallback", "window",
+                                       "persist"):
+        parser.error("only system, fallback, window and persist take "
+                     "--size")
     if args.timeout is None:
         args.timeout = DEFAULT_TIMEOUTS[args.mode]
     with tempfile.TemporaryDirectory() as scratch, \

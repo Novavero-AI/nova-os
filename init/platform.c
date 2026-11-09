@@ -205,13 +205,14 @@ typedef struct child {
 /* The block driver, the console and the compositor take the first
    places, then an input driver for each input function the walk found.
    The programs platform_keep keeps running take the places after
-   theirs: the accounts service and login. */
+   theirs: the accounts service and login, and on a window test disk the
+   test client. */
 #define CHILD_BLOCK 0
 #define CHILD_CLIENT 1
 #define CHILD_COMPOSITOR 2
 #define CHILD_FIRST_INPUT 3
 #define CHILD_FIRST_PROGRAM (CHILD_FIRST_INPUT + INPUT_DEVICES_MAX)
-#define PROGRAMS_MAX 2
+#define PROGRAMS_MAX 3
 #define CHILDREN (CHILD_FIRST_PROGRAM + PROGRAMS_MAX)
 
 _Static_assert(CHILDREN <= KEY_FIELD_MASK + 1,

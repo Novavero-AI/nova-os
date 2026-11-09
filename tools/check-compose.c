@@ -683,6 +683,121 @@ static UINT32 *compose_rect(const COMPOSE_WALLPAPER *wallpaper,
     return out;
 }
 
+/* The pixel the screen holds before a frame, whose unused byte is not 0,
+   so that a pixel the frame does not write shows. */
+#define SCREEN_BEFORE 0xA5A5A5A5u
+
+/* The pixels in a block of the screen's memory, which starts at a multiple
+   of OUTPUT_BLOCK_BYTES. */
+#define BLOCK_PIXELS (OUTPUT_BLOCK_BYTES / sizeof(UINT32))
+
+/* compose_frame of rect, over a screen that held SCREEN_BEFORE, in bands
+   of rows rows: in each row of rect, every pixel of every block that
+   holds a pixel of rect is the composed one in the screen's order with
+   its unused byte 0, and every other pixel is untouched, as is every
+   pixel in the other rows. all is the whole frame composed, as
+   0x00RRGGBB. */
+static void check_frame_rect(const SCREEN *screen, UINT32 *screen_memory,
+                             const COMPOSE_WALLPAPER *wallpaper,
+                             const COMPOSE_WINDOW *windows, const RECT *rect,
+                             INT64 rows, const UINT32 *all)
+{
+    INT64 band_pixels = (INT64)SCENE_WIDTH * (SCENE_HEIGHT + 1);
+    UINT32 *band = malloc((size_t)band_pixels * sizeof(UINT32));
+    INT64 x, y, wrong = 0, stray = 0;
+
+    for (x = 0; x < SCENE_WIDTH * SCENE_HEIGHT; x++)
+        screen_memory[x] = SCREEN_BEFORE;
+    compose_frame(screen, wallpaper, windows, SCENE_WINDOWS, rect, band, rows);
+    for (y = 0; y < SCENE_HEIGHT; y++) {
+        int in_rows = y >= rect->top && y < rect->bottom;
+        INT64 first = (y * SCENE_WIDTH + rect->left) / (INT64)BLOCK_PIXELS;
+        INT64 last = (y * SCENE_WIDTH + rect->right - 1) / (INT64)BLOCK_PIXELS;
+
+        for (x = 0; x < SCENE_WIDTH; x++) {
+            INT64 block = (y * SCENE_WIDTH + x) / (INT64)BLOCK_PIXELS;
+            UINT32 got = screen_memory[y * SCENE_WIDTH + x];
+            UINT32 colour = all[y * SCENE_WIDTH + x];
+            UINT32 wanted = gfx_pixel(screen, colour >> 16 & CHANNEL_MASK,
+                                      colour >> 8 & CHANNEL_MASK,
+                                      colour & CHANNEL_MASK);
+
+            if (in_rows && block >= first && block <= last)
+                wrong += got != wanted;
+            else
+                stray += got != SCREEN_BEFORE;
+        }
+    }
+    check(wrong == 0,
+          "a frame of a rectangle writes the frame's pixels in every block "
+          "of its rows that holds one of the rectangle's",
+          rect->left * 1000 + rect->top, wrong);
+    check(stray == 0,
+          "a frame of a rectangle writes nothing else",
+          rows, stray);
+    free(band);
+}
+
+static void check_frame_rects(const SCENE *scene)
+{
+    static const RECT rects[] = {{0, 0, SCENE_WIDTH, SCENE_HEIGHT},
+                                 {13, 9, 131, 71},
+                                 {0, 0, 1, 1},
+                                 {SCENE_WIDTH - 1, SCENE_HEIGHT - 1,
+                                  SCENE_WIDTH, SCENE_HEIGHT},
+                                 {20, 40, 100, 41},
+                                 {40, 0, 41, SCENE_HEIGHT},
+                                 {17, 3, 70, 99}};
+    static const INT64 rows_of[] = {1, 7, 16, SCENE_HEIGHT + 1};
+    static const RECT nothing[] = {{10, 10, 10, 40}, {10, 40, 30, 40},
+                                   {30, 10, 10, 40}, {10, 40, 30, 10}};
+    COMPOSE_WINDOW windows[SCENE_WINDOWS];
+    size_t f, r, h;
+
+    windows_of(scene, windows);
+    for (f = 0; f < FORMATS; f++) {
+        UINT32 *image = kernel_image(scene->canonical, SCENE_WIDTH,
+                                     SCENE_HEIGHT, formats[f]);
+        COMPOSE_WALLPAPER wallpaper = {image, SCENE_WIDTH, formats[f]};
+        RECT whole = {0, 0, SCENE_WIDTH, SCENE_HEIGHT};
+        UINT32 *all = compose_rect(&wallpaper, windows, &whole);
+        UINT32 *screen_memory = aligned_alloc(
+            OUTPUT_BLOCK_BYTES, (size_t)SCENE_WIDTH * SCENE_HEIGHT *
+                                    sizeof(UINT32));
+        UINT32 *band = malloc((size_t)SCENE_WIDTH * (SCENE_HEIGHT + 1) *
+                              sizeof(UINT32));
+        SCREEN screen = {screen_memory, SCENE_WIDTH, SCENE_HEIGHT, SCENE_WIDTH,
+                         formats[f]};
+        INT64 i, written;
+
+        for (r = 0; r < sizeof rects / sizeof rects[0]; r++)
+            for (h = 0; h < sizeof rows_of / sizeof rows_of[0]; h++)
+                check_frame_rect(&screen, screen_memory, &wallpaper, windows,
+                                 &rects[r], rows_of[h], all);
+        for (r = 0; r < sizeof nothing / sizeof nothing[0]; r++) {
+            for (i = 0; i < SCENE_WIDTH * SCENE_HEIGHT; i++)
+                screen_memory[i] = SCREEN_BEFORE;
+            compose_frame(&screen, &wallpaper, windows, SCENE_WINDOWS,
+                          &nothing[r], band, 16);
+            for (i = 0, written = 0; i < SCENE_WIDTH * SCENE_HEIGHT; i++)
+                written += screen_memory[i] != SCREEN_BEFORE;
+            check(written == 0, "a frame of a rectangle with no pixel writes "
+                                "nothing",
+                  (long long)r, written);
+        }
+        for (i = 0; i < SCENE_WIDTH * SCENE_HEIGHT; i++)
+            screen_memory[i] = SCREEN_BEFORE;
+        compose_frame(&screen, &wallpaper, windows, SCENE_WINDOWS, &whole,
+                      band, 0);
+        check(screen_memory[0] == SCREEN_BEFORE,
+              "a frame in bands of no rows writes nothing", 0, 0);
+        free(band);
+        free(screen_memory);
+        free(all);
+        free(image);
+    }
+}
+
 static void check_frames(const SCENE *scene)
 {
     static const INT64 heights[] = {1, 7, 16, 33, SCENE_HEIGHT};
@@ -1321,10 +1436,6 @@ static void check_corners(void)
 
 /* ------------------------------------------------------------------------
    The wallpaper alone, and the console's panel */
-
-/* The pixel the screen holds before a frame, whose unused byte is not 0,
-   so that a pixel the frame does not write shows. */
-#define SCREEN_BEFORE 0xA5A5A5A5u
 
 static void check_wallpaper_alone(INT64 width, INT64 height,
                                   const UINT32 *codes)
@@ -2797,11 +2908,20 @@ int main(int argc, char **argv)
 
         make_scene(&scene);
         check_frames(&scene);
+        check_frame_rects(&scene);
         free_scene(&scene);
     }
     check_blocks();
     check_write_cuts();
     check_wallpaper_refusals();
+    {
+        /* A width whose last column starts a block of 16 pixels. */
+        static const INT64 narrow_width = 33, narrow_height = 20;
+        UINT32 codes[33 * 20];
+
+        limb_codes(narrow_width, narrow_height, codes);
+        check_wallpaper_alone(narrow_width, narrow_height, codes);
+    }
     for (i = 0; i < SIZES; i++) {
         UINT32 *codes =
             malloc((size_t)(sizes[i].width * sizes[i].height) * sizeof(UINT32));

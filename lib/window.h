@@ -32,6 +32,9 @@
     connection together (D19, rule 4). */
 #define WINDOW_SERVED_MAX 1
 
+/** The screen's height that a scale of 1 belongs to (D7, rule 5). */
+#define WINDOW_SCALE_HEIGHT 800
+
 /** WINDOW_RECORD.shown while no frame has been shown. */
 #define WINDOW_NO_BUFFER WINDOW_BUFFERS_MAX
 
@@ -88,6 +91,24 @@ typedef struct {
                           each widened to whole blocks of the screen's
                           framebuffer by compose_blocks */
 } WINDOW_PRESENTED;
+
+/** The screen's scale, in DISPLAY_SCALE_ONE units (D7, rule 5): its
+    height over WINDOW_SCALE_HEIGHT, to the nearest quarter, halves up,
+    and at least one quarter, which is the least DISPLAY_SCREEN and
+    WINDOW_CONFIGURE give. */
+UINT32 window_scale(UINT32 screen_height);
+
+/** The WINDOW_STATE_ bits of a new window on layer, a DISPLAY_LAYER_
+    value (D11, rule 1): WINDOW_STATE_FOCUSED for a SYSTEM window, which
+    takes the focus while shown, and none for any other, which opens
+    without it. */
+UINT32 window_state(UINT32 layer);
+
+/** Grow *total, the rectangle of what is damaged since a frame, to hold
+    rect. A rectangle with no pixel, whose left is not below its right or
+    whose top is not below its bottom, is empty: it adds nothing, and
+    *total is empty until a rectangle with pixels is added to it. */
+void window_damage_join(RECT *total, const RECT *rect);
 
 /** The size a window asking for width x height gets (D6, Placement): at
     most the area's size and WINDOW_WIDTH_MAX x WINDOW_HEIGHT_MAX, and at
