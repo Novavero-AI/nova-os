@@ -7,8 +7,12 @@
    unused byte holds. The image's bands are not built here: the system
    disk's boots map them. A background is refused unless it is Limb, in
    a format the panel reads, at the display's size, with a side Limb
-   takes and a layout for it, and each refusal names its cause. Prints
-   each failure and a count, and exits nonzero if any check fails.
+   takes and a layout for it, and each refusal names its cause. Limb
+   drawn over a whole screen by panel_limb, as the console draws it after
+   a compositor, is the kernel's image pixel for pixel, in both formats,
+   on rows longer than the screen is wide, and writes nothing past a row
+   and nothing on a screen Limb has no size for. Prints each failure and
+   a count, and exits nonzero if any check fails.
 
    cc -std=c11 -Wall -Wextra -pedantic -I include -I gfx -I console \
      -I lib -o check-backdrop tools/check-backdrop.c console/panel.c \
@@ -25,6 +29,9 @@
 #define CHANNEL_BITS 8
 #define CHANNEL_MASK 0xFFu
 #define UNUSED_BYTE 0xA5000000u
+#define COLOUR_MASK 0x00FFFFFFu
+#define SCREEN_BEFORE 0x5A5A5A5Au
+#define ROW_GAP 5
 #define FAILURES_SHOWN 10
 
 /* The sizes checked: the two CI boots and the README name, a common
@@ -112,6 +119,66 @@ static void check_backdrops(INT64 width, INT64 height)
     free(read);
 }
 
+/* panel_limb on a screen whose rows are ROW_GAP pixels longer than it is
+   wide, in each format, against the kernel's image: every pixel of the
+   screen is the image's, and every pixel in a row's gap is as it was. */
+static void check_limb_screen(INT64 width, INT64 height)
+{
+    size_t i;
+
+    for (i = 0; i < FORMATS; i++) {
+        INT64 stride = width + ROW_GAP, x, y, wrong = 0, touched = 0;
+        UINT32 *pixels = malloc((size_t)(stride * height) * sizeof *pixels);
+        UINT32 *image = kernel_image(width, height, formats[i]);
+        SCREEN screen = {pixels, width, height, stride, formats[i]};
+
+        if (!pixels || !image) {
+            check(0, "Limb over the screen is drawn", width, height);
+            free(pixels);
+            free(image);
+            continue;
+        }
+        for (y = 0; y < stride * height; y++)
+            pixels[y] = SCREEN_BEFORE;
+        check(panel_limb(&screen) == 1, "Limb over the screen is drawn",
+              width, height);
+        for (y = 0; y < height; y++) {
+            for (x = 0; x < width; x++)
+                wrong += pixels[y * stride + x] !=
+                         (image[y * width + x] & COLOUR_MASK);
+            for (x = width; x < stride; x++)
+                touched += pixels[y * stride + x] != SCREEN_BEFORE;
+        }
+        check(wrong == 0,
+              formats[i] == PIXEL_RGB
+                  ? "Limb over an RGB screen is the kernel's image"
+                  : "Limb over a BGR screen is the kernel's image",
+              width, height);
+        check(touched == 0, "Limb over the screen leaves a row's gap alone",
+              width, height);
+        free(pixels);
+        free(image);
+    }
+}
+
+/* A screen Limb has no size for is refused and left as it was. */
+static void check_limb_screen_refusal(void)
+{
+    const INT64 side = LIMB_MIN_SIDE - 1;
+    UINT32 pixels[LIMB_MIN_SIDE * LIMB_MIN_SIDE];
+    SCREEN screen = {pixels, side, side, LIMB_MIN_SIDE, PIXEL_BGR};
+    size_t i, touched = 0;
+
+    for (i = 0; i < LIMB_MIN_SIDE * LIMB_MIN_SIDE; i++)
+        pixels[i] = SCREEN_BEFORE;
+    check(panel_limb(&screen) == 0, "a screen Limb has no size for is refused",
+          side, side);
+    for (i = 0; i < LIMB_MIN_SIDE * LIMB_MIN_SIDE; i++)
+        touched += pixels[i] != SCREEN_BEFORE;
+    check(touched == 0, "a screen Limb has no size for is left as it was",
+          side, side);
+}
+
 /* Whether background is refused on display for reason, or taken where
    reason is 0. */
 static int refused_for(UINT32 background, UINT32 width, UINT32 height,
@@ -167,9 +234,12 @@ int main(void)
 {
     size_t i;
 
-    for (i = 0; i < SIZES; i++)
+    for (i = 0; i < SIZES; i++) {
         check_backdrops(sizes[i].width, sizes[i].height);
+        check_limb_screen(sizes[i].width, sizes[i].height);
+    }
     check_refusals();
+    check_limb_screen_refusal();
     printf("%u failures\n", failures);
     return failures != 0;
 }

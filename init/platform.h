@@ -1,7 +1,8 @@
 /* init as the platform driver (docs/spec/ipc.md I6, I10): it holds the
    root device resources, enumerates PCI, starts the virtio block and
    input drivers with resources covering only their functions, and
-   supervises them and the input drivers' client, the console. */
+   supervises them and the input drivers' client, the console or the
+   compositor. */
 
 #ifndef NOVA_PLATFORM_H
 #define NOVA_PLATFORM_H
@@ -10,12 +11,19 @@
 #include "pci.h"
 #include "program.h"
 
+/* What draws the screen from the kernel's release on, and is the input
+   drivers' client while it runs (docs/spec/display.md D2): the console,
+   or a compositor, which the console takes over from if it is given up
+   (D3). */
+typedef enum { DRAWER_CONSOLE, DRAWER_COMPOSITOR } DRAWER;
+
 typedef struct {
     UINT32 debug_log; /* the root system resource */
     UINT32 self;      /* init's own process, with MAP */
     UINT32 job;       /* the root job */
     UINT32 mmio, irq, dma;
     const BOOTSTRAP_PLATFORM *boot;
+    DRAWER drawer;
 } PLATFORM;
 
 /* On a test disk, find the first virtio block function and run its
@@ -24,7 +32,8 @@ typedef struct {
    a driver, \nova\virtinp.exe, for each virtio input function, up to
    INPUT_DEVICES_MAX, one after another as each reports, and, once the
    first reports, their client, the console, \nova\console.exe, leaving
-   them running. A driver that fails is started again as the restart
+   them running; with drawer DRAWER_COMPOSITOR the endpoints wait for the
+   compositor instead (platform_start_compositor). A driver that fails is started again as the restart
    policy allows (platform.c). Returns 1, or 0, logged, if waiting on
    the supervisor's port fails. The data disk's driver and file system
    service, which data.c starts before this and nothing supervises,
@@ -70,6 +79,16 @@ typedef UINT32 (*PLATFORM_LOAD)(const PLATFORM *platform, PROGRAM *program,
    Returns 1 if it started; 0, logged, if it did not and was given up. */
 int platform_keep(const PLATFORM *platform, const char *name,
                   PLATFORM_LOAD load);
+
+/* With drawer DRAWER_COMPOSITOR, and once the kernel has released the
+   display: start the compositor, \nova\compose.exe, in the root job on
+   a client channel of its own, and hand it each input endpoint, those
+   reported before it started first; then start the console beside it,
+   which gets no endpoint while the compositor runs
+   (docs/spec/display.md D19, rule 2). The compositor is supervised as
+   the console is; once it is given up, the console is the input drivers'
+   client, and is sent the display after a compositor (console.h). */
+void platform_start_compositor(const PLATFORM *platform);
 
 /* Supervise what platform_start left running for the life of the
    system: restart a driver or its client that ends, as the policy

@@ -1522,7 +1522,11 @@ login's session as it does on its own
    `include/display_protocol.h` is generated from it and tracked
    ([interface.md P16](interface.md#p16-where-the-header-lives)).
 2. **Starting,** on every disk but the specimen disk, where the
-   specimen takes the display as before and no compositor starts:
+   specimen takes the display as before and no compositor starts.
+   Until the compositor serves the console's window (rule 4), only a
+   disk that carries `\NOVA\COMPFAIL` starts it, which then exits just
+   after its first frame, and the console draws every other disk as
+   before. The steps:
    1. The first process reports its startup done
       ([console.md C1](console.md#c1-the-display-handoff)) without
       waiting for the console, since no background goes to the console,
@@ -1653,16 +1657,41 @@ login's session as it does on its own
    `COMPOSITOR_OPTION_EXIT_TEST` at every start, and the compositor exits
    with `COMPOSITOR_EXIT_TEST` just after the first frame that shows a
    window's present, so the console's window has been made and shown
-   once before each exit; it is restarted once and then given up
+   once before each exit, and until then just after its first frame
+   (rule 2); it is restarted once and then given up
    ([D3](#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)).
    `fallback.img` is the test disk with `\NOVA\COMPFAIL` added. Its CI
-   boot accepts exactly these failure lines and fails on any other:
-   `nova-init: child restarted name=compositor` once,
-   `nova-init: child given up name=compositor` once, and each input
-   driver's `nova-init: child restarted` with
-   `reason="its client restarted"` or `reason="its client changed"`,
-   the reason the platform driver gives for a driver started again for
-   the compositor's successor and for the console.
+   boot requires, with the counts given:
+   - `nova-compositor: background refused reason="another size"` once,
+     as the console's is on a test disk;
+   - for each of the compositor's two starts, `nova-compositor: display`
+     with `wallpaper=computed` and `nova-init: child ended
+     name=compositor exit=102`, `COMPOSITOR_EXIT_TEST`;
+   - `nova-init: child restarted name=compositor` once and
+     `nova-init: child given up name=compositor` once;
+   - for each of the three input drivers, `nova-init: child restarted`
+     once with `reason="its client restarted"`, for the compositor's
+     successor (input.md K4);
+   - the console's `display` line with `backdrop=computed` and
+     `after=compositor` (console.md C5);
+   - QMP's `screendump`, taken when the first `nova-compositor: display`
+     line is read, equal to Limb alone, as `ci/screens.c` draws it with
+     the console's own code. The console draws nothing until the
+     compositor's second end, so the dump is of the compositor's frame;
+     a first frame the compositor does not write leaves the kernel's
+     Limb, the same pixels, and is not seen.
+
+   Of the lines that report a failure it accepts exactly the three
+   above, each as often as it is given, and for each driver one
+   `nova-init: child restarted` with `reason="its client changed"`, for
+   the console, which it does not require: a driver started for the
+   compositor's second start that has not yet reported when the
+   compositor is given up reports to the console, is not started again
+   and logs none. For no more than the machine's three input functions;
+   any other line that reports a failure fails the boot. The login it
+   goes on to as the test disk's boot does, typed through the console's
+   keys, with each screen it matches, is the evidence that the console
+   has the drivers' endpoints.
 10. **What phase 4 removes:** the `console` connection, the console's
     window beside the compositor, and a secure attention key that does
     nothing. `CONSOLE_SETUP_CONNECTION`, `CONSOLE_SETUP_DISPLAY_AFTER`

@@ -253,6 +253,20 @@ static UINT32 screen_pixel(const SCREEN *screen, UINT32 rgb)
                      rgb >> CHANNEL_BITS & CHANNEL_MASK, rgb & CHANNEL_MASK);
 }
 
+int panel_limb(const SCREEN *screen)
+{
+    LIMB limb;
+    INT64 x, y;
+
+    if (!limb_init(&limb, screen->width, screen->height))
+        return 0;
+    for (y = 0; y < screen->height; y++)
+        for (x = 0; x < screen->width; x++)
+            screen->pixels[y * screen->stride + x] =
+                screen_pixel(screen, limb_pixel(&limb, x, y));
+    return 1;
+}
+
 void panel_show(const SCREEN *screen, const LAYOUT *layout,
                 const UINT32 *backdrop, PANEL_SHOWN *shown)
 {

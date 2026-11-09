@@ -25,7 +25,8 @@ const CONSOLE_READ_NO_ECHO 0x1
 # The bytes of the answer to CONSOLE_SETUP_BACKGROUND.
 const CONSOLE_PREPARED_SIZE 4
 # The messages the control channel queues: the options, the background,
-# the display and a session for each the console serves.
+# the display or the display after a compositor, and a session for each
+# the console serves.
 const CONSOLE_CONTROL_CAPACITY CONSOLE_SESSIONS + 3
 
 # The options the first process sets (console.md C2), from flag files on
@@ -58,16 +59,19 @@ end
 struct CONSOLE_SETUP
   u32 transaction = 0  # 0
   # CONSOLE_SETUP_DISPLAY, CONSOLE_SETUP_SESSION,
-  # CONSOLE_SETUP_BACKGROUND or CONSOLE_SETUP_OPTIONS
+  # CONSOLE_SETUP_BACKGROUND, CONSOLE_SETUP_DISPLAY_AFTER or
+  # CONSOLE_SETUP_OPTIONS
   u32 kind
 end
 
 # The bytes of a setup.
 const CONSOLE_SETUP_SIZE sizeof CONSOLE_SETUP
 
-# The setup that hands the console the display.
+# The setup that hands the console the display, or the display after a
+# compositor (console.md C2).
 struct CONSOLE_SETUP_DISPLAY_MESSAGE
-  CONSOLE_SETUP setup        # CONSOLE_SETUP_DISPLAY
+  # CONSOLE_SETUP_DISPLAY or CONSOLE_SETUP_DISPLAY_AFTER
+  CONSOLE_SETUP setup
   BOOTSTRAP_DISPLAY display  # the display, as nova-boot drew on it
 end
 
@@ -153,6 +157,14 @@ channel control
   reply prepared
     body transaction
     field transaction = 0
+  end
+
+  # The display after a compositor, whose last frame the screen still
+  # shows (console.md C2).
+  request display_after CONSOLE_SETUP_DISPLAY_AFTER 5
+    body CONSOLE_SETUP_DISPLAY_MESSAGE
+    # an MMIO resource covering the framebuffer's pages
+    handle resource travels use needs none
   end
 
   # The options, once, before the background and the display.

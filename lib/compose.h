@@ -21,6 +21,7 @@
 #define NOVA_COMPOSE_H
 
 #include "gfx.h"
+#include "native_abi.h"
 #include "outline.h"
 #include "types.h"
 
@@ -232,6 +233,29 @@ RECT compose_blocks(const SCREEN *screen, const RECT *rect);
     gfx_flush when its frame is written. */
 void compose_write(const COMPOSE_BAND *band, const SCREEN *screen,
                    const RECT *rect);
+
+/** Why the kernel's background, as background labels it and as it holds
+    sections sections, cannot be the wallpaper on display, a short phrase
+    for the log; or 0 if it can: Limb, in a pixel format the composer
+    reads, at the display's size, which Limb takes, in as many sections
+    as an image that size needs (docs/spec/display.md D2 rule 2). The
+    reasons are those the console gives for its panel
+    (docs/spec/console.md C5), but for the panel's own layout, which no
+    wallpaper needs. */
+const char *compose_wallpaper_refusal(const BOOTSTRAP_BACKGROUND *background,
+                                      const BOOTSTRAP_DISPLAY *display,
+                                      UINT32 sections);
+
+/** Write the wallpaper alone to the whole screen, a frame with no
+    window, in bands of rows rows from the top: each band composed in
+    memory (compose_band) and written in whole blocks (compose_write).
+    memory holds the screen's width times rows pixels, room for a band
+    whose blocks reach the width of the screen. The wallpaper is as wide
+    as the screen and at least as high; with rows below 1 nothing is
+    written. Makes no stores visible: the caller calls gfx_flush. */
+void compose_wallpaper_frame(const SCREEN *screen,
+                             const COMPOSE_WALLPAPER *wallpaper,
+                             UINT32 *memory, INT64 rows);
 
 /** Draw the pointer's image over band: the edge, then the body, each
     mixed in linear light by lib/outline.c's exact area, at a screen of

@@ -137,7 +137,9 @@ CI checks every pull request and every push to main:
   `design/backgrounds/check-limb.sh`, `ci/check-mkinterface.sh`, which
   runs `tools/check-probe-protocol.c` under the sanitizers,
   `tools/check-console-protocol.c` and `tools/check-display-protocol.c`,
-  and actionlint over the workflows.
+  `ci/check-boot.py`, which replays serial lines through `ci/boot.py` to
+  check which failure lines the fallback boot accepts, and actionlint
+  over the workflows.
 - **Boot** boots the reproduced disks under QEMU with Ubuntu 24.04's
   OVMF, with a copy of `data.img` as the data disk: `disk.img`, the
   system's disk, on QEMU's default processor, and `test.img`, the test
@@ -165,7 +167,13 @@ CI checks every pull request and every push to main:
   session runs a program in the shell's place that starts programs and
   ends without waiting for them, must show login stopping each of them
   as it ends the session, and a second session, logged into after the
-  first, running programs as the first did.
+  first, running programs as the first did. A boot of `fallback.img`
+  must show the compositor take the display and end at each of its two
+  starts, restarted once and then given up, each input driver started
+  again for the second start, the screen Limb alone after the
+  compositor's first frame and the console draw the display after it,
+  with no other failure line, and then goes on as the test disk's boot
+  does, logging in through the console's keys.
 - **Chain** boots `chain.img` and checks that each step of the bootstrap
   chain passes in its test report and each pinned link matches.
 

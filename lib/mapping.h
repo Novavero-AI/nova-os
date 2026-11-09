@@ -34,6 +34,17 @@ UINT32 mapping_unmap(MAPPING *mapping, const void *address, UINT64 size);
     mapped. */
 void *mapping_memory(MAPPING *mapping, UINT64 size, UINT32 *status);
 
+/** Map the count sections of an image of bytes bytes, as the kernel hands
+    a background on (native_abi.h): bands of SECTION_MAX_SIZE bytes but
+    the last, read one after another, row after row. Returns where the
+    image starts, with the bytes mapped, rounded up to whole pages, in
+    *mapped for mapping_unmap; or 0, with nothing left mapped and the
+    status of the call that failed in *status. The handles stay the
+    caller's. */
+const void *mapping_image(MAPPING *mapping, const RECEIVED_HANDLE *handles,
+                          UINT32 count, UINT64 bytes, UINT64 *mapped,
+                          UINT32 *status);
+
 /** Map display's framebuffer, write-combining, through resource, an
     MMIO resource covering its pages, and describe it in *screen.
     Returns OK; ERR_NOT_SUPPORTED, mapping nothing, for a display that

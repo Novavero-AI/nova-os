@@ -159,6 +159,9 @@ jobs:
             lib/nvo_decimal.c lib/nvo_syntax.c lib/nvo_value.c
           "$RUNNER_TEMP/check-nvo" docs/spec/shell.md
 
+      - name: boot.py accepts the fallback boot's failure lines and no other
+        run: python3 -I ci/check-boot.py
+
       - name: The workflows pass actionlint
         run: |
           archive=actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz
@@ -261,6 +264,7 @@ jobs:
             ${{ runner.temp }}/reproduce/disk.img
             ${{ runner.temp }}/reproduce/test.img
             ${{ runner.temp }}/reproduce/chain.img
+            ${{ runner.temp }}/reproduce/fallback.img
             ${{ runner.temp }}/reproduce/specimen.img
             ${{ runner.temp }}/reproduce/logout.img
             ${{ runner.temp }}/reproduce/data.img
@@ -313,14 +317,19 @@ jobs:
   # pool's entry moved below the usable LBAs, or with them, over the
   # table, or a second entry over it, and check that the file system
   # service refuses the disk and that login does not start without it.
-  # The chain and specimen disks are test disks too. The specimen boot
-  # takes QMP's screendump once the type specimen has drawn, keeps it as
-  # an artifact, and checks it against the specimen's prototype,
-  # rendered from the fonts the reproduce job built. The logout disk is
-  # a system disk whose session runs a program in the shell's place that
-  # starts programs and ends without waiting for them; the boot checks
-  # that login stops each of them as it ends the session, and that a
-  # second session, logged into after the first, runs programs as it did.
+  # The chain, fallback and specimen disks are test disks too. The
+  # fallback boot has the compositor take the display and end at each
+  # start, and must report it restarted once and given up, the console
+  # drawing the display after it and no other failure, and show Limb
+  # alone after the compositor's first frame, and then goes on as the
+  # test disk's boots do. The specimen boot takes QMP's screendump once
+  # the type specimen has drawn, keeps it as an artifact, and checks it
+  # against the specimen's prototype, rendered from the fonts the
+  # reproduce job built. The logout disk is a system disk whose session
+  # runs a program in the shell's place that starts programs and ends
+  # without waiting for them; the boot checks that login stops each of
+  # them as it ends the session, and that a second session, logged into
+  # after the first, runs programs as it did.
   boot:
     name: ${{ matrix.name }}
     needs: reproduce
@@ -408,6 +417,12 @@ jobs:
             disk: disk.img
             accel: tcg
             corrupt: overlap
+            minutes: 15
+          - name: Boot (fallback)
+            mode: fallback
+            disk: fallback.img
+            tests: true
+            accel: tcg
             minutes: 15
           - name: Chain
             mode: chain

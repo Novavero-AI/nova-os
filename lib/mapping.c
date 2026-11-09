@@ -54,6 +54,39 @@ void *mapping_memory(MAPPING *mapping, UINT64 size, UINT32 *status)
     return (void *)start;
 }
 
+/* The bytes of band index of an image of bytes bytes. */
+static UINT64 band_size(UINT64 bytes, UINT32 index)
+{
+    UINT64 rest = bytes - (UINT64)index * SECTION_MAX_SIZE;
+
+    return rest < SECTION_MAX_SIZE ? rest : SECTION_MAX_SIZE;
+}
+
+const void *mapping_image(MAPPING *mapping, const RECEIVED_HANDLE *handles,
+                          UINT32 count, UINT64 bytes, UINT64 *mapped,
+                          UINT32 *status)
+{
+    const UINT8 *start = 0;
+    UINT32 i;
+
+    *mapped = 0;
+    for (i = 0; i < count; i++) {
+        const UINT8 *band = mapping_section(mapping, handles[i].handle,
+                                            band_size(bytes, i), MAP_READ,
+                                            status);
+
+        if (!band) {
+            if (start)
+                mapping_unmap(mapping, start, *mapped);
+            return 0;
+        }
+        if (!start)
+            start = band;
+        *mapped = (UINT64)(mapping->next - (UINT64)start);
+    }
+    return start;
+}
+
 /* Whether display describes a screen drawn on: a pixel format known, a
    side Limb draws, rows no shorter than the screen is wide, and every
    pixel within the address space. */

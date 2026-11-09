@@ -18,7 +18,9 @@
      rectangle, and the cover rules; then in bands of TILE_ROWS and of
      other heights, and whole, which must agree bit for bit;
    - the wallpaper alone, through the output, against the kernel's image
-     in both pixel formats at the sizes the boots run;
+     in both pixel formats at the sizes the boots run, in bands of every
+     height and over a screen that held other pixels, and the reasons the
+     kernel's background is refused as the wallpaper;
    - a window's buffer against its place, which D7 rule 4 says the window
      shows cut or padded with its material: buffers smaller and larger
      than the place, in memory of exactly their size and in a block
@@ -1320,6 +1322,10 @@ static void check_corners(void)
 /* ------------------------------------------------------------------------
    The wallpaper alone, and the console's panel */
 
+/* The pixel the screen holds before a frame, whose unused byte is not 0,
+   so that a pixel the frame does not write shows. */
+#define SCREEN_BEFORE 0xA5A5A5A5u
+
 static void check_wallpaper_alone(INT64 width, INT64 height,
                                   const UINT32 *codes)
 {
@@ -1334,35 +1340,108 @@ static void check_wallpaper_alone(INT64 width, INT64 height,
             (size_t)((width * height * 4 + OUTPUT_BLOCK_BYTES - 1) /
                      OUTPUT_BLOCK_BYTES * OUTPUT_BLOCK_BYTES));
         UINT32 *band_memory =
-            malloc((size_t)(width * tile_rows) * sizeof(UINT32));
+            malloc((size_t)(width * (height + 1)) * sizeof(UINT32));
         SCREEN screen = {screen_memory, width, height, width, formats[f]};
         COMPOSE_WALLPAPER wallpaper = {image, width, formats[f]};
-        INT64 top, i, bad = 0, unused = 0;
+        /* The bands of TILE_ROWS the compositor draws in, a band of one
+           row, a height that leaves a short last band, one band for the
+           screen, and one taller than it. */
+        const INT64 rows_of[] = {tile_rows, 1, 7, height, height + 1};
+        INT64 i;
+        size_t r;
 
-        /* The screen holds the kernel's image, as it does when the
-           compositor draws its first frame. */
-        memcpy(screen_memory, image, (size_t)(width * height) * sizeof(UINT32));
-        for (top = 0; top < height; top += tile_rows) {
-            RECT rows = {0, top, width,
-                         top + tile_rows < height ? top + tile_rows : height};
-            RECT wide = compose_blocks(&screen, &rows);
-            COMPOSE_BAND band = {band_memory, width, wide};
+        for (r = 0; r < sizeof rows_of / sizeof rows_of[0]; r++) {
+            INT64 bad = 0, unused = 0;
 
-            compose_band(&band, &wallpaper, 0, 0);
-            compose_write(&band, &screen, &rows);
+            for (i = 0; i < width * height; i++)
+                screen_memory[i] = SCREEN_BEFORE;
+            compose_wallpaper_frame(&screen, &wallpaper, band_memory,
+                                    rows_of[r]);
+            for (i = 0; i < width * height; i++) {
+                bad += (screen_memory[i] & 0xFFFFFFu) !=
+                       (image[i] & 0xFFFFFFu);
+                unused += screen_memory[i] >> 24 != 0;
+            }
+            check(bad == 0,
+                  "a frame of the wallpaper alone writes the wallpaper's "
+                  "pixels over a screen that held others",
+                  width * 10000 + height, bad);
+            check(unused == 0, "an output pixel's unused byte is 0", width,
+                  unused);
         }
-        for (i = 0; i < width * height; i++) {
-            bad += (screen_memory[i] & 0xFFFFFFu) != (image[i] & 0xFFFFFFu);
-            unused += screen_memory[i] >> 24 != 0;
-        }
-        check(bad == 0,
-              "a frame of the wallpaper alone writes the wallpaper's pixels",
-              width * 10000 + height, bad);
-        check(unused == 0, "an output pixel's unused byte is 0", width, unused);
+        for (i = 0; i < width * height; i++)
+            screen_memory[i] = SCREEN_BEFORE;
+        compose_wallpaper_frame(&screen, &wallpaper, band_memory, 0);
+        check(screen_memory[0] == SCREEN_BEFORE &&
+                  screen_memory[width * height - 1] == SCREEN_BEFORE,
+              "a frame in bands of no rows writes nothing", width, 0);
         free(image);
         free(screen_memory);
         free(band_memory);
     }
+}
+
+/* Whether background, as sections sections hold it, is refused as the
+   wallpaper on a display of display_width x display_height for reason, or
+   taken where reason is 0. */
+static int refused_for(UINT32 background, UINT32 width, UINT32 height,
+                       UINT32 format, UINT32 sections, UINT32 display_width,
+                       UINT32 display_height, const char *reason)
+{
+    BOOTSTRAP_BACKGROUND label = {background, width, height, format};
+    BOOTSTRAP_DISPLAY display = {0, display_width, display_height,
+                                 display_width, PIXEL_BGR};
+    const char *refusal = compose_wallpaper_refusal(&label, &display, sections);
+
+    if (!reason)
+        return refusal == 0;
+    return refusal && strcmp(refusal, reason) == 0;
+}
+
+/* The kernel's background is the wallpaper only where it is Limb, in a
+   format the composer reads, at the display's size, in the sections an
+   image that size takes; each refusal names its cause, and the console's
+   (docs/spec/console.md C5) are the same words. */
+static void check_wallpaper_refusals(void)
+{
+    const UINT32 w = 1280, h = 800;
+    const UINT32 sections = (UINT32)bootstrap_background_sections(w, h);
+    const UINT32 small = LIMB_MIN_SIDE - 1, large = LIMB_MAX_SIDE + 1;
+
+    check(refused_for(BOOTSTRAP_BACKGROUND_LIMB, w, h, PIXEL_BGR, sections, w,
+                      h, 0),
+          "Limb at the display's size is the wallpaper", w, h);
+    check(refused_for(BOOTSTRAP_BACKGROUND_LIMB, w, h, PIXEL_RGB, sections, w,
+                      h, 0),
+          "Limb in the other format is the wallpaper", w, h);
+    check(refused_for(BOOTSTRAP_BACKGROUND_NONE, 0, 0, 0, 0, w, h,
+                      "no image"),
+          "no image is refused", w, h);
+    check(refused_for(BOOTSTRAP_BACKGROUND_LIMB + 1, w, h, PIXEL_BGR, sections,
+                      w, h, "not limb"),
+          "another background is refused", w, h);
+    check(refused_for(BOOTSTRAP_BACKGROUND_LIMB, w, h, PIXEL_BGR + 1, sections,
+                      w, h, "unknown format"),
+          "an unknown format is refused", w, h);
+    check(refused_for(BOOTSTRAP_BACKGROUND_LIMB, w, h, PIXEL_BGR, sections,
+                      w + 1, h, "another size"),
+          "a display a column wider is refused", w, h);
+    check(refused_for(BOOTSTRAP_BACKGROUND_LIMB, w, h, PIXEL_BGR, sections, w,
+                      h + 1, "another size"),
+          "a display a row taller is refused", w, h);
+    check(refused_for(BOOTSTRAP_BACKGROUND_LIMB, small, small, PIXEL_BGR, 1,
+                      small, small, "no size"),
+          "a side Limb does not take is refused", small, small);
+    check(refused_for(BOOTSTRAP_BACKGROUND_LIMB, large, h, PIXEL_BGR,
+                      (UINT32)bootstrap_background_sections(large, h), large,
+                      h, "no size"),
+          "a side past Limb's largest is refused", large, h);
+    check(refused_for(BOOTSTRAP_BACKGROUND_LIMB, w, h, PIXEL_BGR, sections - 1,
+                      w, h, "wrong sections"),
+          "an image in a section too few is refused", w, h);
+    check(refused_for(BOOTSTRAP_BACKGROUND_LIMB, w, h, PIXEL_BGR, sections + 1,
+                      w, h, "wrong sections"),
+          "an image in a section too many is refused", w, h);
 }
 
 /* The console's panel over Limb, computed by console/panel.c, against the
@@ -2722,6 +2801,7 @@ int main(int argc, char **argv)
     }
     check_blocks();
     check_write_cuts();
+    check_wallpaper_refusals();
     for (i = 0; i < SIZES; i++) {
         UINT32 *codes =
             malloc((size_t)(sizes[i].width * sizes[i].height) * sizeof(UINT32));
