@@ -220,7 +220,8 @@ the desktop does not wait for a key.
 When the driver ends, whatever its exit code, or does not start, the
 platform driver stops the function as I10 gives, clearing Bus Master
 Enable, resetting the device and releasing the initiator's quarantine,
-and starts the driver again under I10's restart policy. The client,
+and starts the driver again under I10's restart policy, except as the
+paragraph on a client's end below gives. The client,
 which saw `PEER_CLOSED`, takes the endpoint the new driver reports
 (K3). When the client ends it is started again under the same policy,
 and waits for an endpoint; its driver, whose watch saw the old endpoint
@@ -229,6 +230,22 @@ own and logging `reason="its client restarted"`, so that a client's
 failure soon after the driver's own restart does not give the driver
 up. A driver whose client has been given up is not restarted, since
 nothing would read its endpoint.
+
+The kernel closes a process's handles, which ends the drivers on its
+endpoints, before it asserts the process's `TERMINATED`
+([objects.md O10](objects.md#o10-object-lifetime)), so the
+platform driver can read a driver's end before its client's. It decides a
+driver's end from the end's facts alone, never from which end it read
+first. A driver that ends with `VIRTIO_INPUT_EXIT_DONE`, the exit code of
+a driver whose client has closed its endpoint, while its client is the
+one its endpoint went to and has not been started again, waits, logging
+`child waiting` with `reason="its client's end is not read"`. When the
+client's end is read the driver is decided again: started again for the
+client's restart or for the client that took its place, without counting
+a restart, or left down for a client given up. An endpoint that a client
+whose handles are closed cannot take is closed by the platform driver,
+which ends its driver the same way. Any other end is the driver's own,
+and the driver is started again under I10's restart policy.
 
 When the first process gives the compositor up, the platform driver
 makes the console the client instead
@@ -247,14 +264,27 @@ gives; a driver started again for a new client logs
   live, bus mastering on and its MSI-X entry naming a vector the kernel
   frees ([ipc.md I7](ipc.md#i7-interrupts)), and the keyboard dead
   until the next boot.
+- **Why a driver waits for its client's end:** the driver's end is its
+  own or its client's, and only the client's end says which; the kernel
+  can queue that after the driver's, so a decision at the driver's end
+  alone gives a different answer for each order the two are read in.
 - **Why the console after the compositor:** a machine whose compositor
   fails keeps its keyboard and pointer at a console, where its owner can
   log in, read the log and fix it.
 - **Cost:** a restart loses the events queued for the old endpoint and
   any the device took while no driver ran; a client that ends takes its
   driver down with it; a compositor given up loses the events queued for
-  it.
+  it. A client that closes an endpoint and keeps running, as the console
+  does for a message out of place, leaves that driver waiting until the
+  client ends or is replaced: the platform driver cannot tell the close
+  from the client's end until it reads that end.
 - **Not taken:** keeping the driver running across its client's end and
   having it serve a new endpoint. Its cost is a second protocol between
   driver and supervisor for endpoints after the report, where the
-  restart reuses the one there is.
+  restart reuses the one there is. Starting a driver that ends for a
+  client as it was again at once, counting the restart: it counts the
+  client's end as the driver's own whenever the driver's is read first,
+  and gives the driver up at the client's next failure within the
+  restart period. Waiting a set time for the client's end, which a
+  loaded machine overruns. Asking the kernel to show a process ending
+  before its handles close, which changes O10 for this one reader.

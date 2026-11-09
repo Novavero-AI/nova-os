@@ -4,7 +4,8 @@ Usage: python3 -I ci/check-boot.py
 
 Replays serial lines through boot.py's Serial, as a boot reads them, and
 checks what boot.py makes of them: the lines docs/spec/display.md D19's
-rule 9 has the fallback boot report, each as often as it gives; the
+rule 9 has the fallback boot report, each as often as it gives, and the
+same boot with the input drivers' ends read before the compositor's; the
 failure lines the fallback boot accepts, each as often as it gives and
 each alone, and no failure line in any other mode; the console's display
 lines of the other boots, which a display after the compositor is not;
@@ -38,6 +39,9 @@ COMPOSITOR_GIVEN_UP = ('nova-init: child given up name=compositor '
                        'reason="down again within the restart period"')
 CLIENT_RESTARTED = "its client restarted"
 CLIENT_CHANGED = "its client changed"
+DRIVER_ENDED = "nova-init: child ended name=virtio-input pci=%s exit=100"
+DRIVER_WAITING = ("nova-init: child waiting name=virtio-input pci=%s "
+                  "reason=\"its client's end is not read\"")
 CONSOLE = ("nova-console: display screen=1280x800 cell=8x16 grid=80x30 "
            "backdrop=%s prepare_ms=1.0 draw_ms=1.0%s")
 
@@ -66,6 +70,27 @@ def fallback_log(boot):
              COMPOSITOR_RESTARTED]
             + [driver_restarted(f, CLIENT_RESTARTED) for f in FUNCTIONS]
             + [DISPLAY % "computed", ENDED % exit_code, COMPOSITOR_GIVEN_UP]
+            + [driver_restarted(f, CLIENT_CHANGED) for f in FUNCTIONS]
+            + [CONSOLE % ("computed", " after=compositor")])
+
+
+def drivers_first_log(boot):
+    """The lines of the fallback boot when init reads each input driver's
+    end before the compositor's, which the kernel's order of closing a
+    process's handles and asserting its TERMINATED allows: each driver
+    ends and waits for the compositor's end, and is started again for it
+    once that is read."""
+    exit_code = boot.COMPOSITOR_EXIT_TEST
+
+    def ends():
+        return [line for f in FUNCTIONS
+                for line in (DRIVER_ENDED % f, DRIVER_WAITING % f)]
+
+    return ([REFUSED, DISPLAY % "computed"] + ends()
+            + [ENDED % exit_code, COMPOSITOR_RESTARTED]
+            + [driver_restarted(f, CLIENT_RESTARTED) for f in FUNCTIONS]
+            + [DISPLAY % "computed"] + ends()
+            + [ENDED % exit_code, COMPOSITOR_GIVEN_UP]
             + [driver_restarted(f, CLIENT_CHANGED) for f in FUNCTIONS]
             + [CONSOLE % ("computed", " after=compositor")])
 
@@ -184,6 +209,14 @@ def main():
     changed[-1] = CONSOLE % ("section", " after=compositor")
     refused("a console display after the compositor with backdrop=section",
             FALLBACK, changed, required)
+
+    # The drivers' ends read before the compositor's give the same boot,
+    # and a driver that waits is no failure in any mode.
+    replayed("the fallback boot's lines are reported with the drivers' ends "
+             "read first", FALLBACK, drivers_first_log(boot), required)
+    for mode in sorted(boot.DEFAULT_TIMEOUTS):
+        replayed("a driver that waits is no failure in %s mode" % mode, mode,
+                 [DRIVER_ENDED % FUNCTIONS[0], DRIVER_WAITING % FUNCTIONS[0]])
 
     # Each accepted failure line is accepted alone, and no line that is
     # not one is, alone.
