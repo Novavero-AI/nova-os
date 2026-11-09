@@ -5,7 +5,7 @@ Usage: python3 -I ci/boot.py --code CODE.fd --vars VARS.fd --log LOG
                              [--tests] [--data DATA [--corrupt-gpt KIND]]
                              [--size WIDTHxHEIGHT]
                              [--fonts FONTS [--screen SCREEN.ppm]]
-                             {system,persist,chain,specimen} DISK
+                             {system,persist,chain,specimen,logout} DISK
                              [-- QEMU_ARG ...]
 
 Boots DISK with the machine and devices of README.md's Run section,
@@ -67,13 +67,24 @@ for STEADY_SECONDS more. In persist mode the same copy of the data disk
 is booted twice: the first boot is system mode's but for the wheel, and the
 second must report the account the first made and, typed again, log in
 with it, run whoami and show the file, which the disk must still hold.
+Each session ends with logout, and login must report it ended.
 In chain mode, the boot of chain.img must report the chain's steps
 passing in its test report. In specimen mode, the boot of specimen.img
 must report the display given to the type specimen from /store and the
 specimen drawn; then QMP's screendump, kept at SCREEN.ppm if given,
 must equal pixel for pixel the screen design/text/specimen.py draws at
-its size with the nova-os fonts in FONTS. In every mode but chain, the
-kernel must also report the frames the boot screen's spinner started
+its size with the nova-os fonts in FONTS. In logout mode, the boot of
+logout.img, which takes a data disk whose GPT is whole and no --tests,
+creates the account as system mode does, and the session's program, in
+the shell's place, runs programs that end at once, more of them than
+login has handles, and then programs that stay running until login
+refuses one, at its limit on a session's programs; it ends without
+waiting for them. Login must report the session ended with each of the
+running ones stopped, and none may report again for QUIET_SECONDS. A
+second session, logged into with the account the first made, must then
+do the same, its programs refused at the same count as the first's,
+which they are not if login kept any of the first's places.
+In every mode but chain, the kernel must also report the frames the boot screen's spinner started
 while the background was prepared, from the start of the kernel's
 drawing to the first process's startup report: at least one, unless
 the preparation ended within the longest a turning spinner goes
@@ -353,7 +364,7 @@ PPM_MAXVAL = b"255"
 PPM_FIELDS = 4
 
 DEFAULT_TIMEOUTS = {"system": 300, "persist": 300, "chain": 2700,
-                    "specimen": 300}
+                    "specimen": 300, "logout": 300}
 
 DATA_LINES = [
     Event("nova-fs: pool opened", lba=ANY_VALUE),
@@ -467,14 +478,26 @@ LATER_BOOT_READY = [ACCOUNTS_PASSED, Event("nova-accounts: ready accounts=1"),
                     LOGIN_READY]
 SESSION = Event("nova-shell: session name=%s role=administrator"
                 % ACCOUNT_NAME)
-CREATED = [Event("nova-accounts: account created name=%s id=1 "
-                 "role=administrator" % ACCOUNT_NAME), SESSION]
-LOGGED_IN = [Event("nova-accounts: login accepted name=%s" % ACCOUNT_NAME),
-             SESSION]
+CREATED = Event("nova-accounts: account created name=%s id=1 "
+                "role=administrator" % ACCOUNT_NAME)
+LOGGED_IN = Event("nova-accounts: login accepted name=%s" % ACCOUNT_NAME)
 WHOAMI = "whoami"
 WHOAMI_RAN = Event("nova-shell: whoami name=%s id=1 role=administrator"
                    % ACCOUNT_NAME)
 NO_COMMAND = Event("nova-shell: command unknown user=%s" % ACCOUNT_NAME)
+
+# The session ends with logout. Login then ends every job it made for the
+# session's programs, and reports how many of them still ran; the shell
+# is the session's only program here, and login did not make its job, so
+# none did.
+LOGOUT = "logout"
+
+
+def session_ended(killed):
+    """Login's line for the end of the session, with killed programs
+    stopped."""
+    return Event("nova-login: session ended name=%s killed=%d"
+                 % (ACCOUNT_NAME, killed))
 
 # The file commands the first boot's session runs in its home, each as
 # the lines typed for it, the status the shell must log for it, in a
@@ -625,6 +648,38 @@ UNLOGGED = ([(literal(ACCOUNT_PASSWORD), "the account's password")]
 # answered without a hash takes a second or two.
 HASH_TIMEOUT = 300
 KEY_TIMEOUT = 60
+
+# The logout disk's session program, test/driver.c, stands in for the
+# shell. It runs CHURN_RUNS programs that end at once, one after
+# another, which are more than the handles of login's table, so that a
+# handle kept for each of them runs login out; then programs that stay
+# running, each logging a beat every 100 ms (test/victim.c), until login
+# refuses one. Login allows a session SESSION_PROGRAMS at once, the
+# store service's clients less its control channel's and its root's
+# (login/login.c, SESSION_PROGRAMS_MAX). The driver then ends, and login
+# must stop every victim as it ends the session. A victim that beats
+# again within QUIET_SECONDS, twenty times the beats that show one
+# running, was not stopped. The boot then logs in again and requires the
+# same of a second session.
+CHURN_RUNS = 260
+SESSION_PROGRAMS = 6
+ERR_NO_RESOURCES = 15
+QUIET_SECONDS = 2
+CHURN_TIMEOUT = 600
+VICTIMS_TIMEOUT = 120
+HOLD_TIMEOUT = 60
+DRIVER_SESSION = Event("nova-driver: session name=%s" % ACCOUNT_NAME)
+CHURNED = Event("nova-driver: churned runs=%d" % CHURN_RUNS)
+VICTIM_RUNS = (
+    [Event("nova-driver: run id=%d status=%d" % (n, OK))
+     for n in range(SESSION_PROGRAMS)]
+    + [Event("nova-driver: run id=%d status=%d"
+             % (SESSION_PROGRAMS, ERR_NO_RESOURCES)),
+       Event('nova-login: program start refused reason="session limit" '
+             "limit=%d" % SESSION_PROGRAMS)])
+VICTIM_BEATS = [Event("nova-victim: beat id=%d" % n)
+                for n in range(SESSION_PROGRAMS)]
+ANY_BEAT = Event("nova-victim: beat")
 
 # The lines that report a failure (docs/spec/log.md T1): an event that
 # ends with FAILED, and these.
@@ -969,6 +1024,30 @@ class Serial:
             missing = [event for event in missing
                        if not event.matches(parsed)]
 
+    def wait_quiet(self, seconds, forbidden):
+        """Read lines for seconds, failing at the first that matches the
+        Event forbidden or that reports a failure."""
+        deadline = time.monotonic() + seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            try:
+                line = self.lines.get(timeout=remaining)
+            except queue.Empty:
+                return
+            if line is None:
+                raise BootFailed("QEMU ended before the quiet did")
+            print("%8.1f  %s" % (time.monotonic() - self.start, line),
+                  flush=True)
+            parsed = parse_line(line)
+            if parsed and forbidden.matches(parsed):
+                raise BootFailed("reported after it was to have stopped: "
+                                 + line[LINE_START.search(line).start():])
+            if parsed and reports_failure(parsed):
+                raise BootFailed("reported a failure: "
+                                 + line[LINE_START.search(line).start():])
+
     def unreported(self, missing, report_done):
         return "\n  ".join([str(event) for event in missing]
                            + (["the end of the test report"]
@@ -1038,16 +1117,22 @@ def run_commands(serial, qmp, commands, data):
               flush=True)
 
 
-def log_in(serial, qmp, data, first):
-    """Create the account on a first boot, or log in with it on a later
-    one, then run whoami and the file commands in its shell, checking
-    data, the data disk, after each."""
+def sign_in(serial, qmp, first, session):
+    """Create the account on a first boot, typing its password twice, or
+    log in with it on a later one, and wait for the line session, which
+    its session's program logs."""
     type_line(qmp, ACCOUNT_NAME)
     type_line(qmp, ACCOUNT_PASSWORD, shown=False)
     if first:
         type_line(qmp, ACCOUNT_PASSWORD, shown=False)
-    serial.wait_for(CREATED if first else LOGGED_IN,
+    serial.wait_for([CREATED if first else LOGGED_IN, session],
                     time.monotonic() + HASH_TIMEOUT)
+
+
+def log_in(serial, qmp, data, first):
+    """Sign in as sign_in does, then run whoami and the file commands in
+    the shell, checking data, the data disk, after each."""
+    sign_in(serial, qmp, first, SESSION)
     type_line(qmp, WHOAMI)
     serial.wait_for([WHOAMI_RAN], time.monotonic() + KEY_TIMEOUT)
     type_line(qmp, ACCOUNT_PASSWORD, shown=False)
@@ -1056,12 +1141,20 @@ def log_in(serial, qmp, data, first):
                  FILE_COMMANDS if first else LATER_FILE_COMMANDS, data)
 
 
+def log_out(serial, qmp):
+    """End the session with logout and wait for login to report it
+    ended."""
+    type_line(qmp, LOGOUT)
+    serial.wait_for([session_ended(0)], time.monotonic() + KEY_TIMEOUT)
+
+
 def drive(serial, qmp_path, data, accounts, first, screens, scratch,
           steady):
     """Over QMP: send the pointer's events, then, with accounts, create
     the account or log in with it as log_in does, and with screens, the
     program ci/screens.c builds to, check the wheel as scroll does, with
-    the caret steady or not."""
+    the caret steady or not; then, with accounts, end the session as
+    log_out does."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(QMP_TIMEOUT)
         connection.connect(qmp_path)
@@ -1072,6 +1165,41 @@ def drive(serial, qmp_path, data, accounts, first, screens, scratch,
                 log_in(serial, qmp, data, first)
             if screens:
                 scroll(serial, qmp, data, screens, scratch, steady)
+            if accounts:
+                log_out(serial, qmp)
+
+
+def check_programs(serial):
+    """What the logout disk's driver and login must report of a session,
+    once its driver has started: the churn, the victims refused at login's
+    limit and each beating, the session ended with every victim stopped,
+    and no victim heard from after. Each wait takes the lines it reads
+    off the log, and the last reads to the end of its quiet, so that the
+    lines of the next session are the only ones a later call sees."""
+    serial.wait_for([CHURNED], time.monotonic() + CHURN_TIMEOUT)
+    serial.wait_for(VICTIM_RUNS + VICTIM_BEATS,
+                    time.monotonic() + VICTIMS_TIMEOUT)
+    serial.wait_for([session_ended(SESSION_PROGRAMS)],
+                    time.monotonic() + HOLD_TIMEOUT)
+    serial.wait_quiet(QUIET_SECONDS, ANY_BEAT)
+
+
+def drive_logout(serial, qmp_path):
+    """Over QMP, create the account, which starts the session's driver,
+    and check_programs; then, with login back at its prompt, log in with
+    the account, which starts a second driver, and check_programs again,
+    which the second session passes only if the first left login's
+    places for programs free, as it left the store service's clients.
+    Its driver must start afresh: sign_in waits for the line the driver
+    logs as it starts, which the first session's already read."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(QMP_TIMEOUT)
+        connection.connect(qmp_path)
+        with connection.makefile("rwb") as stream:
+            qmp = Qmp(stream)
+            for first in (True, False):
+                sign_in(serial, qmp, first, DRIVER_SESSION)
+                check_programs(serial)
 
 
 def read_ppm(path):
@@ -1568,6 +1696,8 @@ def boot(args, scratch, log, data_drive, data_lines, first):
         if args.mode in ("system", "persist"):
             drive(serial, qmp_path, os.path.join(scratch, DATA_COPY),
                   accounts, first, screens, scratch, args.tests)
+        if args.mode == "logout":
+            drive_logout(serial, qmp_path)
     finally:
         stop(qemu)
         if serial:
@@ -1627,6 +1757,9 @@ def main():
         parser.error("persist needs --data, whole")
     if args.mode in ("chain", "specimen") and not args.tests:
         parser.error("%s takes only a test disk, with --tests" % args.mode)
+    if args.mode == "logout" and (args.tests or not args.data
+                                  or args.corrupt_gpt):
+        parser.error("logout takes a data disk, whole, and no --tests")
     if (args.mode == "specimen") != bool(args.fonts):
         parser.error("specimen needs --fonts, and only specimen takes it")
     if args.screen and args.mode != "specimen":

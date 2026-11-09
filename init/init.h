@@ -110,6 +110,12 @@ UINT32 load_from_store(UINT32 job, const VIEW *view, const char *path,
 int launch_handles(UINT32 debug_log, const PROGRAM *program,
                    HANDLE_TRANSFER *handles);
 
+/* init's checks of task_kill (kill.c), with its own process's handle and
+   the root job's: the first that does not hold, as a message, or 0. Each
+   starts what it kills in jobs of its own under job, and leaves nothing
+   of it. */
+const char *kill_check(UINT32 self, UINT32 job);
+
 /* Start the store service over image and the namespace server in job,
    publish /store and the data disk's directories (data.h), and on a
    test disk run the test program from /store with a view of its closure

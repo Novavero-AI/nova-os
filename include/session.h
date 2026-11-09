@@ -43,7 +43,8 @@
     @{ */
 #define LOGIN_DEBUG_LOG 0     /**< a resource covering the debug log */
 #define LOGIN_SELF 1          /**< login's process, with MAP */
-#define LOGIN_JOB 2           /**< sessions' job, with CREATE_PROCESS */
+/** the sessions' job, with CREATE_PROCESS and CREATE_JOB */
+#define LOGIN_JOB 2
 #define LOGIN_STORE 3         /**< the store's root: READ, EXECUTE, LIST */
 #define LOGIN_STORE_CONTROL 4 /**< the store service, with CLOSURE */
 #define LOGIN_HANDLES 5       /**< how many handles it carries */
