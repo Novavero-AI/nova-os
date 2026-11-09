@@ -1,9 +1,10 @@
 /* evdev key codes to a US keyboard's characters, and the modifiers held
-   (docs/spec/console.md C3, docs/spec/display.md D11, rule 2). The
-   codes are the Linux input header's (docs/spec/README.md, Devices),
-   which names each key by its unshifted US label. A modifier key's
-   event updates the modifiers held, and a character key gives its
-   table's character under them. */
+   (docs/spec/console.md C3, docs/spec/display.md D11, rule 2 and D12).
+   The codes are the Linux input header's (docs/spec/README.md,
+   Devices), which names each key by its unshifted US label. A modifier
+   key's event updates the modifiers held, a character key gives its
+   table's character under them, and the secure attention key is a
+   Delete with Control and Alt held. */
 
 #include "keymap.h"
 #include "input_protocol.h"
@@ -16,6 +17,8 @@
 #define CODE_RIGHT_SHIFT 54
 #define CODE_LEFT_ALT 56
 #define CODE_CAPS_LOCK 58
+#define CODE_KEYPAD_DOT 83 /* the keypad's Delete, which the header names
+                              by its unshifted label */
 #define CODE_KEYPAD_ENTER 96
 #define CODE_RIGHT_CONTROL 97
 #define CODE_RIGHT_ALT 100
@@ -26,6 +29,8 @@
 #define CODE_END 107
 #define CODE_PAGE_DOWN 109
 #define CODE_DELETE 111
+#define CODE_LEFT_SUPER 125
+#define CODE_RIGHT_SUPER 126
 
 /* The character keys run from code 2, the 1 key, to code 57, the space
    bar. Each table holds, for every code below CHARACTER_CODES, the
@@ -68,9 +73,13 @@ _Static_assert(sizeof shifted == CHARACTER_CODES + 1,
 #define HELD_RIGHT_CONTROL 0x8
 #define HELD_LEFT_ALT 0x10
 #define HELD_RIGHT_ALT 0x20
+#define HELD_LEFT_SUPER 0x40
+#define HELD_RIGHT_SUPER 0x80
 #define HELD_SHIFT (HELD_LEFT_SHIFT | HELD_RIGHT_SHIFT)
-#define HELD_NO_CHARACTER                                                 \
-    (HELD_LEFT_CONTROL | HELD_RIGHT_CONTROL | HELD_LEFT_ALT | HELD_RIGHT_ALT)
+#define HELD_CONTROL (HELD_LEFT_CONTROL | HELD_RIGHT_CONTROL)
+#define HELD_ALT (HELD_LEFT_ALT | HELD_RIGHT_ALT)
+#define HELD_SUPER (HELD_LEFT_SUPER | HELD_RIGHT_SUPER)
+#define HELD_NO_CHARACTER (HELD_CONTROL | HELD_ALT | HELD_SUPER)
 
 /* The KEYBOARD.held bit for a modifier's code, or 0. */
 static UINT32 modifier(UINT32 code)
@@ -88,6 +97,10 @@ static UINT32 modifier(UINT32 code)
         return HELD_LEFT_ALT;
     case CODE_RIGHT_ALT:
         return HELD_RIGHT_ALT;
+    case CODE_LEFT_SUPER:
+        return HELD_LEFT_SUPER;
+    case CODE_RIGHT_SUPER:
+        return HELD_RIGHT_SUPER;
     default:
         return 0;
     }
@@ -160,4 +173,11 @@ UINT32 keys_event(KEYBOARD *keyboard, UINT32 code, UINT32 value,
         return EDIT_INSERT;
     }
     return edit_key(code);
+}
+
+int keys_attention(const KEYBOARD *keyboard, UINT32 code)
+{
+    return (code == CODE_DELETE || code == CODE_KEYPAD_DOT) &&
+           (keyboard->held & HELD_CONTROL) != 0 &&
+           (keyboard->held & HELD_ALT) != 0;
 }
