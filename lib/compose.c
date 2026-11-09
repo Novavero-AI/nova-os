@@ -27,6 +27,7 @@
    radius, and a window of another size reads it by offset. */
 
 #include "compose.h"
+#include "limb.h"
 #include "raster.h"
 
 #define CHANNEL_BITS 8
@@ -323,6 +324,55 @@ void compose_write(const COMPOSE_BAND *band, const SCREEN *screen,
             to[x] = gfx_pixel(screen, channel(pixel, 0), channel(pixel, 1),
                               channel(pixel, 2));
         }
+    }
+}
+
+/* ------------------------------------------------------------------------
+   The wallpaper */
+
+const char *compose_wallpaper_refusal(const BOOTSTRAP_BACKGROUND *background,
+                                      const BOOTSTRAP_DISPLAY *display,
+                                      UINT32 sections)
+{
+    if (background->background == BOOTSTRAP_BACKGROUND_NONE)
+        return "no image";
+    if (background->background != BOOTSTRAP_BACKGROUND_LIMB)
+        return "not limb";
+    if (background->format != PIXEL_RGB && background->format != PIXEL_BGR)
+        return "unknown format";
+    if (background->width != display->width ||
+        background->height != display->height)
+        return "another size";
+    if (background->width < LIMB_MIN_SIDE || background->height < LIMB_MIN_SIDE ||
+        background->width > LIMB_MAX_SIDE || background->height > LIMB_MAX_SIDE)
+        return "no size";
+    if (sections !=
+        bootstrap_background_sections(background->width, background->height))
+        return "wrong sections";
+    return 0;
+}
+
+void compose_wallpaper_frame(const SCREEN *screen,
+                             const COMPOSE_WALLPAPER *wallpaper,
+                             UINT32 *memory, INT64 rows)
+{
+    INT64 top;
+
+    if (rows < 1)
+        return;
+    for (top = 0; top < screen->height; top += rows) {
+        RECT written;
+        COMPOSE_BAND band;
+
+        written.left = 0;
+        written.top = top;
+        written.right = screen->width;
+        written.bottom = smaller(top + rows, screen->height);
+        band.pixels = memory;
+        band.stride = screen->width;
+        band.rect = compose_blocks(screen, &written);
+        compose_band(&band, wallpaper, 0, 0);
+        compose_write(&band, screen, &written);
     }
 }
 

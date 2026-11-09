@@ -42,7 +42,8 @@ _Static_assert(sizeof(BOOTSTRAP_BACKGROUND) == 16, "one layout on every target")
 #define CONSOLE_PREPARED_SIZE 4
 
 /** The messages the control channel queues: the options, the background,
-    the display and a session for each the console serves. */
+    the display or the display after a compositor, and a session for each
+    the console serves. */
 #define CONSOLE_CONTROL_CAPACITY (CONSOLE_SESSIONS + 3)
 
 /** ui.reduce-motion: the caret does not blink. */
@@ -84,7 +85,8 @@ _Static_assert(offsetof(CONSOLE_REPLY, length) == 4, "one layout on every target
 typedef struct {
     UINT32 transaction; /**< 0 */
     /** CONSOLE_SETUP_DISPLAY, CONSOLE_SETUP_SESSION,
-        CONSOLE_SETUP_BACKGROUND or CONSOLE_SETUP_OPTIONS */
+        CONSOLE_SETUP_BACKGROUND, CONSOLE_SETUP_DISPLAY_AFTER or
+        CONSOLE_SETUP_OPTIONS */
     UINT32 kind;
 } CONSOLE_SETUP;
 
@@ -95,9 +97,11 @@ _Static_assert(offsetof(CONSOLE_SETUP, kind) == 4, "one layout on every target")
 /** The bytes of a setup. */
 #define CONSOLE_SETUP_SIZE 8
 
-/** The setup that hands the console the display. */
+/** The setup that hands the console the display, or the display after a
+    compositor (console.md C2). */
 typedef struct {
-    CONSOLE_SETUP setup;       /**< CONSOLE_SETUP_DISPLAY */
+    /** CONSOLE_SETUP_DISPLAY or CONSOLE_SETUP_DISPLAY_AFTER */
+    CONSOLE_SETUP setup;
     BOOTSTRAP_DISPLAY display; /**< the display, as nova-boot drew on it */
 } CONSOLE_SETUP_DISPLAY_MESSAGE;
 
@@ -304,6 +308,9 @@ static inline UINT32 console_bootstrap_endpoint_encode(UINT32 transaction,
 #define CONSOLE_SETUP_SESSION 2
 /** The kernel's background, before the display. */
 #define CONSOLE_SETUP_BACKGROUND 3
+/** The display after a compositor, whose last frame the screen still
+    shows (console.md C2). */
+#define CONSOLE_SETUP_DISPLAY_AFTER 5
 /** The options, once, before the background and the display. */
 #define CONSOLE_SETUP_OPTIONS 6
 /** A dispatcher's `which` for a message too short to hold the
@@ -573,6 +580,71 @@ static inline UINT32 console_control_prepared_encode(UINT32 transaction,
 /** Check a message received on the channel: returns OK, or
     ERR_INVALID_ARGS at the first rule of its description it breaks
     (docs/spec/interface.md P10).
+    The display after a compositor, whose last frame the screen still
+    shows (console.md C2). */
+static inline UINT32 console_control_display_after_check(const void *bytes,
+                                                         UINT32 byte_count,
+                                                         const RECEIVED_HANDLE *handles,
+                                                         UINT32 handle_count)
+{
+    const CONSOLE_SETUP_DISPLAY_MESSAGE *body = (const CONSOLE_SETUP_DISPLAY_MESSAGE *)bytes;
+
+    if ((UINT64)byte_count < 32)
+        return ERR_INVALID_ARGS;
+    if ((UINT64)body->setup.kind != (UINT64)(CONSOLE_SETUP_DISPLAY_AFTER))
+        return ERR_INVALID_ARGS;
+    if ((UINT64)body->setup.transaction != (UINT64)0)
+        return ERR_INVALID_ARGS;
+    if ((UINT64)byte_count != 32)
+        return ERR_INVALID_ARGS;
+    if ((UINT64)handle_count != 1)
+        return ERR_INVALID_ARGS;
+    if ((UINT64)handles[0].type != (UINT64)TYPE_RESOURCE)
+        return ERR_INVALID_ARGS;
+    return OK;
+}
+
+/** Lay the message out in bytes, which is aligned to 8 bytes and
+    holds at least the direction's BYTES_MAX: returns OK with the
+    message's size in *byte_count, or ERR_INVALID_ARGS with 0 there
+    if it breaks the description (docs/spec/interface.md P14).
+    The display after a compositor, whose last frame the screen still
+    shows (console.md C2). */
+static inline UINT32 console_control_display_after_encode(const CONSOLE_SETUP_DISPLAY_MESSAGE *body,
+                                                          const UINT32 *handles,
+                                                          UINT32 handle_count,
+                                                          HANDLE_TRANSFER *transfers,
+                                                          void *bytes,
+                                                          UINT32 *byte_count)
+{
+    CONSOLE_SETUP_DISPLAY_MESSAGE *out = (CONSOLE_SETUP_DISPLAY_MESSAGE *)bytes;
+    UINT8 *p = (UINT8 *)bytes;
+    UINT64 i;
+
+    *byte_count = 0;
+    if ((UINT64)handle_count < 1 ||
+        (UINT64)handle_count > 1)
+        return ERR_INVALID_ARGS;
+    for (i = 0; i < 32; i++)
+        p[i] = ((const UINT8 *)body)[i];
+    out->setup.kind = (UINT32)CONSOLE_SETUP_DISPLAY_AFTER;
+    {
+        const UINT64 total = 32;
+
+        if ((UINT64)out->setup.transaction != (UINT64)0)
+            return ERR_INVALID_ARGS;
+        if (total != 32)
+            return ERR_INVALID_ARGS;
+    }
+    transfers[0].handle = handles[0];
+    transfers[0].rights = RESOURCE_RIGHT_USE;
+    *byte_count = (UINT32)32;
+    return OK;
+}
+
+/** Check a message received on the channel: returns OK, or
+    ERR_INVALID_ARGS at the first rule of its description it breaks
+    (docs/spec/interface.md P10).
     The options, once, before the background and the display. */
 static inline UINT32 console_control_options_check(const void *bytes,
                                                    UINT32 byte_count,
@@ -656,6 +728,8 @@ static inline UINT32 console_control_request_check(const void *bytes,
         return console_control_session_check(bytes, byte_count, handles, handle_count);
     if (selector == (UINT64)CONSOLE_SETUP_BACKGROUND)
         return console_control_background_check(bytes, byte_count, handles, handle_count);
+    if (selector == (UINT64)CONSOLE_SETUP_DISPLAY_AFTER)
+        return console_control_display_after_check(bytes, byte_count, handles, handle_count);
     if (selector == (UINT64)CONSOLE_SETUP_OPTIONS)
         return console_control_options_check(bytes, byte_count, handles, handle_count);
     return ERR_NOT_SUPPORTED;

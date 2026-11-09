@@ -33,15 +33,17 @@ _Static_assert(CONSOLE_BOOTSTRAP_DEBUG_LOG == 0 && CONSOLE_BOOTSTRAP_SELF == 1 &
                "C2: the bootstrap message's handles in this order");
 _Static_assert(CONSOLE_WRITE == 1 && CONSOLE_READ == 2 &&
                    CONSOLE_SETUP_DISPLAY == 1 && CONSOLE_SETUP_SESSION == 2 &&
-                   CONSOLE_SETUP_BACKGROUND == 3 && CONSOLE_SETUP_OPTIONS == 6,
+                   CONSOLE_SETUP_BACKGROUND == 3 &&
+                   CONSOLE_SETUP_DISPLAY_AFTER == 5 &&
+                   CONSOLE_SETUP_OPTIONS == 6,
                "C2 and C4: the operations and the kinds");
 _Static_assert(CONSOLE_OPTION_REDUCE_MOTION == 0x1 &&
                    CONSOLE_OPTIONS == CONSOLE_OPTION_REDUCE_MOTION,
                "C2: the options' one bit");
 _Static_assert(CONSOLE_CONTROL_CAPACITY == CONSOLE_SESSIONS + 3,
                "C2: the control channel queues the options, the background "
-               "or a connection, the display, and a session for each the "
-               "console serves");
+               "or a connection, the display or the display after a "
+               "compositor, and a session for each the console serves");
 
 #define DISPLAY_RECORD_BYTES 24
 #define BACKGROUND_LABEL_BYTES 16
@@ -319,6 +321,39 @@ static void check_control_messages(void)
     check(console_control_request_check(buffer.bytes, 32, received, 0,
                                         &which) == ERR_INVALID_ARGS,
           "a display setup with no handle is refused");
+
+    /* The display after a compositor: the display's message under kind
+       5, with the same record and resource. */
+    display.setup.kind = 0;
+    values[0] = 5;
+    status = console_control_display_after_encode(&display, values, 1,
+                                                  transfers, buffer.bytes,
+                                                  &size);
+    memset(want, 0, sizeof want);
+    set32(want + 4, CONSOLE_SETUP_DISPLAY_AFTER);
+    display_record(want + 8);
+    check(status == OK && size == 32 && same(buffer.bytes, want, 32),
+          "a display after a compositor is a setup of kind 5 and the "
+          "display record");
+    check(transfers[0].handle == 5 && transfers[0].rights == RESOURCE_RIGHT_USE,
+          "the resource of a display after a compositor travels with USE");
+    received[0].handle = 5;
+    received[0].type = TYPE_RESOURCE;
+    received[0].rights = RESOURCE_RIGHT_USE;
+    check(console_control_request_check(buffer.bytes, 32, received, 1,
+                                        &which) == OK &&
+              which == CONSOLE_SETUP_DISPLAY_AFTER,
+          "a display after a compositor passes the dispatcher and is named "
+          "so");
+    received[0].type = TYPE_SECTION;
+    check(console_control_request_check(buffer.bytes, 32, received, 1,
+                                        &which) == ERR_INVALID_ARGS,
+          "a display after a compositor whose handle is no resource is "
+          "refused");
+    received[0].type = TYPE_RESOURCE;
+    check(console_control_request_check(buffer.bytes, 32, received, 0,
+                                        &which) == ERR_INVALID_ARGS,
+          "a display after a compositor with no handle is refused");
 
     /* A session: a setup of kind 2 and the console's end. */
     setup.transaction = 0;

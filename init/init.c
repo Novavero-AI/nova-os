@@ -29,6 +29,7 @@
    EXIT_SUPERVISION_FAILED, if waiting for the drivers fails. */
 
 #include "init.h"
+#include "compositor.h"
 #include "console.h"
 #include "data.h"
 #include "login_start.h"
@@ -466,7 +467,8 @@ static void report_startup_done(UINT32 bootstrap)
 /* The console's panel is prepared before the report, so that the
    display shows it as soon as the kernel releases it (console.md C1);
    the specimen, which draws in the console's place, takes no
-   background. */
+   background, and a compositor, which takes it after the release, has
+   it held until then (display.md D2). */
 _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
 {
     BOOT_BACKGROUND background;
@@ -476,6 +478,7 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     (void)argument;
     job = read_bootstrap(bootstrap);
     tests_begin();
+    platform.drawer = compositor_wanted() ? DRAWER_COMPOSITOR : DRAWER_CONSOLE;
     if (tests_enabled())
         test_calls(bootstrap, job);
     data_start(&platform, job);
@@ -488,11 +491,15 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     specimen = boot_file(SPECIMEN_MARKER) != 0;
     if (specimen)
         boot_background_close(&background);
+    else if (platform.drawer == DRAWER_COMPOSITOR)
+        compositor_hold(&background);
     else
         console_prepare(&platform, &background);
     report_startup_done(bootstrap);
     if (specimen)
         specimen_start(&platform, &services, bootstrap);
+    else if (platform.drawer == DRAWER_COMPOSITOR)
+        compositor_start(&platform, bootstrap);
     else
         console_start(&platform, bootstrap);
     login_start(&platform, &services);

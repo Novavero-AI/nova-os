@@ -32,6 +32,10 @@ int tests_enabled(void);
    display.md D19). */
 #define TEST_FLAG_NO_MOTION "NOMOTION"
 
+/* The flag file that makes the compositor end after its first frame, each
+   time it starts, on a test disk (disk-layout.md, display.md D19). */
+#define TEST_FLAG_COMPOSITOR_FAILS "COMPFAIL"
+
 /* Whether the boot disk is a test disk that holds the flag file name: a
    flag file acts on a test disk alone. */
 int tests_flag(const char *name);

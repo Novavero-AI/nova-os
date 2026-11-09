@@ -5,7 +5,7 @@ Usage: python3 -I ci/boot.py --code CODE.fd --vars VARS.fd --log LOG
                              [--tests] [--data DATA [--corrupt-gpt KIND]]
                              [--size WIDTHxHEIGHT]
                              [--fonts FONTS [--screen SCREEN.ppm]]
-                             {system,persist,chain,specimen,logout} DISK
+                             {system,fallback,persist,chain,specimen,logout} DISK
                              [-- QEMU_ARG ...]
 
 Boots DISK with the machine and devices of README.md's Run section,
@@ -29,7 +29,8 @@ boot disk's read, the data disk's check with a data disk whose GPT is
 whole, and in chain mode the chain, each of its steps and each pinned
 link. Without --tests, a report anywhere in the log fails the boot, and
 the kernel must report its random number generator's self-test
-passing. chain and specimen take only a test disk.
+passing. chain, fallback and specimen take only a test disk, and
+fallback and persist a whole data disk.
 
 In system mode, the boot must report the store service serving, startup
 done, the background drawn, the console drawn, its panel's backdrop
@@ -69,7 +70,25 @@ second must report the account the first made and, typed again, log in
 with it, run whoami and show the file, which the disk must still hold.
 Each session ends with logout, and login must report it ended.
 In chain mode, the boot of chain.img must report the chain's steps
-passing in its test report. In specimen mode, the boot of specimen.img
+passing in its test report. In fallback mode, the boot of fallback.img,
+a test disk whose first process makes the compositor end after its first
+frame at every start, must show the compositor take the display and
+give it up (docs/spec/display.md D19, rule 9): the compositor's refusal
+of the background, its display line, which says its wallpaper is
+computed, and its end with COMPOSITOR_EXIT_TEST, each of the last two
+once for each of its two starts; the first process restarting it once
+and giving it up; each of the three input drivers started again for the
+compositor's second start; and the console drawing the display after
+it, Limb over the whole screen and then its panel. When the first
+display line is read, QMP's screendump must be Limb alone, as
+ci/screens.c draws it; the dump is taken before the console draws
+anything (check_limb). A first frame the compositor
+does not write leaves the kernel's Limb, which is the same pixels, and
+is not seen. Of the lines that report a failure the boot accepts only
+those of the first process and the drivers, each as often as it is
+reported and no more, and any other fails it; it then goes on as system
+mode does, matching the screen against the host's render and logging in
+on the console. In specimen mode, the boot of specimen.img
 must report the display given to the type specimen from /store and the
 specimen drawn; then QMP's screendump, kept at SCREEN.ppm if given,
 must equal pixel for pixel the screen design/text/specimen.py draws at
@@ -91,9 +110,9 @@ the preparation ended within the longest a turning spinner goes
 between frames.
 With --size, QEMU's display is a VGA device whose EDID offers that size
 in pixels, with the video memory a frame that large needs, and the
-display line the console logs must name the size, or the boot fails at
-once, which also checks the recipe against the QEMU and EDK2 releases
-the boot runs with.
+display line the console or the compositor logs must name the size, or
+the boot fails at once, which also checks the recipe against the QEMU
+and EDK2 releases the boot runs with.
 Each --expect LINE, in T1's form, adds a line the boot must report,
 with the keys LINE gives. With a data disk, the boot must also report
 the file system service opening its pool and /data and /users
@@ -112,6 +131,7 @@ and otherwise when the timeout passes with a line not yet reported.
 """
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -195,13 +215,23 @@ def parse_line(text):
 class Event:
     """A line the boot must report: its component and event, with keys,
     each a value it must have, or a pattern it must match whole, and
-    keys it must not have."""
+    keys it must not have. It is reported once, unless repeated says
+    more."""
+
+    times = 1
 
     def __init__(self, line, absent=(), **patterns):
         self.text = line
         self.component, self.event, self.keys = parse_line(line)
         self.keys.update(patterns)
         self.absent = absent
+
+    def repeated(self, times):
+        """This event, which the boot must report times times, each by a
+        line of its own."""
+        counted = copy.copy(self)
+        counted.times = times
+        return counted
 
     def matches(self, parsed):
         if not parsed or parsed[:2] != (self.component, self.event):
@@ -218,7 +248,8 @@ class Event:
         return not any(key in keys for key in self.absent)
 
     def __str__(self):
-        return self.text + "".join(" no %s" % key for key in self.absent)
+        return (self.text + "".join(" no %s" % key for key in self.absent)
+                + (" (%d times)" % self.times if self.times > 1 else ""))
 
 
 # A key's value that may be anything, for a key the line must have.
@@ -238,6 +269,10 @@ INPUT_LINES = [
     Event("nova-console: input kind=pointer x=0..%d y=0..%d"
           % (TABLET_MAX, TABLET_MAX)),
 ]
+
+# The input functions of the machine: the console reports one endpoint
+# for each.
+INPUT_FUNCTIONS = len(INPUT_LINES)
 
 # The kernel draws the background offscreen while the boot screen's
 # spinner turns, hands it to the first process and waits for the
@@ -270,9 +305,12 @@ TICK_MS = 1
 TIME_SLICE_MS = 10
 SPINNER_GAP_MS = FRAME_MS + TICK_MS + TIME_SLICE_MS + TICK_MS
 
-# The console's line for the display it draws on, whose screen key is
-# the display's width and height in pixels, which --size checks.
-DISPLAY = Event("nova-console: display", screen=re.compile(r"\d+x\d+"))
+# The line of each that draws on the display, the console or the
+# compositor, whose screen key is the display's width and height in
+# pixels, which --size checks.
+SCREEN_SIZE = re.compile(r"\d+x\d+")
+DISPLAYS = [Event("nova-console: display", screen=SCREEN_SIZE),
+            Event("nova-compositor: display", screen=SCREEN_SIZE)]
 
 # The console's lines on its panel's backdrop: on the system disk, its
 # line once it draws the panel, made from the kernel's background; on a
@@ -282,11 +320,56 @@ DISPLAY = Event("nova-console: display", screen=re.compile(r"\d+x\d+"))
 # the display.
 CONSOLE_DRAWN = {
     False: [Event("nova-console: display backdrop=section",
-                  screen=ANY_VALUE)],
+                  absent=("after",), screen=ANY_VALUE)],
     True: [Event('nova-console: background refused reason="another size"'),
            Event("nova-console: display backdrop=computed",
-                 screen=ANY_VALUE)],
+                 absent=("after",), screen=ANY_VALUE)],
 }
+
+# The fallback boot's lines (docs/spec/display.md D19, rule 9). The
+# compositor, started on a test disk with the background labelled for a
+# display a row taller, refuses it and computes Limb, as the console of
+# any test disk does. It is started twice, the second time without a
+# background, so its display line and its end come twice, and its first
+# process restarts it once and then gives it up. Each input driver is
+# started again for the second start, which the first process logs with
+# the reason "its client restarted", and may be started again for the
+# console, with the reason "its client changed". Only the first is
+# required: a driver started for the second start that has not reported
+# when the compositor is given up reports straight to the console and is
+# not started again, so the second may come for none, some or all of
+# the three. The console's keys, which log_in types, are the evidence
+# that the console has each driver's endpoint. The console, given no
+# background, draws the display after the compositor: its line says so,
+# and its backdrop is computed.
+COMPOSITOR_STARTS = 2
+
+# The exit code of a compositor that ends for the test disk's COMPFAIL,
+# COMPOSITOR_EXIT_TEST in include/display_protocol.h, as the first
+# process logs it.
+COMPOSITOR_EXIT_TEST = 102
+
+COMPOSITOR_DISPLAY = Event("nova-compositor: display", screen=ANY_VALUE,
+                           wallpaper="computed")
+COMPOSITOR_ENDED = Event("nova-init: child ended name=compositor exit=%d"
+                         % COMPOSITOR_EXIT_TEST)
+COMPOSITOR_RESTARTED = Event("nova-init: child restarted name=compositor")
+COMPOSITOR_GIVEN_UP = Event("nova-init: child given up name=compositor")
+INPUT_RESTARTED = [
+    Event("nova-init: child restarted name=virtio-input",
+          reason="its client restarted"),
+    Event("nova-init: child restarted name=virtio-input",
+          reason="its client changed"),
+]
+CONSOLE_AFTER = Event("nova-console: display backdrop=computed "
+                      "after=compositor", screen=ANY_VALUE)
+FALLBACK_LINES = (
+    [Event('nova-compositor: background refused reason="another size"'),
+     COMPOSITOR_DISPLAY.repeated(COMPOSITOR_STARTS),
+     COMPOSITOR_ENDED.repeated(COMPOSITOR_STARTS),
+     COMPOSITOR_RESTARTED, COMPOSITOR_GIVEN_UP]
+    + [INPUT_RESTARTED[0].repeated(INPUT_FUNCTIONS)]
+    + [CONSOLE_AFTER])
 
 SYSTEM_LINES = [
     Event("nova-store: serving"),
@@ -346,6 +429,7 @@ SCREENS_FLAGS = ["-std=c11", "-O2", "-Wall", "-Wextra", "-pedantic",
                  "-Werror"]
 SCREENS_PROGRAM = "screens"
 CONSOLE_SCREEN = "console"
+LIMB_SCREEN = "limb"
 TYPED_LINE = "line"
 WRITTEN = "write"
 WHEEL_TURNED = "wheel"
@@ -363,8 +447,8 @@ PPM_MAGIC = b"P6"
 PPM_MAXVAL = b"255"
 PPM_FIELDS = 4
 
-DEFAULT_TIMEOUTS = {"system": 300, "persist": 300, "chain": 2700,
-                    "specimen": 300, "logout": 300}
+DEFAULT_TIMEOUTS = {"system": 300, "fallback": 300, "persist": 300,
+                    "chain": 2700, "specimen": 300, "logout": 300}
 
 DATA_LINES = [
     Event("nova-fs: pool opened", lba=ANY_VALUE),
@@ -695,6 +779,54 @@ def reports_failure(parsed):
     return (event.split()[-1] == FAILED
             or (component, event) in FAILURES)
 
+
+# What the fallback boot accepts of those lines, each with whether it
+# comes once for each input function, told apart by its pci key, or once
+# in all: the compositor restarted once and then given up, and each
+# input driver started again without a restart counted, once for the
+# compositor's restart and once for the console taking the clients' place
+# (docs/spec/display.md D19, rule 9).
+ACCEPTED_FAILURES = [(COMPOSITOR_RESTARTED, False),
+                     (COMPOSITOR_GIVEN_UP, False)] + [
+    (event, True) for event in INPUT_RESTARTED]
+
+
+def accepted_failures(mode):
+    """The failure lines a boot in mode accepts: those of the fallback
+    boot in fallback mode, and none in any other."""
+    return ACCEPTED_FAILURES if mode == "fallback" else []
+
+
+class Accepted:
+    """The failure lines a boot may report, as ACCEPTED_FAILURES gives
+    them, and none other: take a line, and it is accepted only the first
+    time it comes, or for the first time for its input function, of
+    which there are INPUT_FUNCTIONS at most, each with a pci key."""
+
+    def __init__(self, accepted):
+        self.accepted = accepted
+        self.seen = set()
+        self.functions = set()
+
+    def take(self, parsed):
+        for index, (event, per_function) in enumerate(self.accepted):
+            if not event.matches(parsed):
+                continue
+            function = parsed[2].get("pci") if per_function else None
+            if per_function and (function is None
+                                 or (function not in self.functions
+                                     and len(self.functions)
+                                     == INPUT_FUNCTIONS)):
+                return False
+            if (index, function) in self.seen:
+                return False
+            self.seen.add((index, function))
+            if per_function:
+                self.functions.add(function)
+            return True
+        return False
+
+
 # A test report in KTAP version 1 (docs/spec/log.md T2, as
 # docs/spec/README.md pins it): a version line, a plan, then a result
 # for each test, a failure's diagnostics before it, and a test's own
@@ -951,8 +1083,9 @@ def check_spinner(keys, line):
 
 
 def check_display(keys, line, size):
-    """Fail if keys, those of the console's display line, name a screen
-    other than size, the width and height QEMU was asked for."""
+    """Fail if keys, those of a display line, the console's or the
+    compositor's, name a screen other than size, the width and height
+    QEMU was asked for."""
     asked = "%dx%d" % size
     if keys["screen"] != asked:
         raise BootFailed("the display is %s, not the %s the boot asked "
@@ -964,14 +1097,19 @@ class Serial:
     a line holds of UNLOGGED is noted in leaked. With report, a Ktap,
     every line is read into it; without, a report's version line fails
     the boot. With size, a display line that names another size fails
-    it."""
+    it. A line that reports a failure fails the boot unless accepted, an
+    Accepted, takes it. Each of watches, pairs of an Event and a function
+    of no arguments, calls the function once, when the first line that
+    matches the Event is read."""
 
-    def __init__(self, stream, log, report, size):
+    def __init__(self, stream, log, report, size, accepted, watches=()):
         self.lines = queue.Queue()
         self.start = time.monotonic()
         self.leaked = set()
         self.report = report
         self.size = size
+        self.accepted = accepted
+        self.watches = list(watches)
         self.reader = threading.Thread(target=self.read, args=(stream, log))
         self.reader.start()
 
@@ -986,21 +1124,25 @@ class Serial:
         self.lines.put(None)
 
     def wait_for(self, wanted, deadline, report_done=False):
-        """Read lines until each Event in wanted has matched one, and with
-        report_done, until the test report has ended."""
-        missing = list(wanted)
-        while missing or (report_done and not self.report.done):
+        """Read lines until each Event in wanted has matched as many
+        lines as it must be reported, and with report_done, until the
+        test report has ended."""
+        seen = [0] * len(wanted)
+        while self.unseen(wanted, seen) or (report_done
+                                            and not self.report.done):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise BootFailed("timed out; not reported:\n  "
-                                 + self.unreported(missing, report_done))
+                                 + self.unreported(wanted, seen,
+                                                   report_done))
             try:
                 line = self.lines.get(timeout=remaining)
             except queue.Empty:
                 continue
             if line is None:
                 raise BootFailed("QEMU ended; not reported:\n  "
-                                 + self.unreported(missing, report_done))
+                                 + self.unreported(wanted, seen,
+                                                   report_done))
             print("%8.1f  %s" % (time.monotonic() - self.start, line),
                   flush=True)
             if self.report:
@@ -1014,15 +1156,19 @@ class Serial:
                     raise BootFailed("a line not in the log's form "
                                      "(docs/spec/log.md T1): " + line)
                 continue
-            if reports_failure(parsed):
+            if reports_failure(parsed) and not self.accepted.take(parsed):
                 raise BootFailed("reported a failure: "
                                  + line[LINE_START.search(line).start():])
             if BACKGROUND.matches(parsed):
                 check_spinner(parsed[2], line)
-            if self.size and DISPLAY.matches(parsed):
+            if self.size and any(d.matches(parsed) for d in DISPLAYS):
                 check_display(parsed[2], line, self.size)
-            missing = [event for event in missing
-                       if not event.matches(parsed)]
+            for index, event in enumerate(wanted):
+                if event.matches(parsed):
+                    seen[index] += 1
+            for watch in [w for w in self.watches if w[0].matches(parsed)]:
+                self.watches.remove(watch)
+                watch[1]()
 
     def wait_quiet(self, seconds, forbidden):
         """Read lines for seconds, failing at the first that matches the
@@ -1048,11 +1194,20 @@ class Serial:
                 raise BootFailed("reported a failure: "
                                  + line[LINE_START.search(line).start():])
 
-    def unreported(self, missing, report_done):
-        return "\n  ".join([str(event) for event in missing]
-                           + (["the end of the test report"]
-                              if report_done and not self.report.done
-                              else []))
+    @staticmethod
+    def unseen(wanted, seen):
+        """The indexes of the events in wanted that lines have matched
+        fewer times than they must be reported, seen."""
+        return [index for index, event in enumerate(wanted)
+                if seen[index] < event.times]
+
+    def unreported(self, wanted, seen, report_done):
+        return "\n  ".join(
+            [str(wanted[index]) + (" (%d reported)" % seen[index]
+                                   if wanted[index].times > 1 else "")
+             for index in self.unseen(wanted, seen)]
+            + (["the end of the test report"]
+               if report_done and not self.report.done else []))
 
 
 class Qmp:
@@ -1272,15 +1427,44 @@ def build_screens(scratch):
     return program
 
 
-def draw_screen(screens, scratch, width, height, inputs):
-    """The pixels of the console's screen screens draws at width x height
-    from inputs."""
+def draw_screen(screens, scratch, kind, width, height, inputs):
+    """The pixels of the screen of kind that screens draws at width x
+    height from inputs."""
     path = os.path.join(scratch, EXPECTED_COPY)
-    command = [screens, CONSOLE_SCREEN, str(width), str(height)] + inputs
+    command = [screens, kind, str(width), str(height)] + inputs
     with open(path, "wb") as out:
         if subprocess.run(command, stdout=out).returncode != 0:
             raise BootFailed("ci/screens.c drew no screen")
     return read_ppm(path)[2]
+
+
+def check_limb(qmp_path, scratch, screens):
+    """Take QMP's screendump and fail unless it is Limb alone, as
+    ci/screens.c draws it by the code the console draws it with, which
+    is not the compositor's. The boot takes it when the compositor's
+    first display line is read, which follows its first frame: the
+    compositor's own next write is the same frame, from its second
+    start, and the console draws nothing until the compositor's second
+    end, a whole start of a process later, and its first write is Limb
+    again. The boot runs under TCG, where that start takes seconds and
+    the dump milliseconds. A frame the compositor does not write at all
+    leaves the kernel's Limb, the same pixels, and is not seen."""
+    shot = os.path.abspath(os.path.join(scratch, SCREEN_COPY))
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(QMP_TIMEOUT)
+        connection.connect(qmp_path)
+        with connection.makefile("rwb") as stream:
+            Qmp(stream).execute("screendump", filename=shot)
+    width, height, pixels = read_ppm(shot)
+    differ = differing(pixels, draw_screen(screens, scratch, LIMB_SCREEN,
+                                           width, height, []))
+    if differ:
+        raise BootFailed("after the compositor's first frame the %dx%d "
+                         "screen differs from Limb in %d pixels"
+                         % (width, height, differ))
+    print("          the %dx%d screen after the compositor's first frame "
+          "equals Limb, sha256 %s"
+          % (width, height, hashlib.sha256(pixels).hexdigest()), flush=True)
 
 
 def match_screen(qmp, scratch, screens, inputs, steady):
@@ -1294,7 +1478,7 @@ def match_screen(qmp, scratch, screens, inputs, steady):
     deadline = time.monotonic() + SCREEN_TIMEOUT
     qmp.execute("screendump", filename=shot)
     width, height, pixels = read_ppm(shot)
-    wanted = [draw_screen(screens, scratch, width, height,
+    wanted = [draw_screen(screens, scratch, CONSOLE_SCREEN, width, height,
                           inputs + [CARET, phase])
               for phase in (CARET_STEADY if steady else CARET_PHASES)]
     digests = [hashlib.sha256(image).digest() for image in wanted]
@@ -1653,7 +1837,7 @@ def boot(args, scratch, log, data_drive, data_lines, first):
     accounts = (args.mode not in ("chain", "specimen") and data_drive
                 and not args.corrupt_gpt)
     screens = None
-    if accounts and args.mode == "system":
+    if accounts and args.mode in ("system", "fallback"):
         screens = build_screens(scratch)
     ready = []
     if accounts:
@@ -1675,9 +1859,15 @@ def boot(args, scratch, log, data_drive, data_lines, first):
     serial = None
     report = Ktap() if args.tests else None
     try:
-        serial = Serial(qemu.stdout, log, report, args.size)
+        watches = []
+        if args.mode == "fallback":
+            watches = [(COMPOSITOR_DISPLAY,
+                        lambda: check_limb(qmp_path, scratch, screens))]
+        serial = Serial(qemu.stdout, log, report, args.size,
+                        Accepted(accepted_failures(args.mode)), watches)
         lines = {"chain": CHAIN_LINES,
-                 "specimen": SPECIMEN_LINES}.get(
+                 "specimen": SPECIMEN_LINES,
+                 "fallback": SYSTEM_LINES + FALLBACK_LINES}.get(
                      args.mode, SYSTEM_LINES + CONSOLE_DRAWN[args.tests])
         if not args.tests:
             lines = [RANDOM_PASSED] + lines
@@ -1693,7 +1883,7 @@ def boot(args, scratch, log, data_drive, data_lines, first):
             raise BootFailed("the test report fails")
         if args.mode == "specimen":
             check_specimen(qmp_path, scratch, args.fonts, args.screen)
-        if args.mode in ("system", "persist"):
+        if args.mode in ("system", "fallback", "persist"):
             drive(serial, qmp_path, os.path.join(scratch, DATA_COPY),
                   accounts, first, screens, scratch, args.tests)
         if args.mode == "logout":
@@ -1753,9 +1943,10 @@ def main():
     args = parser.parse_args()
     if args.corrupt_gpt and not args.data:
         parser.error("--corrupt-gpt needs --data")
-    if args.mode == "persist" and (not args.data or args.corrupt_gpt):
-        parser.error("persist needs --data, whole")
-    if args.mode in ("chain", "specimen") and not args.tests:
+    if args.mode in ("fallback", "persist") and (not args.data
+                                                 or args.corrupt_gpt):
+        parser.error("%s needs --data, whole" % args.mode)
+    if args.mode in ("chain", "fallback", "specimen") and not args.tests:
         parser.error("%s takes only a test disk, with --tests" % args.mode)
     if args.mode == "logout" and (args.tests or not args.data
                                   or args.corrupt_gpt):
@@ -1764,8 +1955,8 @@ def main():
         parser.error("specimen needs --fonts, and only specimen takes it")
     if args.screen and args.mode != "specimen":
         parser.error("only specimen takes --screen")
-    if args.size and args.mode not in ("system", "persist"):
-        parser.error("only system and persist take --size")
+    if args.size and args.mode not in ("system", "fallback", "persist"):
+        parser.error("only system, fallback and persist take --size")
     if args.timeout is None:
         args.timeout = DEFAULT_TIMEOUTS[args.mode]
     with tempfile.TemporaryDirectory() as scratch, \

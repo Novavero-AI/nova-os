@@ -9,11 +9,16 @@
    Writes SCREEN at WIDTH x HEIGHT pixels as a binary PPM on standard
    output. The screens:
 
-   console  Limb, as the kernel's fade leaves it, under the console's
-            panel (console/panel.c) showing its view of the text
-            (console/view.c). Each INPUT is two arguments: "line TEXT",
-            TEXT typed at a read with echo and ended with Enter; "write
-            TEXT", TEXT a program writes while no read waits; "wheel
+   limb     Limb alone, as the kernel's fade leaves it, drawn by
+            panel_limb, which is not the compositor's code. It takes no
+            INPUT.
+
+   console  Limb, as the kernel's fade leaves it and as the console
+            draws it after a compositor (panel_limb), under the
+            console's panel (console/panel.c) showing its view of the
+            text (console/view.c). Each INPUT is two arguments: "line
+            TEXT", TEXT typed at a read with echo and ended with Enter;
+            "write TEXT", TEXT a program writes while no read waits; "wheel
             DETENTS", a pointer report that turns the wheel, up if
             positive; or "caret on" or "caret off", the phase of the
             caret's blink the screen shows, on if not given. The text
@@ -78,30 +83,6 @@ static int number(const char *text, long low, long high, long *value)
     *value = strtol(text, &end, DECIMAL);
     return end != text && *end == '\0' && errno == 0 && *value >= low &&
            *value <= high;
-}
-
-/* ------------------------------------------------------------------------
-   Limb. */
-
-/* Limb over the whole screen: the fade's last step, Limb alone
-   (gfx/background.c). Returns 0 if Limb has no size for the screen. */
-static int draw_limb(const SCREEN *screen)
-{
-    LIMB limb;
-    INT64 x, y;
-
-    if (!limb_init(&limb, screen->width, screen->height))
-        return 0;
-    for (y = 0; y < screen->height; y++)
-        for (x = 0; x < screen->width; x++) {
-            UINT32 rgb = limb_pixel(&limb, x, y);
-
-            screen->pixels[y * screen->stride + x] =
-                gfx_pixel(screen, rgb >> 2 * CHANNEL_BITS & CHANNEL_MASK,
-                          rgb >> CHANNEL_BITS & CHANNEL_MASK,
-                          rgb & CHANNEL_MASK);
-        }
-    return 1;
 }
 
 /* ------------------------------------------------------------------------
@@ -195,7 +176,7 @@ static int console_screen(const SCREEN *screen, int count, char **inputs)
     if (!take_inputs(count, inputs, layout.rows, &back, &lit))
         return 0;
     editor_start(&editor, &text, CONSOLE_LINE_MAX, 1);
-    if (!draw_limb(screen)) {
+    if (!panel_limb(screen)) {
         fprintf(stderr, "screens: console: no Limb on a screen this size\n");
         return 0;
     }
@@ -223,6 +204,21 @@ static int console_screen(const SCREEN *screen, int count, char **inputs)
     return drawn;
 }
 
+/* Limb alone. */
+static int limb_screen(const SCREEN *screen, int count, char **inputs)
+{
+    (void)inputs;
+    if (count != 0) {
+        fprintf(stderr, "screens: limb: takes no input\n");
+        return 0;
+    }
+    if (!panel_limb(screen)) {
+        fprintf(stderr, "screens: limb: no Limb on a screen this size\n");
+        return 0;
+    }
+    return 1;
+}
+
 /* ------------------------------------------------------------------------
    The screens and their output. */
 
@@ -233,6 +229,7 @@ typedef struct {
 
 static const SCREEN_KIND kinds[] = {
     {"console", console_screen},
+    {"limb", limb_screen},
 };
 
 #define KINDS (sizeof kinds / sizeof kinds[0])

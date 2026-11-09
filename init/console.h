@@ -41,17 +41,40 @@ void console_started(const PLATFORM *platform);
    init's. Returns 1 once it is released, 0, logged, if the wait fails. */
 int display_released(UINT32 bootstrap);
 
+/* In *framebuffer, a new MMIO resource covering exactly the pages of the
+   framebuffer (C1), with the rights it travels with. Returns the status
+   of resource_create. */
+UINT32 display_resource(const PLATFORM *platform,
+                        HANDLE_TRANSFER *framebuffer);
+
 /* The message that gives a program the display (C1): the display's
-   record in *message, and in *framebuffer a new MMIO resource covering
-   exactly the framebuffer's pages, with the rights it travels with.
-   Returns the status of resource_create. */
+   record in *message, and in *framebuffer a resource as display_resource
+   makes it. Returns the status of resource_create. */
 UINT32 display_message(const PLATFORM *platform,
                        CONSOLE_SETUP_DISPLAY_MESSAGE *message,
                        HANDLE_TRANSFER *framebuffer);
 
+/* In *display, the display's record as the receiver of the kernel's
+   background is told of it: on a test disk MISMATCH_ROWS taller than the
+   display it is given, so that the background does not match it. */
+void display_for_background(const PLATFORM *platform,
+                            BOOTSTRAP_DISPLAY *display);
+
 /* display_released, then send the display to the console, if one runs,
    and to each console started after. */
 void console_start(const PLATFORM *platform, UINT32 bootstrap);
+
+/* The kernel has released the display and a compositor draws on it: a
+   console started now is given login's session and no display, until
+   console_display_after (C2). */
+void console_defer_display(void);
+
+/* The compositor is given up: the display is the console's. Send the
+   console, if one runs, the display after a compositor, with a new
+   resource over the framebuffer, so that it draws Limb over the whole
+   screen and then its panel (C1, C2). A console started later is sent
+   the plain display, since the one that draws now is the console's. */
+void console_display_after(const PLATFORM *platform);
 
 /* A new session on the console: send the console its end and return the
    client's, with CONSOLE_SESSION_RIGHTS, for a program; HANDLE_INVALID,

@@ -225,9 +225,10 @@ which saw `PEER_CLOSED`, takes the endpoint the new driver reports
 (K3). When the client ends it is started again under the same policy,
 and waits for an endpoint; its driver, whose watch saw the old endpoint
 close, ends and is restarted with it, without counting a restart of its
-own, so that a client's failure soon after the driver's own restart
-does not give the driver up. A driver whose client has been given up
-is not restarted, since nothing would read its endpoint.
+own and logging `reason="its client restarted"`, so that a client's
+failure soon after the driver's own restart does not give the driver
+up. A driver whose client has been given up is not restarted, since
+nothing would read its endpoint.
 
 When the first process gives the compositor up, the platform driver
 makes the console the client instead

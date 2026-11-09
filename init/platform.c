@@ -17,11 +17,16 @@
    INPUT_DEVICES_MAX, goes to a \nova\virtinp.exe of its own, which runs
    on: once its device is live it reports with an endpoint, which init
    hands to their client, the console, \nova\console.exe, whose bootstrap
-   message console.c writes (docs/spec/input.md, docs/spec/console.md).
+   message console.c writes (docs/spec/input.md, docs/spec/console.md); or,
+   where the first process starts a compositor, \nova\compose.exe,
+   whose bootstrap message compositor.c writes, which is their client
+   instead until it is given up, and then the console is
+   (docs/spec/display.md D2, D3).
 
    init supervises the drivers and the console for the life of the
    system (ipc.md I10), and the programs it keeps running that are not
    drivers, the accounts service and login among them (platform_keep).
+   The compositor is supervised as the console is.
    It waits for them through one port, on which a watch of each one's
    process queues a packet when it ends, and a watch of each input
    driver's bootstrap channel one when it reports. One that ends, or does
@@ -31,10 +36,14 @@
    driver's end with VIRTIO_BLK_EXIT_DONE is the end of its work, and it
    is not started again. The client keeps its bootstrap channel to init,
    which hands it each endpoint an input driver reports: the first, and
-   one after each restart of the driver. */
+   one after each restart of the driver. A driver whose client ends, or
+   is replaced by the console when the compositor is given up, sees its
+   endpoint close, ends, and is started again for the client it now has,
+   without counting a restart. */
 
 #include "platform.h"
 #include "console.h"
+#include "compositor.h"
 #include "init.h"
 #include "tests.h"
 #include "input_protocol.h"
@@ -51,6 +60,7 @@
 #define BLOCK_FILE "virtblk.exe"
 #define INPUT_FILE "virtinp.exe"
 #define CLIENT_FILE "console.exe"
+#define COMPOSITOR_FILE "compose.exe"
 #define INPUT_NAME "virtio-input"
 
 /* The hexadecimal digits of a PCI vendor or device ID. */
@@ -154,11 +164,20 @@ static SEGMENT segment;
    driver, and its end of the program's bootstrap channel, which init
    keeps for a client, and for a driver that reports until it has.
    starts numbers its starts, for its packets' keys; restarted is the
-   time of its last restart, if it has had one. client_start, for a
-   driver that reports, is the start of the client its endpoint went to
-   since its own last start, or 0. A program kept running is laid out by
-   its load. */
-typedef struct {
+   time of its last restart, if it has had one. serial, for a client,
+   numbers its starts among every client's, so that a start is told from
+   another's whichever client it is. client and client_start, for a
+   driver that reports, are the client its endpoint went to since its own
+   last start and that client's serial then, or 0; held is an endpoint
+   it reported that no client has taken yet, since the compositor is not
+   started. A program kept running is laid out by its load; a client is
+   given its bootstrap message by its bootstrap and told it has started
+   by its started. */
+typedef UINT32 (*CLIENT_BOOTSTRAP)(const PLATFORM *platform, UINT32 process,
+                                   UINT32 channel);
+typedef void (*CLIENT_STARTED)(const PLATFORM *platform);
+
+typedef struct child {
     const char *name;
     const char *file;
     UINT32 kind;
@@ -171,16 +190,22 @@ typedef struct {
     UINT32 starts;
     UINT32 has_restarted;
     UINT64 restarted;
+    UINT32 serial;
+    CLIENT_BOOTSTRAP bootstrap;
+    CLIENT_STARTED started;
+    const struct child *client;
     UINT32 client_start;
+    UINT32 held;
 } CHILD;
 
-/* The block driver and the console take the first places, then an
-   input driver for each input function the walk found. The programs
-   platform_keep keeps running take the places after theirs: the
-   accounts service and login. */
+/* The block driver, the console and the compositor take the first
+   places, then an input driver for each input function the walk found.
+   The programs platform_keep keeps running take the places after
+   theirs: the accounts service and login. */
 #define CHILD_BLOCK 0
 #define CHILD_CLIENT 1
-#define CHILD_FIRST_INPUT 2
+#define CHILD_COMPOSITOR 2
+#define CHILD_FIRST_INPUT 3
 #define CHILD_FIRST_PROGRAM (CHILD_FIRST_INPUT + INPUT_DEVICES_MAX)
 #define PROGRAMS_MAX 2
 #define CHILDREN (CHILD_FIRST_PROGRAM + PROGRAMS_MAX)
@@ -196,9 +221,20 @@ static CHILD children[CHILDREN] = {
                      .function = &found_functions.block},
     [CHILD_CLIENT] = {.name = "console",
                       .file = CLIENT_FILE,
-                      .kind = KIND_CLIENT},
+                      .kind = KIND_CLIENT,
+                      .bootstrap = console_bootstrap,
+                      .started = console_started},
+    [CHILD_COMPOSITOR] = {.name = "compositor",
+                          .file = COMPOSITOR_FILE,
+                          .kind = KIND_CLIENT,
+                          .bootstrap = compositor_bootstrap,
+                          .started = compositor_started},
 };
 static UINT32 supervisor_port;
+
+/* The starts of every client counted: a client's serial is its start's
+   place in the count. */
+static UINT32 client_starts;
 
 /* Map size bytes of device memory at physical, uncached, into init. */
 static volatile UINT8 *map_device(const PLATFORM *platform, UINT64 physical,
@@ -702,11 +738,12 @@ static int start_driver(const PLATFORM *platform, CHILD *child)
     return 1;
 }
 
-/* Start child, the input drivers' client, the console, in the root job
-   with the bootstrap message console.c writes, keeping init's end of the
-   channel, on which its endpoints follow (input_protocol.h). Returns 1
-   with its process and that end in child; 0, logged, with nothing left
-   open, if it did not start. */
+/* Start child, a client of the input drivers, the console or the
+   compositor, in the root job with the bootstrap message its bootstrap
+   writes, keeping init's end of the channel, on which its endpoints
+   follow (input_protocol.h). Returns 1 with its process and that end in
+   child, once its started has run; 0, logged, with nothing left open, if
+   it did not start. */
 static int start_client(const PLATFORM *platform, CHILD *child)
 {
     PROGRAM program;
@@ -717,7 +754,7 @@ static int start_client(const PLATFORM *platform, CHILD *child)
     if (status == OK)
         status = channel_create(CLIENT_CHANNEL_CAPACITY, &mine, &theirs);
     if (status == OK)
-        status = console_bootstrap(platform, program.process, mine);
+        status = child->bootstrap(platform, program.process, mine);
     if (status == OK)
         status = watch(child, program.process, PROCESS_TERMINATED,
                        EVENT_ENDED);
@@ -733,7 +770,7 @@ static int start_client(const PLATFORM *platform, CHILD *child)
     }
     child->process = program.process;
     child->channel = mine;
-    console_started(platform);
+    child->started(platform);
     return 1;
 }
 
@@ -812,12 +849,89 @@ static int stopped(const PLATFORM *platform, CHILD *child)
     return 0;
 }
 
+/* The child that takes the input drivers' endpoints: the compositor,
+   from the start of a boot that is to run one until it is given up, and
+   the console otherwise (display.md D2, D3). */
+static CHILD *input_client(const PLATFORM *platform)
+{
+    CHILD *compositor = &children[CHILD_COMPOSITOR];
+
+    if (platform->drawer == DRAWER_COMPOSITOR &&
+        compositor->state != STATE_GIVEN_UP)
+        return compositor;
+    return &children[CHILD_CLIENT];
+}
+
+/* Hand the client endpoint, from driver, which then is the client's or,
+   if the client cannot take it, closed, so that the driver sees its
+   client gone. A client not started yet, the compositor before the
+   release, takes none: driver keeps the endpoint until it is. */
+static void hand_endpoint(const PLATFORM *platform, CHILD *driver,
+                          UINT32 endpoint)
+{
+    CHILD *client = input_client(platform);
+    HANDLE_TRANSFER transfer;
+    UINT32 transaction = 0;
+    UINT32 status = ERR_BAD_STATE;
+
+    if (client->state == STATE_STOPPED) {
+        driver->held = endpoint;
+        return;
+    }
+    transfer.handle = endpoint;
+    transfer.rights = CLIENT_ENDPOINT_RIGHTS;
+    if (client->state == STATE_RUNNING)
+        status = channel_write(client->channel, &transaction,
+                               INPUT_CLIENT_MESSAGE_SIZE, &transfer, 1);
+    if (status == OK) {
+        driver->client = client;
+        driver->client_start = client->serial;
+        return;
+    }
+    handle_close(endpoint);
+    say_child_status("endpoint send failed", client, status);
+}
+
+/* Hand each input driver's held endpoint to the client, in the order of
+   the drivers, which is the order they reported in. */
+static void hand_held(const PLATFORM *platform)
+{
+    UINT32 i;
+
+    for (i = CHILD_FIRST_INPUT; i < CHILD_FIRST_PROGRAM; i++) {
+        CHILD *driver = &children[i];
+        UINT32 endpoint = driver->held;
+
+        if (endpoint != HANDLE_INVALID) {
+            driver->held = HANDLE_INVALID;
+            hand_endpoint(platform, driver, endpoint);
+        }
+    }
+}
+
+/* child, a client, has been given up. The compositor's end leaves the
+   console the input drivers' client and the display's holder: the
+   console is sent the display after a compositor, and the endpoints no
+   client has taken go to it. The drivers whose endpoints the compositor
+   held end by themselves, and are started again for the console (ended). */
+static void client_given_up(const PLATFORM *platform, const CHILD *child)
+{
+    if (child != &children[CHILD_COMPOSITOR])
+        return;
+    compositor_given_up();
+    console_display_after(platform);
+    hand_held(platform);
+}
+
 /* Whether child, ended or not started and its function stopped, may
-   start again; logged either way, and given up if not. */
-static int restarting(CHILD *child)
+   start again; logged either way, and given up if not, a client given
+   up with what follows from it. */
+static int restarting(const PLATFORM *platform, CHILD *child)
 {
     if (!restart_allowed(child)) {
         give_up(child, "down again within the restart period");
+        if (child->kind == KIND_CLIENT)
+            client_given_up(platform, child);
         return 0;
     }
     say_child_line("child restarted", child);
@@ -833,7 +947,10 @@ static void launch(const PLATFORM *platform, CHILD *child)
 
     for (;;) {
         child->starts++;
+        child->client = 0;
         child->client_start = 0;
+        if (child->kind == KIND_CLIENT)
+            child->serial = ++client_starts;
         say_child_line("child start", child);
         if (child->kind == KIND_CLIENT)
             started = start_client(platform, child);
@@ -848,7 +965,7 @@ static void launch(const PLATFORM *platform, CHILD *child)
                                : STATE_STARTING;
             return;
         }
-        if (!stopped(platform, child) || !restarting(child))
+        if (!stopped(platform, child) || !restarting(platform, child))
             return;
     }
 }
@@ -873,6 +990,21 @@ static UINT32 exit_code_of(const CHILD *child)
     return exit_code;
 }
 
+/* Why driver, an input driver that ended with VIRTIO_INPUT_EXIT_DONE,
+   is started again without counting a restart: the client its endpoint
+   went to has been started again, or has been replaced by another; or 0
+   if neither, and the driver's end is its own. */
+static const char *client_change(const PLATFORM *platform,
+                                 const CHILD *driver)
+{
+    const CHILD *client = input_client(platform);
+
+    if (!driver->client || driver->client_start == client->serial)
+        return 0;
+    return driver->client == client ? "its client restarted"
+                                    : "its client changed";
+}
+
 /* child's process has ended. A driver's function is stopped first,
    whatever the end; the block driver's end with VIRTIO_BLK_EXIT_DONE is
    the end of its work, whose function keeps its quarantine if it does
@@ -880,17 +1012,19 @@ static UINT32 exit_code_of(const CHILD *child)
    for a client given up, which would leave each endpoint it reports
    with nobody to read it. An input driver's end with
    VIRTIO_INPUT_EXIT_DONE once the client it served has been restarted
-   is the client's failure, not the driver's, and the driver starts
-   again without counting a restart; the client's own policy bounds how
-   often that comes. Any other child starts again as the policy
-   allows. */
+   or replaced is the client's change, not the driver's failure, and the
+   driver starts again without counting a restart; the client's own
+   policy bounds how often that comes. Any other child starts again as
+   the policy allows. */
 static void ended(const PLATFORM *platform, CHILD *child)
 {
     UINT32 exit_code = exit_code_of(child);
+    const char *change = 0;
 
     close_if_open(&child->process);
     close_if_open(&child->job);
     close_if_open(&child->channel);
+    close_if_open(&child->held);
     if (child->kind == KIND_FINISHES && exit_code == VIRTIO_BLK_EXIT_DONE) {
         stop_function(platform, child->function, &child->device,
                       child->initiator);
@@ -901,18 +1035,20 @@ static void ended(const PLATFORM *platform, CHILD *child)
     if (!stopped(platform, child))
         return;
     if (child->kind == KIND_REPORTS &&
-        children[CHILD_CLIENT].state == STATE_GIVEN_UP) {
+        input_client(platform)->state == STATE_GIVEN_UP) {
         give_up(child, "its client is given up");
         return;
     }
     child->state = STATE_STOPPED;
-    if (child->kind == KIND_REPORTS && exit_code == VIRTIO_INPUT_EXIT_DONE &&
-        child->client_start &&
-        child->client_start != children[CHILD_CLIENT].starts) {
+    if (child->kind == KIND_REPORTS && exit_code == VIRTIO_INPUT_EXIT_DONE)
+        change = client_change(platform, child);
+    if (change) {
         say_child("child restarted", child);
-        say(" reason=\"its client restarted\"\r\n");
+        say(" reason=");
+        say_value(change);
+        say("\r\n");
         launch(platform, child);
-    } else if (restarting(child)) {
+    } else if (restarting(platform, child)) {
         launch(platform, child);
     }
 }
@@ -939,43 +1075,22 @@ static UINT32 take_report(const CHILD *driver)
     return HANDLE_INVALID;
 }
 
-/* Hand the client endpoint, from driver, which then is the client's or,
-   if the client cannot take it, closed, so that the driver sees its
-   client gone. */
-static void hand_endpoint(CHILD *driver, UINT32 endpoint)
-{
-    CHILD *client = &children[CHILD_CLIENT];
-    HANDLE_TRANSFER transfer;
-    UINT32 transaction = 0;
-    UINT32 status = ERR_BAD_STATE;
-
-    transfer.handle = endpoint;
-    transfer.rights = CLIENT_ENDPOINT_RIGHTS;
-    if (client->state == STATE_RUNNING)
-        status = channel_write(client->channel, &transaction,
-                               INPUT_CLIENT_MESSAGE_SIZE, &transfer, 1);
-    if (status == OK) {
-        driver->client_start = client->starts;
-        return;
-    }
-    handle_close(endpoint);
-    say_child_status("endpoint send failed", client, status);
-}
-
 /* child, an input driver, has reported: its endpoint goes to the
-   client, which the first report of any input driver starts. */
+   client, which the first report of any input driver starts where the
+   client is the console; the compositor starts at the release
+   (platform_start_compositor), and the endpoints wait for it. */
 static void reported(const PLATFORM *platform, CHILD *child)
 {
-    CHILD *client = &children[CHILD_CLIENT];
+    CHILD *client = input_client(platform);
     UINT32 endpoint = take_report(child);
 
     close_if_open(&child->channel);
     child->state = STATE_RUNNING;
     if (endpoint == HANDLE_INVALID)
         return;
-    if (client->state == STATE_STOPPED)
+    if (client->state == STATE_STOPPED && platform->drawer == DRAWER_CONSOLE)
         launch(platform, client);
-    hand_endpoint(child, endpoint);
+    hand_endpoint(platform, child, endpoint);
 }
 
 /* A packet from a watch of a start before the child's current one finds
@@ -1084,6 +1199,17 @@ int platform_start(const PLATFORM *platform)
         return 1;
     say_status("supervision failed", status);
     return 0;
+}
+
+void platform_start_compositor(const PLATFORM *platform)
+{
+    CHILD *console = &children[CHILD_CLIENT];
+
+    launch(platform, &children[CHILD_COMPOSITOR]);
+    hand_held(platform);
+    if (console->state == STATE_STOPPED && have_file(console))
+        launch(platform, console);
+    hand_held(platform);
 }
 
 int platform_keep(const PLATFORM *platform, const char *name,

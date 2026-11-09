@@ -111,7 +111,7 @@ files and add their own:
 |---|---|---|
 | The specimen disk, `specimen.img` | `\NOVA\SPECIMEN`, an empty file | The first process gives the display to the type specimen from `/store` in the console's place ([console.md C1](console.md#c1-the-display-handoff)) |
 | The chain disk, `chain.img` | The inputs of the bootstrap check, the chain the first process runs from the seed | The first process runs the chain ([compat.md C4](compat.md#c4-files)) |
-| The fallback disk, `fallback.img` | `\NOVA\COMPFAIL`, an empty file | The compositor exits once it has shown the console's window, each time it starts, so the console takes the display after it ([display.md D19](display.md#d19-the-build-plan), the phase 3 arrangement) |
+| The fallback disk, `fallback.img` | `\NOVA\COMPFAIL`, an empty file | The first process starts the compositor, which no other disk starts until it serves the console's window, and the compositor exits at each of its starts, so the console takes the display after it ([display.md D19](display.md#d19-the-build-plan), rules 2 and 9) |
 
 The logout disk, `logout.img`, is a system disk, not a test disk: it
 holds the system disk's files, and its `\NOVA\STORE.IMG` holds the

@@ -428,7 +428,8 @@ release, which gets no background, does. Both give the same pixels,
 since the kernel's image is Limb exactly (`tools/check-backdrop.c`).
 The display's line, `nova-console: display`, names which with
 `backdrop=section` or `backdrop=computed`, and gives the preparation's
-`prepare_ms` and the drawing's `draw_ms`.
+`prepare_ms` and the drawing's `draw_ms`; the line of a display after a
+compositor (C2) ends with `after=compositor`.
 
 On a test disk ([disk-layout.md](disk-layout.md#files)) the first
 process tells the console of a display a row taller than the one it
@@ -458,6 +459,14 @@ tall as it is wide, and its width is the screen's height divided by
   screen of both is matched against the same render of `ci/screens.c`,
   and `ci/boot.py` checks each boot's `backdrop`, with no disk or boot
   job more.
+- **Why the line says `after=compositor`:** the compositor's last frame
+  is Limb as the kernel's fade left it, so the screen cannot show
+  whether the console drew the whole screen or its panel alone. The key
+  shows that it took the display after a compositor, which draws the
+  whole screen (`tools/check-backdrop.c` checks that drawing), and
+  `ci/boot.py` requires it in the fallback boot
+  ([display.md D19](display.md#d19-the-build-plan), rule 9) and in no
+  other.
 - **Cost:** the boot protocol passes no physical size, so a large
   screen of low density shows larger text than it needs. The test
   disk's console never takes the image, so only the system disk's boots

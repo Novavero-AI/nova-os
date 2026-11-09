@@ -9,7 +9,11 @@
    goes only after the kernel has released it, so a console started
    before the release gets it from console_start, and one started after
    from console_started, which also gives login a session on it
-   (login_start.c); login's first session comes with its own start. */
+   (login_start.c); login's first session comes with its own start. Where
+   a compositor draws, the kernel's release leaves the display with it
+   (compositor.c) and a console started meanwhile is given login's
+   session and no display, until the compositor is given up
+   (console_display_after). */
 
 #include "console.h"
 #include "console_protocol.h"
@@ -24,12 +28,12 @@
    travel with the rights console.desc gives them. */
 #define FRAMEBUFFER_RIGHTS RESOURCE_RIGHT_USE
 
-/* On a test disk the console is told of a display MISMATCH_ROWS taller
-   than the one it is given, so that the kernel's background does not
-   match it and the console computes its panel's Limb at the display, as
-   a restarted console does (console.md C5); ci/boot.py checks that every
-   test disk's boot takes that path and draws the screen the system
-   disk's boot draws from the background. */
+/* On a test disk the receiver of the kernel's background is told of a
+   display MISMATCH_ROWS taller than the one it is given, so that the
+   background does not match it and the receiver computes its Limb at
+   the display, as a restarted one does (console.md C5, display.md D19);
+   ci/boot.py checks that every test disk's boot takes that path and
+   draws the screen the system disk's boot draws from the background. */
 #define MISMATCH_ROWS 1
 
 /* The bytes of each message sent to the console, aligned to 8 bytes as
@@ -52,7 +56,12 @@ _Static_assert(CONSOLE_BOOTSTRAP_TO_CLIENT_BYTES_MAX <=
 static const HANDLE_TRANSFER no_handles[1];
 
 static UINT32 control = HANDLE_INVALID;
-static int released;
+
+/* Who the display is for once the kernel has released it: nobody yet,
+   the console, or a compositor. */
+typedef enum { DISPLAY_UNRELEASED, DISPLAY_CONSOLE, DISPLAY_COMPOSITOR }
+    DISPLAY_HOLDER;
+static DISPLAY_HOLDER holder = DISPLAY_UNRELEASED;
 
 static void close_handles(HANDLE_TRANSFER *handles, UINT32 count)
 {
@@ -65,9 +74,8 @@ static void close_handles(HANDLE_TRANSFER *handles, UINT32 count)
         }
 }
 
-UINT32 display_message(const PLATFORM *platform,
-                       CONSOLE_SETUP_DISPLAY_MESSAGE *message,
-                       HANDLE_TRANSFER *framebuffer)
+UINT32 display_resource(const PLATFORM *platform,
+                        HANDLE_TRANSFER *framebuffer)
 {
     const BOOTSTRAP_DISPLAY *d = &platform->boot->display;
     UINT64 first = d->base - d->base % PAGE_SIZE;
@@ -77,23 +85,46 @@ UINT32 display_message(const PLATFORM *platform,
 
     framebuffer->handle = HANDLE_INVALID;
     framebuffer->rights = FRAMEBUFFER_RIGHTS;
-    message->setup.transaction = 0;
-    message->setup.kind = CONSOLE_SETUP_DISPLAY;
-    message->display = *d;
     return resource_create(platform->mmio, first, end - first,
                            &framebuffer->handle);
 }
 
+UINT32 display_message(const PLATFORM *platform,
+                       CONSOLE_SETUP_DISPLAY_MESSAGE *message,
+                       HANDLE_TRANSFER *framebuffer)
+{
+    message->setup.transaction = 0;
+    message->setup.kind = CONSOLE_SETUP_DISPLAY;
+    message->display = platform->boot->display;
+    return display_resource(platform, framebuffer);
+}
+
+void display_for_background(const PLATFORM *platform,
+                            BOOTSTRAP_DISPLAY *display)
+{
+    *display = platform->boot->display;
+    if (tests_enabled())
+        display->height += MISMATCH_ROWS;
+}
+
+/* How the display goes to the console: as the first one after the
+   kernel's, or after a compositor, whose last frame the screen still
+   shows (console.md C2). */
+typedef enum { DISPLAY_FROM_KERNEL, DISPLAY_FROM_COMPOSITOR } DISPLAY_FROM;
+
 /* Send the display and a resource covering exactly the framebuffer's
    pages to the console. */
-static void send_display(const PLATFORM *platform)
+static void send_display(const PLATFORM *platform, DISPLAY_FROM from)
 {
     CONSOLE_SETUP_DISPLAY_MESSAGE message;
     HANDLE_TRANSFER framebuffer;
     UINT32 status = display_message(platform, &message, &framebuffer);
     UINT32 resource = framebuffer.handle, size;
 
-    if (status == OK)
+    if (status == OK && from == DISPLAY_FROM_COMPOSITOR)
+        status = console_control_display_after_encode(
+            &message, &resource, 1, &framebuffer, outgoing.bytes, &size);
+    else if (status == OK)
         status = console_control_display_encode(&message, &resource, 1,
                                                 &framebuffer,
                                                 outgoing.bytes, &size);
@@ -119,9 +150,7 @@ void console_prepare(const PLATFORM *platform, BOOT_BACKGROUND *background)
     }
     message.setup.transaction = 0;
     message.setup.kind = 0;
-    message.display = platform->boot->display;
-    if (tests_enabled())
-        message.display.height += MISMATCH_ROWS;
+    display_for_background(platform, &message.display);
     message.background = background->label;
     status = console_control_background_encode(&message, background->sections,
                                                background->count, sections,
@@ -239,9 +268,10 @@ UINT32 console_bootstrap(const PLATFORM *platform, UINT32 process,
 
 void console_started(const PLATFORM *platform)
 {
-    if (!released)
+    if (holder == DISPLAY_UNRELEASED)
         return;
-    send_display(platform);
+    if (holder == DISPLAY_CONSOLE)
+        send_display(platform, DISPLAY_FROM_KERNEL);
     login_console_started();
 }
 
@@ -263,10 +293,22 @@ void console_start(const PLATFORM *platform, UINT32 bootstrap)
 {
     if (!display_released(bootstrap))
         return;
-    released = 1;
+    holder = DISPLAY_CONSOLE;
     if (control == HANDLE_INVALID) {
         say("nova-init: display unused reason=\"no console\"\r\n");
         return;
     }
-    send_display(platform);
+    send_display(platform, DISPLAY_FROM_KERNEL);
+}
+
+void console_defer_display(void)
+{
+    holder = DISPLAY_COMPOSITOR;
+}
+
+void console_display_after(const PLATFORM *platform)
+{
+    holder = DISPLAY_CONSOLE;
+    if (control != HANDLE_INVALID)
+        send_display(platform, DISPLAY_FROM_COMPOSITOR);
 }

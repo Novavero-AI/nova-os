@@ -24,6 +24,7 @@
 #include "native.h"
 #include "panel.h"
 #include "text.h"
+#include "timing.h"
 #include "view.h"
 #include "wipe.h"
 
@@ -42,10 +43,7 @@
 /* The caret shows for half a second, then hides for as long, while a
    read waits; a key shows it again at once. With the option
    CONSOLE_OPTION_REDUCE_MOTION it stays shown. */
-#define NS_PER_MS 1000000ULL
-#define CARET_BLINK_NS (500 * NS_PER_MS)
-
-#define TIMES_TEN_PER_MS 10
+#define CARET_BLINK_NS (500 * TIMING_NS_PER_MS)
 
 /* The objects one wait watches: the bootstrap channel, the control
    channel, the input endpoints and the sessions. */
@@ -153,19 +151,11 @@ static union {
     UINT8 bytes[CONSOLE_CONTROL_TO_CLIENT_BYTES_MAX];
 } background_answer;
 
-static UINT64 now(void)
-{
-    UINT64 nanoseconds = 0;
-
-    clock_monotonic(&nanoseconds);
-    return nanoseconds;
-}
-
 /* Show the caret for CARET_BLINK_NS more. */
 static void caret_show(void)
 {
     caret_lit = 1;
-    blink_at = now() + CARET_BLINK_NS;
+    blink_at = timing_now() + CARET_BLINK_NS;
 }
 
 /* Whether the caret is on a timer: it blinks while a read waits, unless
@@ -636,15 +626,6 @@ static void add_session(const RECEIVED_HANDLE *handle)
 /* ------------------------------------------------------------------------
    The display. */
 
-static void say_ms(UINT64 nanoseconds)
-{
-    UINT64 tenths = nanoseconds * TIMES_TEN_PER_MS / NS_PER_MS;
-
-    say_number(tenths / TIMES_TEN_PER_MS);
-    say(".");
-    say_number(tenths % TIMES_TEN_PER_MS);
-}
-
 /* Fit the text to the panel's width: its lines wrap at the narrower of
    the two from now on. */
 static void fit_text(void)
@@ -709,44 +690,7 @@ static void finish_panel(INT64 width, INT64 height, const char *source,
     prepared_width = width;
     prepared_height = height;
     backdrop_source = source;
-    prepare_ns = now() - started;
-}
-
-/* The bytes of band index of the kernel's background, an image of bytes
-   bytes (native_abi.h). */
-static UINT64 band_size(UINT64 bytes, UINT32 index)
-{
-    UINT64 rest = bytes - (UINT64)index * SECTION_MAX_SIZE;
-
-    return rest < SECTION_MAX_SIZE ? rest : SECTION_MAX_SIZE;
-}
-
-/* Map the count sections of the kernel's background, an image of bytes
-   bytes, to read, one after another, and return where the image starts,
-   with what was mapped in *mapped; or 0, with nothing left mapped and
-   the status of the call that failed in *status. */
-static const UINT32 *map_image(const RECEIVED_HANDLE *handles, UINT32 count,
-                               UINT64 bytes, UINT64 *mapped, UINT32 *status)
-{
-    const UINT8 *start = 0;
-    UINT32 i;
-
-    *mapped = 0;
-    for (i = 0; i < count; i++) {
-        const UINT8 *band = mapping_section(&mapping, handles[i].handle,
-                                            band_size(bytes, i), MAP_READ,
-                                            status);
-
-        if (!band) {
-            if (start)
-                mapping_unmap(&mapping, start, *mapped);
-            return 0;
-        }
-        if (!start)
-            start = band;
-        *mapped = (UINT64)(mapping.next - (UINT64)start);
-    }
-    return (const UINT32 *)start;
+    prepare_ns = timing_now() - started;
 }
 
 /* Prepare the panel's backdrop from the kernel's background, whose
@@ -768,7 +712,7 @@ static void prepare_from(const CONSOLE_SETUP_BACKGROUND_MESSAGE *m,
         say_status("panel memory failed", status);
         return;
     }
-    image = map_image(handles, count, bytes, &mapped, &status);
+    image = mapping_image(&mapping, handles, count, bytes, &mapped, &status);
     if (!image) {
         release_panel();
         say_status("background map failed", status);
@@ -805,7 +749,7 @@ static void answer_prepared(UINT32 transaction)
 static void take_background(const CONSOLE_SETUP_BACKGROUND_MESSAGE *m,
                             const RECEIVED_HANDLE *handles, UINT32 count)
 {
-    UINT64 started = now();
+    UINT64 started = timing_now();
     const char *refusal = 0;
     UINT32 i;
 
@@ -829,13 +773,21 @@ static void take_background(const CONSOLE_SETUP_BACKGROUND_MESSAGE *m,
     answer_prepared(m->setup.transaction);
 }
 
+/* Who held the display before the console and what the screen shows: the
+   kernel, which left Limb, under which the panel is all there is to
+   draw, or a compositor, whose last frame stays until Limb is drawn over
+   it (C1, C2). */
+typedef enum { HANDOFF_FROM_KERNEL, HANDOFF_FROM_COMPOSITOR } HANDOFF;
+
 /* Take the display through resource, which covers its framebuffer, and
    draw the panel, prepared now if it was not prepared for a screen this
-   size already. Any failure is logged, and the console goes on without
+   size already, after Limb over the whole screen where the compositor
+   drew before. Any failure is logged, and the console goes on without
    drawing. */
-static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
+static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d,
+                    HANDOFF handoff)
 {
-    UINT64 started = now();
+    UINT64 started = timing_now();
     UINT32 status = drawing ? ERR_NOT_SUPPORTED
                             : mapping_display(&mapping, resource, d, &screen);
 
@@ -852,7 +804,7 @@ static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
     }
     if (!prepared || prepared_width != screen.width ||
         prepared_height != screen.height) {
-        UINT64 preparing = now();
+        UINT64 preparing = timing_now();
 
         status = lay_out(screen.width, screen.height);
         if (status == ERR_NOT_SUPPORTED) {
@@ -872,6 +824,10 @@ static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
         finish_panel(screen.width, screen.height, BACKDROP_COMPUTED,
                      preparing);
     }
+    if (handoff == HANDOFF_FROM_COMPOSITOR && !panel_limb(&screen)) {
+        say("nova-console: display refused reason=\"no background\"\r\n");
+        return;
+    }
     panel_show(&screen, &layout, backdrop, &shown);
     fit_text();
     drawing = 1;
@@ -890,9 +846,11 @@ static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d)
     say(" backdrop=");
     say(backdrop_source);
     say(" prepare_ms=");
-    say_ms(prepare_ns);
+    timing_say_ms(prepare_ns);
     say(" draw_ms=");
-    say_ms(now() - started);
+    timing_say_ms(timing_now() - started);
+    if (handoff == HANDOFF_FROM_COMPOSITOR)
+        say(" after=compositor");
     say("\r\n");
 }
 
@@ -1068,11 +1026,12 @@ static void set_options(UINT32 options)
     caret_show();
 }
 
-/* The options, a display, a session or the kernel's background from the
-   first process. A message the description does not allow is dropped,
-   with the handles it carried closed; a background that has a reply is
-   answered with the request's transaction alone, so the first process
-   does not wait for it (docs/spec/interface.md P10). */
+/* The options, a display, the display after a compositor, a session or
+   the kernel's background from the first process. A message the
+   description does not allow is dropped, with the handles it carried
+   closed; a background that has a reply is answered with the request's
+   transaction alone, so the first process does not wait for it
+   (docs/spec/interface.md P10). */
 static void serve_control(void)
 {
     RECEIVED_HANDLE handles[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
@@ -1095,8 +1054,12 @@ static void serve_control(void)
             add_session(&handles[0]);
         else if (which == CONSOLE_SETUP_OPTIONS)
             set_options(message.options.options);
+        else if (which == CONSOLE_SETUP_DISPLAY_AFTER)
+            display(handles[0].handle, &message.setup.display,
+                    HANDOFF_FROM_COMPOSITOR);
         else
-            display(handles[0].handle, &message.setup.display);
+            display(handles[0].handle, &message.setup.display,
+                    HANDOFF_FROM_KERNEL);
         return;
     }
     if (which == CONSOLE_SETUP_BACKGROUND) {
@@ -1160,9 +1123,9 @@ static void serve(void)
             serve_session((int)(which[i] - ENTRY_SESSIONS));
     }
     pump();
-    if (caret_blinks() && now() >= blink_at) {
+    if (caret_blinks() && timing_now() >= blink_at) {
         caret_lit = !caret_lit;
-        blink_at = now() + CARET_BLINK_NS;
+        blink_at = timing_now() + CARET_BLINK_NS;
     }
     if (drawing)
         render();

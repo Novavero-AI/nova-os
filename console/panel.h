@@ -88,6 +88,12 @@ void panel_backdrop_image(const LAYOUT *layout, const UINT32 *image,
 
 void panel_inks(INKS *inks);
 
+/* Draw Limb over the whole screen, computed for its size, as the kernel's
+   last fade frame leaves it (docs/spec/console.md C1), so that nothing a
+   writer before the console drew stays. Returns 0, drawing nothing, if
+   Limb has no size for the screen (limb.h). */
+int panel_limb(const SCREEN *screen);
+
 /* Draw the backdrop on screen, and note in shown what that leaves in
    the cells: every one blank, and no caret. */
 void panel_show(const SCREEN *screen, const LAYOUT *layout,

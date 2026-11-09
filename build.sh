@@ -3,8 +3,9 @@
 # TinyCC, compiled from its source by the host's C compiler, links the
 # loader, the kernel and every program; tools the host compiler builds
 # convert Inter's faces to nova-os fonts and write the store image, the
-# system's boot disk, the test disk, the specimen disk, the chain disk,
-# the logout disk and an empty data disk (docs/spec/disk-layout.md).
+# system's boot disk, the test disk, the specimen disk, the fallback disk,
+# the chain disk, the logout disk and an empty data disk
+# (docs/spec/disk-layout.md).
 # SHA256SUMS gives the sha256 of every file in OUT that a build must
 # reproduce, and the build checks each file it downloads against its
 # line there before anything reads it.
@@ -274,7 +275,7 @@ tcc i386 -shared -Wl,-subsystem=native -Wl,-e=ntdll_entry \
 
 program init.exe init_main -I native -I lib -I drivers -I kernel/random \
   -I store -I test init/init.c init/chain.c init/compat.c init/view.c \
-  init/platform.c init/store.c init/console.c init/data.c \
+  init/platform.c init/store.c init/console.c init/compositor.c init/data.c \
   init/login_start.c init/specimen_start.c init/tests.c init/kill.c \
   drivers/pci.c drivers/virtio_pci.c store/reader.c lib/path.c \
   lib/program.c lib/log.c lib/ktap.c native/native.S \
@@ -288,7 +289,11 @@ program virtinp.exe virtio_input_main -I native -I lib -I drivers \
 program console.exe console_main -I native -I lib -I gfx -I kernel/random \
   console/console.c console/text.c console/view.c console/panel.c \
   gfx/gfx.c gfx/flush.c gfx/raster.c gfx/font.c gfx/limb.c \
-  lib/keymap.c lib/mapping.c lib/log.c native/native.S
+  lib/keymap.c lib/mapping.c lib/timing.c lib/log.c native/native.S
+program compose.exe compositor_main -I native -I lib -I gfx \
+  compositor/compositor.c lib/compose.c lib/outline.c lib/mapping.c \
+  lib/timing.c lib/log.c gfx/gfx.c gfx/flush.c gfx/raster.c gfx/limb.c \
+  native/native.S
 program store.exe store_main -I native -I lib -I kernel/random \
   store/store.c store/reader.c lib/name.c lib/log.c native/native.S \
   kernel/random/sha256.c
@@ -365,7 +370,7 @@ mkdir -p logout
 
 # The system's boot disk holds the loader and, in \NOVA\, these files.
 set -- BOOTX64.EFI kernel.exe init.exe ntdll.dll virtblk.exe virtinp.exe \
-  console.exe store.img fs.exe
+  compose.exe console.exe store.img fs.exe
 ./mkimage disk.img disk.vhdx "$@"
 
 # The logout disk holds the system disk's files but for its store image,
@@ -397,6 +402,13 @@ set -- "$@" fstest.exe TESTS NOMOTION
 # specimen from /store in place of the console.
 : > SPECIMEN
 ./mkimage specimen.img specimen.vhdx "$@" SPECIMEN
+
+# The fallback disk holds the test disk's files and COMPFAIL, an empty
+# file, which makes the first process start the compositor and the
+# compositor end after its first frame, at each start, so that it is
+# given up and the console takes the display from it.
+: > COMPFAIL
+./mkimage fallback.img fallback.vhdx "$@" COMPFAIL
 
 # The chain disk holds the test disk's files and, under 8.3 names, the
 # inputs of stage0-pe32's chain up to M1, unmodified, which the
