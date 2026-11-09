@@ -435,10 +435,12 @@ window opened while another of its connection's is shown goes one
 title bar's depth ([look.md V11](look.md#v11-windows)) right of and
 below the last one placed, and back to the first place when it would
 cross the area's right or bottom edge. A window is at most the area's
-size in each dimension and at least twice its corners' radius, rounded
-up, so that no two of its corners reach the same pixel column or row;
-the compositor gives a window asked to be outside those bounds the
-nearest size inside them. No move or resize takes it into the strip
+size in each dimension and at least twice its corners' reach, the radius
+rounded up to a whole pixel (`reach` of `COMPOSE_CORNERS` in
+`lib/compose.h`), so that no two of its corners reach the same pixel
+column or row; in an area smaller than that it is the area's size. The
+compositor gives a window asked to be outside those bounds the nearest
+size inside them. No move or resize takes it into the strip
 ([D8](#d8-composition)). The 40 percent is the console's panel's
 ([console.md C5](console.md#c5-the-panel)), so a console in a window
 stands where it stands on its own.
@@ -468,7 +470,7 @@ as one buffer, and sends a duplicate of each, with `READ` alone, in a
 of more sections than a message carries is refused. The compositor maps
 the sections one after another in its own address space, read only.
 
-| Screen and window | Bytes a buffer | Sections |
+| Screen and window | Bytes a buffer holds, before whole pages | Sections |
 |---|---|---|
 | 1280 x 800 | 4,096,000 | 2 |
 | 2560 x 1600 | 16,384,000 | 8 |
@@ -514,6 +516,17 @@ screen's order, `PIXEL_RGB` or `PIXEL_BGR`, as it writes.
   every window of its radius is exact only where no other corner's arc
   reaches the same pixels, which a window at least twice its radius,
   rounded up, across and high guarantees.
+- **Why twice the reach, and the area's size where it is smaller:** the
+  corners' coverage is made for the radius rounded up to a whole pixel,
+  its reach (`lib/compose.h`), and two corners reach the same pixels in
+  a window less than twice that across. So a least size is twice the
+  reach. That is one pixel more than the radius doubled and then
+  rounded up where the radius's fraction is above 0 and at most a half,
+  and the same where the radius is whole or its fraction is above a
+  half. Where the area is smaller than that, a window is the area's
+  size, since a window beyond the area cannot be shown whole. Its cost is corners that are not exact where
+  the area is that small; the console's radius is whole pixels, so the
+  console's window is not changed.
 - **Cost:** a buffer at 2880 x 1800 is ten handles to send and ten
   mappings on each side; a window's memory is the client's even while
   the compositor reads it. The compositor holds a channel end for each
@@ -541,9 +554,11 @@ screen's order, `PIXEL_RGB` or `PIXEL_BGR`, as it writes.
 A client shows a frame with `WINDOW_PRESENT`: the buffer
 and up to `WINDOW_DAMAGE_MAX` (16) rectangles, in the buffer's pixels,
 that differ from the buffer it presented before; no rectangle means the
-whole buffer. The compositor reads a buffer from the moment it is
-presented until another is, then answers `WINDOW_RELEASED` for the one
-it stopped reading. A client draws only into a released buffer.
+whole buffer. The compositor reads a buffer from the moment its present
+is shown until another is shown, then answers `WINDOW_RELEASED` for the
+one it stopped reading. A present that is not shown (rule 4) is never
+read, and its buffer is released at once. A client draws only into a
+released buffer.
 
 1. **Double buffering, client side.** With two buffers a client draws
    the next frame into one while the compositor reads the other. A
@@ -560,12 +575,22 @@ it stopped reading. A client draws only into a released buffer.
    (16,666,667 ns, 60 Hz), at deadlines on `clock_monotonic`, and only
    when something is damaged. After a frame shows a window's present it
    sends the window one `WINDOW_FRAME`, with the time, and a client that
-   animates draws its next frame on it.
+   animates draws its next frame on it. A present that is shown but
+   damages nothing, as one whose rectangles lie outside its buffer, is
+   answered at the next frame in the same way, and that frame composes
+   nothing. A present that is not shown (rule 4) is not answered, for
+   its client has a configure to draw for.
 4. **Configure.** The compositor tells a window its size, scale and
    state with `WINDOW_CONFIGURE`, with a serial that rises with each;
    a present names the serial of the configure its buffer was drawn
    for, and answers it. Until then the compositor shows the old buffer,
-   cut or padded with the window's material.
+   cut or padded with the window's material at its right and bottom,
+   for a buffer is anchored at the window's top left corner, its pixel
+   (0, 0) the window's. A present that names another serial, or 0, is
+   ignored: nothing is shown, its buffer is released at once unless it
+   is the one being read, and the next present that is shown damages the
+   whole window, since the client's rectangles are relative to the frame
+   it presented, which the screen does not show.
 5. **The scale** is the screen's height over 800, rounded to the nearest
    quarter: 1 at 1280 x 800, 2 at 2560 x 1600 and 2.25 at 2880 x 1800.
    The system setting `display.scale` overrides it. A program draws at
@@ -588,6 +613,20 @@ it stopped reading. A client draws only into a released buffer.
   size ([console.md C5](console.md#c5-the-panel)), and the console sizes
   its cells from the height too, so the console's text and the
   interface's grow alike.
+- **Why a buffer is anchored at the top left:** a client's pixels and the
+  rectangles it names are the buffer's, counted from its top left, so a
+  buffer at that corner maps to the window by identity, and a change of
+  size adds or removes pixels at the right and bottom only. Its cost is
+  that a window resized from its top or left edge shows the old buffer
+  shifted against the screen until the client presents for the new size;
+  the phase 3 rules resize no window.
+- **Why a shown present that damages nothing still gets its frame:** a
+  client that animates draws its next frame on `WINDOW_FRAME`, so a
+  present of rectangles that all lie outside the buffer, or of a window
+  wholly off the screen, would otherwise stall it for good. An ignored
+  present gets none because its client is waiting for the configure
+  that made it stale and draws again on it. Its cost is a frame boundary
+  that composes nothing.
 - **Cost:** the GOP framebuffer gives no vertical blank to wait for, so
   a band can land while the display scans it out, and a large change can
   show torn for one refresh; the GPU path flushes whole frames
@@ -1515,7 +1554,11 @@ login's session as it does on its own
    a call, composing bands, materials, corners and the pointer's image,
    is `lib/compose.c`, which
    `tools/check-compose.c` checks on the host, in CI beside
-   `tools/check-masks.c`. The console's keymap moves from
+   `tools/check-masks.c`; the rules of a window, its size and place and
+   whether a buffer or a present is valid and what a present damages
+   ([D6](#d6-windows-and-buffers), [D7](#d7-presenting-and-pacing) and
+   rules 4 and 5), are `lib/window.c`, which `tools/check-window.c`
+   checks likewise. The console's keymap moves from
    `console/keys.c` to `lib/keymap.c`, and the console's cell rule,
    `height / CELLS_PER_HEIGHT` within `FONT_WIDTH_MIN` and
    `FONT_WIDTH_MAX`, moves from `console/panel.c` to `gfx/font.h`; the
@@ -1571,11 +1614,12 @@ login's session as it does on its own
    secure attention key alone: it routes it to no window and logs it
    (rule 8), since no connection carries `ATTENTION` yet. Every other
    key reaches the window with the focus.
-4. **One window.** The compositor serves one window: a second, on any
-   connection, it refuses with `ERR_NO_RESOURCES`; a layer outside the
-   connection's with `ERR_ACCESS_DENIED`; and a surface other than
-   `PANEL` with `ERR_NOT_SUPPORTED`. A size beyond the area it gives the
-   window smaller (D6). The console's window is on `SYSTEM`, so it has
+4. **One window.** The compositor serves one window. It refuses a request
+   with the first of these that applies: a layer outside the
+   connection's, `ERR_ACCESS_DENIED`; a surface other than `PANEL`,
+   `ERR_NOT_SUPPORTED`; and a window served already, on any connection,
+   or an area with no pixel to place one in, `ERR_NO_RESOURCES`. A size
+   beyond the area it gives the window smaller (D6). The console's window is on `SYSTEM`, so it has
    no frame and holds the focus while shown
    ([D11](#d11-routing-input), rule 1), on the `PANEL` surface
    ([look.md V4](look.md#v4-surfaces-edges-and-shadows)), of its
@@ -1595,8 +1639,9 @@ login's session as it does on its own
    gives its buffers and presents one naming serial 1; nothing of the
    window shows before that present. A buffer whose stride is below its
    width, or whose sections do not hold `stride` x `height` x 4 bytes
-   as D6 bands them, and a present of a buffer never given, close the
-   window; a damage rectangle is cut to its buffer.
+   as D6 bands them, a buffer given under the number of the one being
+   read, and a present of a buffer never given, close the window; a
+   damage rectangle is cut to its buffer.
 6. **Input.** A key event carries `lib/keymap.c`'s text. The pointer,
    its buttons and the wheel go to the window under it, the wheel in
    120ths of a detent ([D10](#d10-the-pointer), rule 5), and the
@@ -1718,6 +1763,44 @@ login's session as it does on its own
   logs in. A console that keeps login's session through the
   compositor's restart and give-up needs no reconnecting before login
   has a connection to reconnect.
+- **Why a refusal comes in the order layer, surface, count:** a refusal
+  for the count depends on the windows of every connection, so it comes
+  last, and a connection that may not use a layer learns nothing of
+  other windows from its refusal. An area with no room, with no width or
+  with the strip as deep as the screen, is refused as the count is, with
+  `ERR_NO_RESOURCES`. Its cost is nothing to a client that may make the
+  window.
+- **Why a buffer given under the number being read closes the window:**
+  the compositor reads that buffer, read only, from its present's
+  showing until another is shown, and releases it then, so a new buffer
+  under its number would change what the compositor is composing from. It closes the window
+  with the reason `buffer`, as a stride below the width does; a buffer
+  given again under a number that is not being read replaces the earlier
+  one. Its cost is that a client that replaces its buffers presents
+  another, waits for the release and then gives the number again.
+- **Why a present that does not name the latest configure is ignored:**
+  D7's rule 4 keeps the old buffer until then. The compositor releases
+  the buffer of such a present at once, unless it is the one being read,
+  as it releases a buffer at the present that replaces it, and does not
+  close the window, since a client draws for a configure while the next
+  is on its way. Serial 0 names no configure, since the first is 1. The
+  client's next rectangles are relative to the frame it presented, which
+  the screen does not show, so the next present that is shown damages
+  the whole window. Its cost is that a client that presents before it
+  has drawn for the latest configure draws again after the release; that
+  a client under continuous configures, as in a resize drag or on each
+  change of the focus, is starved of a shown present while they last;
+  and that the window is composed whole once after an ignored present.
+- **Why the whole window is damaged by a first frame, by a change of
+  the buffer's size and after an ignored present:** D7's rule 4 cuts or pads the shown buffer with the
+  window's material, so the pixels around the buffer change with its
+  size, a first frame has nothing shown under it, and after an ignored
+  present the screen shows a frame other than the one the client's
+  rectangles are against. A frame of the
+  size already shown damages the rectangles it names, cut to its buffer
+  and the window, a rectangle wholly outside them damages nothing, and
+  none is the whole buffer, cut to the window. Its cost is the window
+  composed once more than its buffer's pixels need at a size change.
 - **Why expected screens from the host:** the drawing code is integer
   arithmetic with no machine dependence (`gfx/raster.h`), so the host
   computes the guest's pixels exactly, and a check against a kept image

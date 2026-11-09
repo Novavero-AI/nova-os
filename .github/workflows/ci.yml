@@ -132,6 +132,16 @@ jobs:
             gfx/raster.c gfx/limb.c -lm
           "$RUNNER_TEMP/check-compose" interfaces/display.desc
 
+      - name: A window's size, place, buffers and presents are as display.md D6, D7 and D19 give them
+        run: |
+          cc -std=c11 -Wall -Wextra -pedantic -Werror \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -I include -I lib -I gfx -I console \
+            -o "$RUNNER_TEMP/check-window" tools/check-window.c \
+            lib/window.c lib/compose.c lib/outline.c console/panel.c \
+            console/text.c gfx/gfx.c gfx/font.c gfx/raster.c gfx/limb.c -lm
+          "$RUNNER_TEMP/check-window"
+
       - name: gfx/limb.c draws Limb as its prototype does
         run: design/backgrounds/check-limb.sh
 
