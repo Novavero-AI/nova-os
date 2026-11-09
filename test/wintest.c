@@ -3,14 +3,17 @@
    surface, waits for the window's first configure, draws a buffer for it
    and presents it, then draws a second buffer, with a square changed, and
    presents that with the square as damage, waiting each time for the
-   frame that shows the present. It logs each step, and holds the window
-   until the compositor closes it or its connection (docs/spec/display.md
-   D5 to D7). Any step that fails ends it WINTEST_EXIT_FAILED, logged. */
+   frame that shows the present. It logs each step, then each key its
+   window is sent, and holds the window until the compositor closes it or
+   its connection (docs/spec/display.md D5 to D7 and D11, rule 2). Any
+   step that fails, and any event of the window that is not a key, ends it
+   WINTEST_EXIT_FAILED, logged. */
 
 #include "display_protocol.h"
 #include "log.h"
 #include "mapping.h"
 #include "native.h"
+#include "timing.h"
 #include "wintest.h"
 
 /* Its own memory: the buffers, each mapped at the next free address from
@@ -39,6 +42,20 @@ static union {
     UINT64 alignment;
     UINT8 bytes[DISPLAY_WINDOW_TO_SERVER_BYTES_MAX];
 } outgoing;
+
+/* The names of a key event's modifier bits, in the order a line gives
+   them. */
+typedef struct {
+    UINT32 bit;
+    const char *name;
+} MODIFIER_NAME;
+
+static const MODIFIER_NAME modifier_names[] = {
+    {DISPLAY_MODIFIER_SHIFT, "shift"},
+    {DISPLAY_MODIFIER_CONTROL, "control"},
+    {DISPLAY_MODIFIER_ALT, "alt"},
+    {DISPLAY_MODIFIER_SUPER, "super"},
+};
 
 static MAPPING mapping = {HANDLE_INVALID, MAPPINGS_BASE};
 static UINT32 connection = HANDLE_INVALID;
@@ -286,10 +303,53 @@ static void await_frame(UINT32 number, UINT32 released)
     say("\r\n");
 }
 
+static const char *value_name(UINT32 value)
+{
+    switch (value) {
+    case INPUT_KEY_RELEASED:
+        return "released";
+    case INPUT_KEY_PRESSED:
+        return "pressed";
+    default:
+        return "repeated";
+    }
+}
+
+/* Log the key event in incoming, the fields of a WINDOW_KEY as it
+   carries them: its code, value, the modifiers held as a comma-joined
+   list of names in lower case or none, the text as a value, which is
+   empty for a key that gives none, and the time the driver took the key,
+   in milliseconds to the tenth. */
+static void log_key(void)
+{
+    const WINDOW_KEY_EVENT *event = (const WINDOW_KEY_EVENT *)incoming.bytes;
+    UINT32 i, written = 0;
+
+    say("nova-wintest: key code=");
+    say_number(event->code);
+    say(" value=");
+    say(value_name(event->value));
+    say(" modifiers=");
+    for (i = 0; i < sizeof modifier_names / sizeof modifier_names[0]; i++)
+        if (event->modifiers & modifier_names[i].bit) {
+            if (written++)
+                say(",");
+            say(modifier_names[i].name);
+        }
+    if (!written)
+        say("none");
+    say(" text=");
+    say_value_bytes(display_window_key_characters(incoming.bytes),
+                    event->text_length);
+    say(" time_ms=");
+    timing_say_ms(event->time);
+    say("\r\n");
+}
+
 _Noreturn void wintest_main(UINT32 bootstrap, UINT64 argument)
 {
     UINT32 screen_width, screen_height, wanted_width, wanted_height;
-    UINT32 width, height, serial, left, top, side, observed;
+    UINT32 width, height, serial, left, top, side;
     WINDOW_RECT marker;
 
     (void)argument;
@@ -318,6 +378,11 @@ _Noreturn void wintest_main(UINT32 bootstrap, UINT64 argument)
     marker.height = side;
     present(BUFFER_SECOND, serial, side ? &marker : 0);
     await_frame(2, 1U << BUFFER_FIRST);
-    object_wait_one(window, CHANNEL_PEER_CLOSED, DEADLINE_INFINITE, &observed);
-    closed();
+    for (;;) {
+        UINT32 which = next_event();
+
+        if (which != WINDOW_KEY)
+            fail("an event that is not a key", which);
+        log_key();
+    }
 }

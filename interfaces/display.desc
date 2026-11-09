@@ -154,7 +154,8 @@ const COMPOSITOR_OPTIONS COMPOSITOR_OPTION_REDUCE_MOTION | COMPOSITOR_OPTION_EXI
 
 # How the compositor ends.
 
-# Its supervisor closed its control channel.
+# Its supervisor closed its control channel, or the platform driver closed
+# the bootstrap channel the input endpoints come on.
 const COMPOSITOR_EXIT_DONE 100
 # It could not start or go on.
 const COMPOSITOR_EXIT_FAILED 101

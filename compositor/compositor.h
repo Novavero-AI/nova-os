@@ -13,20 +13,24 @@
 
 /* What the service runs on: the compositor's mappings, which it makes
    its buffers' mappings in, the control channel the first process sends
-   its messages on, the screen and the wallpaper a frame is composed
+   its messages on, the bootstrap channel the platform driver hands the
+   input endpoints on, the screen and the wallpaper a frame is composed
    from, and memory for a band of TILE_ROWS rows of the screen's width. */
 typedef struct {
     MAPPING *mapping;
     UINT32 control;
+    UINT32 bootstrap;
     const SCREEN *screen;
     const COMPOSE_WALLPAPER *wallpaper;
     UINT32 *band;
 } SERVE;
 
 /* Serve the control channel's connections and their one window as they
-   come, until the first process closes the channel, and then end the
-   compositor. Ends it FAILED, logged, if the corners of a window cannot
-   be made for this screen or a wait fails. */
+   come, and the input endpoints on the bootstrap channel, until the first
+   process closes the control channel or the platform driver the
+   bootstrap channel, and then end the compositor. Ends it FAILED, logged,
+   if the corners of a window cannot be made for this screen or a wait
+   fails. */
 _Noreturn void serve(const SERVE *context);
 
 /* Log nova-compositor: event and status's number as its status key

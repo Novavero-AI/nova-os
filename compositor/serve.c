@@ -6,20 +6,30 @@
    channel in lib/backlog.c and the composition of lib/compose.c, which
    this file only calls.
 
-   Every wait is one object_wait_many on the three channels and the time
-   of the next frame or the channel's stall, so the compositor never
-   waits for a client. Each channel's queue is read for at most its
-   capacity in messages a time, so a client that fills one cannot keep
-   the others waiting. A close of a window's or a connection's channel is
-   read before the control channel is, since the first process issues a
-   connection again only after the one before it is gone. A failed call
-   closes the window or the connection it was for, with the status logged
-   and a reason that is one of rule 8's. */
+   The input drivers' endpoints arrive on the bootstrap channel, are read
+   with lib/endpoint.c and logged as the console logs them (D19, rule 8),
+   and each key event goes through lib/keyroute.c: the secure attention
+   key is logged and sent to no window, and every other key is queued for
+   the window with the focus (D11, rule 1, D12 and D19's rule 3). A
+   pointer report is logged and sent to no window.
+
+   Every wait is one object_wait_many on the channels and the time of the
+   next frame or the channel's stall, so the compositor never waits for a
+   client. Each channel's queue is read for at most its capacity in
+   messages a time, so a client that fills one cannot keep the others
+   waiting. A close of a window's or a connection's channel is read before
+   the control channel is, since the first process issues a connection
+   again only after the one before it is gone. A failed call closes the
+   window or the connection it was for, with the status logged and a
+   reason that is one of rule 8's. */
 
 #include "compositor.h"
 #include "backlog.h"
 #include "display_protocol.h"
+#include "endpoint.h"
 #include "font.h"
+#include "input_protocol.h"
+#include "keyroute.h"
 #include "log.h"
 #include "native.h"
 #include "outline.h"
@@ -29,9 +39,13 @@
 /* The signals every channel is waited on for. */
 #define WAKE_SIGNALS (CHANNEL_READABLE | CHANNEL_PEER_CLOSED)
 
-/* The channels waited on at once: the control channel, a connection and
-   a window. */
-#define WAITED_MAX 3
+/* The channels waited on at once: the control channel, the bootstrap
+   channel, a connection, a window and the input endpoints. */
+#define WAITED_MAX (4 + INPUT_DEVICES_MAX)
+_Static_assert(WAITED_MAX <= WAIT_MANY_MAX, "one wait holds every channel");
+
+/* What the compositor's lines of the log begin with. */
+#define LOG_COMPONENT "nova-compositor"
 
 /* The most bytes of any message the compositor sends. */
 #define OUTGOING_BYTES_MAX DISPLAY_WINDOW_TO_CLIENT_BYTES_MAX
@@ -93,9 +107,24 @@ typedef struct {
     UINT32 frame_owed;
 } WINDOW;
 
+/* An input driver's endpoint, HANDLE_INVALID for a free slot: the
+   device its description gave, whose kind is 0 until it has come, and
+   whether a key event has come on it. */
+typedef struct {
+    UINT32 endpoint;
+    INPUT_DEVICE device;
+    UINT32 keys;
+} INPUT;
+
 static CONNECTION connection;
 static WINDOW window;
 static UINT32 issued;
+
+/* What the keyboards have done, as one keyboard, and the pointer line
+   logged last, for all the pointers. */
+static INPUT inputs[INPUT_DEVICES_MAX];
+static KEYROUTE keyboards;
+static ENDPOINT_NOTES pointer_notes;
 
 /* The area windows are placed in and the corners every window of this
    screen has: the radius of the panel's, rounded up to whole pixels
@@ -204,9 +233,18 @@ static UINT32 send_to_window(void *context, const BACKLOG_MESSAGE *message)
         status = display_window_dropped_encode(&header, outgoing.bytes, &size);
         break;
     }
+    case WINDOW_KEY: {
+        const WINDOW_INPUT *key = &message->body.input;
+
+        status = display_window_key_encode(&key->body.key.event,
+                                           key->body.key.text,
+                                           key->body.key.event.text_length,
+                                           outgoing.bytes, &size);
+        break;
+    }
     default:
-        /* Input events are queued once input is routed; until then the
-           backlog holds none. */
+        /* A pointer's events are routed to no window, so the backlog
+           holds none. */
         return BACKLOG_SEND_TAKEN;
     }
     if (status == OK)
@@ -260,10 +298,10 @@ static void unmap_buffer(UINT32 number)
     }
 }
 
-/* Close the window: its channel, and its buffers' mappings. What it
-   showed is composed over at the next frame. A window closed for reason,
-   one of rule 8's, is logged; one whose holder closed it, with reason 0,
-   is not. */
+/* Close the window: its channel, and its buffers' mappings, and the
+   record of the keys it was sent. What it showed is composed over at the
+   next frame. A window closed for reason, one of rule 8's, is logged; one
+   whose holder closed it, with reason 0, is not. */
 static void close_window(const char *reason)
 {
     UINT32 i;
@@ -287,6 +325,7 @@ static void close_window(const char *reason)
         unmap_buffer(i);
     zero(&window, sizeof window);
     window.channel = HANDLE_INVALID;
+    keyroute_window_gone(&keyboards);
 }
 
 /* Close the connection and, with it, its window, which are logged as
@@ -627,6 +666,150 @@ static void serve_control(void)
 }
 
 /* ------------------------------------------------------------------------
+   Input. */
+
+/* Whether a window has the focus: the window served, if it is on the
+   SYSTEM layer, from its being made, when its first configure says so
+   (D19, rules 5 and 6), until it closes. */
+static UINT32 window_has_focus(void)
+{
+    return window.channel != HANDLE_INVALID &&
+           (window_state(window.record.layer) & WINDOW_STATE_FOCUSED) != 0;
+}
+
+/* A key event of a keyboard: the secure attention key is logged, once for
+   each press, and sent to no window; any other press is queued for the
+   window with the focus, or dropped where none has it; and a repeat or a
+   release is queued only if its press was (lib/keyroute.c). */
+static void take_key(INPUT *input, const INPUT_EVENT *event)
+{
+    WINDOW_INPUT routed;
+
+    input->keys = 1;
+    switch (keyroute_event(&keyboards, event, window_has_focus(), &routed)) {
+    case KEYROUTE_WINDOW:
+        backlog_push(&window.backlog, &routed);
+        break;
+    case KEYROUTE_ATTENTION:
+        say(LOG_COMPONENT ": attention at_ms=");
+        timing_say_ms(event->time);
+        say("\r\n");
+        break;
+    default:
+        break;
+    }
+}
+
+/* Take the byte_count bytes in incoming as the next message of input's
+   endpoint (input.md K3). Returns 0 if the endpoint may not send it. A
+   pointer report is logged as C6 gives and sent to no window. */
+static int take_input(INPUT *input, UINT32 byte_count)
+{
+    switch (endpoint_take(&input->device, incoming.bytes, byte_count)) {
+    case ENDPOINT_DESCRIPTION:
+        endpoint_describe(LOG_COMPONENT, &input->device, say);
+        return 1;
+    case ENDPOINT_KEY:
+        take_key(input, (const INPUT_EVENT *)incoming.bytes);
+        return 1;
+    case ENDPOINT_REPORT:
+        endpoint_pointer(&pointer_notes, LOG_COMPONENT,
+                         (const INPUT_POINTER *)incoming.bytes, say);
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* Close input's endpoint and free its place. A keyboard that sent keys
+   leaves no modifier held and no press waiting for its release
+   (keyroute_gone). */
+static void close_input(INPUT *input)
+{
+    handle_close(input->endpoint);
+    if (input->keys)
+        keyroute_gone(&keyboards);
+    zero(input, sizeof *input);
+    input->endpoint = HANDLE_INVALID;
+}
+
+/* Take the messages queued on input's endpoint, at most its capacity. A
+   message out of place ends the endpoint, as one the driver closed does. */
+static void serve_input(INPUT *input)
+{
+    RECEIVED_HANDLE handles[1];
+    UINT32 n;
+
+    for (n = 0; n < INPUT_ENDPOINT_CAPACITY; n++) {
+        UINT32 bytes, count;
+        UINT32 status = channel_read(input->endpoint, incoming.bytes,
+                                     sizeof incoming.bytes, handles, 0, &bytes,
+                                     &count);
+
+        if (status == ERR_SHOULD_WAIT)
+            return;
+        if (status == OK && take_input(input, bytes))
+            continue;
+        if (status != ERR_PEER_CLOSED)
+            compositor_say_status("input message refused", status);
+        close_input(input);
+        return;
+    }
+}
+
+static void serve_inputs(void)
+{
+    UINT32 i;
+
+    for (i = 0; i < INPUT_DEVICES_MAX; i++)
+        if (inputs[i].endpoint != HANDLE_INVALID)
+            serve_input(&inputs[i]);
+}
+
+/* A place for an input endpoint, or 0 where every place holds one. */
+static INPUT *free_input(void)
+{
+    UINT32 i;
+
+    for (i = 0; i < INPUT_DEVICES_MAX; i++)
+        if (inputs[i].endpoint == HANDLE_INVALID)
+            return &inputs[i];
+    return 0;
+}
+
+/* An input endpoint from the platform driver, one a time, and only while
+   a place is free, so that the endpoint a driver's restart gives waits in
+   the channel until its predecessor has been read to its close and given
+   up its place, however many messages that took, and none is refused.
+   Its close of the channel ends the compositor (D19, rule 2) once the
+   channel is read, and a message that is not an endpoint is its failure. */
+static void serve_bootstrap(void)
+{
+    INPUT *place = free_input();
+    RECEIVED_HANDLE handle;
+    UINT32 bytes, count = 0, status;
+
+    if (place == 0)
+        return;
+    status = channel_read(host->bootstrap, incoming.bytes,
+                          sizeof incoming.bytes, &handle, 1, &bytes, &count);
+    if (status == ERR_SHOULD_WAIT)
+        return;
+    if (status == ERR_PEER_CLOSED)
+        process_exit(COMPOSITOR_EXIT_DONE);
+    if (status == OK &&
+        display_bootstrap_endpoint_check(incoming.bytes, bytes, &handle,
+                                         count) == OK) {
+        place->endpoint = handle.handle;
+        return;
+    }
+    if (status == OK)
+        compositor_close_received(&handle, count);
+    compositor_say_status("bootstrap message failed", status);
+    process_exit(COMPOSITOR_EXIT_FAILED);
+}
+
+/* ------------------------------------------------------------------------
    Frames. */
 
 /* Whether a frame has something to do: damage to compose, or a frame to
@@ -702,12 +885,23 @@ static void flush_window(void)
 static void wait_for_work(void)
 {
     WAIT_ENTRY items[WAITED_MAX];
-    UINT32 count = 0, status;
+    UINT32 count = 0, status, i;
     UINT64 deadline = DEADLINE_INFINITE;
 
     items[count].handle = host->control;
     items[count].signals = WAKE_SIGNALS;
     count++;
+    if (free_input()) {
+        items[count].handle = host->bootstrap;
+        items[count].signals = WAKE_SIGNALS;
+        count++;
+    }
+    for (i = 0; i < INPUT_DEVICES_MAX; i++)
+        if (inputs[i].endpoint != HANDLE_INVALID) {
+            items[count].handle = inputs[i].endpoint;
+            items[count].signals = WAKE_SIGNALS;
+            count++;
+        }
     if (connection.channel != HANDLE_INVALID) {
         items[count].handle = connection.channel;
         items[count].signals = WAKE_SIGNALS;
@@ -758,15 +952,21 @@ static void prepare_windows(void)
 
 _Noreturn void serve(const SERVE *context)
 {
+    UINT32 i;
+
     host = context;
     connection.channel = HANDLE_INVALID;
     window.channel = HANDLE_INVALID;
+    for (i = 0; i < INPUT_DEVICES_MAX; i++)
+        inputs[i].endpoint = HANDLE_INVALID;
     prepare_windows();
     for (;;) {
         wait_for_work();
         serve_window();
         serve_connection();
         serve_control();
+        serve_bootstrap();
+        serve_inputs();
         frame();
         flush_window();
     }

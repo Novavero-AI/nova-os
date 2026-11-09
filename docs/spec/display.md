@@ -1660,15 +1660,20 @@ login's session as it does on its own
    rules 4 and 5), are `lib/window.c`, which `tools/check-window.c`
    checks likewise; which window a pointer's report goes to and what it
    is sent ([D10](#d10-the-pointer), rule 4, and [D11](#d11-routing-input),
-   rule 3) is `lib/route.c`, and what waits for a window's channel
-   (D11, rule 7) is `lib/backlog.c`, which `tools/check-route.c` and
-   `tools/check-backlog.c` check likewise. The console's keymap moves from
+   rule 3) is `lib/route.c`, what waits for a window's channel
+   (D11, rule 7) is `lib/backlog.c`, and which key events a window is
+   sent and which are the secure attention key's
+   ([D12](#d12-the-secure-attention-key-and-global-keys) and rule 6) is
+   `lib/keyroute.c`, which `tools/check-route.c`,
+   `tools/check-backlog.c` and `tools/check-keyroute.c` check likewise.
+   The console's keymap moves from
    `console/keys.c` to `lib/keymap.c`, and the console's cell rule,
    `height / CELLS_PER_HEIGHT` within `FONT_WIDTH_MIN` and
    `FONT_WIDTH_MAX`, moves from `console/panel.c` to `gfx/font.h`; the
    console and the compositor both use them ([D11](#d11-routing-input),
-   rule 2). The console's checks of an input endpoint's messages and
-   the lines it logs for them ([console.md C6](console.md#c6-the-pointer))
+   rule 2). The console's checks of an input endpoint's messages, what
+   each is taken as once the endpoint's description is known, and the
+   lines it logs for them ([console.md C6](console.md#c6-the-pointer))
    move from `console/console.c` to `lib/endpoint.c`, which
    `tools/check-endpoint.c` checks on the host, in CI beside
    `tools/check-text.c`; the compositor uses them as the console does
@@ -1692,8 +1697,11 @@ login's session as it does on its own
       starts the compositor in the root job, on a client channel of its
       own, and hands it each input endpoint, those reported before it
       started first ([input.md K3](input.md#k3-the-report-and-the-client)).
-      It then starts the console on the channel it keeps to it, and
-      hands it no endpoint while the compositor runs.
+      The compositor ends when the platform driver closes that channel,
+      which it sees once an input place is free (rule 6), as it does
+      when the first process closes its control channel. The
+      platform driver then starts the console on the channel it keeps to
+      it, and hands it no endpoint while the compositor runs.
    3. The first process sends the compositor `COMPOSITOR_SETUP_OPTIONS`,
       its bits 0 but those a test disk's flag files set; then
       `COMPOSITOR_SETUP_BACKGROUND`, labelled on a test disk for a
@@ -1715,17 +1723,19 @@ login's session as it does on its own
 3. **No attention state and no strip.** The compositor starts out of
    the attention state and draws no strip, so the area below the strip
    is the whole screen ([D6](#d6-windows-and-buffers)). It reserves the
-   secure attention key alone: it routes it to no window and logs it
-   (rule 8), since no connection carries `ATTENTION` yet. Every other
-   key reaches the window with the focus.
+   secure attention key alone, which rule 6 gives: it routes it to no
+   window and logs it (rule 8), since no connection carries `ATTENTION`
+   yet. Every other key press reaches the window with the focus, and
+   so does the repeat or release of a press the window was sent; rule 6
+   withholds the rest.
 4. **One window.** The compositor serves one window. It refuses a request
    with the first of these that applies: a layer outside the
    connection's, `ERR_ACCESS_DENIED`; a surface other than `PANEL`,
    `ERR_NOT_SUPPORTED`; and a window served already, on any connection,
    or an area with no pixel to place one in, `ERR_NO_RESOURCES`. A size
    beyond the area it gives the window smaller (D6). The console's window is on `SYSTEM`, so it has
-   no frame and holds the focus while shown
-   ([D11](#d11-routing-input), rule 1), on the `PANEL` surface
+   no frame and holds the focus ([D11](#d11-routing-input), rule 1) from
+   its being made until it closes (rule 6), on the `PANEL` surface
    ([look.md V4](look.md#v4-surfaces-edges-and-shadows)), of its
    panel's box's size, which D6's placement puts where the panel stands
    in direct mode. Its corners' radius is five quarters of the cell
@@ -1746,12 +1756,40 @@ login's session as it does on its own
    as D6 bands them, a buffer given under the number of the one being
    read, and a present of a buffer never given, close the window; a
    damage rectangle is cut to its buffer.
-6. **Input.** A key event carries `lib/keymap.c`'s text. The pointer,
-   its buttons and the wheel go to the window that has the pointer
-   ([D11](#d11-routing-input), rule 3), the wheel in
-   120ths of a detent ([D10](#d10-the-pointer), rule 5), and the
-   console scrolls its panel three lines a detent as it does in direct
-   mode. Relative motion moves no pointer yet (D10, rule 6).
+6. **Input.** The compositor reads every input endpoint it is handed,
+   checks each message and logs it as rule 8 gives, and takes the keys of
+   every keyboard as one keyboard's.
+   - **A key press** is sent to the window with the focus, where there
+     is one, as a `WINDOW_KEY` of its code, its value and its time, the
+     modifiers held once it is applied, and the text `lib/keymap.c`
+     gives ([D11](#d11-routing-input), rules 1 and 2). The one window of
+     rule 4 is on `SYSTEM` and has the focus from its being made, which
+     its first configure says (rule 5), until it closes. A press that
+     finds no window goes nowhere.
+   - **A key repeat or release** is sent to the window only if the
+     window was sent the press and has had no release of it, and the
+     code has not been pressed as the secure attention key since. One
+     that is not sent goes nowhere: the secure attention key's, those of
+     a key pressed before the window was made or with no window to send it
+     to, and those of a key pressed before a window that has since closed.
+   - **The secure attention key** is a press of Delete or the keypad's
+     Delete while Control and Alt are held, either of each, whatever else
+     is held ([D12](#d12-the-secure-attention-key-and-global-keys)). The
+     press is sent to no window and logged (rule 8). D12 names the
+     combination with no order; the compositor takes it in this order
+     only, so a Delete pressed before Control and Alt is a press like any
+     other, which the window is sent.
+   - **A keyboard's endpoint that closes** after sending a key leaves no
+     modifier held, the other keyboards' included, and leaves Caps Lock as
+     it was. The presses sent stay recorded, and the window is sent no
+     release for them.
+   - **The pointer's** reports are read and logged (rule 8), and the
+     compositor routes none to a window yet. Routed, its buttons and the
+     wheel go to the window that has the pointer
+     ([D11](#d11-routing-input), rule 3), the wheel in 120ths of a detent
+     ([D10](#d10-the-pointer), rule 5), and the console scrolls its panel
+     three lines a detent as it does in direct mode. Relative motion
+     moves no pointer yet (D10, rule 6).
 7. **The pointer** is not drawn until the first absolute report that
    sets both axes, and then with its hotspot on the top left corner of
    the pixel the position rounds down to, from
@@ -1776,8 +1814,9 @@ login's session as it does on its own
      `malformed` for a message its description refuses, `buffer` and
      `present` for rule 5's, `stalled` for D11's rule 7. A connection or
      window its holder closes is not logged.
-   - `nova-compositor: attention at_ms=1234.5`, for each secure
-     attention key, at its time on `clock_monotonic`.
+   - `nova-compositor: attention at_ms=1234.5`, once for each press of
+     the secure attention key (rule 6), at the time the driver took the
+     press, on `clock_monotonic`.
    - [console.md C6](console.md#c6-the-pointer)'s input and pointer
      lines, with `nova-compositor:` for `nova-console:` and the same
      rules. A console in a window logs none, and logs
@@ -1882,7 +1921,8 @@ login's session as it does on its own
       shorter side, and presents it with that square as its one
       rectangle; waits for the release of the buffer 0, and then for the
       frame;
-    - holds the window until the compositor closes it or its connection.
+    - holds the window until the compositor closes it or its connection,
+      and logs each event it is sent, which must be a key.
 
     Its pixels, from `test/wintest.h`: the top eighth of the window has
     cover 0 over a colour the material must hide; the next eighth has half
@@ -1892,7 +1932,13 @@ login's session as it does on its own
     at full cover. It logs `nova-wintest: window screen=2880x1800
     size=1440x900` once it has the configure, `nova-wintest: shown
     frame=1`, `nova-wintest: released buffers=1` and `nova-wintest: shown
-    frame=2`; a step that fails ends it, logged as `nova-wintest: failed
+    frame=2`; for each key, `nova-wintest: key code=30 value=pressed
+    modifiers=shift text=A time_ms=6786.6`, its `modifiers` the names
+    `shift`, `control`, `alt` and `super` of those held, comma-joined,
+    or `none`, its `text` the key's text, quoted as
+    [log.md T1](log.md#t1-lines) gives a value, empty for a key that gives
+    none, and its `time_ms` the time as rule 8's `at_ms` gives it; a
+    step that fails ends it, logged as `nova-wintest: failed
     step="window request" status=15`.
 
     The CI boot of `window.img`, `ci/boot.py window`, requires, each once:
@@ -1906,13 +1952,51 @@ login's session as it does on its own
       `shown frame=2` lines;
     - QMP's `screendump`, equal, within `SCREEN_TIMEOUT` of the line for
       the second frame, to the `window` screen `ci/screens.c` draws for
-      its size.
+      its size;
+    - the compositor's input line for each of the three input functions,
+      as the system boot requires the console's, and the pointer's
+      events that boot sends, each logged as console.md C6 gives with
+      `nova-compositor:` and none of them reaching the client;
+    - the keys of `WINDOW_KEYS` in `ci/boot.py`, sent by QMP's
+      `input-send-event`, since `send-key` releases keys in an order of
+      its own: the client's `key` line for each event the window must be
+      sent, in order, and the compositor's `attention` line for each
+      press of the secure attention key, each before the client's line for
+      the first key sent after it. Each line is checked as it is read, and
+      read until the client's line for the last letter's release: a `key`
+      line that is not the next one due fails the boot, and so does an
+      `attention` line past the number of presses, but a line that comes
+      after that one is not read for this. An `attention` line names no
+      key, so it is tied to a press by its place among the `attention`
+      lines and by its time, not by what it says. The client may log a key
+      after the compositor has logged a later one, so no other order of
+      the two is required. The times of the client's
+      lines must not fall from one to the next, and the time of an
+      `attention` line must not be before that of the client's line for the
+      last key sent before it nor after that of its line for the first key
+      sent after it. No other time is checked. The keys are a letter, a
+      capital, a `!` from Shift and 1, a space, Left, Control with C
+      and Alt with X, which give no text, Delete alone and with Control,
+      the keypad's Delete with Alt, Delete pressed before Control and Alt,
+      and the secure attention key four times: with a Delete held that
+      the window was sent the press of, and so is sent no release of; with
+      the left keys released in the order pressed; the same with Delete
+      then pressed again with no Control or Alt held, which the window must
+      be sent with its release; and on the keypad with Shift and the right
+      keys released in reverse. A last letter's release, the boot waits for,
+      since every event before it has then been taken. What the window
+      must be sent is written in `ci/boot.py` from D11 and D12, not from
+      the code it checks.
 
-    It accepts no line that reports a failure, and neither
-    `nova-compositor: window closed` nor `nova-compositor: connection
-    closed`: the client holds its window and its connection for the whole
-    boot, and a close by their holder is not logged (rule 8), so a line
-    that says either is the compositor's. The window screen is drawn by
+    It accepts no line that reports a failure, and none of
+    `nova-compositor: window closed`, `nova-compositor: connection
+    closed`, `nova-compositor: input message refused` and a
+    `nova-console: input` line: the client holds its window and its
+    connection for the whole boot, and a close by their holder is not
+    logged (rule 8), so a line that says either of the first two is the
+    compositor's; the console is handed no endpoint, so a line of its for
+    one means the endpoint went to it, and a compositor that refuses an
+    endpoint's message has failed to serve it. The window screen is drawn by
     `lib/window.c` and `lib/compose.c`, which the compositor composes
     with, from the screen's size alone. Its equality shows that the
     compositor reads a buffer by its stride and not its width, places and
@@ -1920,7 +2004,14 @@ login's session as it does on its own
     second frame's damage over the first, and gets the client's messages
     whole; it does not show that those libraries are right, which
     `tools/check-window.c` and `tools/check-compose.c` check on the host
-    against D6 to D8.
+    against D6 to D8. The key lines show that the compositor takes the
+    endpoints' events, applies the modifiers and the keymap, sends the
+    secure attention key's press and release nowhere, and gets each other
+    key to the window whole, in the sequences listed. The boot sends
+    presses and releases and no repeat, and the sequences it does not send
+    are `tools/check-keyroute.c`'s alone, which checks `lib/keyroute.c`
+    against a model written apart from it and against laws of its decisions
+    that keep no record of the presses sent.
 
 - **Why a test client in the console's place:** the compositor must
   serve a connection and a window before the console can be its client,
@@ -1944,8 +2035,9 @@ login's session as it does on its own
   endpoint and no display while the compositor runs, and the test client
   is the compositor's one client, as the console is from step 4 on. Its
   cost is a boot that logs in nowhere, so `window.img` makes no account
-  and `ci/boot.py window` types no key. Not taken: the console as a
-  second client; its cost is a second window, which rule 4 refuses.
+  and the keys `ci/boot.py window` types are the client's to read, not a
+  login's. Not taken: the console as a second client; its cost is a
+  second window, which rule 4 refuses.
 - **Why the compositor serves one connection at a time:** the
   phase 3 arrangement has one window (rule 4), and a record for each of
   many connections is state nothing reads. A connection issued while one
@@ -1999,6 +2091,140 @@ login's session as it does on its own
   requests faster than it reads its replies is closed when the channel
   is full, not when `CONNECTION_PENDING_MAX` replies wait. The queue
   arrives with the windows that make it matter.
+- **Why a key event carries the modifiers held once it is applied:**
+  D11's rule 2 says the modifiers held and not whether before or after the
+  event. A press of Control is sent with Control among them and its release
+  without, so a client that reads the last event alone knows what is held.
+  The text is `lib/keymap.c`'s: one character for a character key pressed
+  or repeated with no Control, Alt or Super held, which Shift and Caps Lock
+  choose, and none for a release or any other key. Its cost is that a client
+  that wants what was held when a modifier key was pressed keeps the event
+  before it. Not taken: the modifiers held before the event; its cost is
+  that the last event never says what is held now.
+- **Why every keyboard's keys give one set of modifiers:** there is one
+  pointer, whatever devices move it (D11, rule 3), and the console takes
+  every keyboard's keys as one keyboard's. The compositor keeps one set of
+  the modifiers held and of Caps Lock, so Control pressed on one keyboard
+  combines with a key on another. Its cost is that two keyboards cannot be
+  told apart, and that a keyboard that goes clears the modifiers another
+  keyboard holds: Control and Alt held on a second keyboard are forgotten,
+  and the secure attention key is not taken on it until they are pressed
+  again. Not taken: a set for each keyboard; its cost is a record for each
+  endpoint, and Control on one keyboard that does not combine with a letter
+  on another.
+- **Why the secure attention key is a press with Control and Alt already
+  held:** D12 reserves Ctrl+Alt+Delete and sends a window neither the press
+  nor the release of a key that completes it, and names no order. The
+  compositor takes the press of Delete or the keypad's, one or both, while
+  either Control and either Alt are held, with Shift or Super or not. D12
+  is not met for the other orders: with Delete pressed before Control and
+  Alt, the key that completes the combination is Control's or Alt's, which
+  D12 sends no window and this sends, so the window is sent all three keys,
+  no attention state is raised and nothing is logged. Nothing shows the
+  person that the key was not taken, since phase 3 has no secure screen.
+  Not taken: the press that completes the combination, in
+  whatever order the keys come, as D12's words can be read; its cost is a
+  rule for each key that can complete it, a press of Control or Alt that
+  the window is not sent though it is sent their releases, and a Delete it
+  was sent pressed that is then sent no release.
+- **Why a key repeat or release is sent only for a press that was sent:**
+  a window builds the keys it believes down from the events it is sent, so
+  it must be sent a repeat or a release only of a press it was sent, as
+  D11's rule 3 gives for buttons. The compositor records the presses it
+  sends by code, a release erasing the record, and withholds a repeat or a
+  release of a code not recorded: the secure attention key's, whichever of
+  Control and Alt is held by then, since a user releases them in any order;
+  a key pressed with no window to send it to, or before the window was
+  made; and a key pressed before the window that has closed, whose record
+  its closing erases. The secure attention key's press erases the record
+  of its code, so that a code the window was sent a press of earlier, and
+  that is then the attention key's, has its repeats and its release
+  withheld. A press is always decided afresh, so a press of a
+  code whose last press was the secure attention key's is that key again
+  where Control and Alt are held, and a press for the window where they
+  are not, which is then sent its repeats and its release. Its cost is that
+  a window made while Control is held reads Control in the modifiers of
+  its first events and is sent neither a press of it nor its release, that
+  a window that was sent a press of a code and then the attention key's
+  press of it is sent no release of the earlier press, as it is sent none
+  for a key whose keyboard goes (below), and that the record is 8 KiB. Not
+  taken: withholding every event of a code
+  whose press was the secure attention key's until its release; its cost is
+  the release of a later press of that code, which the window was sent,
+  withheld.
+- **Why the window is sent the releases of Control and Alt, and none is
+  made up:** D12 tells a window that had Control and Alt pressed that they
+  are released, for the attention state takes the keyboard from it. The
+  phase 3 arrangement has no attention state (rule 3), so the window keeps
+  the focus and is sent every key, the releases of Control and Alt it was
+  sent the presses of when they are made, so what it was sent of them is
+  whole. The attention state tells the window as D12 says, once phase 4
+  builds it. Its cost is that a window is sent the presses of Control and
+  Alt that come before the secure attention key, as it is for any
+  combination of them. Not taken: telling the window at the key; its cost
+  is a release for a press whose release is on its way.
+- **Why a keyboard that goes leaves no modifier held, and sends no
+  release:** an endpoint that closes has lost the releases of what it held
+  (D11, rule 3, for buttons). The compositor clears the modifiers held and
+  keeps Caps Lock, which is the keyboard's state and not a key held. It
+  keeps the record of presses sent and sends the window no release of a
+  key that was held: a release from another keyboard still reaches the
+  window, which was sent its press. Its cost is that a window that builds
+  the keys down from presses and releases sees a key held that the driver
+  lost until it is pressed and released again, and that the modifiers
+  another keyboard holds are cleared with this one's, as they are one set.
+  Not taken: a release for each key held, as buttons get; its cost is the
+  codes held in the order they were pressed, which a window that reads
+  codes needs and no window of phase 3 does.
+- **Why a key press is dropped where no window has the focus:** a press
+  that finds no window, before the window is made or after it has closed,
+  changes the modifiers held and goes nowhere, and its repeats and release
+  go nowhere either. D11's why is that a key reaches the one window the user
+  chose. Its cost is that a key typed in the time before a window shows is
+  lost. Not taken: keeping keys until a window has the focus; its cost is a
+  window that opens being sent what was typed before it existed, a
+  password typed for another among it.
+- **Why the window has the focus from its being made:** D11's rule 1 gives
+  a `SYSTEM` window the focus while shown. The window of phase 3 is
+  told it has the focus by its first configure (rule 5), before it has
+  presented, and is sent keys from then until it closes, so a key typed
+  between its being made and its first frame is queued for a window that
+  shows nothing yet. Its cost is that, where D11's words mean from the
+  first present, the window is sent keys earlier than they say. Not taken:
+  from the first present; its cost is a window that its configure told has
+  the focus being sent no key, and a second rule for when the focus begins.
+- **Why an input endpoint is read at most its capacity at a time:** the
+  compositor never waits for a client (D11, rule 7) and serves the control
+  channel, the window's channel, the frame and every endpoint in turn.
+  `INPUT_ENDPOINT_CAPACITY` (32) is the most an endpoint queues
+  ([input.md K2](input.md#k2-key-events-and-pointer-reports)); each pass
+  takes at most that many from each, and an endpoint with more waiting
+  wakes the next wait at once. Its cost is that a burst of more than that
+  is taken over more than one pass, and so is the end of an endpoint whose
+  driver ended with that many queued. Not taken: reading an endpoint until
+  it is empty; its cost is a driver that fills it as fast as it is read
+  holding the compositor from the window and the frame.
+- **Why an endpoint waits in its channel while every place holds one:** a
+  driver that restarts hands an endpoint while its predecessor's may still
+  hold messages to read, and at most `INPUT_ENDPOINT_CAPACITY` are taken
+  from it at a time. The compositor reads the platform driver's channel
+  only while one of its `INPUT_DEVICES_MAX` places is free, so the new
+  endpoint waits until the old has been read to its close and given up its
+  place, however many passes that takes, and none is refused. Its cost is
+  that a fifth endpoint, while four are live, waits for ever and logs
+  nothing, which the platform driver cannot hand it, since it runs a driver
+  for at most `INPUT_DEVICES_MAX` devices, and that the platform driver's
+  close of the channel is seen once a place is free. Not taken: refusing the
+  endpoint and closing it with a log line; its cost is a restarted driver's
+  endpoint refused for good while its predecessor's queue is read.
+- **Why the compositor ends when the platform driver closes its channel
+  of endpoints:** the console does (input.md K3), and a compositor that
+  served on would wait for endpoints from a driver that is gone, and a
+  wait on a closed channel returns at once for ever. It ends
+  `COMPOSITOR_EXIT_DONE`, as it does for its control channel. Its cost is
+  that the platform driver's end is the compositor's. Not taken: serving
+  on without the channel; its cost is a compositor that no driver can
+  give an endpoint, which nothing then ends.
 - **Why `COMPOSITOR_OPTION_EXIT_TEST` still ends the compositor after
   its first frame:** the console is not yet a client (rule 2, step 4),
   so no window's present is shown on a disk that carries `COMPFAIL`, and

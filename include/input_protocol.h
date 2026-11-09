@@ -120,6 +120,13 @@ typedef struct {
 
 _Static_assert(sizeof(INPUT_POINTER) == 80, "one layout on every target");
 
+/** The most messages an input driver's endpoint queues for its client
+    before the driver waits for it to read (docs/spec/input.md K2): each
+    holds kernel memory until it is read. The compositor, which serves
+    other channels as well, reads at most this many from one endpoint
+    before it serves them. */
+#define INPUT_ENDPOINT_CAPACITY 32
+
 /** The most input devices the platform driver runs a driver for, and so
     the most endpoints a client reads at once, since each driver serves
     one: a keyboard, a tablet and a mouse, and one more. */

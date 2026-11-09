@@ -27,6 +27,7 @@
 #define AXES_JUNK 0x4
 #define VALUE_PAST_REPEAT 3
 #define VALUE_PAST_PRESS 2
+#define UNDESCRIBED_BYTE 0xA5
 
 /* The lines a write function was given, in order. */
 #define LINES_MAX 256
@@ -141,26 +142,33 @@ static void check_key_events(void)
 {
     static const UINT16 types[] = {INPUT_TYPE_KEY, INPUT_TYPE_SYN,
                                    INPUT_TYPE_DEVICE};
-    unsigned p, v, t, wrong = 0;
+    static const UINT32 reserved[] = {0, 1, 0x80000000u, 0xFFFFFFFFu};
+    unsigned p, v, t, r, wrong = 0, valid = 0;
 
     for (p = 0; p < sizeof types / sizeof types[0]; p++)
         for (v = 0; v <= VALUE_PAST_REPEAT; v++)
-            for (t = 0; t < 2; t++) {
-                INPUT_EVENT e;
-                int wanted = types[p] == INPUT_TYPE_KEY &&
-                             v <= INPUT_KEY_REPEATED && t == 0;
+            for (t = 0; t < 2; t++)
+                for (r = 0; r < sizeof reserved / sizeof reserved[0]; r++) {
+                    INPUT_EVENT e;
+                    int wanted = types[p] == INPUT_TYPE_KEY &&
+                                 v <= INPUT_KEY_REPEATED && t == 0 &&
+                                 reserved[r] == 0;
 
-                memset(&e, 0, sizeof e);
-                e.transaction = t ? TRANSACTION_CALL : 0;
-                e.type = types[p];
-                e.code = KEY_A;
-                e.value = v;
-                wrong += endpoint_is_key_event(&e, sizeof e) != wanted;
-                wrong += endpoint_is_key_event(&e, sizeof e - BYTES_MORE);
-                wrong += endpoint_is_key_event(&e, sizeof e + BYTES_MORE);
-            }
+                    memset(&e, 0, sizeof e);
+                    e.transaction = t ? TRANSACTION_CALL : 0;
+                    e.type = types[p];
+                    e.code = KEY_A;
+                    e.value = v;
+                    e.reserved = reserved[r];
+                    wrong += endpoint_is_key_event(&e, sizeof e) != wanted;
+                    wrong += endpoint_is_key_event(&e, sizeof e - BYTES_MORE);
+                    wrong += endpoint_is_key_event(&e, sizeof e + BYTES_MORE);
+                    valid += wanted;
+                }
     check(wrong == 0, "a key event is one exactly where K2 says, of its "
-                      "exact size");
+                      "exact size, with its reserved field 0");
+    check(valid == INPUT_KEY_REPEATED + 1,
+          "the key events checked include each value a key has, valid");
 }
 
 /* ------------------------------------------------------------------------
@@ -262,6 +270,171 @@ static void check_reports(void)
         check(!endpoint_is_report(&s, sizeof s, 0),
               "the last button's value is checked");
     }
+}
+
+/* ------------------------------------------------------------------------
+   What an endpoint may send next */
+
+/* What a message in the pool below is, as it is made rather than as
+   endpoint_take is to decide it: a description of a keyboard, of a
+   tablet whose axes are both absolute and of a mouse whose are none, a
+   description K3 refuses, a key event, a key event with its reserved
+   field set, a report that sets both absolute axes, one that sets none,
+   and one K2 refuses. */
+typedef enum {
+    IS_KEYBOARD,
+    IS_TABLET,
+    IS_MOUSE,
+    IS_BAD_DESCRIPTION,
+    IS_KEY,
+    IS_BAD_KEY,
+    IS_TABLET_REPORT,
+    IS_MOUSE_REPORT,
+    IS_BAD_REPORT,
+    MESSAGE_KINDS
+} MESSAGE_IS;
+
+typedef union {
+    INPUT_DEVICE description;
+    INPUT_EVENT key;
+    INPUT_POINTER report;
+} MESSAGE;
+
+static UINT32 message_size(MESSAGE_IS is)
+{
+    switch (is) {
+    case IS_KEY:
+    case IS_BAD_KEY:
+        return sizeof(INPUT_EVENT);
+    case IS_TABLET_REPORT:
+    case IS_MOUSE_REPORT:
+    case IS_BAD_REPORT:
+        return sizeof(INPUT_POINTER);
+    default:
+        return sizeof(INPUT_DEVICE);
+    }
+}
+
+static MESSAGE message_make(MESSAGE_IS is)
+{
+    MESSAGE m;
+
+    memset(&m, 0, sizeof m);
+    switch (is) {
+    case IS_KEYBOARD:
+        m.description = device(INPUT_DEVICE_KEYBOARD, 0, 0, 0, 0, 0);
+        break;
+    case IS_TABLET:
+        m.description = device(INPUT_DEVICE_POINTER, AXES_BOTH, 0, 0x7FFF, 0,
+                               0x7FFFFFFF);
+        break;
+    case IS_MOUSE:
+        m.description = device(INPUT_DEVICE_POINTER, 0, 0, 0, 0, 0);
+        break;
+    case IS_BAD_DESCRIPTION:
+        m.description = device(INPUT_DEVICE_POINTER, AXES_BOTH, 5, 5, 0, 9);
+        break;
+    case IS_KEY:
+        m.key.type = INPUT_TYPE_KEY;
+        m.key.code = KEY_A;
+        m.key.value = INPUT_KEY_PRESSED;
+        break;
+    case IS_BAD_KEY:
+        m.key.type = INPUT_TYPE_KEY;
+        m.key.code = KEY_A;
+        m.key.value = INPUT_KEY_PRESSED;
+        m.key.reserved = 1;
+        break;
+    case IS_TABLET_REPORT:
+        m.report = report_new(AXES_BOTH, 0, 0, 0);
+        break;
+    case IS_MOUSE_REPORT:
+        m.report = report_new(0, 1, 1, 0);
+        break;
+    case IS_BAD_REPORT:
+        m.report = report_new(AXES_JUNK, 0, 0, 0);
+        break;
+    case MESSAGE_KINDS:
+        break;
+    }
+    return m;
+}
+
+/* What a message of kind is gets, for an endpoint described as kind
+   described (0 before its description) with absolute axes axes, stated
+   as K3 reads: the first message is a description, then a keyboard sends
+   key events and a pointer reports of the axes it has. */
+static UINT32 take_wanted(UINT32 described, UINT32 axes, MESSAGE_IS is)
+{
+    if (!described)
+        return is == IS_KEYBOARD || is == IS_TABLET || is == IS_MOUSE
+                   ? ENDPOINT_DESCRIPTION
+                   : ENDPOINT_REFUSED;
+    if (described == INPUT_DEVICE_KEYBOARD)
+        return is == IS_KEY ? ENDPOINT_KEY : ENDPOINT_REFUSED;
+    if (is == IS_MOUSE_REPORT || (is == IS_TABLET_REPORT && axes == AXES_BOTH))
+        return ENDPOINT_REPORT;
+    return ENDPOINT_REFUSED;
+}
+
+/* Every sequence of up to three messages from the pool, from an endpoint
+   whose device has no description, a kind of 0 and every other byte not:
+   what each is taken as, that the description is kept whole, and that a
+   refused message changes nothing. */
+static void check_take(void)
+{
+    unsigned a, b, c, wrong = 0, sequences = 0, taken_reports = 0;
+    unsigned length;
+
+    for (length = 1; length <= 3; length++) {
+        unsigned total = length == 1   ? MESSAGE_KINDS
+                         : length == 2 ? MESSAGE_KINDS * MESSAGE_KINDS
+                                       : MESSAGE_KINDS * MESSAGE_KINDS *
+                                             MESSAGE_KINDS;
+        unsigned n;
+
+        for (n = 0; n < total; n++) {
+            INPUT_DEVICE endpoint;
+            UINT32 described = 0, axes = 0;
+            unsigned step;
+
+            a = n % MESSAGE_KINDS;
+            b = n / MESSAGE_KINDS % MESSAGE_KINDS;
+            c = n / MESSAGE_KINDS / MESSAGE_KINDS;
+            memset(&endpoint, UNDESCRIBED_BYTE, sizeof endpoint);
+            endpoint.kind = 0;
+            sequences++;
+            for (step = 0; step < length; step++) {
+                MESSAGE_IS is = (MESSAGE_IS)(step == 0 ? a : step == 1 ? b : c);
+                MESSAGE m = message_make(is);
+                INPUT_DEVICE before = endpoint;
+                UINT32 want = take_wanted(described, axes, is);
+                UINT32 got = endpoint_take(&endpoint, &m, message_size(is));
+
+                wrong += got != want;
+                taken_reports += got == ENDPOINT_REPORT;
+                if (want == ENDPOINT_DESCRIPTION) {
+                    described = m.description.kind;
+                    axes = m.description.absolute;
+                    wrong += memcmp(&endpoint, &m.description,
+                                    sizeof endpoint) != 0;
+                } else {
+                    wrong += memcmp(&endpoint, &before, sizeof endpoint) != 0;
+                }
+                wrong += endpoint_take(&endpoint, &m,
+                                       message_size(is) + BYTES_MORE) !=
+                         ENDPOINT_REFUSED;
+                wrong += endpoint.kind != described;
+            }
+        }
+    }
+    check(wrong == 0, "an endpoint's messages are taken as K3 says: its "
+                      "description first and kept, then what its kind sends, "
+                      "and a refused message changes nothing");
+    check(sequences == MESSAGE_KINDS + MESSAGE_KINDS * MESSAGE_KINDS +
+                           MESSAGE_KINDS * MESSAGE_KINDS * MESSAGE_KINDS &&
+              taken_reports > 0,
+          "the sequences taken include reports");
 }
 
 /* ------------------------------------------------------------------------
@@ -690,6 +863,7 @@ int main(void)
     check_descriptions();
     check_key_events();
     check_reports();
+    check_take();
     check_description_lines();
     check_pointer_lines();
     check_runs();

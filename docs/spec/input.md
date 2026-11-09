@@ -92,7 +92,8 @@ client's endpoint, in the order the device returned them:
 | 12 | 4 | Reserved, 0 |
 | 16 | 8 | `time`: the monotonic clock in nanoseconds (`clock_monotonic`) when the driver took the event from the used ring |
 
-The endpoint queues up to 32 messages. When it is full the driver waits
+The endpoint queues up to `INPUT_ENDPOINT_CAPACITY` (32) messages. When
+it is full the driver waits
 for `WRITABLE`, and gives no buffer back meanwhile, so the device runs
 out of buffers and may drop events (5.8.6.2) instead of the kernel
 queueing them without bound. The driver learns that the client has

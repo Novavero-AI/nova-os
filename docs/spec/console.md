@@ -290,9 +290,9 @@ the character a US keyboard gives: a key's name in the evdev header is
 its unshifted label, so `KEY_A` (30) gives `a` and `KEY_1` (2) gives
 `1`. Shift, either one, gives the shifted character; Caps Lock, which
 each press toggles, shifts the letters alone, and Shift with Caps Lock
-gives them unshifted. A repeat (value 2) acts as a press. With Control,
-Alt or Super held a character key gives nothing; the editing keys still
-edit.
+gives them unshifted. A repeat (value 2) acts as a press, but does not
+toggle Caps Lock. With Control, Alt or Super held a character key gives
+nothing; the editing keys still edit.
 
 While a read waits (C4) the keys edit its line:
 

@@ -32,7 +32,8 @@ typedef struct {
 int endpoint_is_description(const INPUT_DEVICE *d, UINT32 byte_count);
 
 /** Whether the byte_count bytes of the message at event are a key event
-    (K2): exactly an INPUT_EVENT, of a key, with a value a key can have. */
+    (K2): exactly an INPUT_EVENT, of a key, with a value a key can have
+    and its reserved field 0. */
 int endpoint_is_key_event(const INPUT_EVENT *event, UINT32 byte_count);
 
 /** Whether the byte_count bytes of the message at report are a pointer
@@ -42,6 +43,26 @@ int endpoint_is_key_event(const INPUT_EVENT *event, UINT32 byte_count);
     released. */
 int endpoint_is_report(const INPUT_POINTER *report, UINT32 byte_count,
                        UINT32 axes);
+
+/** @name What endpoint_take makes of a message
+    @{ */
+#define ENDPOINT_REFUSED 0     /**< not a message the endpoint may send now */
+#define ENDPOINT_DESCRIPTION 1 /**< the device's description */
+#define ENDPOINT_KEY 2         /**< a key event of a keyboard */
+#define ENDPOINT_REPORT 3      /**< a pointer report of a pointer */
+/** @} */
+
+/** Take the byte_count bytes of the next message of an input endpoint,
+    aligned to 8 bytes, whose device is *device, with a kind of 0 before
+    the endpoint's first message (K3): the first must be a description,
+    and is kept in *device; each after it must be what the kind of device
+    sends, a key event from a keyboard and a pointer report from a
+    pointer, as endpoint_is_key_event and endpoint_is_report decide.
+    Returns what the message is, or ENDPOINT_REFUSED for one that is not
+    what the endpoint may send, which a client answers by closing the
+    endpoint; *device is then as it was. */
+UINT32 endpoint_take(INPUT_DEVICE *device, const void *message,
+                     UINT32 byte_count);
 
 /** Write the line that says what the description d (which
     endpoint_is_description accepted) gives: `COMPONENT: input

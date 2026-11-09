@@ -135,7 +135,7 @@ CI checks every pull request and every push to main:
   `tools/check-backdrop.c`, `tools/check-outline.c`,
   `tools/check-compose.c`, `tools/check-window.c`,
   `tools/check-mapping.c`, `tools/check-route.c`,
-  `tools/check-backlog.c`, `tools/check-nvo.c`,
+  `tools/check-backlog.c`, `tools/check-keyroute.c`, `tools/check-nvo.c`,
   `tools/check-decimal.c` (on the decimal test cases it downloads, pinned
   by sha256),
   `design/backgrounds/check-limb.sh`, `ci/check-mkinterface.sh`, which
@@ -144,7 +144,8 @@ CI checks every pull request and every push to main:
   `ci/check-boot.py`, which replays serial lines through `ci/boot.py` to
   check which lines the fallback and window boots require, which
   failure lines the fallback boot accepts, which lines the window boot
-  refuses, and how the screens a boot waits for are polled, and
+  refuses, in what order the window boot's key lines must come, and how
+  the screens a boot waits for are polled, and
   actionlint over the workflows.
 - **Boot** boots the reproduced disks under QEMU with Ubuntu 24.04's
   OVMF, with a copy of `data.img` as the data disk: `disk.img`, the
@@ -183,9 +184,12 @@ CI checks every pull request and every push to main:
   must show the compositor issue a test client's connection and the
   client's window made, its first buffer shown and its second shown
   with the first released, with no close of the window or the
-  connection by the compositor; and QMP's screendump, once the second
+  connection by the compositor; QMP's screendump, once the second
   is shown, must equal the screen `ci/screens.c` draws for the window
-  with the library code the compositor composes with.
+  with the library code the compositor composes with; and the keys it
+  then types over QMP must reach the client in order as the keyboard
+  rules of `docs/spec/display.md` give them, with the secure attention
+  key logged by the compositor and sent to no window.
 - **Chain** boots `chain.img` and checks that each step of the bootstrap
   chain passes in its test report and each pinned link matches.
 

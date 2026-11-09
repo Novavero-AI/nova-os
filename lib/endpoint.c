@@ -25,7 +25,8 @@ int endpoint_is_description(const INPUT_DEVICE *d, UINT32 byte_count)
 int endpoint_is_key_event(const INPUT_EVENT *event, UINT32 byte_count)
 {
     return byte_count == sizeof *event && event->transaction == 0 &&
-           event->type == INPUT_TYPE_KEY && event->value <= INPUT_KEY_REPEATED;
+           event->type == INPUT_TYPE_KEY && event->value <= INPUT_KEY_REPEATED &&
+           event->reserved == 0;
 }
 
 int endpoint_is_report(const INPUT_POINTER *report, UINT32 byte_count,
@@ -43,6 +44,36 @@ int endpoint_is_report(const INPUT_POINTER *report, UINT32 byte_count,
             report->button[i].value != INPUT_KEY_RELEASED)
             return 0;
     return 1;
+}
+
+/* Bytes, not a structure assignment: TinyCC turns that into a call to
+   memmove, and no program here links a C library (docs/spec/interface.md
+   P2). */
+static void keep(INPUT_DEVICE *device, const INPUT_DEVICE *description)
+{
+    const UINT8 *from = (const UINT8 *)description;
+    UINT8 *to = (UINT8 *)device;
+    UINT32 i;
+
+    for (i = 0; i < sizeof *device; i++)
+        to[i] = from[i];
+}
+
+UINT32 endpoint_take(INPUT_DEVICE *device, const void *message,
+                     UINT32 byte_count)
+{
+    if (device->kind == 0) {
+        if (!endpoint_is_description(message, byte_count))
+            return ENDPOINT_REFUSED;
+        keep(device, message);
+        return ENDPOINT_DESCRIPTION;
+    }
+    if (device->kind == INPUT_DEVICE_KEYBOARD)
+        return endpoint_is_key_event(message, byte_count) ? ENDPOINT_KEY
+                                                          : ENDPOINT_REFUSED;
+    return endpoint_is_report(message, byte_count, device->absolute)
+               ? ENDPOINT_REPORT
+               : ENDPOINT_REFUSED;
 }
 
 /* ------------------------------------------------------------------------

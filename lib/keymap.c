@@ -7,6 +7,7 @@
    Delete with Control and Alt held. */
 
 #include "keymap.h"
+#include "display_protocol.h"
 #include "input_protocol.h"
 
 /* Key codes this file reads, as the evdev header numbers them. */
@@ -180,4 +181,12 @@ int keys_attention(const KEYBOARD *keyboard, UINT32 code)
     return (code == CODE_DELETE || code == CODE_KEYPAD_DOT) &&
            (keyboard->held & HELD_CONTROL) != 0 &&
            (keyboard->held & HELD_ALT) != 0;
+}
+
+UINT32 keys_modifiers(const KEYBOARD *keyboard)
+{
+    return ((keyboard->held & HELD_SHIFT) ? DISPLAY_MODIFIER_SHIFT : 0) |
+           ((keyboard->held & HELD_CONTROL) ? DISPLAY_MODIFIER_CONTROL : 0) |
+           ((keyboard->held & HELD_ALT) ? DISPLAY_MODIFIER_ALT : 0) |
+           ((keyboard->held & HELD_SUPER) ? DISPLAY_MODIFIER_SUPER : 0);
 }

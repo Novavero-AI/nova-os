@@ -94,10 +94,6 @@ _Static_assert(QUEUE_SIZE * VIRTQ_DESCRIPTOR_SIZE <= AVAIL_OFFSET &&
                    EVENTS_OFFSET + QUEUE_SIZE * EVENT_SIZE <= PAGE_SIZE,
                "the event queue and its buffers fit one page");
 
-/* The most messages queued for the client before the driver waits for
-   it to read: each holds kernel memory until it is read. */
-#define CLIENT_QUEUE_CAPACITY 32
-
 /* The keys of the port's packets: the event queue's interrupt, and the
    watch of the client's endpoint. */
 #define QUEUE_KEY 1
@@ -472,7 +468,7 @@ _Noreturn void virtio_input_main(UINT32 bootstrap, UINT64 argument)
 
     (void)argument;
     start_device(bootstrap);
-    check(channel_create(CLIENT_QUEUE_CAPACITY, &device.events, &client),
+    check(channel_create(INPUT_ENDPOINT_CAPACITY, &device.events, &client),
           "channel create");
     check(object_wait_async(device.events, device.virtio.port, CLIENT_KEY,
                             CHANNEL_PEER_CLOSED),
