@@ -39,11 +39,13 @@
    one after each restart of the driver. A driver whose client ends, or
    is replaced by the console when the compositor is given up, sees its
    endpoint close, ends, and is started again for the client it now has,
-   without counting a restart. */
+   without counting a restart, once the client's end is read; the
+   driver's end, read first, waits for it (lib/driver_end.h). */
 
 #include "platform.h"
 #include "console.h"
 #include "compositor.h"
+#include "driver_end.h"
 #include "init.h"
 #include "tests.h"
 #include "input_protocol.h"
@@ -125,13 +127,15 @@ static const JOB_LIMITS driver_limits = {DRIVER_INTERRUPT_VECTORS};
 
 /* How a child stands: not started, or not to be; started, with what it
    was started for still awaited, its end for one that finishes and its
-   report for one that reports; running; done with its work; or given
-   up. */
+   report for one that reports; running; done with its work; given up; or,
+   an input driver, ended and stopped, to start again once its client's
+   end is read. */
 #define STATE_STOPPED 0
 #define STATE_STARTING 1
 #define STATE_RUNNING 2
 #define STATE_DONE 3
 #define STATE_GIVEN_UP 4
+#define STATE_WAITING 5
 
 typedef struct {
     UINT32 requester;
@@ -865,7 +869,11 @@ static CHILD *input_client(const PLATFORM *platform)
 /* Hand the client endpoint, from driver, which then is the client's or,
    if the client cannot take it, closed, so that the driver sees its
    client gone. A client not started yet, the compositor before the
-   release, takes none: driver keeps the endpoint until it is. */
+   release, takes none: driver keeps the endpoint until it is. A client
+   whose channel has no peer is ending, its handles closed and its end
+   not read yet: the driver is recorded as its, so that the driver's end
+   follows the client's (driver_end_decide) as it does for an endpoint
+   the client held. */
 static void hand_endpoint(const PLATFORM *platform, CHILD *driver,
                           UINT32 endpoint)
 {
@@ -883,11 +891,12 @@ static void hand_endpoint(const PLATFORM *platform, CHILD *driver,
     if (client->state == STATE_RUNNING)
         status = channel_write(client->channel, &transaction,
                                INPUT_CLIENT_MESSAGE_SIZE, &transfer, 1);
-    if (status == OK) {
+    if (status == OK || status == ERR_PEER_CLOSED) {
         driver->client = client;
         driver->client_start = client->serial;
-        return;
     }
+    if (status == OK)
+        return;
     handle_close(endpoint);
     say_child_status("endpoint send failed", client, status);
 }
@@ -990,36 +999,94 @@ static UINT32 exit_code_of(const CHILD *child)
     return exit_code;
 }
 
-/* Why driver, an input driver that ended with VIRTIO_INPUT_EXIT_DONE,
-   is started again without counting a restart: the client its endpoint
-   went to has been started again, or has been replaced by another; or 0
-   if neither, and the driver's end is its own. */
-static const char *client_change(const PLATFORM *platform,
-                                 const CHILD *driver)
+/* The facts of the end of driver, an input driver, that exit_code was the
+   code of: the client its endpoint went to, and the client the input
+   drivers have now. */
+static DRIVER_END end_facts(const PLATFORM *platform, const CHILD *driver,
+                            UINT32 exit_code)
 {
     const CHILD *client = input_client(platform);
+    DRIVER_END facts;
 
-    if (!driver->client || driver->client_start == client->serial)
-        return 0;
-    return driver->client == client ? "its client restarted"
-                                    : "its client changed";
+    facts.endpoint_closed = exit_code == VIRTIO_INPUT_EXIT_DONE;
+    facts.served = driver->client != 0;
+    facts.served_client =
+        driver->client ? (UINT32)(driver->client - children) : 0;
+    facts.served_start = driver->client_start;
+    facts.client = (UINT32)(client - children);
+    facts.start = client->serial;
+    facts.client_given_up = client->state == STATE_GIVEN_UP;
+    return facts;
+}
+
+/* Start driver, stopped, again for its client's change, as reason says,
+   counting no restart. */
+static void restart_for_client(const PLATFORM *platform, CHILD *driver,
+                               const char *reason)
+{
+    say_child("child restarted", driver);
+    say(" reason=");
+    say_value(reason);
+    say("\r\n");
+    launch(platform, driver);
+}
+
+/* What follows the end of driver, an input driver whose function is
+   stopped, that exit_code was the code of, as driver_end_decide gives
+   it. A driver that waits is decided again by release_waiting, and
+   logged once. */
+static void driver_ended(const PLATFORM *platform, CHILD *driver,
+                         UINT32 exit_code)
+{
+    DRIVER_END facts = end_facts(platform, driver, exit_code);
+    UINT32 next = driver_end_decide(&facts);
+    UINT32 was_waiting = driver->state == STATE_WAITING;
+
+    driver->state = next == DRIVER_END_WAIT ? STATE_WAITING : STATE_STOPPED;
+    switch (next) {
+    case DRIVER_END_WAIT:
+        if (!was_waiting) {
+            say_child("child waiting", driver);
+            say(" reason=\"its client's end is not read\"\r\n");
+        }
+        break;
+    case DRIVER_END_CLIENT_RESTARTED:
+        restart_for_client(platform, driver, "its client restarted");
+        break;
+    case DRIVER_END_CLIENT_CHANGED:
+        restart_for_client(platform, driver, "its client changed");
+        break;
+    case DRIVER_END_GIVEN_UP:
+        give_up(driver, "its client is given up");
+        break;
+    case DRIVER_END_RESTART:
+        if (restarting(platform, driver))
+            launch(platform, driver);
+        break;
+    }
+}
+
+/* A client's end has been read and acted on: decide each input driver
+   that waits again, now that its client may have been started again,
+   replaced or given up. One whose client is as it was waits on. */
+static void release_waiting(const PLATFORM *platform)
+{
+    UINT32 i;
+
+    for (i = CHILD_FIRST_INPUT; i < CHILD_FIRST_PROGRAM; i++)
+        if (children[i].state == STATE_WAITING)
+            driver_ended(platform, &children[i], VIRTIO_INPUT_EXIT_DONE);
 }
 
 /* child's process has ended. A driver's function is stopped first,
    whatever the end; the block driver's end with VIRTIO_BLK_EXIT_DONE is
    the end of its work, whose function keeps its quarantine if it does
-   not stop, as any driver's does; an input driver is not started again
-   for a client given up, which would leave each endpoint it reports
-   with nobody to read it. An input driver's end with
-   VIRTIO_INPUT_EXIT_DONE once the client it served has been restarted
-   or replaced is the client's change, not the driver's failure, and the
-   driver starts again without counting a restart; the client's own
-   policy bounds how often that comes. Any other child starts again as
-   the policy allows. */
+   not stop, as any driver's does. An input driver's end is driver_ended's
+   to decide. Any other child starts again as the policy allows, and the
+   end of a client releases the input drivers that wait for it. */
 static void ended(const PLATFORM *platform, CHILD *child)
 {
     UINT32 exit_code = exit_code_of(child);
-    const char *change = 0;
 
     close_if_open(&child->process);
     close_if_open(&child->job);
@@ -1034,23 +1101,15 @@ static void ended(const PLATFORM *platform, CHILD *child)
     }
     if (!stopped(platform, child))
         return;
-    if (child->kind == KIND_REPORTS &&
-        input_client(platform)->state == STATE_GIVEN_UP) {
-        give_up(child, "its client is given up");
+    if (child->kind == KIND_REPORTS) {
+        driver_ended(platform, child, exit_code);
         return;
     }
     child->state = STATE_STOPPED;
-    if (child->kind == KIND_REPORTS && exit_code == VIRTIO_INPUT_EXIT_DONE)
-        change = client_change(platform, child);
-    if (change) {
-        say_child("child restarted", child);
-        say(" reason=");
-        say_value(change);
-        say("\r\n");
+    if (restarting(platform, child))
         launch(platform, child);
-    } else if (restarting(platform, child)) {
-        launch(platform, child);
-    }
+    if (child->kind == KIND_CLIENT)
+        release_waiting(platform);
 }
 
 /* The client's endpoint from the report of driver, read from its

@@ -85,6 +85,14 @@ jobs:
             drivers/pointer.c
           "$RUNNER_TEMP/check-pointer"
 
+      - name: An input driver's end is decided as input.md K4 gives, whichever end is read first
+        run: |
+          cc -std=c99 -Wall -Wextra -pedantic -Werror \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -I include -I lib -o "$RUNNER_TEMP/check-driver-end" \
+            tools/check-driver-end.c lib/driver_end.c
+          "$RUNNER_TEMP/check-driver-end"
+
       - name: The console's text, keys and view behave as console.md C3 to C5 give
         run: |
           cc -std=c11 -Wall -Wextra -pedantic -Werror -I include -I console \

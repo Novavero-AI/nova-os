@@ -278,7 +278,7 @@ program init.exe init_main -I native -I lib -I drivers -I kernel/random \
   init/platform.c init/store.c init/console.c init/compositor.c init/data.c \
   init/login_start.c init/specimen_start.c init/tests.c init/kill.c \
   drivers/pci.c drivers/virtio_pci.c store/reader.c lib/path.c \
-  lib/program.c lib/log.c lib/ktap.c native/native.S \
+  lib/program.c lib/log.c lib/ktap.c lib/driver_end.c native/native.S \
   kernel/random/sha256.c
 program virtblk.exe virtio_blk_main -I native -I lib -I drivers \
   drivers/virtio_blk.c drivers/virtio_driver.c drivers/virtio_pci.c \
