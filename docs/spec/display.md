@@ -999,11 +999,12 @@ Some keys belong to the system and never reach a window:
 
 The compositor matches them on key events before routing, and sends a
 window neither the press nor the release of a key that completes one; a
-window that had Ctrl and Alt pressed is told they are released. A
-reserved key other than the secure attention key is a setting of the
-system, which only an administrator's settings handle changes ([shell.md
-L24](shell.md#l24-settings-and-service-commands), rule 3), and none may
-be a key that gives text, or Enter, Tab or Escape.
+window that had Ctrl and Alt pressed is told they are released. Shift
+or Super held with the secure attention key do not stop it being that
+key. A reserved key other than the secure attention key is a setting of
+the system, which only an administrator's settings handle changes
+([shell.md L24](shell.md#l24-settings-and-service-commands), rule 3), and
+none may be a key that gives text, or Enter, Tab or Escape.
 
 **The secure attention key.** On it the compositor, at once and before
 any other event: ends any hold of the pointer, any popup and any
@@ -1047,6 +1048,10 @@ the keyboard.
 - **Why Ctrl+Alt+Delete:** it is the combination people know for this
   purpose, and no program here has a use for it. The keypad's Delete
   counts, so a keyboard whose Delete is on its keypad alone can press it.
+- **Why Shift and Super do not stop it:** a program that cannot receive
+  the combination must not receive a variant of it either, such as
+  Ctrl+Alt+Shift+Delete, which a program could otherwise draw a
+  prompt for and read.
 - **Why Super and Alt+Space:** a tap of Super with no key between gives
   no text and completes no other combination; Alt+Space opens the HUD
   on a keyboard without Super, or under a host that keeps Super for its
