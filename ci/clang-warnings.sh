@@ -43,7 +43,8 @@ for source in $(git ls-files '*.c'); do
     # compile_flags.txt of their own.
     tools/check-masks.c | tools/check-pointer.c | tools/check-text.c | \
       tools/check-backdrop.c | tools/check-compose.c | \
-      tools/check-console-protocol.c | tools/check-display-protocol.c)
+      tools/check-console-protocol.c | tools/check-display-protocol.c | \
+      tools/check-endpoint.c)
       standard=-std=c11 ;;
   esac
   # shellcheck disable=SC2086

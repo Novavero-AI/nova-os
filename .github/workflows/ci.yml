@@ -92,6 +92,14 @@ jobs:
             console/text.c lib/keymap.c console/view.c
           "$RUNNER_TEMP/check-text"
 
+      - name: The input endpoints' checks and lines are as input.md K2, K3 and console.md C6 give them
+        run: |
+          cc -std=c11 -Wall -Wextra -pedantic -Werror \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -I include -I lib -o "$RUNNER_TEMP/check-endpoint" \
+            tools/check-endpoint.c lib/endpoint.c
+          "$RUNNER_TEMP/check-endpoint"
+
       - name: The console's panel from the kernel's background is the one it computes
         run: |
           cc -std=c11 -Wall -Wextra -pedantic -Werror -I include -I gfx \

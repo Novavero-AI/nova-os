@@ -1520,7 +1520,12 @@ login's session as it does on its own
    `height / CELLS_PER_HEIGHT` within `FONT_WIDTH_MIN` and
    `FONT_WIDTH_MAX`, moves from `console/panel.c` to `gfx/font.h`; the
    console and the compositor both use them ([D11](#d11-routing-input),
-   rule 2). The compositor's bootstrap, its control channel, its
+   rule 2). The console's checks of an input endpoint's messages and
+   the lines it logs for them ([console.md C6](console.md#c6-the-pointer))
+   move from `console/console.c` to `lib/endpoint.c`, which
+   `tools/check-endpoint.c` checks on the host, in CI beside
+   `tools/check-text.c`; the compositor uses them as the console does
+   (rule 8). The compositor's bootstrap, its control channel, its
    connections and its windows are one interface description,
    `interfaces/display.desc` ([interface.md](interface.md)), which gives
    every message phase 3 uses, byte by byte, and its theme's defaults;

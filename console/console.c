@@ -16,6 +16,7 @@
    others. */
 
 #include "console_protocol.h"
+#include "endpoint.h"
 #include "font.h"
 #include "input_protocol.h"
 #include "keymap.h"
@@ -33,6 +34,9 @@
    exception vectors a faulting process ends with (objects.md O10). */
 #define EXIT_SUPERVISOR_GONE 100
 #define EXIT_FAILED 101
+
+/* The component the input and pointer lines begin with (log.md T1). */
+#define LOG_COMPONENT "nova-console"
 
 /* Its own memory: the framebuffer's mapping, the backdrop and the masks,
    and the kernel's background while the backdrop is made from it, each
@@ -315,146 +319,8 @@ static void key(const INPUT_EVENT *event)
 /* ------------------------------------------------------------------------
    The pointer's lines (C6). */
 
-/* A line of the log built whole, then written with one say, which the
-   kernel writes in one piece, so that no other process's line lands
-   among its pieces. A line longer than the buffer is cut short, before
-   the LINE_END bytes its end and the NUL take. */
-typedef struct {
-    char text[DEBUG_WRITE_MAX_BYTES];
-    UINT32 length;
-} LINE;
-
-#define LINE_END 3
-#define DECIMAL_DIGITS_MAX 20
-
-static void line_add(LINE *l, const char *piece)
-{
-    for (; *piece && l->length + LINE_END < sizeof l->text; piece++)
-        l->text[l->length++] = *piece;
-}
-
-static void line_number(LINE *l, UINT64 n)
-{
-    char digits[DECIMAL_DIGITS_MAX + 1];
-    UINT32 at = DECIMAL_DIGITS_MAX;
-
-    digits[at] = 0;
-    do
-        digits[--at] = (char)('0' + n % 10);
-    while (n /= 10);
-    line_add(l, digits + at);
-}
-
-static void line_signed(LINE *l, INT32 n)
-{
-    if (n < 0)
-        line_add(l, "-");
-    line_number(l, n < 0 ? (UINT64)(-(INT64)n) : (UINT64)n);
-}
-
-static void line_say(LINE *l)
-{
-    l->text[l->length++] = '\r';
-    l->text[l->length++] = '\n';
-    l->text[l->length] = 0;
-    say(l->text);
-}
-
-/* What a pointer line notes, as a kind and its detail: a motion,
-   absolute or relative, with the axes it moves; a button pressed or
-   released, with its code; the wheel turned up or down. */
-#define NOTE_ABSOLUTE 0x10000
-#define NOTE_RELATIVE 0x20000
-#define NOTE_PRESSED 0x30000
-#define NOTE_RELEASED 0x40000
-#define NOTE_WHEEL 0x50000
-#define NOTE_KIND 0xF0000
-#define NOTE_DETAIL 0xFFFF
-#define WHEEL_UP 0
-#define WHEEL_DOWN 1
-#define BOTH_AXES (INPUT_AXIS_X | INPUT_AXIS_Y)
-
-/* evdev's BTN_MISC, below which every key code is a keyboard's key, and
-   BTN_LEFT, with its names for that code and the seven after it, up to
-   BTN_TASK. */
-#define BTN_MISC 0x100
-#define BTN_LEFT 0x110
-static const char *const button_names[] = {
-    "left", "right", "middle", "side", "extra", "forward", "back", "task"};
-#define BUTTON_NAMES (sizeof button_names / sizeof button_names[0])
-
-/* The pointer line noted last. */
-static UINT32 pointer_noted;
-
-static void line_axes(LINE *l, UINT32 axes)
-{
-    line_add(l, " axes=");
-    if (axes == BOTH_AXES)
-        line_add(l, "xy");
-    else
-        line_add(l, axes == INPUT_AXIS_X ? "x" : "y");
-}
-
-/* A button by its evdev name, a code past those by its number, and a
-   keyboard's key by neither, since its code is what was typed. */
-static void line_button(LINE *l, UINT32 code)
-{
-    line_add(l, " button=");
-    if (code >= BTN_LEFT && code - BTN_LEFT < BUTTON_NAMES)
-        line_add(l, button_names[code - BTN_LEFT]);
-    else if (code >= BTN_MISC)
-        line_number(l, code);
-    else
-        line_add(l, "key");
-}
-
-/* Whether note says what the note before it did: the same motion's
-   kind, whatever axes it moves, or the same button change or turn. */
-static int noted(UINT32 note)
-{
-    UINT32 kind = note & NOTE_KIND;
-
-    if (kind == NOTE_ABSOLUTE || kind == NOTE_RELATIVE)
-        return kind == (pointer_noted & NOTE_KIND);
-    return note == pointer_noted;
-}
-
-/* Log note unless it says what the one before did, so that a run of
-   motion of one kind, or of turns one way, is one line. */
-static void pointer_line(UINT32 note)
-{
-    UINT32 detail = note & NOTE_DETAIL;
-    LINE l;
-
-    if (noted(note))
-        return;
-    pointer_noted = note;
-    l.length = 0;
-    line_add(&l, "nova-console: pointer ");
-    switch (note & NOTE_KIND) {
-    case NOTE_ABSOLUTE:
-        line_add(&l, "move mode=absolute");
-        line_axes(&l, detail);
-        break;
-    case NOTE_RELATIVE:
-        line_add(&l, "move mode=relative");
-        line_axes(&l, detail);
-        break;
-    case NOTE_PRESSED:
-        line_add(&l, "press");
-        line_button(&l, detail);
-        break;
-    case NOTE_RELEASED:
-        line_add(&l, "release");
-        line_button(&l, detail);
-        break;
-    default:
-        line_add(&l, detail == WHEEL_UP ? "wheel direction=up"
-                                        : "wheel direction=down");
-        break;
-    }
-    line_say(&l);
-}
+/* The pointer line logged last. */
+static ENDPOINT_NOTES pointer_notes;
 
 /* Log what a pointer report does, and nothing of where the pointer is
    or how far it moved. A turn of the wheel also scrolls the view
@@ -463,89 +329,9 @@ static void pointer_line(UINT32 note)
    forward. */
 static void pointer(const INPUT_POINTER *report)
 {
-    UINT32 i;
-
-    if (report->absolute)
-        pointer_line(NOTE_ABSOLUTE | report->absolute);
-    if (report->dx || report->dy)
-        pointer_line(NOTE_RELATIVE | (report->dx ? INPUT_AXIS_X : 0) |
-                     (report->dy ? INPUT_AXIS_Y : 0));
-    for (i = 0; i < report->buttons; i++)
-        pointer_line((report->button[i].value == INPUT_KEY_PRESSED
-                          ? NOTE_PRESSED
-                          : NOTE_RELEASED) |
-                     report->button[i].code);
-    if (report->wheel) {
-        pointer_line(NOTE_WHEEL |
-                     (report->wheel > 0 ? WHEEL_UP : WHEEL_DOWN));
+    endpoint_pointer(&pointer_notes, LOG_COMPONENT, report, say);
+    if (report->wheel)
         scroll((INT64)VIEW_WHEEL_LINES * report->wheel);
-    }
-}
-
-/* Whether a message of a pointer report's size is one from a pointer
-   with the absolute axes axes: tagged as one, setting no other axis,
-   and changing at most INPUT_REPORT_BUTTONS buttons, each pressed or
-   released. */
-static int is_report(const INPUT_POINTER *report, UINT32 axes)
-{
-    UINT32 i;
-
-    if (report->transaction != 0 || report->type != INPUT_TYPE_SYN ||
-        report->code != INPUT_SYN_REPORT || report->reserved != 0 ||
-        (report->absolute & ~axes) != 0 ||
-        report->buttons > INPUT_REPORT_BUTTONS)
-        return 0;
-    for (i = 0; i < report->buttons; i++)
-        if (report->button[i].value != INPUT_KEY_PRESSED &&
-            report->button[i].value != INPUT_KEY_RELEASED)
-            return 0;
-    return 1;
-}
-
-/* ------------------------------------------------------------------------
-   An endpoint's description. */
-
-/* Whether a message of a description's size is one: a keyboard's with
-   no axis, or a pointer's with no axis but x and y, each with its
-   maximum above its minimum. */
-static int is_description(const INPUT_DEVICE *d)
-{
-    if (d->transaction != 0 || d->type != INPUT_TYPE_DEVICE ||
-        d->reserved != 0 || (d->absolute & ~(UINT32)BOTH_AXES) != 0)
-        return 0;
-    if (d->kind == INPUT_DEVICE_KEYBOARD)
-        return d->absolute == 0;
-    return d->kind == INPUT_DEVICE_POINTER &&
-           (!(d->absolute & INPUT_AXIS_X) || d->x.max > d->x.min) &&
-           (!(d->absolute & INPUT_AXIS_Y) || d->y.max > d->y.min);
-}
-
-static void line_range(LINE *l, const char *key, const INPUT_RANGE *r)
-{
-    line_add(l, key);
-    line_signed(l, r->min);
-    line_add(l, "..");
-    line_signed(l, r->max);
-}
-
-/* Log what an endpoint's description says the device is, its axes'
-   ranges included, which are the device's, not the user's. */
-static void describe(const INPUT_DEVICE *d)
-{
-    LINE l;
-
-    l.length = 0;
-    line_add(&l, "nova-console: input kind=");
-    if (d->kind == INPUT_DEVICE_KEYBOARD) {
-        line_add(&l, "keyboard");
-    } else {
-        line_add(&l, "pointer");
-        if (d->absolute & INPUT_AXIS_X)
-            line_range(&l, " x=", &d->x);
-        if (d->absolute & INPUT_AXIS_Y)
-            line_range(&l, " y=", &d->y);
-    }
-    line_say(&l);
 }
 
 /* ------------------------------------------------------------------------
@@ -925,25 +711,21 @@ static int take_input(int index, UINT32 byte_count)
     const INPUT_EVENT *event = &message.event;
 
     if (!input->kind) {
-        if (byte_count != sizeof message.description ||
-            !is_description(&message.description))
+        if (!endpoint_is_description(&message.description, byte_count))
             return 0;
         input->kind = message.description.kind;
         input->absolute = message.description.absolute;
-        describe(&message.description);
+        endpoint_describe(LOG_COMPONENT, &message.description, say);
         return 1;
     }
     if (input->kind == INPUT_DEVICE_KEYBOARD) {
-        if (byte_count != sizeof *event || event->transaction != 0 ||
-            event->type != INPUT_TYPE_KEY ||
-            event->value > INPUT_KEY_REPEATED)
+        if (!endpoint_is_key_event(event, byte_count))
             return 0;
         input->keys = 1;
         key(event);
         return 1;
     }
-    if (byte_count != sizeof message.report ||
-        !is_report(&message.report, input->absolute))
+    if (!endpoint_is_report(&message.report, byte_count, input->absolute))
         return 0;
     pointer(&message.report);
     return 1;
