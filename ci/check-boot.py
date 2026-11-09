@@ -10,11 +10,25 @@ failure lines the fallback boot accepts, each as often as it gives and
 each alone, and no failure line in any other mode; the console's display
 lines of the other boots, which a display after the compositor is not;
 the lines of the window boot, each of which it requires, and a failure
-line of the test client, which fails it; the screens a boot waits for,
-which poll_screen takes from QMP's screendump until one is the wanted
-image or SCREEN_TIMEOUT passes; and the usage errors of a mode that needs
-a whole data disk and those of a mode that takes none. Prints each check
-that fails, and a count; the exit status is nonzero if any did.
+line of the test client, which fails it; the compositor's refusals of an
+endpoint's message and the console's lines for an endpoint, which fail it;
+how boot.py's KeyScript reads a log of the keys the window boot sends: a
+client key line that is lost, doubled, out of order, with another code,
+value, modifier set or text, or without its time, an attention line that
+is lost, doubled or after the client's line for the key sent after it,
+the attention key's own press logged by the client, and a time that falls
+or that lies outside its neighbours' (an attention time before the
+client's line for the key before it or after that for the key after it),
+each fail the boot, and an attention line logged earlier than it must be
+does not. The logs are built from key_script's own events, so these
+checks show how KeyScript reads a log against that model, not that the
+model is what the compositor and the client do: the model is written from
+display.md D11 and D12, and the boot is what tests the compositor against
+it; the screens a boot waits for, which poll_screen takes from QMP's
+screendump until one is the wanted image or SCREEN_TIMEOUT passes; and
+the usage errors of a mode that needs a whole data disk and those of a
+mode that takes none. Prints each check that fails, and a count; the
+exit status is nonzero if any did.
 """
 
 import contextlib
@@ -54,6 +68,14 @@ CONNECTION = ("nova-compositor: connection issued number=1 label=%s mark=no "
               "layers=%s rights=none")
 WINDOW_CONNECTION = CONNECTION % ("wintest", "system")
 WINDOW_MADE = "nova-wintest: window screen=1280x800 size=640x400"
+COMPOSITOR_INPUT = ["nova-compositor: input kind=keyboard",
+                    "nova-compositor: input kind=pointer",
+                    "nova-compositor: input kind=pointer x=0..32767 "
+                    "y=0..32767"]
+INPUT_REFUSALS = ["nova-compositor: input message refused status=0",
+                  "nova-console: input kind=keyboard"]
+KEY_TIME_STEP = 3.0
+ATTENTION = "nova-compositor: attention"
 SHOWN = "nova-wintest: shown frame=%d"
 RELEASED = "nova-wintest: released buffers=%d"
 SHOWN_RELEASED = RELEASED % 1
@@ -123,8 +145,64 @@ def window_log():
     with."""
     return [STORE_SERVING, BACKGROUND, REFUSED, DISPLAY % "computed",
             WINDOW_CONNECTION, WINDOW_MADE, SHOWN % 1, SHOWN_RELEASED,
-            SHOWN % 2]
+            SHOWN % 2] + COMPOSITOR_INPUT
 
+
+def text_value(text):
+    """text as a log value: bare, or in quotes where it is empty or holds
+    a space or a quote."""
+    return text if text and " " not in text and '"' not in text \
+        else '"%s"' % text
+
+
+def key_line(event, time):
+    """The line the window test client logs for the key event, an Event
+    of key_script, at time ms."""
+    keys = event.keys
+    return ("nova-wintest: key code=%s value=%s modifiers=%s text=%s "
+            "time_ms=%.1f" % (keys["code"], keys["value"], keys["modifiers"],
+                              text_value(keys["text"]), time))
+
+
+def attention_line(time):
+    return "%s at_ms=%.1f" % (ATTENTION, time)
+
+
+def key_log(boot):
+    """The lines of the window boot's keys, in the order the boot reads
+    them: each key line of key_script's, KEY_TIME_STEP ms after the one
+    before, and each attention line just before the line of the first
+    key sent after it, at the middle of the time between the keys around
+    it. Returns the lines, the keys, the attentions and the keys' times."""
+    events, attentions = boot.key_script(boot.WINDOW_KEYS)
+    times = [KEY_TIME_STEP * (n + 1) for n in range(len(events))]
+    lines = []
+    for index, event in enumerate(events):
+        lines += [attention_line(times[index] - KEY_TIME_STEP / 2)
+                  for count in attentions if count == index]
+        lines.append(key_line(event, times[index]))
+    return lines, events, attentions, times
+
+
+def replay_keys(boot, lines):
+    """Whether Serial reads lines, as the window boot's, with the
+    KeyScript of boot.WINDOW_KEYS set, finds the last key's line, and
+    the script finishes, without failing the boot."""
+    events, attentions = boot.key_script(boot.WINDOW_KEYS)
+    script = boot.KeyScript(events, attentions)
+    stream = [(line + "\r\n").encode("ascii") for line in lines + [SENTINEL]]
+    serial = boot.Serial(stream, io.BytesIO(), None, None, WINDOW)
+    serial.script = script
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            serial.wait_for([events[-1], boot.Event(SENTINEL)],
+                            time.monotonic() + REPLAY_SECONDS)
+        script.finish()
+    except boot.BootFailed:
+        return False
+    finally:
+        serial.reader.join()
+    return True
 
 def ppm(fill):
     """A binary PPM of SCREEN_WIDTH x SCREEN_HEIGHT pixels, each fill, a
@@ -404,6 +482,117 @@ def main():
     expect("the window boot refuses the close lines and no other boot does",
            [mode for mode in sorted(boot.DEFAULT_TIMEOUTS)
             if boot.refused_lines(mode)], [WINDOW])
+
+    # The compositor reads each endpoint and the console none, so a line
+    # of the console for an endpoint, or a message the compositor refuses,
+    # fails the window boot, wherever it comes.
+    for line in INPUT_REFUSALS:
+        refused("the window boot with %s at its end" % line[:60], WINDOW,
+                window + [line], window_required)
+        refused("the window boot with %s before its window is made"
+                % line[:60], WINDOW,
+                window[:after] + [line] + window[after:], window_required)
+
+    # A log built from key_script's events is read as the boot reads it:
+    # the check of KeyScript against its own model's output, which is
+    # what it shows and no more. The counts are written out by hand from
+    # WINDOW_KEYS, the keys that reach the window and the presses of the
+    # secure attention key, which reach none.
+    lines, events, attentions, times = key_log(boot)
+    count = len(events)
+    expect("the key script has the events and the attention presses "
+           "WINDOW_KEYS gives it, counted by hand",
+           (count, len(attentions)), (61, 4))
+    expect("a log of the key script's events and attention lines is read "
+           "in order", replay_keys(boot, lines), True)
+
+    def keyed(name, changed, accepted=False):
+        expect("the window boot's keys " + name, replay_keys(boot, changed),
+               accepted)
+
+    positions = [i for i, line in enumerate(lines)
+                 if line.startswith("nova-wintest: key")]
+    for position in positions:
+        line = lines[position]
+        name = "with the key line %s" % line[len("nova-wintest: key "):56]
+        keyed(name + " lost", lines[:position] + lines[position + 1:])
+        keyed(name + " twice",
+              lines[:position + 1] + lines[position:])
+        for field, other in (("code", "1"), ("value", "repeated"),
+                             ("modifiers", "super"), ("text", "?")):
+            old = [word for word in line.split() if word.startswith(field
+                                                                    + "=")]
+            if field == "text":
+                old = [line[line.index(" text=") + 1:line.index(" time_ms")]]
+            changed = line.replace(old[0], "%s=%s" % (field, other))
+            keyed(name + " with another " + field,
+                  lines[:position] + [changed] + lines[position + 1:])
+        keyed(name + " with no time",
+              lines[:position] + [line[:line.index(" time_ms")]]
+              + lines[position + 1:])
+    for first, second in zip(positions, positions[1:]):
+        if first + 1 == second and (lines[first].split(" time_ms")[0]
+                                    != lines[second].split(" time_ms")[0]):
+            swapped = list(lines)
+            swapped[first], swapped[second] = lines[second], lines[first]
+            keyed("with the lines at %d and %d swapped" % (first, second),
+                  swapped)
+    keyed("with a key line after the last", lines + [lines[-1]])
+
+    # The secure attention key's press, repeats and release reach no
+    # window: a key line for any of them fails, and each press is logged
+    # by the compositor once, before the line of the key sent after it, or
+    # earlier, as the compositor, ahead of the client, may log it.
+    attention_positions = [i for i, line in enumerate(lines)
+                           if line.startswith(ATTENTION)]
+    for number, position in enumerate(attention_positions):
+        name = "with the attention line %d" % (number + 1)
+        keyed(name + " lost", lines[:position] + lines[position + 1:])
+        keyed(name + " twice", lines[:position + 1] + lines[position:])
+        keyed(name + " after the line of the key sent after it",
+              lines[:position] + [lines[position + 1], lines[position]]
+              + lines[position + 2:])
+        ahead = attention_positions[number - 1] + 1 if number else 0
+        keyed(name + " logged earlier, ahead of the client",
+              lines[:ahead] + [lines[position]] + lines[ahead:position]
+              + lines[position + 1:], True)
+        leaked = key_line(boot.Event(
+            "nova-wintest: key", code="111", value="pressed",
+            modifiers="control,alt", text=""), times[attentions[number]])
+        keyed(name + " and Delete's press sent to the window",
+              lines[:position] + [leaked] + lines[position:])
+    # The first attention press comes with a Delete held that the window was
+    # sent the press of, which the attention key's press ends: that Delete's
+    # release is not sent either.
+    after_first = attention_positions[0] + 1
+    stale = key_line(boot.Event(
+        "nova-wintest: key", code="111", value="released",
+        modifiers="control,alt", text=""), times[attentions[0]])
+    keyed("with the release of a Delete sent before the attention key's "
+          "press of it sent to the window",
+          lines[:after_first] + [stale] + lines[after_first:])
+    keyed("with an attention line after the last key",
+          lines + [attention_line(times[-1])])
+    keyed("with every attention line before the keys",
+          [lines[i] for i in attention_positions]
+          + [line for i, line in enumerate(lines)
+             if i not in attention_positions], True)
+
+    # The times: those of the client's lines do not fall, and each
+    # attention line's lies between those of the keys around it.
+    first = positions[0]
+    keyed("with a time that falls", lines[:first + 1] + [
+        lines[first + 1].replace("time_ms=%.1f" % times[1],
+                                 "time_ms=%.1f" % (times[0] - 1))]
+          + lines[first + 2:])
+    for number, position in enumerate(attention_positions):
+        near = attentions[number]
+        for name, moved in (("before", times[near - 1] - 1),
+                            ("after", times[near] + 1)):
+            keyed("with attention line %d at a time %s the keys around it"
+                  % (number + 1, name),
+                  lines[:position] + [attention_line(moved)]
+                  + lines[position + 1:])
 
     # A screen is polled for until it is the wanted one, with the caret's
     # two phases as two wanted images, and given up on after the timeout.

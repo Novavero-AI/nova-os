@@ -167,6 +167,14 @@ jobs:
             tools/check-backlog.c lib/backlog.c
           "$RUNNER_TEMP/check-backlog"
 
+      - name: Which key events a window is sent, and which are the secure attention key's, are as display.md D11 and D12 give them
+        run: |
+          cc -std=c11 -Wall -Wextra -pedantic -Werror \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -I include -I lib -I gfx -o "$RUNNER_TEMP/check-keyroute" \
+            tools/check-keyroute.c lib/keyroute.c lib/keymap.c
+          "$RUNNER_TEMP/check-keyroute"
+
       - name: gfx/limb.c draws Limb as its prototype does
         run: design/backgrounds/check-limb.sh
 

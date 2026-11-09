@@ -2,8 +2,9 @@
    lib/keymap.c, console/view.c, docs/spec/console.md C3 to C5) on the
    host: writing and wrapping, the line editor, the lines kept for
    scrolling back once an edit has wrapped and been taken back, the US
-   layout with Shift and Caps Lock, which modifiers give no character
-   and which hold the secure attention key, and how far the view
+   layout with Shift and Caps Lock, which modifiers give no character,
+   which hold the secure attention key and which a window is sent, and
+   how far the view
    scrolls, by the wheel's detents and to either end, and where it shows
    the caret.
    Prints each failure and a count, and exits nonzero if any check
@@ -16,6 +17,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "display_protocol.h"
 #include "input_protocol.h"
 #include "keymap.h"
 #include "text.h"
@@ -179,6 +181,10 @@ static void check_keys(void)
     check(key(&keyboard, KEY_A, INPUT_KEY_PRESSED) == 'A' &&
               key(&keyboard, KEY_1, INPUT_KEY_PRESSED) == '1',
           "Caps Lock shifts the letters alone");
+    key(&keyboard, KEY_CAPS_LOCK, INPUT_KEY_REPEATED);
+    check(keyboard.caps_lock != 0 &&
+              key(&keyboard, KEY_A, INPUT_KEY_PRESSED) == 'A',
+          "a repeat of Caps Lock does not toggle it");
     key(&keyboard, KEY_LEFT_SHIFT, INPUT_KEY_PRESSED);
     check(key(&keyboard, KEY_A, INPUT_KEY_PRESSED) == 'a',
           "Shift with Caps Lock unshifts a letter");
@@ -224,6 +230,30 @@ static KEYBOARD hold(unsigned mask, HOLDING how)
 
 static const UINT32 values[] = {INPUT_KEY_RELEASED, INPUT_KEY_PRESSED,
                                 INPUT_KEY_REPEATED};
+
+/* A window's modifiers are Shift, Control, Alt and Super, each set while
+   either key of its kind is held (D11, rule 2): over every subset of the
+   eight modifier keys, reached three ways, and unchanged by Caps Lock. */
+static void check_modifiers(void)
+{
+    unsigned mask, how, wrong = 0;
+
+    for (mask = 0; mask < MASKS; mask++)
+        for (how = 0; how < HOLDINGS; how++) {
+            KEYBOARD keyboard = hold(mask, (HOLDING)how);
+            UINT32 want = ((mask & MASK_SHIFT) ? DISPLAY_MODIFIER_SHIFT : 0) |
+                          ((mask & MASK_CONTROL) ? DISPLAY_MODIFIER_CONTROL
+                                                 : 0) |
+                          ((mask & MASK_ALT) ? DISPLAY_MODIFIER_ALT : 0) |
+                          ((mask & MASK_SUPER) ? DISPLAY_MODIFIER_SUPER : 0);
+
+            wrong += keys_modifiers(&keyboard) != want;
+            keyboard.caps_lock = 1;
+            wrong += keys_modifiers(&keyboard) != want;
+        }
+    check(wrong == 0, "the modifiers a window is sent are those held, each "
+                      "of Shift, Control, Alt and Super set by either key");
+}
 
 /* The secure attention key is Delete, or the keypad's, with either Control
    and either Alt held, whatever else is, and for any value: over every
@@ -440,6 +470,7 @@ int main(void)
     check_keys();
     check_no_character();
     check_super();
+    check_modifiers();
     check_attention();
     check_attention_events();
     check_view();

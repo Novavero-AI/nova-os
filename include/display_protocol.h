@@ -183,7 +183,8 @@ _Static_assert(sizeof(INPUT_BUTTON) == 4, "one layout on every target");
 #define COMPOSITOR_OPTIONS (COMPOSITOR_OPTION_REDUCE_MOTION | \
     COMPOSITOR_OPTION_EXIT_TEST)
 
-/** Its supervisor closed its control channel. */
+/** Its supervisor closed its control channel, or the platform driver closed
+    the bootstrap channel the input endpoints come on. */
 #define COMPOSITOR_EXIT_DONE 100
 
 /** It could not start or go on. */

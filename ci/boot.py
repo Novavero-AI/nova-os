@@ -280,12 +280,19 @@ STARTUP_DONE = Event("nova: startup done")
 # absolute axis, and its tablet, whose axes run from 0 to 0x7FFF
 # (include/ui/input.h, INPUT_EVENT_ABS_MAX).
 TABLET_MAX = 0x7FFF
-INPUT_LINES = [
-    Event("nova-console: input kind=keyboard"),
-    Event("nova-console: input kind=pointer", absent=("x", "y")),
-    Event("nova-console: input kind=pointer x=0..%d y=0..%d"
-          % (TABLET_MAX, TABLET_MAX)),
-]
+
+
+def input_lines(component):
+    """component's line for each endpoint's description."""
+    return [
+        Event("%s: input kind=keyboard" % component),
+        Event("%s: input kind=pointer" % component, absent=("x", "y")),
+        Event("%s: input kind=pointer x=0..%d y=0..%d"
+              % (component, TABLET_MAX, TABLET_MAX)),
+    ]
+
+
+INPUT_LINES = input_lines("nova-console")
 
 # The input functions of the machine: the console reports one endpoint
 # for each.
@@ -404,7 +411,10 @@ SYSTEM_LINES = STARTUP_LINES + INPUT_LINES
 # size of the window it was given, makes two buffers, and logs each frame
 # that shows a present, the second after the release of the first's
 # buffer, a bit of the mask of buffers. The window is on screen once the
-# client logs the second frame; the screen is then checked.
+# client logs the second frame; the screen is then checked. The input
+# drivers' endpoints are the compositor's, which logs a line for each as
+# the console does, and the keys and the pointer's events that the boot
+# then sends are those of WINDOW_KEYS and POINTER_EVENTS below.
 WINDOW_SHOWN = Event("nova-wintest: shown frame=2")
 WINDOW_LINES = STARTUP_LINES + [
     Event('nova-compositor: background refused reason="another size"'),
@@ -415,14 +425,19 @@ WINDOW_LINES = STARTUP_LINES + [
     Event("nova-wintest: shown frame=1"),
     Event("nova-wintest: released buffers=1"),
     WINDOW_SHOWN,
-]
+] + input_lines("nova-compositor")
 
 # The lines the window boot refuses besides those that report a failure.
 # The client holds its window and its connection for the whole boot, and
 # a close by their holder logs nothing (docs/spec/display.md D19, rule 8),
-# so each is a close the compositor made.
+# so each is a close the compositor made. The console is handed no
+# endpoint while the compositor runs, so a line of its for one means the
+# endpoint went to it, and a compositor that refuses a message of an
+# endpoint has failed to serve it.
 WINDOW_REFUSED = [Event("nova-compositor: window closed"),
-                  Event("nova-compositor: connection closed")]
+                  Event("nova-compositor: connection closed"),
+                  Event("nova-compositor: input message refused"),
+                  Event("nova-console: input")]
 
 CHAIN_LINES = [STARTUP_DONE]
 
@@ -738,30 +753,246 @@ POINTER_EVENTS = ([move("abs", POINTER_AT)]
                      for name in BUTTONS + ["wheel-up", "wheel-down"]
                      for down in (True, False)]
                   + [move("rel", {"x": 7, "y": -3})])
-POINTER_LINES = ([Event("nova-console: pointer move mode=absolute axes=xy")]
-                 + [Event("nova-console: pointer %s button=%s"
-                          % (change, name))
-                    for name in BUTTONS
-                    for change in ("press", "release")]
-                 + [Event("nova-console: pointer wheel direction=up"),
-                    Event("nova-console: pointer wheel direction=down"),
-                    Event("nova-console: pointer move mode=relative "
-                          "axes=xy")])
+
+
+def pointer_lines(component):
+    """The line component must log for each of POINTER_EVENTS."""
+    return ([Event("%s: pointer move mode=absolute axes=xy" % component)]
+            + [Event("%s: pointer %s button=%s" % (component, change, name))
+               for name in BUTTONS
+               for change in ("press", "release")]
+            + [Event("%s: pointer wheel direction=up" % component),
+               Event("%s: pointer wheel direction=down" % component),
+               Event("%s: pointer move mode=relative axes=xy" % component)])
+
+
+POINTER_LINES = pointer_lines("nova-console")
+
+# The keys the window boot sends, each string one QMP input-send-event
+# of key events in the order given, a key's name (its QKeyCode) and a
+# plus for pressed or a minus for released: input-send-event, not
+# send-key, since send-key releases the keys in an order of its own. It
+# sends presses and releases, so the boot exercises no repeat.
+# What each should do, per docs/spec/display.md D11 and D12, and the
+# strings in order: a letter; a capital; a symbol, which Shift gives; a
+# space, which a log value must quote; Left, which gives no text; Control
+# with C and Alt with X, which give none; Delete alone, which reaches the
+# window; Delete with Control, and the keypad's with Alt, which reach it
+# too; Delete pressed before Control and Alt, which is no secure attention
+# key; the same with Delete pressed again while the first press is held,
+# which is the secure attention key, and ends what the window was sent of
+# Delete, so that its release is not sent; the secure attention key with the left keys released in the order
+# pressed, as the release of Delete then comes after Control's and Alt's;
+# the same, then Delete pressed again with no Control or Alt held, a press
+# of its own which the window is sent with its release; the key on the
+# keypad with Shift and the right keys, released in reverse; and a last
+# letter, whose release the boot waits for, since every event before it
+# has then been taken.
+WINDOW_KEYS = [
+    "a+ a-",
+    "shift+ a+ shift- a-",
+    "shift+ 1+ 1- shift-",
+    "spc+ spc-",
+    "left+ left-",
+    "ctrl+ c+ c- ctrl-",
+    "alt+ x+ alt- x-",
+    "delete+ delete-",
+    "ctrl+ delete+ delete- ctrl-",
+    "alt+ kp_decimal+ kp_decimal- alt-",
+    "delete+ ctrl+ alt+ delete- alt- ctrl-",
+    "delete+ ctrl+ alt+ delete+ delete- alt- ctrl-",
+    "ctrl+ alt+ delete+ ctrl- alt- delete-",
+    "ctrl+ alt+ delete+ ctrl- alt- delete+ delete-",
+    "shift+ ctrl_r+ alt_r+ kp_decimal+ kp_decimal- alt_r- ctrl_r- shift-",
+    "z+ z-",
+]
+
+# For each key those name, its evdev code and the characters it gives
+# unshifted and shifted, or None (include/input_protocol.h and
+# docs/spec/console.md C3's table), and the modifier a key is, as
+# display.md D11's rule 2 names them.
+KEY_CODES = {
+    "a": (30, "a", "A"), "c": (46, "c", "C"), "x": (45, "x", "X"),
+    "z": (44, "z", "Z"), "1": (2, "1", "!"), "spc": (57, " ", " "),
+    "left": (105, None, None), "delete": (111, None, None),
+    "kp_decimal": (83, None, None), "shift": (42, None, None),
+    "ctrl": (29, None, None), "alt": (56, None, None),
+    "ctrl_r": (97, None, None), "alt_r": (100, None, None),
+}
+KEY_MODIFIERS = {"shift": "shift", "ctrl": "control", "ctrl_r": "control",
+                 "alt": "alt", "alt_r": "alt"}
+MODIFIER_ORDER = ["shift", "control", "alt", "super"]
+NO_TEXT_MODIFIERS = {"control", "alt", "super"}
+ATTENTION_KEYS = ["delete", "kp_decimal"]
+ATTENTION_MODIFIERS = {"control", "alt"}
+KEY_LINE = "nova-wintest: key"
+ATTENTION_LINE = "nova-compositor: attention"
+TIME_MS = re.compile(r"\d+\.\d")
+
+
+def describe(parsed):
+    """A parsed line as text."""
+    component, event, keys = parsed
+    return "%s: %s%s" % (component, event, "".join(
+        " %s=%s" % item for item in keys.items()))
+
+
+def describe_event(event):
+    """An Event as the line it asks for, a pattern given as its text."""
+    return "%s: %s%s" % (event.component, event.event, "".join(
+        " %s=%s" % (key, value.pattern if isinstance(value, re.Pattern)
+                    else value) for key, value in event.keys.items()))
+
+
+def modifiers_held(held):
+    """The names of the modifiers the keys in held make, in the order
+    the window test client logs them, or none."""
+    names = {KEY_MODIFIERS[key] for key in held}
+    return [name for name in MODIFIER_ORDER if name in names]
+
+
+def key_script(script):
+    """The window test client's key lines the keys of script must make,
+    an Event for each in order, and, for each press of the secure
+    attention key, how many of them come before it. A model of the keys
+    written from display.md D11 and D12 and not from the code it checks:
+    the secure attention key is a press of Delete or the keypad's with
+    Control and Alt held, which goes to no window; a repeat or a release
+    goes to a window only if its press did, so the attention key's go to
+    none, wherever they come, and so do a later one's of a code whose
+    earlier press the window was sent, since the attention key's press
+    ends that; every press that is not the attention key's is sent, with
+    the modifiers held after it, and the text of a character key pressed
+    with no Control, Alt or Super held."""
+    held, sent, events, attentions = [], set(), [], []
+    for step in script:
+        for item in step.split():
+            key, down = item[:-1], item.endswith("+")
+            code, plain, shifted = KEY_CODES[key]
+            before = modifiers_held(held)
+            if key in KEY_MODIFIERS:
+                if down:
+                    held.append(key)
+                else:
+                    held.remove(key)
+            if (down and key in ATTENTION_KEYS
+                    and ATTENTION_MODIFIERS <= set(before)):
+                attentions.append(len(events))
+                sent.discard(key)
+            elif down or key in sent:
+                after = modifiers_held(held)
+                text = ""
+                if down and plain and not NO_TEXT_MODIFIERS & set(after):
+                    text = shifted if "shift" in after else plain
+                events.append(Event(
+                    KEY_LINE, code=str(code),
+                    value="pressed" if down else "released",
+                    modifiers=",".join(after) or "none", text=text,
+                    time_ms=TIME_MS))
+                if down:
+                    sent.add(key)
+                else:
+                    sent.discard(key)
+    return events, attentions
+
+
+class KeyScript:
+    """The lines a boot's keys must make (key_script), checked as the
+    Serial reads them: the window test client's key lines, each the next
+    of the events, so that a key that reaches the window out of order,
+    twice or not as the secure attention key must not fails the boot at
+    its line; and the compositor's attention lines, one for each press of
+    that key, each before the client's line for the first key sent after
+    it, since the compositor logs it before it queues that key, and no
+    more of them than there are presses. Only the lines read while the
+    boot waits are checked, which is up to the client's line for the
+    last key sent (drive_window): a key line or an attention line that
+    comes after it is not read for this. An attention line names no key,
+    so it is tied to a press of the secure attention key by its place
+    among the attention lines and by its time, not by what it says. The
+    client may log a key later than the compositor logs a later one, so
+    no other order is required. Each line gives its time, and finish
+    checks the times of the client's lines do not fall from one to the
+    next, and that each attention line's is not before that of the
+    client's line for the last key sent before it and not after that of
+    its line for the first key sent after it, where there are such keys.
+    It checks no other time."""
+
+    def __init__(self, events, attentions):
+        self.events = events
+        self.attentions = attentions
+        self.client = []
+        self.logged = []
+
+    def take(self, parsed):
+        """Check a line, parsed, of the boot."""
+        if parsed[:2] == tuple(KEY_LINE.split(": ")):
+            self.take_key(parsed)
+        elif parsed[:2] == tuple(ATTENTION_LINE.split(": ")):
+            self.take_attention(parsed)
+
+    def take_key(self, parsed):
+        index = len(self.client)
+        if index >= len(self.events):
+            raise BootFailed("a key line after the last that was sent: %s"
+                             % describe(parsed))
+        if not self.events[index].matches(parsed):
+            raise BootFailed("key line %d is %s; the window should be sent "
+                             "%s" % (index + 1, describe(parsed),
+                                     describe_event(self.events[index])))
+        due = len([n for n in self.attentions if n <= index])
+        if len(self.logged) < due:
+            raise BootFailed("key line %d, %s, came before the compositor "
+                             "logged the secure attention key that precedes "
+                             "it" % (index + 1, describe(parsed)))
+        self.client.append(float(parsed[2]["time_ms"]))
+
+    def take_attention(self, parsed):
+        if len(self.logged) == len(self.attentions):
+            raise BootFailed("the compositor logged the secure attention "
+                             "key more often than it was pressed: %d times"
+                             % (len(self.logged) + 1))
+        self.logged.append(float(parsed[2]["at_ms"]))
+
+    def finish(self):
+        """Check that every line has been read, and the times."""
+        if (len(self.client) != len(self.events)
+                or len(self.logged) != len(self.attentions)):
+            raise BootFailed("%d of %d key lines and %d of %d attention "
+                             "lines were read" % (
+                                 len(self.client), len(self.events),
+                                 len(self.logged), len(self.attentions)))
+        for earlier, later in zip(self.client, self.client[1:]):
+            if later < earlier:
+                raise BootFailed("a key's time, %.1f ms, is before the one "
+                                 "sent before it, %.1f ms" % (later, earlier))
+        for number, (count, at) in enumerate(zip(self.attentions,
+                                                  self.logged)):
+            if count > 0 and at < self.client[count - 1]:
+                raise BootFailed("the secure attention key %d at %.1f ms is "
+                                 "before the key pressed before it, at "
+                                 "%.1f ms" % (number + 1, at,
+                                              self.client[count - 1]))
+            if count < len(self.client) and at > self.client[count]:
+                raise BootFailed("the secure attention key %d at %.1f ms is "
+                                 "after the key pressed after it, at %.1f "
+                                 "ms" % (number + 1, at, self.client[count]))
 
 # What no line of the log may hold: the password, each word of the names
 # and lines typed for the file commands, words no other line of the log
 # holds, so that a log of any of them is found, but for the wheel's
 # lines, single characters, which other lines hold, and, in a line of the
-# console or an input driver, the only processes that see it, the
-# pointer's position as sent, which the driver passes on as it is, as a
-# whole number. Other lines hold numbers that change from run to run,
-# such as the kernel's timings and the generator's first bytes, which
-# can hold a position's digits.
+# console, an input driver or the compositor's pointer lines, the only
+# processes that see it, the pointer's position as sent, which the driver
+# passes on as it is, as a whole number. Other lines hold numbers that
+# change from run to run, such as the kernel's timings and the
+# generator's first bytes, which can hold a position's digits.
 def literal(word):
     return re.compile(re.escape(word.encode("ascii")))
 
 
-SEES_POSITION = rb"nova-(?:console|virtio-input): .*"
+SEES_POSITION = (rb"(?:nova-(?:console|virtio-input): "
+                 rb"|nova-compositor: pointer ).*")
 
 
 def whole_number(value):
@@ -1157,9 +1388,11 @@ class Serial:
     accepted_failures take it, and a line that matches one of the mode's
     refused_lines fails it. Each of watches, pairs of an Event and a
     function of no arguments, calls the function once, when the first
-    line that matches the Event is read."""
+    line that matches the Event is read. While script, a KeyScript, is
+    set, each line is checked against it as it is read."""
 
     def __init__(self, stream, log, report, size, mode, watches=()):
+        self.script = None
         self.lines = queue.Queue()
         self.start = time.monotonic()
         self.leaked = set()
@@ -1221,6 +1454,8 @@ class Serial:
                 raise BootFailed("reported a close its holder does not "
                                  "make: "
                                  + line[LINE_START.search(line).start():])
+            if self.script:
+                self.script.take(parsed)
             if BACKGROUND.matches(parsed):
                 check_spinner(parsed[2], line)
             if self.size and any(d.matches(parsed) for d in DISPLAYS):
@@ -1309,15 +1544,16 @@ def type_line(qmp, text, shown=True):
         qmp.execute("send-key", keys=[{"type": "qcode", "data": name}])
 
 
-def point(serial, qmp):
-    """Send the pointer's events and wait for the console's lines."""
+def point(serial, qmp, lines=POINTER_LINES):
+    """Send the pointer's events and wait for lines, those of the console
+    unless the compositor's are given."""
     for events in POINTER_EVENTS:
         print("          input-send-event %s"
               % ", ".join("%s %s" % (e["type"], " ".join(
                   str(v) for v in e["data"].values())) for e in events),
               flush=True)
         qmp.execute("input-send-event", events=events)
-    serial.wait_for(POINTER_LINES, time.monotonic() + KEY_TIMEOUT)
+    serial.wait_for(lines, time.monotonic() + KEY_TIMEOUT)
 
 
 def run_commands(serial, qmp, commands, data):
@@ -1586,6 +1822,42 @@ def check_window(qmp_path, scratch, screens):
                         lambda width, height: [
                             draw_screen(screens, scratch, WINDOW_SCREEN,
                                         width, height, [])])
+
+
+def key_event(item):
+    """The QMP key event of an item of WINDOW_KEYS: a key's name and a
+    plus or a minus."""
+    return {"type": "key", "data": {
+        "down": item.endswith("+"),
+        "key": {"type": "qcode", "data": item[:-1]}}}
+
+
+def drive_window(serial, qmp_path):
+    """Over QMP, send the pointer's events, which the compositor must log
+    and send to no window, and then WINDOW_KEYS, and read the window test
+    client's key lines and the compositor's attention lines as key_script
+    gives them, until the client has logged the last key's, which every
+    key before it has reached the window or been taken ahead of."""
+    events, attentions = key_script(WINDOW_KEYS)
+    script = KeyScript(events, attentions)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(QMP_TIMEOUT)
+        connection.connect(qmp_path)
+        with connection.makefile("rwb") as stream:
+            qmp = Qmp(stream)
+            point(serial, qmp, pointer_lines("nova-compositor"))
+            serial.script = script
+            for step in WINDOW_KEYS:
+                print("          input-send-event keys %s" % step,
+                      flush=True)
+                qmp.execute("input-send-event",
+                            events=[key_event(i) for i in step.split()])
+            serial.wait_for([events[-1]], time.monotonic() + KEY_TIMEOUT)
+    serial.script = None
+    script.finish()
+    print("          the window was sent %d keys in order, and the "
+          "compositor logged the secure attention key %d times"
+          % (len(events), len(attentions)), flush=True)
 
 
 def hold_screen(qmp, shot, wanted, digests):
@@ -1980,6 +2252,8 @@ def boot(args, scratch, log, data_drive, data_lines, first):
             raise BootFailed("the test report fails")
         if args.mode == "specimen":
             check_specimen(qmp_path, scratch, args.fonts, args.screen)
+        if args.mode == "window":
+            drive_window(serial, qmp_path)
         if args.mode in ("system", "fallback", "persist"):
             drive(serial, qmp_path, os.path.join(scratch, DATA_COPY),
                   accounts, first, screens, scratch, args.tests)

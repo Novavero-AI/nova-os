@@ -293,10 +293,11 @@ program console.exe console_main -I native -I lib -I gfx -I kernel/random \
   native/native.S
 program compose.exe compositor_main -I native -I lib -I gfx -I compositor \
   compositor/compositor.c compositor/serve.c lib/compose.c lib/outline.c \
-  lib/window.c lib/backlog.c lib/mapping.c lib/timing.c lib/log.c \
-  gfx/gfx.c gfx/flush.c gfx/raster.c gfx/limb.c native/native.S
+  lib/window.c lib/backlog.c lib/endpoint.c lib/keyroute.c lib/keymap.c \
+  lib/mapping.c lib/timing.c lib/log.c gfx/gfx.c gfx/flush.c gfx/raster.c \
+  gfx/limb.c native/native.S
 program wintest.exe wintest_main -I native -I lib -I gfx -I test \
-  test/wintest.c lib/mapping.c lib/log.c native/native.S
+  test/wintest.c lib/mapping.c lib/timing.c lib/log.c native/native.S
 program store.exe store_main -I native -I lib -I kernel/random \
   store/store.c store/reader.c lib/name.c lib/log.c native/native.S \
   kernel/random/sha256.c

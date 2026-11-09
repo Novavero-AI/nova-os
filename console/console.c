@@ -74,13 +74,12 @@ typedef struct {
     UINT64 order;
 } SESSION;
 
-/* An input driver's endpoint, HANDLE_INVALID for a free slot; the
-   kind and absolute axes its description gave, the kind 0 until it has
-   come; and whether a key event has come on it. */
+/* An input driver's endpoint, HANDLE_INVALID for a free slot; the device
+   its description gave, whose kind is 0 until it has come; and whether a
+   key event has come on it. */
 typedef struct {
     UINT32 endpoint;
-    UINT32 kind;
-    UINT32 absolute;
+    INPUT_DEVICE device;
     UINT32 keys;
 } INPUT;
 
@@ -132,7 +131,6 @@ static MAPPING mapping = {HANDLE_INVALID, MAPPINGS_BASE};
 static union {
     CONSOLE_REQUEST request;
     INPUT_EVENT event;
-    INPUT_DEVICE description;
     INPUT_POINTER report;
     CONSOLE_SETUP_DISPLAY_MESSAGE setup;
     CONSOLE_SETUP_BACKGROUND_MESSAGE background;
@@ -696,8 +694,7 @@ static void close_input(int index)
     close_if_open(&inputs[index].endpoint);
     if (inputs[index].keys)
         modifiers.held = 0;
-    inputs[index].kind = 0;
-    inputs[index].absolute = 0;
+    inputs[index].device.kind = 0;
     inputs[index].keys = 0;
 }
 
@@ -708,27 +705,21 @@ static void close_input(int index)
 static int take_input(int index, UINT32 byte_count)
 {
     INPUT *input = &inputs[index];
-    const INPUT_EVENT *event = &message.event;
 
-    if (!input->kind) {
-        if (!endpoint_is_description(&message.description, byte_count))
-            return 0;
-        input->kind = message.description.kind;
-        input->absolute = message.description.absolute;
-        endpoint_describe(LOG_COMPONENT, &message.description, say);
+    switch (endpoint_take(&input->device, message.bytes, byte_count)) {
+    case ENDPOINT_DESCRIPTION:
+        endpoint_describe(LOG_COMPONENT, &input->device, say);
         return 1;
-    }
-    if (input->kind == INPUT_DEVICE_KEYBOARD) {
-        if (!endpoint_is_key_event(event, byte_count))
-            return 0;
+    case ENDPOINT_KEY:
         input->keys = 1;
-        key(event);
+        key(&message.event);
         return 1;
-    }
-    if (!endpoint_is_report(&message.report, byte_count, input->absolute))
+    case ENDPOINT_REPORT:
+        pointer(&message.report);
+        return 1;
+    default:
         return 0;
-    pointer(&message.report);
-    return 1;
+    }
 }
 
 /* Take the messages queued on input endpoint index. A message out of

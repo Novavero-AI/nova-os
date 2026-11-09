@@ -57,4 +57,9 @@ UINT32 keys_event(KEYBOARD *keyboard, UINT32 code, UINT32 value,
     longer hold. */
 int keys_attention(const KEYBOARD *keyboard, UINT32 code);
 
+/** The modifiers keyboard holds, as the DISPLAY_MODIFIER_ bits a window's
+    key event carries (docs/spec/display.md D11, rule 2): Shift, Control,
+    Alt and Super, each set while either key of its kind is held. */
+UINT32 keys_modifiers(const KEYBOARD *keyboard);
+
 #endif

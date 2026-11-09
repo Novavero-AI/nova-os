@@ -336,6 +336,7 @@ _Noreturn void compositor_main(UINT32 bootstrap_channel, UINT64 argument)
         process_exit(COMPOSITOR_EXIT_TEST);
     context.mapping = &mapping;
     context.control = control;
+    context.bootstrap = bootstrap_channel;
     context.screen = &output;
     context.wallpaper = &wallpaper;
     context.band = band;
