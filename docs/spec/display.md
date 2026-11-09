@@ -1685,11 +1685,11 @@ login's session as it does on its own
    `include/display_protocol.h` is generated from it and tracked
    ([interface.md P16](interface.md#p16-where-the-header-lives)).
 2. **Starting,** on every disk but the specimen disk, where the
-   specimen takes the display as before and no compositor starts.
-   Until the compositor serves the console's window (rule 4), only a
-   disk that carries `\NOVA\COMPFAIL`, which then exits just after its
-   first frame, or `\NOVA\WINDOW` (rule 11) starts it, and the console
-   draws every other disk as before. The steps:
+   specimen takes the display and no compositor starts. On a disk that
+   carries `\NOVA\WINDOW` (rule 11) the test client is the compositor's
+   client in the console's place, so the first process issues the
+   console no connection there, and the console, which runs, draws
+   nothing. The steps:
    1. The first process reports its startup done
       ([console.md C1](console.md#c1-the-display-handoff)) without
       waiting for the console, since no background goes to the console,
@@ -1710,9 +1710,11 @@ login's session as it does on its own
       test disks check the computed Limb and the system disk the
       kernel's; then `COMPOSITOR_SETUP_DISPLAY`. It waits for no answer
       between them.
-   4. It sends login's session to the console, as it does now,
-      whatever follows; the console has had its options since it started
-      ([console.md C2](console.md#c2-starting-the-console)). It sends
+   4. It sends login's session to the console, whatever follows; the
+      console has had its options since it started
+      ([console.md C2](console.md#c2-starting-the-console)). Once both
+      the console and the compositor have started, in whichever order,
+      it sends
       `COMPOSITOR_CONNECT` for the console: the label `console`, no
       mark, `SYSTEM` alone and no rights; and waits for `connected`, or
       for the control channel to close, when the compositor has ended
@@ -1794,9 +1796,11 @@ login's session as it does on its own
      a button is the input endpoint it came on, and an endpoint that
      closes lets go its buttons. A window whose first present is shown
      under a pointer that has not moved is sent its entry then, and a
-     window that closes has no pointer. The console, once it is the
-     window's client, scrolls its panel three lines a detent as it does
-     in direct mode. Relative motion moves no pointer yet (D10, rule 6).
+     window that closes has no pointer. The console, the window's client,
+     scrolls its panel three lines for each detent of the wheel it is
+     sent, which is the wheel turned while the pointer is over the window
+     or held to it (D11, rule 3), as it does in direct mode. Relative
+     motion moves no pointer yet (D10, rule 6).
 7. **The pointer** is not drawn until both its axes have been set, by the
    absolute reports of one device or of several (D10, rule 4), and then
    with its hotspot on the top left corner of
@@ -1836,7 +1840,14 @@ login's session as it does on its own
      lines, with `nova-compositor:` for `nova-console:` and the same
      rules. A console in a window logs none, and logs
      `nova-console: window screen=2880x1800 size=1484x1116` each time it
-     makes its window.
+     makes its window, `nova-console: window refused reason="size"` for
+     a configure of another size than the one it asked for, or
+     `reason="no room for a cell"` for a screen too small to lay the
+     panel out on, and `nova-console: window failed step="present"
+     status=N`, as [log.md T1](log.md#t1-lines) gives a failure, for a
+     step that fails; each of the three ends the window and its
+     connection, and the console waits for the next connection
+     (console.md C2).
    - On a test disk, `nova-compositor: budget change=pointer frames=16
      pixels=3744 total_ms=0.9 max_ms=0.1` for frames the pointer's
      motion alone damaged, and `change=present` for frames a window's
@@ -1871,16 +1882,18 @@ login's session as it does on its own
    `COMPOSITOR_OPTION_EXIT_TEST` at every start, and the compositor exits
    with `COMPOSITOR_EXIT_TEST` just after the first frame that shows a
    window's present, so the console's window has been made and shown
-   once before each exit, and until then just after its first frame
-   (rule 2); it is restarted once and then given up
+   once before each exit; it is restarted once and then given up
    ([D3](#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)).
    `fallback.img` is the test disk with `\NOVA\COMPFAIL` added. Its CI
    boot requires, with the counts given:
    - `nova-compositor: background refused reason="another size"` once,
      as the console's is on a test disk;
    - for each of the compositor's two starts, `nova-compositor: display`
-     with `wallpaper=computed` and `nova-init: child ended
-     name=compositor exit=102`, `COMPOSITOR_EXIT_TEST`;
+     with `wallpaper=computed`, `nova-compositor: connection issued` for
+     the label `console`, the console's `nova-console: window` and then
+     `nova-init: child ended name=compositor exit=102`,
+     `COMPOSITOR_EXIT_TEST`, so that the window is made once before each
+     exit;
    - `nova-init: child restarted name=compositor` once and
      `nova-init: child given up name=compositor` once;
    - for each of the three input drivers, `nova-init: child restarted`
@@ -1888,12 +1901,22 @@ login's session as it does on its own
      successor (input.md K4);
    - the console's `display` line with `backdrop=computed` and
      `after=compositor` (console.md C5);
-   - QMP's `screendump`, taken when the first `nova-compositor: display`
-     line is read, equal to Limb alone, as `ci/screens.c` draws it with
-     the console's own code. The console draws nothing until the
-     compositor's second end, so the dump is of the compositor's frame;
-     a first frame the compositor does not write leaves the kernel's
-     Limb, the same pixels, and is not seen.
+   - QMP's `screendump`, taken from when the first `nova-compositor:
+     display` line is read and taken again until it is one of two
+     screens: Limb alone, as `ci/screens.c` draws it with the console's
+     own code, or the console's window over Limb, as its `console-window`
+     screen draws it with the text empty and no caret, since the console
+     has no read waiting and nothing written. The console's window is
+     shown after that line, once the console has been sent its connection
+     and has made and drawn the window, so which of the two the first dump
+     is depends on timing. A dump that is neither, as one taken while a
+     frame is composed, is taken again, and after `SCREEN_TIMEOUT` the
+     boot fails with the pixels that differ from the nearer. This shows
+     that each frame the compositor shows is a whole one, Limb as the
+     kernel's fade left it or the window composed over it. It does not
+     show the order of the two, or that Limb alone was ever shown; a
+     first frame the compositor does not write leaves the kernel's Limb,
+     the same pixels, and is not seen.
 
    Of the lines that report a failure it accepts exactly the three
    above, each as often as it is given, and for each driver one
@@ -1911,7 +1934,7 @@ login's session as it does on its own
     nothing. `CONSOLE_SETUP_CONNECTION`, `CONSOLE_SETUP_DISPLAY_AFTER`
     and the fallback stay, for the terminal and for a compositor given
     up.
-11. **The window test, until the console is the compositor's client.**
+11. **The window test, in the console's place.**
     On a test disk that carries `\NOVA\WINDOW`, an empty file, a test
     client, `\NOVA\WINTEST.EXE`, built from `test/wintest.c`, is the
     compositor's client in the console's place; `window.img` is the test
@@ -1922,9 +1945,9 @@ login's session as it does on its own
     with the label `wintest`, no mark, `SYSTEM` alone and no rights,
     waits for `connected`, and gives the client its end in the client's
     bootstrap message with `DISPLAY_CONNECTION_RIGHTS`
-    (`test/wintest.h`). The console runs beside the compositor as rule 2
-    gives, so it draws nothing and takes no key while the client holds
-    the window. The client:
+    (`test/wintest.h`). The console runs beside the compositor but is
+    sent no connection, so it draws nothing and takes no key while the
+    client holds the window. The client:
     - reads the screen from its connection, makes one window on `SYSTEM`
       of the `PANEL` surface that asks for half the screen's width and
       height, and waits for the first configure;
@@ -2079,31 +2102,31 @@ login's session as it does on its own
     `tools/check-backlog.c` the bytes of each message the window is sent,
     against the wire layout the description gives.
 
-- **Why a test client in the console's place:** the compositor must
-  serve a connection and a window before the console can be its client,
-  and a client whose every pixel the host knows tests what the
-  compositor does with it, where the console's text would test the
-  console too. Its pixels cover each way a window can differ from a
-  correct one: cover 0 shows the material and hides the colour, half
-  cover mixes, a checkerboard has an edge at every pixel, so that a
-  place off by one changes pixels, a gradient gives each column and row
-  a colour of its own, so that a window read from the wrong place or by
-  the wrong stride changes them, the row's extra pixels show if the
-  compositor reads a row at the window's width, and the second frame's
-  damage, composed over the first, shows if it is cut wrongly or never
-  composed. Its cost is a program, a disk and a boot, and a connection
+- **Why a test client in the console's place:** a client whose every
+  pixel the host knows tests what the compositor does with it, where the
+  console's text tests the console too. Its pixels cover each way a
+  window can differ from a correct one: cover 0 shows the material and
+  hides the colour, half cover mixes, a checkerboard has an edge at
+  every pixel, so that a place off by one changes pixels, a gradient
+  gives each column and row a colour of its own, so that a window read
+  from the wrong place or by the wrong stride changes them, the row's
+  extra pixels show if the compositor reads a row at the window's width,
+  and the second frame's damage, composed over the first, shows if it is
+  cut wrongly or never composed. Its cost is a program, a disk and a boot, and a connection
   the first process issues for it on a disk that carries `WINDOW`. The
   names follow `COMPFAIL` and `fallback.img`: the flag file is the
   behaviour, the disk the flag file added to the test disk's. Not taken:
-  the console as the first client, which is step 4's; its cost is that a
-  fault of the window protocol and a fault of the console look alike.
+  the console as the only client, which every other disk has; its cost is
+  that a fault of the window protocol and a fault of the console look
+  alike.
 - **Why the console draws nothing meanwhile:** rule 2 hands it no
-  endpoint and no display while the compositor runs, and the test client
-  is the compositor's one client, as the console is from step 4 on. Its
-  cost is a boot that logs in nowhere, so `window.img` makes no account
-  and the keys `ci/boot.py window` types are the client's to read, not a
-  login's. Not taken: the console as a second client; its cost is a
-  second window, which rule 4 refuses.
+  endpoint and no display while the compositor runs, and rule 11 no
+  connection, since the test client is the compositor's one client, as the
+  console is on every other disk. Its cost is a boot that logs in
+  nowhere, so `window.img` makes no account and the keys `ci/boot.py
+  window` types are the client's to read, not a login's. Not taken: the
+  console as a second client; its cost is a second window, which rule 4
+  refuses.
 - **Why the compositor serves one connection at a time:** the
   phase 3 arrangement has one window (rule 4), and a record for each of
   many connections is state nothing reads. A connection issued while one
@@ -2374,12 +2397,29 @@ login's session as it does on its own
   that the platform driver's end is the compositor's. Not taken: serving
   on without the channel; its cost is a compositor that no driver can
   give an endpoint, which nothing then ends.
-- **Why `COMPOSITOR_OPTION_EXIT_TEST` still ends the compositor after
-  its first frame:** the console is not yet a client (rule 2, step 4),
-  so no window's present is shown on a disk that carries `COMPFAIL`, and
-  rule 9's exit after one is the exit after the first frame it gives
-  until then. The window test sets no option, so a boot of `window.img`
-  is of a compositor that runs.
+- **Why `COMPOSITOR_OPTION_EXIT_TEST` ends the compositor after the
+  first frame that shows a window's present:** the console is the
+  compositor's client on a disk that carries `COMPFAIL` (rule 2, step 4),
+  so each start of the compositor serves the console's window and shows
+  it once before it ends, which is the console's window path run to a
+  frame at each end and the fallback that follows it. Its cost is that
+  the compositor's first frame, Limb alone, is on the screen for the
+  time the console takes to make its window, so a dump of the first
+  frame may be Limb alone or the window (rule 9), and that the exit is
+  later than the first frame. Not taken: the exit after the first frame; its cost is a
+  fallback boot in which the console's window is never shown, so the
+  give-up is tested without the window it gives up on. The window test
+  sets no option, so a boot of `window.img` is of a compositor that
+  runs.
+- **Why the connection is issued once the console and the compositor
+  have both started:** a connection needs the compositor to answer and
+  the console to take its end, and the platform driver starts either
+  first, so the first process issues it when the later of the two has
+  started, for each start of either (rule 9). Its cost is a first
+  process that waits for the compositor's `connected` before it goes on
+  to start login, as it waits for the window test client's. Not taken:
+  issuing it from the compositor's start alone, which would send it to a
+  console that has not started.
 - **Why this order:** each phase uses what the ones before it built and
   what its row needs first, and each leaves the system working: the
   console draws every screen until phase 3, and remains the fallback
@@ -2441,8 +2481,10 @@ login's session as it does on its own
   time need the reduced-motion setting, and each screen checked on a
   test disk takes `STEADY_SECONDS` more. Phase 3's arrangement is a
   connection the first process issues that phase 4 removes, and its
-  screens are phase 2's with a pointer, so its work shows in the log,
-  the fallback and the host checks more than on the screen.
+  screens are the console's panel composed by the compositor, with a
+  pointer, matched against the host's render of that path, so its work
+  shows in the log, the fallback and the host checks more than on the
+  screen.
 - **Not taken:** comparing screens by eye, or within a tolerance. Its
   cost is regressions in a pixel or a colour that pass. Matching the
   lit phase alone; its cost is a blink that is never seen. Phases 3 and 4

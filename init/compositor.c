@@ -2,9 +2,11 @@
    compositor, the first and every restart, gets a control channel of its
    own; the end init keeps is the one the options, the background and the
    display go to, in that order and with no wait between them
-   (docs/spec/display.md D19's phase 3 arrangement, rule 2). The kernel's
-   background goes with the first start alone: a compositor started again
-   computes Limb (D2, rule 2). */
+   (docs/spec/display.md D19's phase 3 arrangement, rule 2), and then the
+   console's connection, if a console runs, which a compositor started
+   again gets as the first did (rule 9). The kernel's background goes
+   with the first start alone: a compositor started again computes Limb
+   (D2, rule 2). */
 
 #include "compositor.h"
 #include "console.h"
@@ -48,9 +50,7 @@ static UINT32 connect_transaction = FIRST_CONNECT_TRANSACTION;
 
 int compositor_wanted(void)
 {
-    return (tests_flag(TEST_FLAG_COMPOSITOR_FAILS) ||
-            tests_flag(TEST_FLAG_WINDOW)) &&
-           !boot_file(SPECIMEN_MARKER);
+    return !boot_file(SPECIMEN_MARKER);
 }
 
 void compositor_hold(BOOT_BACKGROUND *background)
@@ -85,7 +85,8 @@ void compositor_start(const PLATFORM *platform, UINT32 bootstrap)
 
 /* The options the compositor starts with (display_protocol.h), from the
    flag files a test disk holds: ui.reduce-motion for NOMOTION, and
-   leaving after its first frame for COMPFAIL. WINDOW sets none. */
+   leaving after the first frame that shows a window's present for
+   COMPFAIL. WINDOW sets none. */
 static UINT32 options(void)
 {
     UINT32 bits = 0;
@@ -276,6 +277,7 @@ void compositor_started(const PLATFORM *platform)
 {
     send_background(platform);
     send_display(platform);
+    console_connect();
 }
 
 UINT32 compositor_bootstrap(const PLATFORM *platform, UINT32 process,

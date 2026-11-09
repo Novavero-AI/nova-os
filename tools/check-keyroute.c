@@ -34,6 +34,13 @@
    event the window is sent encodes as a message that display.desc's
    generated check accepts, and decodes to the fields it was made from.
 
+   The key a console in a window takes (lib/keymap.c, keys_window_edit,
+   console.md C2 and C3) is checked beside them: a table of events with
+   the edit and character written out by hand, and a law over random
+   sessions, that the edit of each WINDOW_KEY the window is sent is the edit
+   keys_event gives the same events given in order to a keyboard of its own,
+   which is the console's direct path, with the same character.
+
    Random cases come from SEEDS seeds, a number of sessions from each, and
    a failure names its seed: the same one every run. Another run is
    -DSEEDS= or -DSESSIONS_PER_SEED= on the command line.
@@ -104,7 +111,11 @@
 #define KEY_RIGHT_CONTROL 97
 #define KEY_RIGHT_ALT 100
 #define KEY_HOME 102
+#define KEY_PAGE_UP 104
 #define KEY_LEFT 105
+#define KEY_RIGHT 106
+#define KEY_END 107
+#define KEY_PAGE_DOWN 109
 #define KEY_DELETE 111
 #define KEY_LEFT_SUPER 125
 #define KEY_RIGHT_SUPER 126
@@ -1236,6 +1247,140 @@ static void check_text_of_every_code(void)
           with_text, 4 * layout_keys);
 }
 
+/* ------------------------------------------------------------------------
+   The key a console in a window takes */
+
+/* An event's text as a WINDOW_KEY carries it and the edit and character
+   keys_window_edit must give, written out: the editing keys of console.md
+   C3's table by code, a printable character of one byte, and nothing for
+   a release, a modifier, a key that gives no text, or text that is not one
+   printable ASCII character. */
+typedef struct {
+    UINT32 code, value;
+    const char *text;
+    UINT32 text_length;
+    UINT32 edit;
+    UINT8 character;
+} WINDOW_EDIT_CASE;
+
+static const WINDOW_EDIT_CASE window_edits[] = {
+    {KEY_A, PRESS, "a", 1, EDIT_INSERT, 'a'},
+    {KEY_A, REPEAT, "A", 1, EDIT_INSERT, 'A'},
+    {KEY_SPACE, PRESS, " ", 1, EDIT_INSERT, ' '},
+    {KEY_GRAVE, PRESS, "~", 1, EDIT_INSERT, '~'},
+    {KEY_A, RELEASE, "a", 1, EDIT_NONE, 0},
+    {KEY_A, PRESS, "", 0, EDIT_NONE, 0},
+    {KEY_A, PRESS, "ab", 2, EDIT_NONE, 0},
+    {KEY_A, PRESS, "\x7f", 1, EDIT_NONE, 0},
+    {KEY_A, PRESS, "\x1f", 1, EDIT_NONE, 0},
+    {KEY_A, PRESS, "\xc3", 1, EDIT_NONE, 0},
+    {KEY_LEFT_SHIFT, PRESS, "", 0, EDIT_NONE, 0},
+    {KEY_CAPS_LOCK, PRESS, "", 0, EDIT_NONE, 0},
+    {KEY_F1, PRESS, "", 0, EDIT_NONE, 0},
+    {KEY_MAX, PRESS, "", 0, EDIT_NONE, 0},
+    {KEY_BACKSPACE, PRESS, "", 0, EDIT_BACKSPACE, 0},
+    {KEY_DELETE, PRESS, "", 0, EDIT_DELETE, 0},
+    {KEY_LEFT, REPEAT, "", 0, EDIT_LEFT, 0},
+    {KEY_RIGHT, PRESS, "", 0, EDIT_RIGHT, 0},
+    {KEY_HOME, PRESS, "", 0, EDIT_HOME, 0},
+    {KEY_END, PRESS, "", 0, EDIT_END, 0},
+    {KEY_ENTER, PRESS, "", 0, EDIT_ENTER, 0},
+    {KEY_KEYPAD_ENTER, PRESS, "", 0, EDIT_ENTER, 0},
+    {KEY_PAGE_UP, PRESS, "", 0, EDIT_PAGE_UP, 0},
+    {KEY_PAGE_DOWN, REPEAT, "", 0, EDIT_PAGE_DOWN, 0},
+    {KEY_LEFT, RELEASE, "", 0, EDIT_NONE, 0},
+    {KEY_ENTER, RELEASE, "", 0, EDIT_NONE, 0},
+};
+
+static void check_window_edit_table(void)
+{
+    unsigned i;
+
+    for (i = 0; i < sizeof window_edits / sizeof window_edits[0]; i++) {
+        const WINDOW_EDIT_CASE *c = &window_edits[i];
+        UINT8 character = UNTOUCHED;
+        UINT32 edit = keys_window_edit(c->code, c->value,
+                                       (const UINT8 *)c->text, c->text_length,
+                                       &character);
+
+        check(edit == c->edit, "a window's key makes the edit written out",
+              c->code, edit);
+        check(character == c->character,
+              "a window's key gives the character written out", c->code,
+              character);
+    }
+}
+
+/* The codes of the sessions below: every editing key, the keys that give
+   text, the modifiers, and keys that do nothing. */
+static const UINT32 window_edit_codes[] = {
+    KEY_ESC,        KEY_1,           KEY_A,         KEY_Z,
+    KEY_SPACE,      KEY_BACKSPACE,   KEY_ENTER,     KEY_KEYPAD_ENTER,
+    KEY_HOME,       KEY_END,         KEY_LEFT,      KEY_RIGHT,
+    KEY_DELETE,     KEY_KEYPAD_DOT,  KEY_PAGE_UP,   KEY_PAGE_DOWN,
+    KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT, KEY_LEFT_CONTROL, KEY_RIGHT_ALT,
+    KEY_LEFT_ALT,   KEY_LEFT_SUPER,  KEY_CAPS_LOCK, KEY_F1,
+    KEY_GRAVE,      KEY_SLASH,       KEY_TAB,       KEY_MAX};
+
+/* Each event of random sessions goes to a KEYROUTE, as the compositor
+   takes it, and to a keyboard of its own, as the console takes it in
+   direct mode; for the events the window is sent, keys_window_edit of the
+   WINDOW_KEY is the edit and character keys_event gives. */
+static void check_window_edit_session(unsigned *edits, unsigned *inserts)
+{
+    static KEYROUTE state;
+    static KEYBOARD direct;
+    unsigned step;
+
+    memset(&state, 0, sizeof state);
+    memset(&direct, 0, sizeof direct);
+    for (step = 0; step < SESSION_STEPS; step++) {
+        INPUT_EVENT event = make_event(
+            window_edit_codes[below(sizeof window_edit_codes /
+                                    sizeof window_edit_codes[0])],
+            random_value(), (UINT64)(step + 1) * TIME_STEP);
+        UINT8 direct_character, window_character;
+        UINT32 direct_edit =
+            keys_event(&direct, event.code, event.value, &direct_character);
+        WINDOW_INPUT routed;
+
+        if (keyroute_event(&state, &event, 1, &routed) != KEYROUTE_WINDOW)
+            continue;
+        {
+            UINT32 window_edit = keys_window_edit(
+                routed.body.key.event.code, routed.body.key.event.value,
+                routed.body.key.text, routed.body.key.event.text_length,
+                &window_character);
+
+            check(window_edit == direct_edit,
+                  "a window's key makes the edit the direct path makes",
+                  event.code, window_edit);
+            check(window_character == direct_character,
+                  "a window's key gives the character the direct path gives",
+                  event.code, window_character);
+            *edits += window_edit != EDIT_NONE;
+            *inserts += window_edit == EDIT_INSERT;
+        }
+    }
+}
+
+static void check_window_edits(void)
+{
+    unsigned n, session, edits = 0, inserts = 0;
+
+    check_window_edit_table();
+    for (n = 0; n < SEEDS; n++) {
+        seed_number = n;
+        seed_random(n);
+        for (session = 0; session < SESSIONS_PER_SEED; session++)
+            check_window_edit_session(&edits, &inserts);
+    }
+    seed_number = NO_SEED;
+    check(inserts > SEEDS * SESSIONS_PER_SEED &&
+              edits > inserts + SEEDS * SESSIONS_PER_SEED,
+          "the sessions reach characters and editing keys", inserts, edits);
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -1243,6 +1388,7 @@ int main(void)
     check_sent_bits();
     check_text_of_every_code();
     check_sessions();
+    check_window_edits();
     printf("%llu checks, %u failed, %u seeds of %u sessions\n", checks,
            failures, (unsigned)SEEDS, (unsigned)SESSIONS_PER_SEED);
     return failures != 0;

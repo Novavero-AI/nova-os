@@ -20,6 +20,15 @@ typedef struct {
     UINT32 lit;
 } VIEW_CARET;
 
+/* The lines a turn of a window's wheel scrolls (C2, C3): wheel is the
+   turn in DISPLAY_WHEEL_DETENT units of a detent, up positive, and
+   *remainder the part of a detent turned and not yet scrolled, which
+   starts at 0, keeps the turn's sign and is under a detent. A detent
+   scrolls VIEW_WHEEL_LINES lines, so a whole detent a time scrolls just
+   as the direct path's detents do, and turns in parts scroll once the
+   parts have made a detent. Positive is up, as view_scroll's lines are. */
+INT64 view_wheel(INT64 *remainder, INT32 wheel);
+
 /* The most lines a view of rows lines stands back from the text's end,
    where it shows the last rows lines: back to the oldest line kept. */
 UINT64 view_back_limit(const TEXT *text, UINT32 rows);

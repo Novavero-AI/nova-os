@@ -13,14 +13,14 @@
    stage0-pe32's chain from its seed as 32-bit processes when the boot
    volume holds the chain's inputs (chain.c), and the virtio block
    driver's read of the boot disk (platform.c). Then it takes the desktop
-   background the kernel drew from its bootstrap channel, gives it to
-   the console to prepare its panel from (console.c), reports to the
-   kernel there that its startup is done (docs/spec/boot-protocol.md,
-   Startup done), hands the display to the console once the kernel
-   releases it, or to the type specimen from /store on a boot disk that
-   asks for it (specimen_start.c), starts the accounts service and login
+   background the kernel drew from its bootstrap channel, holds it for the
+   compositor (compositor.c), reports to the kernel there that its
+   startup is done (docs/spec/boot-protocol.md, Startup done), hands the
+   display to the compositor once the kernel releases it, or to the type
+   specimen from /store on a boot disk that asks for it
+   (specimen_start.c), starts the accounts service and login
    (login_start.c), and runs on as the supervisor of the drivers, the
-   console and those two (ipc.md I10). The store service and the
+   compositor, the console and those two (ipc.md I10). The store service and the
    namespace server run on after startup, and init keeps its channels
    to them (STORE_SERVICES).
    A failed step of its startup is logged, if the log is reachable, and
@@ -30,7 +30,6 @@
 
 #include "init.h"
 #include "compositor.h"
-#include "console.h"
 #include "data.h"
 #include "login_start.h"
 #include "platform.h"
@@ -465,16 +464,13 @@ static void report_startup_done(UINT32 bootstrap)
           "the kernel took no startup report");
 }
 
-/* The console's panel is prepared before the report, so that the
-   display shows it as soon as the kernel releases it (console.md C1);
-   the specimen, which draws in the console's place, takes no
-   background, and a compositor, which takes it after the release, has
-   it held until then (display.md D2). */
+/* A compositor takes the kernel's background after the release, so it is
+   held until then (display.md D2); the specimen, which draws in the
+   console's place, takes none. */
 _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
 {
     BOOT_BACKGROUND background;
     UINT32 job, status;
-    int specimen;
 
     (void)argument;
     job = read_bootstrap(bootstrap);
@@ -489,20 +485,15 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     check(platform_start(&platform), "the platform driver's startup failed");
     tests_end();
     take_background(bootstrap, &background);
-    specimen = boot_file(SPECIMEN_MARKER) != 0;
-    if (specimen)
-        boot_background_close(&background);
-    else if (platform.drawer == DRAWER_COMPOSITOR)
+    if (platform.drawer == DRAWER_COMPOSITOR)
         compositor_hold(&background);
     else
-        console_prepare(&platform, &background);
+        boot_background_close(&background);
     report_startup_done(bootstrap);
-    if (specimen)
-        specimen_start(&platform, &services, bootstrap);
-    else if (platform.drawer == DRAWER_COMPOSITOR)
+    if (platform.drawer == DRAWER_COMPOSITOR)
         compositor_start(&platform, bootstrap);
     else
-        console_start(&platform, bootstrap);
+        specimen_start(&platform, &services, bootstrap);
     login_start(&platform, &services);
     window_test_start(&platform);
     status = platform_supervise(&platform);

@@ -1,27 +1,32 @@
 /* init's part in the console. The console is the platform driver's
-   input client (platform.c), which starts it and asks this file for its
-   bootstrap message, so each start of the console, the first and every
-   restart, gets a control channel of its own; the end init keeps is the
-   one the options, the background, the next display and sessions go to,
-   the options first. The kernel's background goes to a console started
-   before the release, which prepares its panel from it and answers
-   before init reports its startup done (console_prepare). The display
-   goes only after the kernel has released it, so a console started
-   before the release gets it from console_start, and one started after
-   from console_started, which also gives login a session on it
-   (login_start.c); login's first session comes with its own start. Where
-   a compositor draws, the kernel's release leaves the display with it
-   (compositor.c) and a console started meanwhile is given login's
-   session and no display, until the compositor is given up
-   (console_display_after). */
+   input client where no compositor runs (platform.c), which starts it and
+   asks this file for its bootstrap message, so each start of the console,
+   the first and every restart, gets a control channel of its own; the end
+   init keeps is the one the options, the connection, the next display and
+   sessions go to, the options first. Where a compositor draws, the
+   kernel's release leaves the display with it (compositor.c) and the
+   console, started beside it, is given login's session and a connection
+   to it, on which it makes its window (console_connect), and no display,
+   until the compositor is given up: then it is sent the display after a
+   compositor (console_display_after), and a console started later the
+   plain display, which console_started also gives login a session on
+   (login_start.c); login's first session comes with its own start. The
+   type specimen's disk runs no compositor and gives the console no
+   display. */
 
 #include "console.h"
+#include "compositor.h"
 #include "console_protocol.h"
+#include "display_protocol.h"
 #include "init.h"
 #include "login_start.h"
 #include "tests.h"
 
 #define PIXEL_BYTES 4
+
+/* The label of the console's connection to the compositor (display.md
+   D5, D19 rule 2). */
+#define CONSOLE_CONNECTION_LABEL "console"
 
 /* The rights the framebuffer's resource travels with: to make sections
    over it, and none to pass on. The other handles the console gets
@@ -39,15 +44,11 @@
 /* The bytes of each message sent to the console, aligned to 8 bytes as
    the generated functions require (docs/spec/interface.md P14) and as
    long as the control channel's longest message, which holds the
-   bootstrap channel's too; and of the console's answer. */
+   bootstrap channel's too. */
 static union {
     UINT64 alignment;
     UINT8 bytes[CONSOLE_CONTROL_TO_SERVER_BYTES_MAX];
 } outgoing;
-static union {
-    UINT64 alignment;
-    UINT8 bytes[CONSOLE_CONTROL_TO_CLIENT_BYTES_MAX];
-} incoming;
 _Static_assert(CONSOLE_BOOTSTRAP_TO_CLIENT_BYTES_MAX <=
                    CONSOLE_CONTROL_TO_SERVER_BYTES_MAX,
                "the bootstrap message fits the outgoing buffer");
@@ -137,47 +138,6 @@ static void send_display(const PLATFORM *platform, DISPLAY_FROM from)
     }
 }
 
-void console_prepare(const PLATFORM *platform, BOOT_BACKGROUND *background)
-{
-    CONSOLE_SETUP_BACKGROUND_MESSAGE message;
-    HANDLE_TRANSFER sections[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
-    RECEIVED_HANDLE handle;
-    UINT32 byte_count = 0, handle_count = 0, size, observed, status;
-
-    if (control == HANDLE_INVALID) {
-        boot_background_close(background);
-        return;
-    }
-    message.setup.transaction = 0;
-    message.setup.kind = 0;
-    display_for_background(platform, &message.display);
-    message.background = background->label;
-    status = console_control_background_encode(&message, background->sections,
-                                               background->count, sections,
-                                               outgoing.bytes, &size);
-    if (status == OK)
-        status = channel_write(control, outgoing.bytes, size, sections,
-                               background->count);
-    if (status != OK) {
-        boot_background_close(background);
-        if (status != ERR_PEER_CLOSED)
-            say_status("background send failed", status);
-        return;
-    }
-    background->count = 0;
-    status = object_wait_one(control, CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
-                             DEADLINE_INFINITE, &observed);
-    if (status == OK)
-        status = channel_read(control, incoming.bytes, sizeof incoming.bytes,
-                              &handle, 0, &byte_count, &handle_count);
-    if (status != OK && status != ERR_PEER_CLOSED)
-        say_status("console answer failed", status);
-    else if (status == OK &&
-             console_control_prepared_check(incoming.bytes, byte_count,
-                                            &handle, handle_count) != OK)
-        say("nova-init: console answer refused reason=malformed\r\n");
-}
-
 /* Send the console its options, the first message on its control channel
    (console.md C2): ui.reduce-motion where the boot disk is a test disk
    with the flag file, and no bit otherwise. A console that has already
@@ -223,6 +183,32 @@ UINT32 console_session(void)
         handle_close(client);
     say_status("console session failed", status);
     return HANDLE_INVALID;
+}
+
+void console_connect(void)
+{
+    CONSOLE_SETUP setup;
+    HANDLE_TRANSFER end;
+    UINT32 client, size, status;
+
+    if (control == HANDLE_INVALID || holder != DISPLAY_COMPOSITOR ||
+        tests_flag(TEST_FLAG_WINDOW))
+        return;
+    status = compositor_connect(CONSOLE_CONNECTION_LABEL, DISPLAY_LAYER_SYSTEM,
+                                0, &client);
+    if (status != OK)
+        return;
+    setup.transaction = 0;
+    setup.kind = 0;
+    status = console_control_connection_encode(&setup, &client, 1, &end,
+                                               outgoing.bytes, &size);
+    if (status == OK)
+        status = channel_write(control, outgoing.bytes, size, &end, 1);
+    if (status == OK)
+        return;
+    handle_close(client);
+    if (status != ERR_PEER_CLOSED)
+        say_status("console connection send failed", status);
 }
 
 UINT32 console_bootstrap(const PLATFORM *platform, UINT32 process,
@@ -273,6 +259,7 @@ void console_started(const PLATFORM *platform)
     if (holder == DISPLAY_CONSOLE)
         send_display(platform, DISPLAY_FROM_KERNEL);
     login_console_started();
+    console_connect();
 }
 
 int display_released(UINT32 bootstrap)
@@ -287,18 +274,6 @@ int display_released(UINT32 bootstrap)
         return 0;
     }
     return 1;
-}
-
-void console_start(const PLATFORM *platform, UINT32 bootstrap)
-{
-    if (!display_released(bootstrap))
-        return;
-    holder = DISPLAY_CONSOLE;
-    if (control == HANDLE_INVALID) {
-        say("nova-init: display unused reason=\"no console\"\r\n");
-        return;
-    }
-    send_display(platform, DISPLAY_FROM_KERNEL);
 }
 
 void console_defer_display(void)

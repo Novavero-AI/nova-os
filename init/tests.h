@@ -32,13 +32,15 @@ int tests_enabled(void);
    display.md D19). */
 #define TEST_FLAG_NO_MOTION "NOMOTION"
 
-/* The flag file that makes the compositor end after its first frame, each
-   time it starts, on a test disk (disk-layout.md, display.md D19). */
+/* The flag file that makes the compositor end just after the first frame
+   that shows a window's present, each time it starts, on a test disk
+   (disk-layout.md, display.md D19). */
 #define TEST_FLAG_COMPOSITOR_FAILS "COMPFAIL"
 
-/* The flag file that makes the first process start the compositor and
-   the window test client, which makes a window and shows two frames on a
-   test disk (test/wintest.h, display.md D19). */
+/* The flag file that makes the first process start the window test
+   client, which makes a window and shows two frames on a test disk, in the
+   console's place as the compositor's client (test/wintest.h, display.md
+   D19). */
 #define TEST_FLAG_WINDOW "WINDOW"
 
 /* Whether the boot disk is a test disk that holds the flag file name: a

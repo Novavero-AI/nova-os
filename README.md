@@ -53,8 +53,8 @@ and on Windows with a TinyCC built from stage0-pe32's seed.
 **Services and drivers, each a user-mode process**
 
 - The first process starts the rest, and restarts the input driver, the
-  console, the accounts service or login when one ends, as its restart
-  policy allows ([ipc.md](docs/spec/ipc.md)).
+  compositor, the console, the accounts service or login when one ends,
+  as its restart policy allows ([ipc.md](docs/spec/ipc.md)).
 - virtio block and input drivers, for disks and for keyboards, tablets
   and mice, each given its own device's resources and nothing else.
 - The store service serves `/store` read-only from the store image,
@@ -65,10 +65,15 @@ and on Windows with a TinyCC built from stage0-pe32's seed.
 - The file system service serves `/data` and `/users` from a data disk:
   a copy-on-write pool with a SHA-256 checksum on every block
   ([pool-format.md](docs/spec/pool-format.md)).
-- The console draws a panel over the background in its own font, edits
-  the line a program reads from the keyboard, scrolls back through what
-  it has shown with Page Up, Page Down and the pointer's wheel, and logs
-  what each pointer report does ([console.md](docs/spec/console.md)).
+- The compositor draws the desktop background, a window over it and the
+  pointer, and sends the window the keys typed and the pointer's events
+  ([display.md](docs/spec/display.md)).
+- The console draws a panel in a window on the compositor, in its own
+  font, edits the line a program reads from the keyboard, and scrolls
+  back through what it has shown with Page Up, Page Down and the wheel
+  while the pointer is over its window
+  ([console.md](docs/spec/console.md)). It draws the display itself if
+  the compositor is given up.
 
 **Accounts and the shell**
 
@@ -173,20 +178,21 @@ asks for a name and a password.
 
 The virtio-rng device seeds the kernel's random number generator, which
 creating an account needs, since QEMU's default processor has neither
-RDRAND nor RDSEED. The virtio tablet gives the console a pointer and,
-once its driver runs, keeps QEMU from capturing the mouse.
+RDRAND nor RDSEED. The virtio tablet gives the compositor a pointer to
+draw and, once its driver runs, keeps QEMU from capturing the mouse.
 
 - `out/test.img` in place of `out/disk.img` boots the system and runs
   its tests, which report on the serial port in KTAP; they write their
   files in the data disk's `/data/fstest`. The console's caret does not
   blink on it, so that a screen can be compared.
 - `out/fallback.img` in place of `out/disk.img` runs the tests and has
-  the compositor take the display and end at each start, until it is
-  given up and the console takes the display after it.
+  the compositor take the display and end at each start, once it shows
+  the console's window, until it is given up and the console takes the
+  display after it.
 - `out/window.img` in place of `out/disk.img` runs the tests and has
   the compositor show a test client's window over Limb with the pointer
-  drawn over it, and send it the pointer's events and the keys typed; the
-  console runs but draws nothing.
+  drawn over it, and send it the pointer's events and the keys typed in
+  the console's place; the console runs but draws nothing.
 - `out/specimen.img` in place of `out/disk.img` runs the tests and shows
   the type specimen over Limb; the console runs but draws nothing.
 - `out/chain.img` in place of `out/disk.img` runs the tests and the

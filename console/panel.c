@@ -371,3 +371,183 @@ void panel_text(const PANEL *panel, PANEL_SHOWN *shown, const TEXT *text,
         cell(panel, caret->row, layout->columns, BLANK, 1);
     shown->caret = *caret;
 }
+
+/* ------------------------------------------------------------------------
+   A window's pixels. */
+
+/* A pixel's cover is its top byte and runs to COVER_MAX; a mask's
+   coverage becomes a cover by rounding half up. */
+#define COVER_SHIFT 24
+#define COVER_MAX 255
+#define COVER_ROUND (COVERAGE_MAX / 2)
+
+/* A cell that holds nothing drawn: no character the text holds is 0. */
+#define UNDRAWN 0
+
+static UINT32 cover_of(UINT8 coverage)
+{
+    return ((UINT32)coverage * COVER_MAX + COVER_ROUND) / COVERAGE_MAX;
+}
+
+UINT32 panel_window_pixel(UINT8 glyph, UINT8 caret)
+{
+    UINT32 g = cover_of(glyph), c = cover_of(caret), cover, rgb = 0;
+    int k;
+
+    cover = g + c - g * c / COVER_MAX;
+    if (cover == 0)
+        return 0;
+    for (k = 0; k < PANEL_CHANNELS; k++) {
+        INT64 shift = (PANEL_CHANNELS - 1 - k) * CHANNEL_BITS;
+        UINT32 code;
+
+        if (c == 0)
+            code = ink[PANEL_TEXT][k];
+        else if (g == 0)
+            code = ink[PANEL_CARET][k];
+        else
+            code = (UINT32)gfx_cross_fade(ink[PANEL_TEXT][k],
+                                          ink[PANEL_CARET][k], c, cover);
+        rgb |= code << shift;
+    }
+    return cover << COVER_SHIFT | rgb;
+}
+
+/* The character cell (row, column) of shown holds: the padding to the
+   right of the last column holds none but the caret. */
+static UINT8 character_of(const LAYOUT *layout, const PANEL_SHOWN *shown,
+                          UINT64 row, UINT32 column)
+{
+    return column < layout->columns ? shown->cells[row][column]
+                                    : (UINT8)BLANK;
+}
+
+static int differs(const LAYOUT *layout, const PANEL_SHOWN *was,
+                   const PANEL_SHOWN *want, UINT64 row, UINT32 column)
+{
+    return character_of(layout, was, row, column) !=
+               character_of(layout, want, row, column) ||
+           at(&was->caret, row, column) != at(&want->caret, row, column);
+}
+
+/* The window's own coordinates of cell (row, column)'s left and top. */
+static INT64 cell_left(const LAYOUT *layout, UINT32 column)
+{
+    return layout->text_left - layout->box.left + column * layout->cell_width;
+}
+
+static INT64 cell_top(const LAYOUT *layout, UINT64 row)
+{
+    return layout->text_top - layout->box.top +
+           (INT64)row * layout->cell_height;
+}
+
+void panel_view(const LAYOUT *layout, const TEXT *text, UINT64 top,
+                const VIEW_CARET *caret, PANEL_SHOWN *want)
+{
+    UINT64 row;
+    UINT32 column;
+
+    for (row = 0; row < layout->rows; row++) {
+        UINT64 line = top + row;
+        const UINT8 *cells = line < text->lines ? text_line(text, line) : 0;
+
+        for (column = 0; column < layout->columns; column++)
+            want->cells[row][column] = cells ? cells[column] : (UINT8)BLANK;
+    }
+    want->caret.row = caret->row;
+    want->caret.column = caret->column;
+    want->caret.lit = caret->lit;
+}
+
+void panel_window_forget(const LAYOUT *layout, PANEL_SHOWN *shown)
+{
+    UINT64 row;
+    UINT32 column;
+
+    for (row = 0; row < layout->rows; row++)
+        for (column = 0; column < layout->columns; column++)
+            shown->cells[row][column] = UNDRAWN;
+    shown->caret.lit = 0;
+}
+
+int panel_window_damage(const LAYOUT *layout, const PANEL_SHOWN *was,
+                        const PANEL_SHOWN *want, RECT *damage)
+{
+    int found = 0;
+    UINT64 row;
+    UINT32 column;
+
+    for (row = 0; row < layout->rows; row++)
+        for (column = 0; column <= layout->columns; column++) {
+            INT64 left, top;
+
+            if (!differs(layout, was, want, row, column))
+                continue;
+            left = cell_left(layout, column);
+            top = cell_top(layout, row);
+            if (!found || left < damage->left)
+                damage->left = left;
+            if (!found) /* the rows go top down: the first cell has the top */
+                damage->top = top;
+            if (!found || left + layout->cell_width > damage->right)
+                damage->right = left + layout->cell_width;
+            if (!found || top + layout->cell_height > damage->bottom)
+                damage->bottom = top + layout->cell_height;
+            found = 1;
+        }
+    return found;
+}
+
+int panel_window_buffer(const int *available, UINT32 count)
+{
+    UINT32 i;
+
+    for (i = 0; i < count; i++)
+        if (available[i])
+            return (int)i;
+    return PANEL_NO_BUFFER;
+}
+
+/* Draw the cell at row and column, the column up to the layout's columns,
+   into pixels, with character's glyph, and the caret over it if caret is
+   nonzero. */
+static void window_cell(const LAYOUT *layout, const UINT8 *masks,
+                        UINT32 *pixels, UINT32 stride, UINT64 row,
+                        UINT32 column, UINT8 character, int caret)
+{
+    INT64 cw = layout->cell_width;
+    INT64 left = cell_left(layout, column), top = cell_top(layout, row);
+    const UINT8 *glyph = font_mask(masks, cw, character);
+    const UINT8 *caret_glyph = caret ? font_mask(masks, cw, FONT_CARET) : 0;
+    INT64 x, y;
+
+    for (y = 0; y < layout->cell_height; y++) {
+        UINT32 *to = pixels + (top + y) * stride + left;
+
+        for (x = 0; x < cw; x++)
+            to[x] = panel_window_pixel(
+                glyph[y * cw + x], caret_glyph ? caret_glyph[y * cw + x] : 0);
+    }
+}
+
+void panel_window_draw(const LAYOUT *layout, const UINT8 *masks,
+                       UINT32 *pixels, UINT32 stride, PANEL_SHOWN *shown,
+                       const PANEL_SHOWN *want)
+{
+    UINT64 row;
+    UINT32 column;
+
+    for (row = 0; row < layout->rows; row++)
+        for (column = 0; column <= layout->columns; column++)
+            if (differs(layout, shown, want, row, column))
+                window_cell(layout, masks, pixels, stride, row, column,
+                            character_of(layout, want, row, column),
+                            at(&want->caret, row, column));
+    for (row = 0; row < layout->rows; row++)
+        for (column = 0; column < layout->columns; column++)
+            shown->cells[row][column] = want->cells[row][column];
+    shown->caret.row = want->caret.row;
+    shown->caret.column = want->caret.column;
+    shown->caret.lit = want->caret.lit;
+}

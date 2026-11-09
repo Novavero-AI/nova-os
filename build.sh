@@ -287,8 +287,8 @@ program virtinp.exe virtio_input_main -I native -I lib -I drivers \
   drivers/virtio_input.c drivers/pointer.c drivers/virtio_driver.c \
   drivers/virtio_pci.c drivers/pci.c lib/log.c native/native.S
 program console.exe console_main -I native -I lib -I gfx -I kernel/random \
-  console/console.c console/text.c console/view.c console/panel.c \
-  gfx/gfx.c gfx/flush.c gfx/raster.c gfx/font.c gfx/limb.c \
+  console/console.c console/pane.c console/text.c console/view.c \
+  console/panel.c gfx/gfx.c gfx/flush.c gfx/raster.c gfx/font.c gfx/limb.c \
   lib/endpoint.c lib/keymap.c lib/mapping.c lib/timing.c lib/log.c \
   native/native.S
 program compose.exe compositor_main -I native -I lib -I gfx -I compositor \
@@ -415,16 +415,16 @@ set -- "$@" fstest.exe TESTS NOMOTION
 ./mkimage specimen.img specimen.vhdx "$@" SPECIMEN
 
 # The fallback disk holds the test disk's files and COMPFAIL, an empty
-# file, which makes the first process start the compositor and the
-# compositor end after its first frame, at each start, so that it is
-# given up and the console takes the display from it.
+# file, which makes the compositor end just after the first frame that
+# shows the console's window, at each start, so that it is given up and
+# the console takes the display from it.
 : > COMPFAIL
 ./mkimage fallback.img fallback.vhdx "$@" COMPFAIL
 
 # The window disk holds the test disk's files, wintest.exe, the window test
 # client, and WINDOW, an empty file, which makes the first process start the
-# compositor and the client, which makes a window and shows two frames in
-# it, in the console's place as the compositor's client.
+# client, which makes a window and shows two frames in it, in the console's
+# place as the compositor's client.
 : > WINDOW
 ./mkimage window.img window.vhdx "$@" wintest.exe WINDOW
 

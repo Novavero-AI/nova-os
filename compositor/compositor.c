@@ -14,10 +14,8 @@
    window (serve.c), until its channel from the first process closes.
 
    A compositor that the options tell to exit for a test, a disk that
-   carries COMPFAIL, ends just after its first frame: the first process
-   issues no connection on such a disk until the console is a client of
-   the compositor, whose first shown present ends it then (display.md D19,
-   rule 9). */
+   carries COMPFAIL, ends just after the first frame that shows a
+   window's present (serve.c; display.md D19, rule 9). */
 
 #include "compositor.h"
 #include "display_protocol.h"
@@ -332,13 +330,12 @@ _Noreturn void compositor_main(UINT32 bootstrap_channel, UINT64 argument)
     started = timing_now();
     take_bootstrap(bootstrap_channel);
     take_setup();
-    if (options & COMPOSITOR_OPTION_EXIT_TEST)
-        process_exit(COMPOSITOR_EXIT_TEST);
     context.mapping = &mapping;
     context.control = control;
     context.bootstrap = bootstrap_channel;
     context.screen = &output;
     context.wallpaper = &wallpaper;
     context.band = band;
+    context.options = options;
     serve(&context);
 }

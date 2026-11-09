@@ -1,12 +1,17 @@
-/* The console, \nova\console.exe (docs/spec/console.md): the input
-   drivers' client, which the platform driver starts and hands each
-   input endpoint on its bootstrap channel (C2), and the server of the
-   sessions the first process sends on its control channel (C4). The
-   kernel's background comes there before the display, and the console
+/* The console, \nova\console.exe (docs/spec/console.md): the server of
+   the sessions the first process sends on its control channel (C4), in
+   one of two modes. In window mode, while a compositor runs, the first
+   process sends it a display connection, on which it makes a window and
+   draws its panel's pixels (pane.c); it takes its keys and the wheel from
+   the window and holds no input endpoint (C2). In direct mode it is the
+   input drivers' client, which the platform driver starts and hands each
+   input endpoint on its bootstrap channel (C2): the kernel's background
+   comes on the control channel before the display, and the console
    prepares its panel from it where it matches the display, and answers;
    otherwise it prepares the panel once the display comes (C5). With the
    display (C1) it draws the panel and, after every round of messages,
-   the cells whose text changed and the caret.
+   the cells whose text changed and the caret. The display after a
+   compositor, which ends window mode, comes the same way.
 
    One thread waits on every channel at once with object_wait_many, with
    a deadline at the caret's next blink while a read waits on a drawn
@@ -23,6 +28,7 @@
 #include "log.h"
 #include "mapping.h"
 #include "native.h"
+#include "pane.h"
 #include "panel.h"
 #include "text.h"
 #include "timing.h"
@@ -50,10 +56,13 @@
 #define CARET_BLINK_NS (500 * TIMING_NS_PER_MS)
 
 /* The objects one wait watches: the bootstrap channel, the control
-   channel, the input endpoints and the sessions. */
+   channel, the window's connection and the window, the input endpoints
+   and the sessions. */
 #define ENTRY_BOOTSTRAP 0
 #define ENTRY_CONTROL 1
-#define ENTRY_INPUTS 2
+#define ENTRY_CONNECTION 2
+#define ENTRY_WINDOW 3
+#define ENTRY_INPUTS 4
 #define ENTRY_SESSIONS (ENTRY_INPUTS + INPUT_DEVICES_MAX)
 #define ENTRIES (ENTRY_SESSIONS + CONSOLE_SESSIONS)
 
@@ -127,6 +136,7 @@ static UINT32 caret_lit;
 static UINT64 blink_at;
 static UINT32 reduce_motion;
 static MAPPING mapping = {HANDLE_INVALID, MAPPINGS_BASE};
+static PANE pane;
 
 static union {
     CONSOLE_REQUEST request;
@@ -277,10 +287,12 @@ static void pump(void)
     }
 }
 
-/* The lines the view shows: the panel's, or before the display comes
-   the most it can. */
+/* The lines the view shows: the panel's, in a window or drawn directly,
+   or before either comes the most it can. */
 static UINT32 view_rows(void)
 {
+    if (pane_laid_out(&pane))
+        return pane.layout.rows;
     return drawing ? layout.rows : PANEL_ROWS;
 }
 
@@ -290,12 +302,11 @@ static void scroll(INT64 lines)
     back = view_scroll(&text, view_rows(), back, lines);
 }
 
-static void key(const INPUT_EVENT *event)
+/* Act on an edit and its character, as the keys of either mode make them
+   (keymap.h): scroll, or edit the line a read waits for, or keep the key
+   for the next read. */
+static void edit_key(UINT32 edit, UINT8 character)
 {
-    UINT8 character;
-    UINT32 edit = keys_event(&modifiers, event->code, event->value,
-                             &character);
-
     if (edit == EDIT_NONE)
         return;
     if (edit == EDIT_PAGE_UP || edit == EDIT_PAGE_DOWN) {
@@ -312,6 +323,15 @@ static void key(const INPUT_EVENT *event)
         typed[typed_count].character = character;
         typed_count++;
     }
+}
+
+static void key(const INPUT_EVENT *event)
+{
+    UINT8 character;
+    UINT32 edit = keys_event(&modifiers, event->code, event->value,
+                             &character);
+
+    edit_key(edit, character);
 }
 
 /* ------------------------------------------------------------------------
@@ -410,15 +430,15 @@ static void add_session(const RECEIVED_HANDLE *handle)
 /* ------------------------------------------------------------------------
    The display. */
 
-/* Fit the text to the panel's width: its lines wrap at the narrower of
-   the two from now on. */
-static void fit_text(void)
+/* Fit the text to the width of the panel laid out as target: its lines
+   wrap at the narrower of the two from now on. */
+static void fit_text(const LAYOUT *target)
 {
-    if (layout.columns >= text.columns)
+    if (target->columns >= text.columns)
         return;
     if (reader >= 0)
         editor_hide(&editor, &text);
-    text.columns = layout.columns;
+    text.columns = target->columns;
     if (text.column > text.columns)
         text.column = text.columns;
     if (reader >= 0)
@@ -613,7 +633,7 @@ static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d,
         return;
     }
     panel_show(&screen, &layout, backdrop, &shown);
-    fit_text();
+    fit_text(&layout);
     drawing = 1;
     say("nova-console: display screen=");
     say_number(screen.width);
@@ -652,6 +672,17 @@ static void render(void)
 
     panel_text(&panel, &shown, &text, top, &caret);
     gfx_flush();
+}
+
+/* Draw the view in the window, which presents it when the compositor is
+   ready for a frame. */
+static void render_window(void)
+{
+    UINT64 top = view_top(&text, pane.layout.rows, back);
+    VIEW_CARET caret = view_caret(reader >= 0 && caret_lit ? &editor : 0,
+                                  &text, pane.layout.rows, top);
+
+    pane_show(&pane, &text, top, &caret);
 }
 
 /* ------------------------------------------------------------------------
@@ -799,8 +830,30 @@ static void set_options(UINT32 options)
     caret_show();
 }
 
-/* The options, a display, the display after a compositor, a session or
-   the kernel's background from the first process. A message the
+/* Take a display connection, on which the console makes its window while
+   a compositor runs (C2), in place of the one it held. A console that
+   holds the display itself has no use for one. */
+static void take_connection(const RECEIVED_HANDLE *handle)
+{
+    if (drawing) {
+        say("nova-console: connection refused reason=\"display held\"\r\n");
+        handle_close(handle->handle);
+        return;
+    }
+    pane_adopt(&pane, handle->handle);
+}
+
+/* The display after a compositor: the console leaves window mode, which
+   the compositor's end has made of no use, and draws the panel itself. */
+static void take_display_after(const RECEIVED_HANDLE *resource,
+                               const BOOTSTRAP_DISPLAY *d)
+{
+    pane_drop(&pane);
+    display(resource->handle, d, HANDOFF_FROM_COMPOSITOR);
+}
+
+/* The options, a display, the display after a compositor, a connection, a
+   session or the kernel's background from the first process. A message the
    description does not allow is dropped, with the handles it carried
    closed; a background that has a reply is answered with the request's
    transaction alone, so the first process does not wait for it
@@ -827,9 +880,10 @@ static void serve_control(void)
             add_session(&handles[0]);
         else if (which == CONSOLE_SETUP_OPTIONS)
             set_options(message.options.options);
+        else if (which == CONSOLE_SETUP_CONNECTION)
+            take_connection(&handles[0]);
         else if (which == CONSOLE_SETUP_DISPLAY_AFTER)
-            display(handles[0].handle, &message.setup.display,
-                    HANDOFF_FROM_COMPOSITOR);
+            take_display_after(&handles[0], &message.setup.display);
         else
             display(handles[0].handle, &message.setup.display,
                     HANDOFF_FROM_KERNEL);
@@ -847,19 +901,50 @@ static void serve_control(void)
         close_if_open(&control);
 }
 
+/* Serve the window's connection, then the window: the answer to its
+   request comes on the one before the first configure on the other, so
+   the connection is read first. Each message of the window is a key or a
+   turn of the wheel to act on, or one the pane has acted on; at most the
+   window's queue's worth are served a round. */
+static void serve_pane(void)
+{
+    PANE_INPUT input;
+    UINT32 served;
+
+    pane_serve_connection(&pane);
+    for (served = 0; served < WINDOW_CAPACITY && pane_input(&pane, &input);
+         served++) {
+        edit_key(input.edit, input.character);
+        if (input.lines)
+            scroll(input.lines);
+    }
+    if (pane_laid_out(&pane))
+        fit_text(&pane.layout);
+}
+
 /* Wait for any channel to be ready, or for the caret's blink, and serve
    what is ready. */
 static void serve(void)
 {
     WAIT_ENTRY entries[ENTRIES];
     UINT32 which[ENTRIES], count = 0, i, status;
-    UINT64 deadline = drawing && caret_blinks() ? blink_at : DEADLINE_INFINITE;
+    UINT64 deadline = (drawing || pane_laid_out(&pane)) && caret_blinks()
+                          ? blink_at
+                          : DEADLINE_INFINITE;
 
     entries[count].handle = bootstrap;
     which[count++] = ENTRY_BOOTSTRAP;
     if (control != HANDLE_INVALID) {
         entries[count].handle = control;
         which[count++] = ENTRY_CONTROL;
+    }
+    if (pane.connection != HANDLE_INVALID) {
+        entries[count].handle = pane.connection;
+        which[count++] = ENTRY_CONNECTION;
+    }
+    if (pane.window != HANDLE_INVALID) {
+        entries[count].handle = pane.window;
+        which[count++] = ENTRY_WINDOW;
     }
     for (i = 0; i < INPUT_DEVICES_MAX; i++)
         if (inputs[i].endpoint != HANDLE_INVALID) {
@@ -887,7 +972,9 @@ static void serve(void)
             serve_bootstrap();
         else if (which[i] == ENTRY_CONTROL)
             serve_control();
-        else if (which[i] < ENTRY_SESSIONS &&
+        else if (which[i] == ENTRY_CONNECTION || which[i] == ENTRY_WINDOW)
+            serve_pane();
+        else if (which[i] >= ENTRY_INPUTS && which[i] < ENTRY_SESSIONS &&
                  inputs[which[i] - ENTRY_INPUTS].endpoint == entries[i].handle)
             serve_input((int)(which[i] - ENTRY_INPUTS));
         else if (which[i] >= ENTRY_SESSIONS &&
@@ -902,6 +989,8 @@ static void serve(void)
     }
     if (drawing)
         render();
+    else if (pane.phase == PANE_SHOWING)
+        render_window();
 }
 
 _Noreturn void console_main(UINT32 bootstrap_channel, UINT64 argument)
@@ -914,6 +1003,7 @@ _Noreturn void console_main(UINT32 bootstrap_channel, UINT64 argument)
         sessions[i].channel = HANDLE_INVALID;
     for (i = 0; i < INPUT_DEVICES_MAX; i++)
         inputs[i].endpoint = HANDLE_INVALID;
+    pane_init(&pane, &mapping);
     take_bootstrap();
     text_init(&text, TEXT_COLUMNS_MAX);
     for (;;)
