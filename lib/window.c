@@ -37,6 +37,46 @@ static UINT32 fit(UINT32 value, UINT32 low, UINT32 high)
     return value < low ? low : value > high ? high : value;
 }
 
+UINT32 window_scale(UINT32 screen_height)
+{
+    UINT64 quarters =
+        ((UINT64)screen_height * DISPLAY_SCALE_ONE + WINDOW_SCALE_HEIGHT / 2) /
+        WINDOW_SCALE_HEIGHT;
+
+    return quarters < 1 ? 1 : (UINT32)quarters;
+}
+
+UINT32 window_state(UINT32 layer)
+{
+    return layer == DISPLAY_LAYER_SYSTEM ? WINDOW_STATE_FOCUSED : 0;
+}
+
+static int has_pixels(const RECT *rect)
+{
+    return rect->left < rect->right && rect->top < rect->bottom;
+}
+
+void window_damage_join(RECT *total, const RECT *rect)
+{
+    if (!has_pixels(rect))
+        return;
+    if (!has_pixels(total)) {
+        total->left = rect->left;
+        total->top = rect->top;
+        total->right = rect->right;
+        total->bottom = rect->bottom;
+        return;
+    }
+    if (rect->left < total->left)
+        total->left = rect->left;
+    if (rect->top < total->top)
+        total->top = rect->top;
+    if (rect->right > total->right)
+        total->right = rect->right;
+    if (rect->bottom > total->bottom)
+        total->bottom = rect->bottom;
+}
+
 void window_size(const WINDOW_AREA *area, UINT32 reach, UINT32 width,
                  UINT32 height, UINT32 *fitted_width, UINT32 *fitted_height)
 {

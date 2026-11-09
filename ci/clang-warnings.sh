@@ -45,7 +45,7 @@ for source in $(git ls-files '*.c'); do
       tools/check-backdrop.c | tools/check-compose.c | \
       tools/check-console-protocol.c | tools/check-display-protocol.c | \
       tools/check-endpoint.c | tools/check-window.c | tools/check-route.c | \
-      tools/check-backlog.c)
+      tools/check-backlog.c | tools/check-mapping.c)
       standard=-std=c11 ;;
   esac
   # shellcheck disable=SC2086

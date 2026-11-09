@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "compose.h"
+#include "font.h"
 #include "panel.h"
 #include "window.h"
 
@@ -354,6 +355,28 @@ static void check_panel_agrees(void)
           compared, 0);
 }
 
+/* A window drawn on the panel's surface has the panel's radius: five
+   quarters of the cell, rounded down, which is the cell's quarters five
+   times over less what the next pixel would hold. */
+static void check_panel_radius(void)
+{
+    INT64 height;
+
+    for (height = 0; height <= 4400; height++) {
+        INT64 cell = font_cell_width(height);
+        INT64 radius = font_panel_radius(cell);
+        LAYOUT layout;
+
+        check(radius * 4 <= cell * 5 && cell * 5 < (radius + 1) * 4,
+              "the panel's radius is five quarters of a cell rounded down",
+              cell, radius);
+        if (panel_layout(&layout, height * 2, height))
+            check(layout.radius == radius,
+                  "the panel's layout has the panel's radius", height,
+                  layout.radius);
+    }
+}
+
 /* ------------------------------------------------------------------------
    Making a window (D19, rule 4) */
 
@@ -557,6 +580,163 @@ static void check_configure(void)
         last = serial;
     }
     check(last == UINT32_LARGEST, "a serial stays at the greatest", last, 0);
+}
+
+/* ------------------------------------------------------------------------
+   The screen's scale and a window's state (D7 rule 5, D11 rule 1) */
+
+/* The nearest quarter of height / 800, found by comparing distances to
+   each candidate in pixels, a quarter being 200 pixels of height, a half
+   going to the greater, and never below the one quarter DISPLAY_SCREEN
+   gives as its least. */
+static UINT32 nearest_quarters(UINT32 height)
+{
+    UINT32 best = 1, candidate;
+    long long best_distance = -1;
+
+    for (candidate = 1; candidate <= height / 200 + 2; candidate++) {
+        long long distance = (long long)height - 200ll * candidate;
+
+        if (distance < 0)
+            distance = -distance;
+        if (best_distance < 0 || distance <= best_distance) {
+            best = candidate;
+            best_distance = distance;
+        }
+    }
+    return best;
+}
+
+static void check_scale(void)
+{
+    static const struct {
+        UINT32 height, scale;
+    } table[] = {{800, 4}, {1600, 8}, {1800, 9}, {768, 4}, {1080, 5},
+                 {700, 4}, {699, 3}, {99, 1}, {0, 1}, {100, 1}, {2160, 11}};
+    UINT32 height, last = 0;
+    size_t i;
+
+    for (i = 0; i < sizeof table / sizeof table[0]; i++)
+        check(window_scale(table[i].height) == table[i].scale,
+              "the scale is the height over 800 to the nearest quarter",
+              table[i].height, window_scale(table[i].height));
+    for (height = 0; height <= 4400; height++) {
+        UINT32 scale = window_scale(height);
+
+        check(scale == nearest_quarters(height),
+              "the scale is the nearest quarter", height, scale);
+        check(scale >= last, "a taller screen has no smaller scale", height,
+              scale);
+        last = scale;
+    }
+    check(window_scale(UINT32_LARGEST) == (UINT32_LARGEST + 100ull) / 200,
+          "the scale of the tallest height does not overflow",
+          window_scale(UINT32_LARGEST), 0);
+}
+
+static void check_state(void)
+{
+    static const UINT32 layers[] = {DISPLAY_LAYER_APP,
+                                    DISPLAY_LAYER_NOTIFICATION,
+                                    DISPLAY_LAYER_OVERLAY,
+                                    DISPLAY_LAYER_TRUSTED,
+                                    DISPLAY_LAYER_SYSTEM};
+    size_t i;
+
+    for (i = 0; i < sizeof layers / sizeof layers[0]; i++)
+        check(window_state(layers[i]) ==
+                  (layers[i] == DISPLAY_LAYER_SYSTEM ? WINDOW_STATE_FOCUSED
+                                                      : 0),
+              "only a SYSTEM window opens with the focus", layers[i],
+              window_state(layers[i]));
+    check(window_state(0) == 0 &&
+              window_state(DISPLAY_LAYER_SYSTEM | DISPLAY_LAYER_APP) == 0,
+          "no layer, or two, is not a SYSTEM window", 0, 0);
+}
+
+/* The pixels of the rectangle that has them, on a grid of width GRID
+   from GRID_LOW, as a mask by pixel; an inverted or empty rectangle has
+   none. */
+#define GRID_LOW (-4)
+#define GRID_SIDE 9
+#define COORDINATE_LOW (-2)
+#define COORDINATE_HIGH 2
+
+static void pixels_of(const RECT *rect, unsigned char *held)
+{
+    int x, y;
+
+    for (y = 0; y < GRID_SIDE; y++)
+        for (x = 0; x < GRID_SIDE; x++)
+            held[y * GRID_SIDE + x] =
+                x + GRID_LOW >= rect->left && x + GRID_LOW < rect->right &&
+                y + GRID_LOW >= rect->top && y + GRID_LOW < rect->bottom;
+}
+
+/* Every pair of rectangles with coordinates from COORDINATE_LOW to
+   COORDINATE_HIGH, the empty and inverted ones among them: the joined
+   rectangle holds the pixels of both and no more than their bounding
+   box, and an empty pair leaves the total as it was. */
+static void check_damage_join(void)
+{
+    RECT all[(COORDINATE_HIGH - COORDINATE_LOW + 1) *
+             (COORDINATE_HIGH - COORDINATE_LOW + 1) *
+             (COORDINATE_HIGH - COORDINATE_LOW + 1) *
+             (COORDINATE_HIGH - COORDINATE_LOW + 1)];
+    size_t count = 0, a, b;
+    INT64 l, t, r, bo;
+
+    for (l = COORDINATE_LOW; l <= COORDINATE_HIGH; l++)
+        for (t = COORDINATE_LOW; t <= COORDINATE_HIGH; t++)
+            for (r = COORDINATE_LOW; r <= COORDINATE_HIGH; r++)
+                for (bo = COORDINATE_LOW; bo <= COORDINATE_HIGH; bo++) {
+                    all[count].left = l;
+                    all[count].top = t;
+                    all[count].right = r;
+                    all[count].bottom = bo;
+                    count++;
+                }
+    for (a = 0; a < count; a++)
+        for (b = 0; b < count; b++) {
+            unsigned char in_total[GRID_SIDE * GRID_SIDE];
+            unsigned char in_rect[GRID_SIDE * GRID_SIDE];
+            unsigned char in_joined[GRID_SIDE * GRID_SIDE];
+            RECT total = all[a];
+            int x, y, any = 0, left = GRID_SIDE, top = GRID_SIDE, right = -1,
+                      bottom = -1, wrong = 0;
+
+            pixels_of(&all[a], in_total);
+            pixels_of(&all[b], in_rect);
+            window_damage_join(&total, &all[b]);
+            pixels_of(&total, in_joined);
+            for (y = 0; y < GRID_SIDE; y++)
+                for (x = 0; x < GRID_SIDE; x++)
+                    if (in_total[y * GRID_SIDE + x] ||
+                        in_rect[y * GRID_SIDE + x]) {
+                        any = 1;
+                        left = x < left ? x : left;
+                        top = y < top ? y : top;
+                        right = x > right ? x : right;
+                        bottom = y > bottom ? y : bottom;
+                    }
+            for (y = 0; y < GRID_SIDE; y++)
+                for (x = 0; x < GRID_SIDE; x++) {
+                    int inside = any && x >= left && x <= right &&
+                                 y >= top && y <= bottom;
+
+                    wrong += (in_joined[y * GRID_SIDE + x] != 0) != inside;
+                }
+            check(wrong == 0,
+                  "a joined rectangle is the bounding box of what was "
+                  "damaged",
+                  (long long)a, (long long)b);
+            if (!any)
+                check(total.left == all[a].left && total.top == all[a].top &&
+                          total.right == all[a].right &&
+                          total.bottom == all[a].bottom,
+                      "joining nothing to nothing changes nothing",
+                      (long long)a, (long long)b);
+        }
 }
 
 /* ------------------------------------------------------------------------
@@ -1694,8 +1874,12 @@ int main(void)
     check_sizes();
     check_places();
     check_panel_agrees();
+    check_panel_radius();
     check_opens();
     check_configure();
+    check_scale();
+    check_state();
+    check_damage_join();
     check_buffer_sizes();
     check_give_table();
     check_band_table();

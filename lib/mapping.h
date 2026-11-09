@@ -45,6 +45,16 @@ const void *mapping_image(MAPPING *mapping, const RECEIVED_HANDLE *handles,
                           UINT32 count, UINT64 bytes, UINT64 *mapped,
                           UINT32 *status);
 
+/** How many bytes of section it holds from its start, up to limit, in
+    whole pages: no call reports a section's size, so this maps ranges of
+    it read-only, each unmapped at once, and is told by process_map's
+    refusal of a range past its end, where mapping->next lies and nothing
+    else is mapped. A section of limit bytes or more gives limit rounded
+    down to a page. Returns the bytes, or 0 with the status of the call
+    that failed in *status, which is OK for a section of no whole page. */
+UINT64 mapping_section_bytes(MAPPING *mapping, UINT32 section, UINT64 limit,
+                             UINT32 *status);
+
 /** Map display's framebuffer, write-combining, through resource, an
     MMIO resource covering its pages, and describe it in *screen.
     Returns OK; ERR_NOT_SUPPORTED, mapping nothing, for a display that

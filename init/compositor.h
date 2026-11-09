@@ -12,8 +12,8 @@
 #include "platform.h"
 
 /* Whether a compositor runs on this boot: on a test disk that holds the
-   flag file COMPFAIL, and not on the specimen disk, which draws in the
-   console's place. */
+   flag file COMPFAIL or WINDOW, and not on the specimen disk, which draws
+   in the console's place. */
 int compositor_wanted(void);
 
 /* Take the kernel's background from *background, which then holds none,
@@ -42,6 +42,19 @@ UINT32 compositor_bootstrap(const PLATFORM *platform, UINT32 process,
    kernel's background, if init still holds it, and then the display with
    a resource covering exactly the framebuffer's pages. */
 void compositor_started(const PLATFORM *platform);
+
+/* Issue a connection to the compositor that runs (display.md D19's phase
+   3 arrangement, rule 2): the label, no mark, the layers and the rights,
+   on a channel of its own, and wait for the compositor's answer, or for
+   its control channel to close, which is a compositor that has ended
+   (rule 9). Returns OK, with *client the client's end of the connection,
+   which the caller sends on to the client with DISPLAY_CONNECTION_RIGHTS; the status
+   the compositor refused with, logged as nova-init: connection refused;
+   or the status of the call that failed, ERR_PEER_CLOSED if the
+   compositor has ended and ERR_BAD_STATE if none runs. *client is
+   HANDLE_INVALID unless OK. */
+UINT32 compositor_connect(const char *label, UINT32 layers, UINT32 rights,
+                          UINT32 *client);
 
 /* The compositor is given up: close the background init still holds, if
    it was never sent, and its control channel's end. */

@@ -134,15 +134,18 @@ CI checks every pull request and every push to main:
   `tools/check-text.c`, `tools/check-endpoint.c`,
   `tools/check-backdrop.c`, `tools/check-outline.c`,
   `tools/check-compose.c`, `tools/check-window.c`,
-  `tools/check-route.c`, `tools/check-backlog.c`, `tools/check-nvo.c`,
+  `tools/check-mapping.c`, `tools/check-route.c`,
+  `tools/check-backlog.c`, `tools/check-nvo.c`,
   `tools/check-decimal.c` (on the decimal test cases it downloads, pinned
   by sha256),
   `design/backgrounds/check-limb.sh`, `ci/check-mkinterface.sh`, which
   runs `tools/check-probe-protocol.c` under the sanitizers,
   `tools/check-console-protocol.c` and `tools/check-display-protocol.c`,
   `ci/check-boot.py`, which replays serial lines through `ci/boot.py` to
-  check which failure lines the fallback boot accepts, and actionlint
-  over the workflows.
+  check which lines the fallback and window boots require, which
+  failure lines the fallback boot accepts, which lines the window boot
+  refuses, and how the screens a boot waits for are polled, and
+  actionlint over the workflows.
 - **Boot** boots the reproduced disks under QEMU with Ubuntu 24.04's
   OVMF, with a copy of `data.img` as the data disk: `disk.img`, the
   system's disk, on QEMU's default processor, and `test.img`, the test
@@ -176,7 +179,13 @@ CI checks every pull request and every push to main:
   again for the second start, the screen Limb alone after the
   compositor's first frame and the console draw the display after it,
   with no other failure line, and then goes on as the test disk's boot
-  does, logging in through the console's keys.
+  does, logging in through the console's keys. A boot of `window.img`
+  must show the compositor issue a test client's connection and the
+  client's window made, its first buffer shown and its second shown
+  with the first released, with no close of the window or the
+  connection by the compositor; and QMP's screendump, once the second
+  is shown, must equal the screen `ci/screens.c` draws for the window
+  with the library code the compositor composes with.
 - **Chain** boots `chain.img` and checks that each step of the bootstrap
   chain passes in its test report and each pinned link matches.
 

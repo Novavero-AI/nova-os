@@ -54,6 +54,52 @@ void *mapping_memory(MAPPING *mapping, UINT64 size, UINT32 *status)
     return (void *)start;
 }
 
+/* Whether section holds bytes from its start, mapped and unmapped at
+   mapping->next: *holds is 1 if so and 0 if process_map refuses the range
+   as past the section's end. Returns OK, or the status of a call that
+   failed otherwise. */
+static UINT32 section_holds(const MAPPING *mapping, UINT32 section,
+                            UINT64 bytes, int *holds)
+{
+    UINT32 status = process_map(mapping->self, section, 0, mapping->next, bytes,
+                                MAP_READ);
+
+    *holds = status == OK;
+    if (status == OK)
+        return process_unmap(mapping->self, mapping->next, bytes);
+    return status == ERR_OUT_OF_RANGE ? OK : status;
+}
+
+UINT64 mapping_section_bytes(MAPPING *mapping, UINT32 section, UINT64 limit,
+                             UINT32 *status)
+{
+    /* The pages known to be held, and the least known not to be, or
+       the most asked about while that is not known. */
+    UINT64 held = 0, past = limit / PAGE_SIZE;
+    int holds;
+
+    *status = OK;
+    if (past == 0)
+        return 0;
+    *status = section_holds(mapping, section, past * PAGE_SIZE, &holds);
+    if (*status != OK)
+        return 0;
+    if (holds)
+        return past * PAGE_SIZE;
+    while (past - held > 1) {
+        UINT64 middle = held + (past - held) / 2;
+
+        *status = section_holds(mapping, section, middle * PAGE_SIZE, &holds);
+        if (*status != OK)
+            return 0;
+        if (holds)
+            held = middle;
+        else
+            past = middle;
+    }
+    return held * PAGE_SIZE;
+}
+
 /* The bytes of band index of an image of bytes bytes. */
 static UINT64 band_size(UINT64 bytes, UINT32 index)
 {

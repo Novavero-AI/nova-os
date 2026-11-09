@@ -4,7 +4,7 @@
 # loader, the kernel and every program; tools the host compiler builds
 # convert Inter's faces to nova-os fonts and write the store image, the
 # system's boot disk, the test disk, the specimen disk, the fallback disk,
-# the chain disk, the logout disk and an empty data disk
+# the window disk, the chain disk, the logout disk and an empty data disk
 # (docs/spec/disk-layout.md).
 # SHA256SUMS gives the sha256 of every file in OUT that a build must
 # reproduce, and the build checks each file it downloads against its
@@ -276,8 +276,8 @@ tcc i386 -shared -Wl,-subsystem=native -Wl,-e=ntdll_entry \
 program init.exe init_main -I native -I lib -I drivers -I kernel/random \
   -I store -I test init/init.c init/chain.c init/compat.c init/view.c \
   init/platform.c init/store.c init/console.c init/compositor.c init/data.c \
-  init/login_start.c init/specimen_start.c init/tests.c init/kill.c \
-  drivers/pci.c drivers/virtio_pci.c store/reader.c lib/path.c \
+  init/login_start.c init/specimen_start.c init/window_test.c init/tests.c \
+  init/kill.c drivers/pci.c drivers/virtio_pci.c store/reader.c lib/path.c \
   lib/program.c lib/log.c lib/ktap.c lib/driver_end.c native/native.S \
   kernel/random/sha256.c
 program virtblk.exe virtio_blk_main -I native -I lib -I drivers \
@@ -291,10 +291,12 @@ program console.exe console_main -I native -I lib -I gfx -I kernel/random \
   gfx/gfx.c gfx/flush.c gfx/raster.c gfx/font.c gfx/limb.c \
   lib/endpoint.c lib/keymap.c lib/mapping.c lib/timing.c lib/log.c \
   native/native.S
-program compose.exe compositor_main -I native -I lib -I gfx \
-  compositor/compositor.c lib/compose.c lib/outline.c lib/mapping.c \
-  lib/timing.c lib/log.c gfx/gfx.c gfx/flush.c gfx/raster.c gfx/limb.c \
-  native/native.S
+program compose.exe compositor_main -I native -I lib -I gfx -I compositor \
+  compositor/compositor.c compositor/serve.c lib/compose.c lib/outline.c \
+  lib/window.c lib/backlog.c lib/mapping.c lib/timing.c lib/log.c \
+  gfx/gfx.c gfx/flush.c gfx/raster.c gfx/limb.c native/native.S
+program wintest.exe wintest_main -I native -I lib -I gfx -I test \
+  test/wintest.c lib/mapping.c lib/log.c native/native.S
 program store.exe store_main -I native -I lib -I kernel/random \
   store/store.c store/reader.c lib/name.c lib/log.c native/native.S \
   kernel/random/sha256.c
@@ -341,23 +343,12 @@ program nvo-library.exe nvo_parse -I lib lib/nvo_decimal.c lib/nvo_syntax.c \
   lib/nvo_value.c
 rm -f -- "$out/nvo-library.exe"
 
-# The rules of a window, lib/window.c, are in no program yet. Linking them
-# alone with the composer they call, with --werror's -Wall -Werror, checks
-# that they build for the guest with TinyCC and leave no symbol undefined;
-# no program is built from them and the result is not kept.
-program window-library.exe window_open -I lib -I gfx lib/window.c \
-  lib/compose.c lib/outline.c gfx/gfx.c gfx/flush.c gfx/raster.c gfx/limb.c
-rm -f -- "$out/window-library.exe"
-
-# The routing of a pointer's reports to the window, lib/route.c, and the
-# backlog of what a window's channel cannot take, lib/backlog.c, are in no
-# program yet. Linking each alone, with --werror's -Wall -Werror, checks
-# that it builds for the guest with TinyCC and leaves no symbol undefined;
-# no program is built from them and the results are not kept.
+# The routing of a pointer's reports to the window, lib/route.c, is in no
+# program yet. Linking it alone, with --werror's -Wall -Werror, checks
+# that it builds for the guest with TinyCC and leaves no symbol
+# undefined; no program is built from it and the result is not kept.
 program route-library.exe route_report -I lib -I gfx lib/route.c
 rm -f -- "$out/route-library.exe"
-program backlog-library.exe backlog_flush -I lib -I gfx lib/backlog.c
-rm -f -- "$out/backlog-library.exe"
 
 # The store image's paths: nova-services, the programs the image's
 # header names for the first process to start; greeting; hello, the
@@ -428,6 +419,13 @@ set -- "$@" fstest.exe TESTS NOMOTION
 # given up and the console takes the display from it.
 : > COMPFAIL
 ./mkimage fallback.img fallback.vhdx "$@" COMPFAIL
+
+# The window disk holds the test disk's files, wintest.exe, the window test
+# client, and WINDOW, an empty file, which makes the first process start the
+# compositor and the client, which makes a window and shows two frames in
+# it, in the console's place as the compositor's client.
+: > WINDOW
+./mkimage window.img window.vhdx "$@" wintest.exe WINDOW
 
 # The chain disk holds the test disk's files and, under 8.3 names, the
 # inputs of stage0-pe32's chain up to M1, unmodified, which the

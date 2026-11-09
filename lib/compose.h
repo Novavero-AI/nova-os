@@ -246,6 +246,20 @@ const char *compose_wallpaper_refusal(const BOOTSTRAP_BACKGROUND *background,
                                       const BOOTSTRAP_DISPLAY *display,
                                       UINT32 sections);
 
+/** Compose rect of the screen, which lies within it, in bands of rows
+    rows from its top: each band composed in memory (compose_band) from
+    the wallpaper and the count windows, lowest first, and written in
+    whole blocks (compose_write), so that pixels beside rect's, in the
+    blocks it touches, are written too, with the pixels the frame has
+    there. memory holds the screen's width times rows pixels, room for a
+    band whose blocks reach the width of the screen. The wallpaper is as
+    wide as the screen and at least as high; with rows below 1, or a rect
+    with no pixel, nothing is written. Makes no stores visible: the caller
+    calls gfx_flush. */
+void compose_frame(const SCREEN *screen, const COMPOSE_WALLPAPER *wallpaper,
+                   const COMPOSE_WINDOW *windows, UINT32 count,
+                   const RECT *rect, UINT32 *memory, INT64 rows);
+
 /** Write the wallpaper alone to the whole screen, a frame with no
     window, in bands of rows rows from the top: each band composed in
     memory (compose_band) and written in whole blocks (compose_write).

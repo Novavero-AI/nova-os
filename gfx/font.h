@@ -47,6 +47,21 @@ static inline INT64 font_cell_width(INT64 height)
     return width > FONT_WIDTH_MAX ? FONT_WIDTH_MAX : width;
 }
 
+/* A cell's quarters: the unit the panel's padding and its corners' radius
+   are given in (console.md C5). */
+#define CELL_QUARTERS 4
+
+/* The corners' radius of the panel, and of a window drawn on the panel's
+   surface, in quarters of a cell's width (display.md D19, rule 4). */
+#define PANEL_RADIUS_QUARTERS 5
+
+/* The radius in whole pixels of the panel's corners for cells cell pixels
+   wide: five quarters of a cell, rounded down. */
+static inline INT64 font_panel_radius(INT64 cell)
+{
+    return cell * PANEL_RADIUS_QUARTERS / CELL_QUARTERS;
+}
+
 /* The height in pixels of a cell width pixels wide. */
 INT64 font_height(INT64 width);
 

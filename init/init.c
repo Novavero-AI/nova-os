@@ -36,6 +36,7 @@
 #include "platform.h"
 #include "specimen_start.h"
 #include "tests.h"
+#include "window_test.h"
 
 #define EXIT_STARTUP_FAILED 1
 #define EXIT_SUPERVISION_FAILED 2
@@ -503,6 +504,7 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     else
         console_start(&platform, bootstrap);
     login_start(&platform, &services);
+    window_test_start(&platform);
     status = platform_supervise(&platform);
     say_status("supervision failed", status);
     process_exit(EXIT_SUPERVISION_FAILED);
