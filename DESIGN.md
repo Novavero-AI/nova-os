@@ -131,9 +131,10 @@ CI checks every pull request and every push to main:
   `ci/check-mkinterface.sh` builds with them against the header it makes;
   it runs `tools/check-masks.c`, `tools/check-fade.c`,
   `tools/check-pointer.c`, `tools/check-text.c`,
-  `tools/check-backdrop.c`, `tools/check-outline.c`,
-  `tools/check-compose.c`, `tools/check-nvo.c`, `tools/check-decimal.c`
-  (on the decimal test cases it downloads, pinned by sha256),
+  `tools/check-endpoint.c`, `tools/check-backdrop.c`,
+  `tools/check-outline.c`, `tools/check-compose.c`, `tools/check-nvo.c`,
+  `tools/check-decimal.c` (on the decimal test cases it downloads, pinned
+  by sha256),
   `design/backgrounds/check-limb.sh`, `ci/check-mkinterface.sh`, which
   runs `tools/check-probe-protocol.c` under the sanitizers,
   `tools/check-console-protocol.c` and `tools/check-display-protocol.c`,

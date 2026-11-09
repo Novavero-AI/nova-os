@@ -289,7 +289,8 @@ program virtinp.exe virtio_input_main -I native -I lib -I drivers \
 program console.exe console_main -I native -I lib -I gfx -I kernel/random \
   console/console.c console/text.c console/view.c console/panel.c \
   gfx/gfx.c gfx/flush.c gfx/raster.c gfx/font.c gfx/limb.c \
-  lib/keymap.c lib/mapping.c lib/timing.c lib/log.c native/native.S
+  lib/endpoint.c lib/keymap.c lib/mapping.c lib/timing.c lib/log.c \
+  native/native.S
 program compose.exe compositor_main -I native -I lib -I gfx \
   compositor/compositor.c lib/compose.c lib/outline.c lib/mapping.c \
   lib/timing.c lib/log.c gfx/gfx.c gfx/flush.c gfx/raster.c gfx/limb.c \
