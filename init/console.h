@@ -1,7 +1,7 @@
 /* init's part in the console (docs/spec/console.md C1, C2): the
-   console's bootstrap message and control channel, its options, the
-   kernel's background before the release, the display's handoff once
-   the kernel releases it, and sessions. */
+   console's bootstrap message and control channel, its options, its
+   connection to the compositor, the display's handoff once the
+   compositor is given up, and sessions. */
 
 #ifndef NOVA_INIT_CONSOLE_H
 #define NOVA_INIT_CONSOLE_H
@@ -21,20 +21,22 @@
 UINT32 console_bootstrap(const PLATFORM *platform, UINT32 process,
                          UINT32 channel);
 
-/* Give the console, if one runs, the kernel's background, with the
-   display it is to be given, and wait until it answers that its panel
-   is prepared or its control channel closes (C1, C5); on a test disk,
-   with the display described MISMATCH_ROWS taller (console.c). The
-   background's sections leave init either way. A console that has
-   ended, whose end the supervisor logs, closes the channel; any other
-   failure to send or to read the answer, and an answer that is not the
-   one console_protocol.h gives, is logged. */
-void console_prepare(const PLATFORM *platform, BOOT_BACKGROUND *background);
-
 /* The console console_bootstrap wrote for has started: once the display
-   is released, send it on the control channel and give login, if it
-   runs, a session on it. */
+   is released, give login, if it runs, a session on it, and send the
+   console the display if the compositor is given up, or else a
+   connection to the compositor (console_connect). */
 void console_started(const PLATFORM *platform);
+
+/* Issue the console a connection to the compositor and send it, as
+   display.md D19's phase 3 arrangement, rule 2's step 4, gives: the label
+   console, no mark, SYSTEM alone and no rights, and the console's end on
+   the control channel once the compositor has answered. Does nothing
+   where no compositor runs, no console does, or the window test client
+   holds the compositor in the console's place (rule 11). A compositor
+   that ends before it answers is rule 9's: the connection is issued
+   again when it is started again. A refusal is logged by
+   compositor_connect. */
+void console_connect(void);
 
 /* After the startup report on bootstrap, init's bootstrap endpoint, wait
    for the kernel to release the display by closing its end, and close
@@ -60,13 +62,9 @@ UINT32 display_message(const PLATFORM *platform,
 void display_for_background(const PLATFORM *platform,
                             BOOTSTRAP_DISPLAY *display);
 
-/* display_released, then send the display to the console, if one runs,
-   and to each console started after. */
-void console_start(const PLATFORM *platform, UINT32 bootstrap);
-
 /* The kernel has released the display and a compositor draws on it: a
-   console started now is given login's session and no display, until
-   console_display_after (C2). */
+   console started while it does is given login's session and a
+   connection and no display, until console_display_after (C2). */
 void console_defer_display(void);
 
 /* The compositor is given up: the display is the console's. Send the

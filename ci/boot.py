@@ -34,17 +34,22 @@ passing. chain, fallback, window and specimen take only a test disk, and
 fallback and persist a whole data disk.
 
 In system mode, the boot must report the store service serving, startup
-done, the background drawn, the console drawn, its panel's backdrop
-made from the kernel's background or, on a test disk, whose console is
-told of a display the background does not match, computed
-(docs/spec/console.md C5), and the console taking the description of
-each of the keyboard, the mouse and the tablet, the tablet's with its
-axes' range. Then, sent through QMP, QEMU's monitor
-protocol, the tablet moves, each of three buttons is clicked, the wheel
-turns up and down and the mouse moves, and the console must report
-each; no position sent may appear in a line of the console or an input
-driver. With a data disk whose GPT is whole, the accounts service must
-report its self-test passing and no account, and login must start;
+done, the background drawn, the compositor's display, its wallpaper
+made from the kernel's background or, on a test disk, whose compositor
+is told of a display the background does not match, computed
+(docs/spec/display.md D2), the console's connection issued and its
+window made on it, and the compositor taking the description of each of
+the keyboard, the mouse and the tablet, the tablet's with its axes'
+range. Then, sent through QMP, QEMU's monitor protocol, the tablet
+moves, each of three buttons is clicked, the wheel turns up and down
+and the mouse moves, and the compositor must report each; no position
+sent may appear in a line of the compositor, the console or an input
+driver, and the console, in a window, must log no line for an input.
+With a data disk whose GPT is whole, the accounts service must
+report its self-test passing and no account, and login must start,
+and QMP's screendump must come to equal, within SCREEN_TIMEOUT, the
+screen ci/screens.c draws for the console's window showing login's
+prompt, with the pointer at the pixel the tablet's last place gives;
 then, typed through QMP, the first account is created, the shell
 starts, and the shell must report running whoami for it; the password,
 typed at the shell's prompt too, must appear nowhere in the log. The
@@ -56,13 +61,15 @@ host as docs/spec/pool-format.md lays it out, must hold the account's
 home alone in /users and the command's change in the home, and nothing
 else there; no word of a name or line typed for the commands may
 appear in the log. In system mode the session then writes a file of
-one-character lines, which fill the console's panel past a screen, and
-once the screen shows the shell's prompt after them the wheel turns
-back and forward through QMP. Before the turns and after each, QMP's
-screendump must come to equal, within SCREEN_TIMEOUT, the screen
-ci/screens.c draws from the same lines, prompt and turns, with the
-caret in either phase of its blink, built with the host's C compiler,
-CC if set. On a test disk, whose first process sets ui.reduce-motion
+one-character lines, which fill the console's panel past a screen, the
+tablet moves into the console's window, and once the screen shows the
+shell's prompt after the lines the wheel turns back and forward through
+QMP. Before the turns and after each, QMP's screendump must come to
+equal, within SCREEN_TIMEOUT, the screen ci/screens.c draws from the
+same lines, prompt and turns, with the pointer where the tablet is and
+the caret in either phase of its blink, built with the host's C
+compiler, CC if set. The secure attention key, sent through QMP, must be
+logged by the compositor and leave the screen as it was. On a test disk, whose first process sets ui.reduce-motion
 for its flag file NOMOTION (docs/spec/display.md D19), the caret holds
 steady: each screen must show it lit, and the screen must stay the same
 for STEADY_SECONDS more. In persist mode the same copy of the data disk
@@ -72,27 +79,30 @@ with it, run whoami and show the file, which the disk must still hold.
 Each session ends with logout, and login must report it ended.
 In chain mode, the boot of chain.img must report the chain's steps
 passing in its test report. In fallback mode, the boot of fallback.img,
-a test disk whose first process makes the compositor end after its first
-frame at every start, must show the compositor take the display and
-give it up (docs/spec/display.md D19, rule 9): the compositor's refusal
-of the background, its display line, which says its wallpaper is
-computed, and its end with COMPOSITOR_EXIT_TEST, each of the last two
-once for each of its two starts; the first process restarting it once
-and giving it up; each of the three input drivers started again for the
-compositor's second start; and the console drawing the display after
-it, Limb over the whole screen and then its panel. When the first
-display line is read, QMP's screendump must be Limb alone, as
-ci/screens.c draws it; the dump is taken before the console draws
-anything (check_limb). A first frame the compositor
-does not write leaves the kernel's Limb, which is the same pixels, and
-is not seen. Of the lines that report a failure the boot accepts only
-those of the first process and the drivers, each as often as it is
-reported and no more, and any other fails it; it then goes on as system
-mode does, matching the screen against the host's render and logging in
-on the console. In window mode, the boot of window.img, a
-test disk whose first process starts the compositor and a test client
-that makes a window on it (docs/spec/display.md D19, rules 2, 4, 5 and
-8), must report the compositor refusing the background and computing
+a test disk whose first process makes the compositor end just after the
+first frame that shows the console's window, at every start, must show
+the compositor take the display and give it up (docs/spec/display.md
+D19, rule 9): the compositor's refusal of the background, its display
+line, which says its wallpaper is computed, the console's connection
+issued and its window made, and the compositor's end with
+COMPOSITOR_EXIT_TEST, each of the last three once for each of its two
+starts, the console's window made before each end; the first process
+restarting it once and giving it up; each of the three input drivers
+started again for the compositor's second start; and the console
+drawing the display after it, Limb over the whole screen and then its
+panel. When the first display line is read, QMP's screendump must be
+either Limb alone or the console's window over Limb, as ci/screens.c
+draws them, polled until it is one (check_limb): a whole frame of the
+compositor, not the order of the two. A first frame the compositor does
+not write leaves the kernel's Limb, which is the same pixels, and is not
+seen. Of the lines that report a failure the boot accepts only those of
+the first process and the drivers, each as often as it is reported and
+no more, and any other fails it; it then goes on as system mode does,
+matching the screen against the host's render and logging in on the
+console. In window mode, the boot of window.img, a
+test disk whose first process starts a test client that makes a window
+on the compositor in the console's place (docs/spec/display.md D19,
+rules 2, 4, 5, 8 and 11), must report the compositor refusing the background and computing
 Limb, issuing the client's connection, and the client's window made,
 its first buffer shown, and its second shown with the first released;
 and then, within SCREEN_TIMEOUT of the client's report of the second,
@@ -117,7 +127,7 @@ no pointer, where it must also stay so for STEADY_SECONDS. Then keys are
 typed through QMP, and the client must be sent them as display.md D11 and
 D12 give. The client holds its window and its connection for the whole
 boot, so a line that says the compositor closed either fails the boot.
-No console draws and no account is made. In specimen
+No console connects, draws or takes a key, and no account is made. In specimen
 mode, the boot of specimen.img
 must report the display given to the type specimen from /store and the
 specimen drawn; then QMP's screendump, kept at SCREEN.ppm if given,
@@ -349,25 +359,21 @@ SCREEN_SIZE = re.compile(r"\d+x\d+")
 DISPLAYS = [Event("nova-console: display", screen=SCREEN_SIZE),
             Event("nova-compositor: display", screen=SCREEN_SIZE)]
 
-# The console's lines on its panel's backdrop: on the system disk, its
-# line once it draws the panel, made from the kernel's background; on a
-# test disk, whose console the first process tells of a display a row
-# taller than the background (init/console.c, MISMATCH_ROWS), its
-# refusal of the background for that, and the panel's Limb computed at
-# the display.
-CONSOLE_DRAWN = {
-    False: [Event("nova-console: display backdrop=section",
-                  absent=("after",), screen=ANY_VALUE)],
-    True: [Event('nova-console: background refused reason="another size"'),
-           Event("nova-console: display backdrop=computed",
-                 absent=("after",), screen=ANY_VALUE)],
-}
+# The console's window and the lines before it (docs/spec/display.md D19,
+# rules 2 and 4): the compositor's connection for the console, and the
+# console's line for the window it made on it, which names the screen it
+# was told of and the window's size, the panel's box.
+CONSOLE_CONNECTION = Event("nova-compositor: connection issued "
+                           "label=console mark=no layers=system rights=none")
+CONSOLE_WINDOW = Event("nova-console: window", screen=SCREEN_SIZE,
+                       size=SCREEN_SIZE)
 
 # The fallback boot's lines (docs/spec/display.md D19, rule 9). The
 # compositor, started on a test disk with the background labelled for a
-# display a row taller, refuses it and computes Limb, as the console of
-# any test disk does. It is started twice, the second time without a
-# background, so its display line and its end come twice, and its first
+# display a row taller, refuses it and computes Limb, as the compositor
+# of any test disk does. It is started twice, the second time without a
+# background, so its display line, the console's connection and window
+# and its end come twice, the window before each end, and its first
 # process restarts it once and then gives it up. Each input driver is
 # started again for the second start, which the first process logs with
 # the reason "its client restarted", and may be started again for the
@@ -388,6 +394,22 @@ COMPOSITOR_EXIT_TEST = 102
 
 COMPOSITOR_DISPLAY = Event("nova-compositor: display", screen=ANY_VALUE,
                            wallpaper="computed")
+REFUSED_BACKGROUND = Event('nova-compositor: background refused '
+                           'reason="another size"')
+
+# The compositor's lines on the wallpaper, the console's connection and
+# its window, in the system boot: on the system disk, a wallpaper made
+# from the kernel's background; on a test disk, whose compositor the
+# first process tells of a display a row taller than the background
+# (init/console.c, MISMATCH_ROWS), its refusal of the background for
+# that, and Limb computed at the display.
+COMPOSITOR_DRAWN = {
+    False: [Event("nova-compositor: display", screen=ANY_VALUE,
+                  wallpaper="section"),
+            CONSOLE_CONNECTION, CONSOLE_WINDOW],
+    True: [REFUSED_BACKGROUND, COMPOSITOR_DISPLAY, CONSOLE_CONNECTION,
+           CONSOLE_WINDOW],
+}
 COMPOSITOR_ENDED = Event("nova-init: child ended name=compositor exit=%d"
                          % COMPOSITOR_EXIT_TEST)
 COMPOSITOR_RESTARTED = Event("nova-init: child restarted name=compositor")
@@ -401,8 +423,10 @@ INPUT_RESTARTED = [
 CONSOLE_AFTER = Event("nova-console: display backdrop=computed "
                       "after=compositor", screen=ANY_VALUE)
 FALLBACK_LINES = (
-    [Event('nova-compositor: background refused reason="another size"'),
+    [REFUSED_BACKGROUND,
      COMPOSITOR_DISPLAY.repeated(COMPOSITOR_STARTS),
+     CONSOLE_CONNECTION.repeated(COMPOSITOR_STARTS),
+     CONSOLE_WINDOW.repeated(COMPOSITOR_STARTS),
      COMPOSITOR_ENDED.repeated(COMPOSITOR_STARTS),
      COMPOSITOR_RESTARTED, COMPOSITOR_GIVEN_UP]
     + [INPUT_RESTARTED[0].repeated(INPUT_FUNCTIONS)]
@@ -414,7 +438,11 @@ STARTUP_LINES = [
     BACKGROUND,
 ]
 
-SYSTEM_LINES = STARTUP_LINES + INPUT_LINES
+# The system boot's lines before the compositor's (COMPOSITOR_DRAWN): the
+# compositor has the input endpoints. The fallback boot's console has them
+# once the compositor is given up.
+SYSTEM_LINES = STARTUP_LINES + input_lines("nova-compositor")
+FALLBACK_STARTUP_LINES = STARTUP_LINES + INPUT_LINES
 
 # The window boot's lines (docs/spec/display.md D19, rules 2, 4, 5 and 8,
 # and test/wintest.h). The compositor, started on a test disk, refuses the
@@ -432,7 +460,7 @@ WINDOW_SHOWN = Event("nova-wintest: shown frame=2")
 WINDOW_MADE = Event("nova-wintest: window", screen=SCREEN_SIZE,
                     size=SCREEN_SIZE)
 WINDOW_LINES = STARTUP_LINES + [
-    Event('nova-compositor: background refused reason="another size"'),
+    REFUSED_BACKGROUND,
     COMPOSITOR_DISPLAY,
     Event("nova-compositor: connection issued number=1 label=wintest "
           "mark=no layers=system rights=none"),
@@ -442,17 +470,29 @@ WINDOW_LINES = STARTUP_LINES + [
     WINDOW_SHOWN,
 ] + input_lines("nova-compositor")
 
-# The lines the window boot refuses besides those that report a failure.
-# The client holds its window and its connection for the whole boot, and
+# The lines the boots that run on the compositor refuse besides those that
+# report a failure. The client of the window boot and the console of the
+# others hold their window and their connection for the whole boot, and
 # a close by their holder logs nothing (docs/spec/display.md D19, rule 8),
 # so each is a close the compositor made. The console is handed no
-# endpoint while the compositor runs, so a line of its for one means the
-# endpoint went to it, and a compositor that refuses a message of an
-# endpoint has failed to serve it.
-WINDOW_REFUSED = [Event("nova-compositor: window closed"),
-                  Event("nova-compositor: connection closed"),
-                  Event("nova-compositor: input message refused"),
-                  Event("nova-console: input")]
+# endpoint while the compositor runs and logs none for a window's keys
+# and wheel (docs/spec/console.md C2), so a line of its for an input or a
+# pointer event means the endpoint went to it, and a compositor that
+# refuses a message of an endpoint has failed to serve it.
+COMPOSITOR_REFUSED = [Event("nova-compositor: window closed"),
+                      Event("nova-compositor: connection closed"),
+                      Event("nova-compositor: input message refused"),
+                      Event("nova-console: input")] + [
+    Event("nova-console: pointer " + change)
+    for change in ("move", "press", "release", "wheel")]
+
+# The window boot's console draws, connects and takes a key not at all,
+# since the test client is the compositor's one.
+WINDOW_REFUSED = COMPOSITOR_REFUSED + [Event("nova-console: window")]
+
+# The modes whose console draws in a window on the compositor, through
+# which the boot types and points (docs/spec/display.md D19, rule 2).
+WINDOW_PATH_MODES = ("system", "persist", "logout")
 
 CHAIN_LINES = [STARTUP_DONE]
 
@@ -507,6 +547,7 @@ SCREENS_FLAGS = ["-std=c11", "-O2", "-Wall", "-Wextra", "-pedantic",
                  "-Werror"]
 SCREENS_PROGRAM = "screens"
 CONSOLE_SCREEN = "console"
+CONSOLE_WINDOW_SCREEN = "console-window"
 LIMB_SCREEN = "limb"
 WINDOW_SCREEN = "window"
 TYPED_LINE = "line"
@@ -731,6 +772,17 @@ SCROLL_COMMAND = (["write " + SCROLL_FILE] + SCROLL_LINES + [END_OF_LINES],
 # write brings the view back to the end.
 PROMPT = "%s@nova /%s> " % (ACCOUNT_NAME, "/".join(HOME))
 
+# What login has written when it waits for a name: on a first boot, which
+# has no account, its message and the prompt for the new account's name,
+# and on a later boot the prompt to log in (login/login.c).
+FIRST_PROMPT = ("nova-os has no accounts yet. Create the administrator's "
+                "account.\nname: ")
+LATER_PROMPT = "login: "
+
+# The secure attention key, Control and Alt held and Delete pressed and
+# released, as key_event takes them (docs/spec/display.md D12).
+ATTENTION_KEYS_SENT = "ctrl+ alt+ delete+ delete- alt- ctrl-"
+
 # The wheel's turns, each detent a press and release of QMP's wheel-up or
 # wheel-down in one input-send-event, which QEMU sends as REL_WHEEL 1 or
 # -1 and a release no driver takes, ended by one SYN_REPORT
@@ -782,6 +834,13 @@ def pointer_lines(component):
 
 
 POINTER_LINES = pointer_lines("nova-console")
+COMPOSITOR_POINTER_LINES = pointer_lines("nova-compositor")
+
+# The tablet's place when the console's window is turned the wheel: inside
+# the window at every size the boots run, whose middle D6 puts half the
+# screen across and at 40 percent of its height down (display.md D6,
+# Placement), and a place no other line holds (UNLOGGED).
+WHEEL_AT = {"x": 16301, "y": 13007}
 
 # The keys the window boot sends, each string one QMP input-send-event
 # of key events in the order given, a key's name (its QKeyCode) and a
@@ -1298,7 +1357,8 @@ UNLOGGED = ([(literal(ACCOUNT_PASSWORD), "the account's password")]
                             "alphabet"]
                + " ".join([FIRST_DRAFT] + FINAL_LINES).split()]
             + [(whole_number(value), "the pointer's %s" % axis)
-               for axis, value in POINTER_AT.items()])
+               for place in (POINTER_AT, WHEEL_AT)
+               for axis, value in place.items()])
 
 # The window boot's pointer places, which the compositor must not log
 # either, and the client logs only relative to its window.
@@ -1378,8 +1438,11 @@ def accepted_failures(mode):
 
 def refused_lines(mode):
     """The lines, besides those that report a failure, that fail a boot
-    in mode: the window boot's WINDOW_REFUSED, and none in any other."""
-    return WINDOW_REFUSED if mode == "window" else []
+    in mode: the window boot's WINDOW_REFUSED, the console in a window's
+    COMPOSITOR_REFUSED, and none in any other."""
+    if mode == "window":
+        return WINDOW_REFUSED
+    return COMPOSITOR_REFUSED if mode in WINDOW_PATH_MODES else []
 
 
 class Accepted:
@@ -1688,13 +1751,17 @@ class Serial:
     function of no arguments, calls the function once, when the first
     line that matches the Event is read. While script, a KeyScript or a
     PointerScript, is set, each line is checked against it as it is read.
-    The keys of the test client's window line, once it is read, are kept in
-    window, and the window boot's pointer places are among the lines'
-    unlogged words."""
+    The keys of the window line of the test client or of the console, once
+    it is read, are kept in window, and the window boot's pointer places
+    are among the lines' unlogged words. In the fallback boot, the console
+    makes its window before each end of the compositor."""
 
     def __init__(self, stream, log, report, size, mode, watches=()):
         self.script = None
         self.window = None
+        self.mode = mode
+        self.windows = 0
+        self.exits = 0
         self.lines = queue.Queue()
         self.start = time.monotonic()
         self.leaked = set()
@@ -1760,8 +1827,10 @@ class Serial:
                                  + line[LINE_START.search(line).start():])
             if self.script:
                 self.script.take(parsed)
-            if WINDOW_MADE.matches(parsed):
+            if WINDOW_MADE.matches(parsed) or CONSOLE_WINDOW.matches(parsed):
                 self.window = parsed[2]
+            if self.mode == "fallback":
+                self.check_window_before_end(parsed, line)
             if BACKGROUND.matches(parsed):
                 check_spinner(parsed[2], line)
             if self.size and any(d.matches(parsed) for d in DISPLAYS):
@@ -1772,6 +1841,20 @@ class Serial:
             for watch in [w for w in self.watches if w[0].matches(parsed)]:
                 self.watches.remove(watch)
                 watch[1]()
+
+    def check_window_before_end(self, parsed, line):
+        """Fail if parsed, a line of the fallback boot, is an end of the
+        compositor that the console's window did not come before: each end
+        is of a compositor that ends after the first frame that shows a
+        window's present (docs/spec/display.md D19, rule 9)."""
+        if CONSOLE_WINDOW.matches(parsed):
+            self.windows += 1
+        elif COMPOSITOR_ENDED.matches(parsed):
+            self.exits += 1
+            if self.windows < self.exits:
+                raise BootFailed("the compositor ended before the console "
+                                 "made its window: "
+                                 + line[LINE_START.search(line).start():])
 
     def wait_quiet(self, seconds, forbidden):
         """Read lines for seconds, failing at the first that matches the
@@ -1860,11 +1943,15 @@ def send_events(qmp, events):
     qmp.execute("input-send-event", events=events)
 
 
-def point(serial, qmp):
-    """Send the pointer's events and wait for the console's lines."""
+def point(serial, qmp, window):
+    """Send the pointer's events and wait for the lines for them: the
+    compositor's where the console is in a window, as window, that
+    window's line's keys, says, and the console's where it has the
+    pointing device."""
     for events in POINTER_EVENTS:
         send_events(qmp, events)
-    serial.wait_for(POINTER_LINES, time.monotonic() + KEY_TIMEOUT)
+    serial.wait_for(COMPOSITOR_POINTER_LINES if window else POINTER_LINES,
+                    time.monotonic() + KEY_TIMEOUT)
 
 
 def run_commands(serial, qmp, commands, data):
@@ -1913,22 +2000,28 @@ def log_out(serial, qmp):
 
 
 def drive(serial, qmp_path, data, accounts, first, screens, scratch,
-          steady):
-    """Over QMP: send the pointer's events, then, with accounts, create
-    the account or log in with it as log_in does, and with screens, the
-    program ci/screens.c builds to, check the wheel as scroll does, with
-    the caret steady or not; then, with accounts, end the session as
-    log_out does."""
+          steady, window):
+    """Over QMP: send the pointer's events, then, with accounts, and with
+    screens, the program ci/screens.c builds to, check the login prompt
+    as check_prompt does, create the account or log in with it as log_in
+    does, and with screens check the wheel as scroll does, with the caret
+    steady or not; then, with accounts, end the session as log_out does.
+    window is the keys of the console's window line where the console is in
+    a window, or None."""
+    geometry = Geometry.of(window) if window else None
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(QMP_TIMEOUT)
         connection.connect(qmp_path)
         with connection.makefile("rwb") as stream:
             qmp = Qmp(stream)
-            point(serial, qmp)
+            point(serial, qmp, window)
+            if accounts and screens:
+                check_prompt(qmp, scratch, screens, steady, geometry, first)
             if accounts:
                 log_in(serial, qmp, data, first)
             if screens:
-                scroll(serial, qmp, data, screens, scratch, steady)
+                scroll(serial, qmp, data, screens, scratch, steady,
+                       geometry)
             if accounts:
                 log_out(serial, qmp)
 
@@ -2047,33 +2140,58 @@ def draw_screen(screens, scratch, kind, width, height, inputs):
     return read_ppm(path)[2]
 
 
-def check_limb(qmp_path, scratch, screens):
-    """Take QMP's screendump and fail unless it is Limb alone, as
-    ci/screens.c draws it by the code the console draws it with, which
-    is not the compositor's. The boot takes it when the compositor's
-    first display line is read, which follows its first frame: the
-    compositor's own next write is the same frame, from its second
-    start, and the console draws nothing until the compositor's second
-    end, a whole start of a process later, and its first write is Limb
-    again. The boot runs under TCG, where that start takes seconds and
-    the dump milliseconds. A frame the compositor does not write at all
-    leaves the kernel's Limb, the same pixels, and is not seen."""
+# The screens the compositor shows from its first frame to its exit in the
+# fallback boot, which the compositor's first display line comes after: its
+# first frame, Limb alone, and the frame that shows the console's window,
+# whose text is empty and which has no caret, since the console has been
+# given nothing to write and no read waits (docs/spec/display.md D19,
+# rule 9).
+FIRST_FRAME_SCREENS = ("Limb alone", "the console's window over Limb")
+
+
+def first_frame_screens(screens, scratch, width, height):
+    """The pixels of each of FIRST_FRAME_SCREENS, in order, at width x
+    height, as ci/screens.c draws them."""
+    return [draw_screen(screens, scratch, LIMB_SCREEN, width, height, []),
+            draw_screen(screens, scratch, CONSOLE_WINDOW_SCREEN, width,
+                        height, [CARET, "off"])]
+
+
+def match_first_frame(qmp, scratch, screens):
+    """Take QMP's screendump until its pixels are one of
+    FIRST_FRAME_SCREENS as ci/screens.c draws them, or SCREEN_TIMEOUT
+    passes with a BootFailed that counts the pixels of the nearer one that
+    differ. Returns the name of the one it was."""
     shot = os.path.abspath(os.path.join(scratch, SCREEN_COPY))
+    wanted, _ = poll_screen(
+        qmp, shot, lambda width, height: first_frame_screens(
+            screens, scratch, width, height))
+    return FIRST_FRAME_SCREENS[wanted.index(read_ppm(shot)[2])]
+
+
+def check_limb(qmp_path, scratch, screens):
+    """Fail unless the screen is, in some dump taken from when the
+    compositor's first display line is read, one of the two frames the
+    compositor shows before it ends: Limb alone, or the console's window
+    over Limb (match_first_frame). The dumps are polled, so a dump taken
+    while a frame is composed, which matches neither, is taken again.
+
+    This shows that each frame the compositor shows is a whole one, the
+    first Limb as the kernel's fade left it and the next the console's
+    window composed over it, as ci/screens.c draws them by the code the
+    compositor composes with and the console draws with. It does not show
+    the order: the console's window may be shown before the first dump, in
+    which case Limb alone is never seen. A frame the compositor does not
+    write at all leaves the kernel's Limb, the same pixels, and is not
+    seen. The boot's later screens, after the compositor is given up,
+    are the console's own."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(QMP_TIMEOUT)
         connection.connect(qmp_path)
         with connection.makefile("rwb") as stream:
-            Qmp(stream).execute("screendump", filename=shot)
-    width, height, pixels = read_ppm(shot)
-    differ = differing(pixels, draw_screen(screens, scratch, LIMB_SCREEN,
-                                           width, height, []))
-    if differ:
-        raise BootFailed("after the compositor's first frame the %dx%d "
-                         "screen differs from Limb in %d pixels"
-                         % (width, height, differ))
-    print("          the %dx%d screen after the compositor's first frame "
-          "equals Limb, sha256 %s"
-          % (width, height, hashlib.sha256(pixels).hexdigest()), flush=True)
+            shown = match_first_frame(Qmp(stream), scratch, screens)
+    print("          the screen after the compositor's first display line is "
+          "%s" % shown, flush=True)
 
 
 def poll_screen(qmp, shot, draw):
@@ -2100,19 +2218,28 @@ def poll_screen(qmp, shot, draw):
     return wanted, digests
 
 
-def match_screen(qmp, scratch, screens, inputs, steady):
+def match_screen(qmp, scratch, screens, inputs, steady, geometry=None,
+                 at=None):
     """Take QMP's screendump until its pixels' SHA-256 is that of the
     console's screen screens draws at its size from inputs, or
-    SCREEN_TIMEOUT passes. The caret is in either phase of its blink,
-    which a screen with no caret in view draws alike; where it is
-    steady, it is lit, and the screen must then stay that one for
-    STEADY_SECONDS, since a blinking caret matches whenever it is lit."""
+    SCREEN_TIMEOUT passes: the console in a window with the pointer at the
+    pixel the tablet's place at gives on geometry's screen, where there is
+    a geometry, and the console on its own where there is none. The caret
+    is in either phase of its blink, which a screen with no caret in view
+    draws alike; where it is steady, it is lit, and the screen must then
+    stay that one for STEADY_SECONDS, since a blinking caret matches
+    whenever it is lit."""
     shot = os.path.abspath(os.path.join(scratch, SCREEN_COPY))
+    kind, pointer = CONSOLE_SCREEN, []
+    if geometry:
+        column, row = geometry.pixel(at)
+        kind, pointer = CONSOLE_WINDOW_SCREEN, [POINTER_INPUT, str(column),
+                                                str(row)]
     wanted, digests = poll_screen(
         qmp, shot,
         lambda width, height: [
-            draw_screen(screens, scratch, CONSOLE_SCREEN, width, height,
-                        inputs + [CARET, phase])
+            draw_screen(screens, scratch, kind, width, height,
+                        inputs + [CARET, phase] + pointer)
             for phase in (CARET_STEADY if steady else CARET_PHASES)])
     if steady:
         hold_screen(qmp, shot, wanted, digests)
@@ -2232,16 +2359,44 @@ def hold_screen(qmp, shot, wanted, digests):
           flush=True)
 
 
-def scroll(serial, qmp, data, screens, scratch, steady):
+def check_prompt(qmp, scratch, screens, steady, geometry, first):
+    """Match the screen with the one screens draws for login's prompt:
+    what login writes, on a first boot, with no account made, and its
+    prompt for a name, and at later boots its prompt alone, with the
+    pointer where the tablet last was, POINTER_AT, in a window."""
+    match_screen(qmp, scratch, screens,
+                 [WRITTEN, FIRST_PROMPT if first else LATER_PROMPT], steady,
+                 geometry, POINTER_AT)
+
+
+def attention(serial, qmp):
+    """Send the secure attention key, Control and Alt held and Delete
+    pressed and released, and wait for the compositor to log it."""
+    print("          input-send-event keys %s" % ATTENTION_KEYS_SENT,
+          flush=True)
+    qmp.execute("input-send-event",
+                events=[key_event(item)
+                        for item in ATTENTION_KEYS_SENT.split()])
+    serial.wait_for([Event(ATTENTION_LINE, at_ms=TIME_MS)],
+                    time.monotonic() + KEY_TIMEOUT)
+
+
+def scroll(serial, qmp, data, screens, scratch, steady, geometry):
     """Write the file of SCROLL_COMMAND, its lines filling the console's
     panel, wait for the shell's prompt after it, then turn the wheel as
     WHEEL_TURNS gives, and match each screen with the one screens draws
     from the lines, the prompt and the turns, as match_screen does with
-    steady."""
+    steady. In a window, the tablet first moves to WHEEL_AT, inside it,
+    which is where the pointer is drawn, and the screen must be as it was
+    after the secure attention key."""
+    at = POINTER_AT
+    if geometry:
+        send_events(qmp, move("abs", WHEEL_AT))
+        at = WHEEL_AT
     run_commands(serial, qmp, [SCROLL_COMMAND], data)
     inputs = [word for line in SCROLL_LINES + [END_OF_LINES]
               for word in (TYPED_LINE, line)] + [WRITTEN, PROMPT]
-    match_screen(qmp, scratch, screens, inputs, steady)
+    match_screen(qmp, scratch, screens, inputs, steady, geometry, at)
     for detents in WHEEL_TURNS:
         name = "wheel-up" if detents > 0 else "wheel-down"
         for _ in range(abs(detents)):
@@ -2249,7 +2404,10 @@ def scroll(serial, qmp, data, screens, scratch, steady):
             qmp.execute("input-send-event",
                         events=button(name, True) + button(name, False))
             inputs += [WHEEL_TURNED, "1" if detents > 0 else "-1"]
-        match_screen(qmp, scratch, screens, inputs, steady)
+        match_screen(qmp, scratch, screens, inputs, steady, geometry, at)
+    if geometry:
+        attention(serial, qmp)
+        match_screen(qmp, scratch, screens, inputs, steady, geometry, at)
 
 
 def stop(qemu):
@@ -2590,8 +2748,8 @@ def boot(args, scratch, log, data_drive, data_lines, first):
         lines = {"chain": CHAIN_LINES,
                  "specimen": SPECIMEN_LINES,
                  "window": WINDOW_LINES,
-                 "fallback": SYSTEM_LINES + FALLBACK_LINES}.get(
-                     args.mode, SYSTEM_LINES + CONSOLE_DRAWN[args.tests])
+                 "fallback": FALLBACK_STARTUP_LINES + FALLBACK_LINES}.get(
+                     args.mode, SYSTEM_LINES + COMPOSITOR_DRAWN[args.tests])
         if not args.tests:
             lines = [RANDOM_PASSED] + lines
         try:
@@ -2610,7 +2768,8 @@ def boot(args, scratch, log, data_drive, data_lines, first):
             drive_window(serial, qmp_path, scratch, screens)
         if args.mode in ("system", "fallback", "persist"):
             drive(serial, qmp_path, os.path.join(scratch, DATA_COPY),
-                  accounts, first, screens, scratch, args.tests)
+                  accounts, first, screens, scratch, args.tests,
+                  serial.window if args.mode in WINDOW_PATH_MODES else None)
         if args.mode == "logout":
             drive_logout(serial, qmp_path)
     finally:

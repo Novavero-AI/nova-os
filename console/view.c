@@ -1,11 +1,20 @@
 /* The panel's view of the console's text (view.h). */
 
 #include "view.h"
+#include "display_protocol.h"
 
 /* The first line of a view of rows lines at the end. */
 static UINT64 end_top(const TEXT *text, UINT32 rows)
 {
     return text->lines > rows ? text->lines - rows : 0;
+}
+
+INT64 view_wheel(INT64 *remainder, INT32 wheel)
+{
+    INT64 turned = *remainder + wheel;
+
+    *remainder = turned % DISPLAY_WHEEL_DETENT;
+    return turned / DISPLAY_WHEEL_DETENT * VIEW_WHEEL_LINES;
 }
 
 UINT64 view_back_limit(const TEXT *text, UINT32 rows)

@@ -44,6 +44,17 @@ typedef struct {
 UINT32 keys_event(KEYBOARD *keyboard, UINT32 code, UINT32 value,
                   UINT8 *character);
 
+/** What a WINDOW_KEY does (docs/spec/display.md D11, rule 2), the same
+    as keys_event gives for the event it was made of: the compositor has
+    applied the modifiers and the keymap, so a character key pressed or
+    repeated arrives with its text, one printable ASCII character, which
+    is EDIT_INSERT with *character set; a release, a key with no text that
+    is no editing key, and any text that is not one printable ASCII
+    character are EDIT_NONE; an editing key is its edit. The console in a
+    window takes its keys by this, since it holds no keyboard's state. */
+UINT32 keys_window_edit(UINT32 code, UINT32 value, const UINT8 *text,
+                        UINT32 text_length, UINT8 *character);
+
 /** Whether the key event of evdev code, of any value (a press, a repeat or
     a release), is of the secure attention key (docs/spec/display.md D12):
     code is Delete or the keypad's Delete, and keyboard holds either

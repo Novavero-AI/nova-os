@@ -11,10 +11,10 @@
 #include "pci.h"
 #include "program.h"
 
-/* What draws the screen from the kernel's release on, and is the input
-   drivers' client while it runs (docs/spec/display.md D2): the console,
-   or a compositor, which the console takes over from if it is given up
-   (D3). */
+/* What is the input drivers' client from the kernel's release on
+   (docs/spec/display.md D2): a compositor, which the console takes over
+   from if it is given up (D3), or the console, where no compositor runs,
+   on the type specimen's disk. */
 typedef enum { DRAWER_CONSOLE, DRAWER_COMPOSITOR } DRAWER;
 
 typedef struct {
@@ -33,8 +33,8 @@ typedef struct {
    INPUT_DEVICES_MAX, one after another as each reports, and, once the
    first reports, their client, the console, \nova\console.exe, leaving
    them running; with drawer DRAWER_COMPOSITOR the endpoints wait for the
-   compositor instead (platform_start_compositor). A driver that fails is started again as the restart
-   policy allows (platform.c). Returns 1, or 0, logged, if waiting on
+   compositor instead (platform_start_compositor). A driver that fails
+   is started again as the restart policy allows (platform.c). Returns 1, or 0, logged, if waiting on
    the supervisor's port fails. The data disk's driver and file system
    service, which data.c starts before this and nothing supervises,
    outlive such an end and wind down on their own: the service once
@@ -84,10 +84,11 @@ int platform_keep(const PLATFORM *platform, const char *name,
    display: start the compositor, \nova\compose.exe, in the root job on
    a client channel of its own, and hand it each input endpoint, those
    reported before it started first; then start the console beside it,
-   which gets no endpoint while the compositor runs
-   (docs/spec/display.md D19, rule 2). The compositor is supervised as
-   the console is; once it is given up, the console is the input drivers'
-   client, and is sent the display after a compositor (console.h). */
+   which gets no endpoint while the compositor runs and a connection to
+   it for its window (docs/spec/display.md D19, rule 2). The compositor
+   is supervised as the console is; once it is given up, the console is
+   the input drivers' client, and is sent the display after a compositor
+   (console.h). */
 void platform_start_compositor(const PLATFORM *platform);
 
 /* Supervise what platform_start left running for the life of the

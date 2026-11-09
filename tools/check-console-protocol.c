@@ -34,6 +34,7 @@ _Static_assert(CONSOLE_BOOTSTRAP_DEBUG_LOG == 0 && CONSOLE_BOOTSTRAP_SELF == 1 &
 _Static_assert(CONSOLE_WRITE == 1 && CONSOLE_READ == 2 &&
                    CONSOLE_SETUP_DISPLAY == 1 && CONSOLE_SETUP_SESSION == 2 &&
                    CONSOLE_SETUP_BACKGROUND == 3 &&
+                   CONSOLE_SETUP_CONNECTION == 4 &&
                    CONSOLE_SETUP_DISPLAY_AFTER == 5 &&
                    CONSOLE_SETUP_OPTIONS == 6,
                "C2 and C4: the operations and the kinds");
@@ -394,15 +395,57 @@ static void check_control_messages(void)
                                         &which) == ERR_INVALID_ARGS,
           "a setup whose transaction is not 0 is refused");
     set32(buffer.bytes, 0);
-    set32(buffer.bytes + 4, 4);
+    set32(buffer.bytes + 4, CONSOLE_SETUP_OPTIONS + 1);
     check(console_control_request_check(buffer.bytes, 8, received, 1,
                                         &which) == ERR_NOT_SUPPORTED &&
-              which == 4,
-          "a setup of a kind console.desc does not have yet is refused");
+              which == CONSOLE_SETUP_OPTIONS + 1,
+          "a setup of a kind console.desc does not have is refused");
     check(console_control_request_check(buffer.bytes, 7, received, 1,
                                         &which) == ERR_INVALID_ARGS &&
               which == CONSOLE_CONTROL_UNNAMED,
           "a setup too short to hold its kind is unnamed");
+
+    /* A connection: a setup of kind 4 and the console's end, which
+       travels with the rights of a display connection. */
+    setup.transaction = 0;
+    setup.kind = 0;
+    values[0] = 7;
+    status = console_control_connection_encode(&setup, values, 1, transfers,
+                                               buffer.bytes, &size);
+    memset(want, 0, sizeof want);
+    set32(want + 4, CONSOLE_SETUP_CONNECTION);
+    check(status == OK && size == 8 && same(buffer.bytes, want, 8),
+          "a connection setup is a setup alone");
+    check(transfers[0].handle == 7 &&
+              transfers[0].rights == (CONTROL_RIGHTS | RIGHT_TRANSFER),
+          "the connection's end travels with READ, WRITE, WAIT and TRANSFER");
+    received[0].handle = 7;
+    received[0].type = TYPE_CHANNEL;
+    received[0].rights = CONTROL_RIGHTS | RIGHT_TRANSFER;
+    check(console_control_request_check(buffer.bytes, 8, received, 1,
+                                        &which) == OK &&
+              which == CONSOLE_SETUP_CONNECTION,
+          "a connection setup passes and is named a connection");
+    received[0].rights = CONTROL_RIGHTS;
+    check(console_control_request_check(buffer.bytes, 8, received, 1,
+                                        &which) == OK,
+          "a connection end that cannot be passed on passes");
+    received[0].rights = CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE;
+    check(console_control_request_check(buffer.bytes, 8, received, 1,
+                                        &which) == ERR_INVALID_ARGS,
+          "a connection end without WAIT is refused");
+    received[0].rights = CONTROL_RIGHTS | RIGHT_TRANSFER;
+    received[0].type = TYPE_SECTION;
+    check(console_control_request_check(buffer.bytes, 8, received, 1,
+                                        &which) == ERR_INVALID_ARGS,
+          "a connection setup whose handle is no channel is refused");
+    received[0].type = TYPE_CHANNEL;
+    check(console_control_request_check(buffer.bytes, 8, received, 0,
+                                        &which) == ERR_INVALID_ARGS,
+          "a connection setup with no handle is refused");
+    check(console_control_request_check(buffer.bytes, 9, received, 1,
+                                        &which) == ERR_INVALID_ARGS,
+          "a connection setup with a byte more is refused");
 
     /* The options: a setup of kind 6 and the option bits, with no
        handle. */

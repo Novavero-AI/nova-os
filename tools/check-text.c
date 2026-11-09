@@ -3,10 +3,10 @@
    host: writing and wrapping, the line editor, the lines kept for
    scrolling back once an edit has wrapped and been taken back, the US
    layout with Shift and Caps Lock, which modifiers give no character,
-   which hold the secure attention key and which a window is sent, and
-   how far the view
-   scrolls, by the wheel's detents and to either end, and where it shows
-   the caret.
+   which hold the secure attention key and which a window is sent, what
+   a window's keys edit, and how far the view scrolls, by the wheel's
+   detents, by a window's wheel in parts of a detent and to either end,
+   and where it shows the caret.
    Prints each failure and a count, and exits nonzero if any check
    fails.
 
@@ -462,6 +462,78 @@ static void check_view_caret(void)
     check(!caret.lit, "no caret while no read waits or the blink hides it");
 }
 
+/* A turn of a window's wheel, in 120ths of a detent, and what view_wheel
+   must give for it from the remainder before: the lines, and the
+   remainder after, written out. */
+typedef struct {
+    INT32 wheel;
+    INT64 before, lines, after;
+} WHEEL_CASE;
+
+static const WHEEL_CASE wheel_cases[] = {
+    {120, 0, 3, 0},
+    {-120, 0, -3, 0},
+    {240, 0, 6, 0},
+    {60, 0, 0, 60},
+    {60, 60, 3, 0},
+    {-60, -60, -3, 0},
+    {119, 0, 0, 119},
+    {1, 119, 3, 0},
+    {-100, 100, 0, 0},
+    {100, -100, 0, 0},
+    {-121, 0, -3, -1},
+    {-119, -1, -3, 0},
+    {130, 0, 3, 10},
+    {-130, 10, -3, 0},
+    {0, 0, 0, 0},
+    {0, 77, 0, 77},
+    {0x7fffffff, 0, 3LL * 17895697, 0x7fffffff - 17895697LL * 120},
+    {-0x7fffffff - 1, 0, -3LL * 17895697,
+     -0x7fffffff - 1 + 17895697LL * 120},
+};
+
+#define WHEEL_STEPS 100000
+#define WHEEL_LARGEST_TURN 1000
+
+/* A turn of the wheel in whole detents scrolls VIEW_WHEEL_LINES lines each,
+   as the direct path's detents do (view_scroll's detent); a turn in parts
+   keeps what has not made a detent. Over a long run of turns of either
+   sign, the lines scrolled are three to each detent turned and the
+   remainder the turns left, so that no turn is lost or counted twice, and
+   the remainder stays under a detent. */
+static void check_wheel(void)
+{
+    INT64 remainder = 0, total = 0, scrolled = 0, lines;
+    UINT64 state = 0x853c49e6748fea9bULL;
+    unsigned i;
+
+    for (i = 0; i < sizeof wheel_cases / sizeof wheel_cases[0]; i++) {
+        remainder = wheel_cases[i].before;
+        lines = view_wheel(&remainder, wheel_cases[i].wheel);
+        check(lines == wheel_cases[i].lines &&
+                  remainder == wheel_cases[i].after,
+              "a turn of the wheel scrolls the lines written out and "
+              "leaves the remainder written out");
+    }
+    remainder = 0;
+    for (i = 0; i < WHEEL_STEPS; i++) {
+        INT32 wheel;
+
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        wheel = (INT32)((state >> 33) % (2 * WHEEL_LARGEST_TURN + 1)) -
+                WHEEL_LARGEST_TURN;
+        total += wheel;
+        scrolled += view_wheel(&remainder, wheel);
+        check(scrolled % VIEW_WHEEL_LINES == 0 &&
+                  scrolled / VIEW_WHEEL_LINES * DISPLAY_WHEEL_DETENT +
+                          remainder ==
+                      total &&
+                  remainder > -DISPLAY_WHEEL_DETENT &&
+                  remainder < DISPLAY_WHEEL_DETENT,
+              "the lines and the remainder account for every turn");
+    }
+}
+
 int main(void)
 {
     check_writing();
@@ -475,6 +547,7 @@ int main(void)
     check_attention_events();
     check_view();
     check_view_caret();
+    check_wheel();
     printf("%u failures\n", failures);
     return failures != 0;
 }

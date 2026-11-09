@@ -27,6 +27,23 @@
             panel also shows what came before, which the screen leaves
             blank, so it matches only where its view holds none of it.
 
+   console-window
+            The console in a window on the compositor: Limb computed as
+            the compositor computes its wallpaper, under the console's
+            window, which holds the panel's pixels as the console draws
+            them in a buffer (panel_view and panel_window_draw, which
+            call the same function that makes a window's pixel as the
+            host's render does), composed as the compositor composes a
+            window of the PANEL surface (lib/window.c, lib/compose.c).
+            The inputs are those of console, and then, if the
+            pointer has a place, "pointer COLUMN ROW" as window
+            takes it. As for console, the guest's panel also shows what
+            came before, which the screen leaves blank. The window is
+            placed by lib/window.c, and the screen fails to be drawn
+            unless that is the place the panel stands in direct mode,
+            which is where the window's size and place are the console's
+            panel's box (docs/spec/display.md D6).
+
    window   Limb computed as the compositor computes its wallpaper, under
             the window the test client (test/wintest.h) shows when it has
             presented its second frame. It takes no INPUT, or one, "pointer
@@ -188,6 +205,27 @@ static int take_inputs(int count, char **inputs, UINT32 rows, UINT64 *back,
     return 1;
 }
 
+/* The panel's layout on screen, and the text the inputs make with a read
+   with echo waiting at its end, in *layout, the global text and editor,
+   *back and *lit. Returns 0, with the reason said, if there is no panel
+   on a screen this size or an input is not one. */
+static int console_text(const SCREEN *screen, int count, char **inputs,
+                        LAYOUT *layout, UINT64 *back, int *lit)
+{
+    *back = 0;
+    *lit = 1;
+    if (!panel_layout(layout, screen->width, screen->height)) {
+        fprintf(stderr, "screens: console: no panel on a screen this "
+                        "size\n");
+        return 0;
+    }
+    text_init(&text, layout->columns);
+    if (!take_inputs(count, inputs, layout->rows, back, lit))
+        return 0;
+    editor_start(&editor, &text, CONSOLE_LINE_MAX, 1);
+    return 1;
+}
+
 static int console_screen(const SCREEN *screen, int count, char **inputs)
 {
     LAYOUT layout;
@@ -195,18 +233,11 @@ static int console_screen(const SCREEN *screen, int count, char **inputs)
     VIEW_CARET caret;
     UINT32 *backdrop = 0;
     UINT8 *masks = 0;
-    UINT64 back = 0, top;
-    int lit = 1, drawn = 0;
+    UINT64 back, top;
+    int lit, drawn = 0;
 
-    if (!panel_layout(&layout, screen->width, screen->height)) {
-        fprintf(stderr, "screens: console: no panel on a screen this "
-                        "size\n");
+    if (!console_text(screen, count, inputs, &layout, &back, &lit))
         return 0;
-    }
-    text_init(&text, layout.columns);
-    if (!take_inputs(count, inputs, layout.rows, &back, &lit))
-        return 0;
-    editor_start(&editor, &text, CONSOLE_LINE_MAX, 1);
     if (!panel_limb(screen)) {
         fprintf(stderr, "screens: console: no Limb on a screen this size\n");
         return 0;
@@ -251,11 +282,17 @@ static int limb_screen(const SCREEN *screen, int count, char **inputs)
 }
 
 /* ------------------------------------------------------------------------
-   The window test client's window. */
+   A window of a client, composed over Limb. */
 
-/* The frame whose pixels the screen shows: the client's second, which is
-   the last it presents. */
-#define WINDOW_LAST_FRAME WINTEST_FRAMES
+/* A client's window: the size it asks for on the screen, and the pixels it
+   fills the window the compositor made for it with, width x height, one to
+   a word with no extra at the end of a row, from content. Returns 0, with
+   the reason said, if it cannot. */
+typedef struct {
+    UINT32 width, height;
+    const void *content;
+    UINT32 *(*pixels)(const void *content, const WINDOW_RECORD *record);
+} WINDOW_SOURCE;
 
 /* Limb for a screen as the compositor computes it, one pixel to a word, in
    the screen's own format; 0 if Limb does not take the size. */
@@ -278,19 +315,14 @@ static UINT32 *limb_wallpaper(const SCREEN *screen)
     return pixels;
 }
 
-/* The pixels of the client's window of width x height, WINDOW_LAST_FRAME,
-   with no extra pixel at the end of a row; 0 if there is no memory. */
-static UINT32 *window_pixels(UINT32 width, UINT32 height)
+/* The pixels of a window of width x height; 0, said, if there is no
+   memory. */
+static UINT32 *window_memory(UINT32 width, UINT32 height)
 {
-    UINT32 *pixels = malloc((size_t)width * (size_t)height * sizeof(UINT32));
-    UINT32 x, y;
+    UINT32 *pixels = calloc((size_t)width * (size_t)height, sizeof(UINT32));
 
     if (!pixels)
-        return 0;
-    for (y = 0; y < height; y++)
-        for (x = 0; x < width; x++)
-            pixels[(size_t)y * width + x] =
-                wintest_pixel(width, height, x, y, WINDOW_LAST_FRAME);
+        fprintf(stderr, "screens: no memory for the window\n");
     return pixels;
 }
 
@@ -334,13 +366,13 @@ static int draw_pointer(const SCREEN *screen, OUTLINE *work, long column,
                            window_scale((UINT32)screen->height));
 }
 
-/* Compose the window over the wallpaper, the whole screen, with the panel
-   material and corners the compositor gives a window of the PANEL surface,
-   and the pointer over it where pointer, if it is not 0, gives the pixel
-   of its hotspot, a column and a row. Returns 0 if the window cannot be
-   made, the pointer drawn or there is no memory. */
+/* Compose the client's window over the wallpaper, the whole screen, with
+   the panel material and corners the compositor gives a window of the PANEL
+   surface, and the pointer over it where pointer, if it is not 0, gives the
+   pixel of its hotspot, a column and a row. Returns 0 if the window cannot
+   be made, the pointer drawn or there is no memory. */
 static int compose_window(const SCREEN *screen, const UINT32 *wallpaper,
-                          const long *pointer)
+                          const WINDOW_SOURCE *source, const long *pointer)
 {
     static COMPOSE_MATERIAL material;
     static COMPOSE_CORNERS corners;
@@ -361,8 +393,8 @@ static int compose_window(const SCREEN *screen, const UINT32 *wallpaper,
     area.screen_height = (UINT32)screen->height;
     area.strip = 0;
     memset(&request, 0, sizeof request);
-    wintest_want(area.screen_width, area.screen_height, &request.width,
-                 &request.height);
+    request.width = source->width;
+    request.height = source->height;
     request.layer = DISPLAY_LAYER_SYSTEM;
     request.surface = DISPLAY_SURFACE_PANEL;
     if (!work || !memory ||
@@ -372,7 +404,7 @@ static int compose_window(const SCREEN *screen, const UINT32 *wallpaper,
         window_open(&area, (UINT32)corners.reach, DISPLAY_LAYER_SYSTEM, 0,
                     &request, &record) != OK) {
         fprintf(stderr, "screens: window: no window on a screen this size\n");
-    } else if ((pixels = window_pixels(record.width, record.height))) {
+    } else if ((pixels = source->pixels(source->content, &record))) {
         under.pixels = wallpaper;
         under.stride = screen->width;
         under.format = screen->format;
@@ -394,8 +426,6 @@ static int compose_window(const SCREEN *screen, const UINT32 *wallpaper,
                    draw_pointer(screen, work, pointer[0], pointer[1]);
         if (!composed)
             fprintf(stderr, "screens: window: the pointer cannot be drawn\n");
-    } else {
-        fprintf(stderr, "screens: window: no memory for the window\n");
     }
     free(pixels);
     free(memory);
@@ -403,28 +433,156 @@ static int compose_window(const SCREEN *screen, const UINT32 *wallpaper,
     return composed;
 }
 
+/* The pointer's place from inputs, "pointer COLUMN ROW" with a pixel of the
+   screen, into at[] as column and row. Returns 0, the reason said, if it
+   is not one. */
+static int pointer_input(const SCREEN *screen, char **inputs, long *at)
+{
+    if (strcmp(inputs[0], INPUT_POINTER_AT) == 0 &&
+        number(inputs[1], 0, (long)(screen->width - 1), &at[0]) &&
+        number(inputs[2], 0, (long)(screen->height - 1), &at[1]))
+        return 1;
+    fprintf(stderr, "screens: \"%s COLUMN ROW\" within the screen is the "
+                    "pointer's place\n", INPUT_POINTER_AT);
+    return 0;
+}
+
+/* The frame whose pixels the screen shows: the client's second, which is
+   the last it presents. */
+#define WINDOW_LAST_FRAME WINTEST_FRAMES
+
+/* The client's pixels (test/wintest.h), WINDOW_LAST_FRAME's. */
+static UINT32 *wintest_pixels(const void *content,
+                              const WINDOW_RECORD *record)
+{
+    UINT32 *pixels = window_memory(record->width, record->height);
+    UINT32 x, y;
+
+    (void)content;
+    if (!pixels)
+        return 0;
+    for (y = 0; y < record->height; y++)
+        for (x = 0; x < record->width; x++)
+            pixels[(size_t)y * record->width + x] = wintest_pixel(
+                record->width, record->height, x, y, WINDOW_LAST_FRAME);
+    return pixels;
+}
+
+/* Compose source's window over Limb on screen, with the pointer's hotspot
+   at the column and row of pointer unless it is 0. Returns 0, with the
+   reason said, if it cannot be drawn. */
+static int compose_over_limb(const SCREEN *screen, const WINDOW_SOURCE *source,
+                             const long *pointer)
+{
+    UINT32 *wallpaper = limb_wallpaper(screen);
+    int drawn;
+
+    if (!wallpaper) {
+        fprintf(stderr, "screens: no Limb on a screen this size\n");
+        return 0;
+    }
+    drawn = compose_window(screen, wallpaper, source, pointer);
+    free(wallpaper);
+    return drawn;
+}
+
 static int window_screen(const SCREEN *screen, int count, char **inputs)
 {
-    UINT32 *wallpaper;
+    WINDOW_SOURCE source;
     long at[2];
-    int drawn = 0;
 
     if (count != 0 &&
-        !(count == POINTER_ARGUMENTS &&
-          strcmp(inputs[0], INPUT_POINTER_AT) == 0 &&
-          number(inputs[1], 0, (long)(screen->width - 1), &at[0]) &&
-          number(inputs[2], 0, (long)(screen->height - 1), &at[1]))) {
-        fprintf(stderr, "screens: window: takes no input, or \"%s COLUMN "
-                        "ROW\" within the screen\n", INPUT_POINTER_AT);
+        !(count == POINTER_ARGUMENTS && pointer_input(screen, inputs, at))) {
+        fprintf(stderr, "screens: window: takes no input, or the pointer's "
+                        "place\n");
         return 0;
     }
-    wallpaper = limb_wallpaper(screen);
-    if (!wallpaper) {
-        fprintf(stderr, "screens: window: no Limb on a screen this size\n");
+    wintest_want((UINT32)screen->width, (UINT32)screen->height, &source.width,
+                 &source.height);
+    source.content = 0;
+    source.pixels = wintest_pixels;
+    return compose_over_limb(screen, &source, count ? at : 0);
+}
+
+/* ------------------------------------------------------------------------
+   The console's window. */
+
+/* What the console draws in its window: the panel's layout, the font's
+   masks at its cell width, and the cells the text's view shows. */
+typedef struct {
+    const LAYOUT *layout;
+    const UINT8 *masks;
+    const PANEL_SHOWN *want;
+} PANEL_CONTENT;
+
+/* The console's pixels as it draws a first frame of a buffer: panel_view's
+   cells through panel_window_draw. Fails, said, if the compositor placed
+   or sized the window other than as the panel's box. */
+static UINT32 *panel_pixels(const void *content, const WINDOW_RECORD *record)
+{
+    const PANEL_CONTENT *panel = content;
+    const LAYOUT *layout = panel->layout;
+    static PANEL_SHOWN window_shown;
+    UINT32 *pixels;
+
+    if (record->x != layout->box.left || record->y != layout->box.top ||
+        (INT64)record->width != layout->box.right - layout->box.left ||
+        (INT64)record->height != layout->box.bottom - layout->box.top) {
+        fprintf(stderr, "screens: console-window: the window is not where "
+                        "and as large as the panel stands in direct mode\n");
         return 0;
     }
-    drawn = compose_window(screen, wallpaper, count ? at : 0);
-    free(wallpaper);
+    pixels = window_memory(record->width, record->height);
+    if (!pixels)
+        return 0;
+    panel_window_forget(layout, &window_shown);
+    panel_window_draw(layout, panel->masks, pixels, record->width, &window_shown,
+                      panel->want);
+    return pixels;
+}
+
+static int console_window_screen(const SCREEN *screen, int count,
+                                 char **inputs)
+{
+    static PANEL_SHOWN want;
+    LAYOUT layout;
+    PANEL_CONTENT content;
+    WINDOW_SOURCE source;
+    VIEW_CARET caret;
+    UINT64 back, top;
+    UINT8 *masks;
+    long at[2];
+    int lit, pointer = 0, drawn;
+
+    if (count >= POINTER_ARGUMENTS &&
+        (count - POINTER_ARGUMENTS) % INPUT_ARGUMENTS == 0 &&
+        strcmp(inputs[count - POINTER_ARGUMENTS], INPUT_POINTER_AT) == 0) {
+        if (!pointer_input(screen, inputs + count - POINTER_ARGUMENTS, at))
+            return 0;
+        pointer = 1;
+        count -= POINTER_ARGUMENTS;
+    }
+    if (!console_text(screen, count, inputs, &layout, &back, &lit))
+        return 0;
+    masks = malloc(font_masks_size(layout.cell_width));
+    if (!masks) {
+        fprintf(stderr, "screens: console-window: no memory for the "
+                        "masks\n");
+        return 0;
+    }
+    font_render(layout.cell_width, masks);
+    top = view_top(&text, layout.rows, back);
+    caret = view_caret(lit ? &editor : 0, &text, layout.rows, top);
+    panel_view(&layout, &text, top, &caret, &want);
+    content.layout = &layout;
+    content.masks = masks;
+    content.want = &want;
+    source.width = (UINT32)(layout.box.right - layout.box.left);
+    source.height = (UINT32)(layout.box.bottom - layout.box.top);
+    source.content = &content;
+    source.pixels = panel_pixels;
+    drawn = compose_over_limb(screen, &source, pointer ? at : 0);
+    free(masks);
     return drawn;
 }
 
@@ -438,6 +596,7 @@ typedef struct {
 
 static const SCREEN_KIND kinds[] = {
     {"console", console_screen},
+    {"console-window", console_window_screen},
     {"limb", limb_screen},
     {"window", window_screen},
 };

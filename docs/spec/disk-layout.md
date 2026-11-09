@@ -86,7 +86,7 @@ The system disk, `disk.img`, holds:
 \NOVA\VIRTBLK.EXE        the virtio block driver
 \NOVA\VIRTINP.EXE        the virtio input driver
 \NOVA\COMPOSE.EXE        the compositor, the input drivers' client while it runs
-\NOVA\CONSOLE.EXE        the console, the input drivers' client otherwise
+\NOVA\CONSOLE.EXE        the console, the compositor's client, and the input drivers' once it is given up
 \NOVA\STORE.IMG          the store image
 \NOVA\FS.EXE             the file system service, for a data disk
 ```
@@ -111,8 +111,8 @@ files and add their own:
 |---|---|---|
 | The specimen disk, `specimen.img` | `\NOVA\SPECIMEN`, an empty file | The first process gives the display to the type specimen from `/store` in the console's place ([console.md C1](console.md#c1-the-display-handoff)) |
 | The chain disk, `chain.img` | The inputs of the bootstrap check, the chain the first process runs from the seed | The first process runs the chain ([compat.md C4](compat.md#c4-files)) |
-| The fallback disk, `fallback.img` | `\NOVA\COMPFAIL`, an empty file | The first process starts the compositor, which no other disk but the window disk starts until it serves the console's window, and the compositor exits at each of its starts, so the console takes the display after it ([display.md D19](display.md#d19-the-build-plan), rules 2 and 9) |
-| The window disk, `window.img` | `\NOVA\WINTEST.EXE`, the window test client, and `\NOVA\WINDOW`, an empty file | The first process starts the compositor and the test client, which makes a window on it in the console's place ([display.md D19](display.md#d19-the-build-plan), rule 11) |
+| The fallback disk, `fallback.img` | `\NOVA\COMPFAIL`, an empty file | The first process has the compositor exit just after the first frame that shows the console's window, at each of its starts, so the console takes the display after it ([display.md D19](display.md#d19-the-build-plan), rules 2 and 9) |
+| The window disk, `window.img` | `\NOVA\WINTEST.EXE`, the window test client, and `\NOVA\WINDOW`, an empty file | The first process starts the compositor and the test client, which makes a window on it in the console's place, and issues the console no connection ([display.md D19](display.md#d19-the-build-plan), rule 11) |
 
 The logout disk, `logout.img`, is a system disk, not a test disk: it
 holds the system disk's files, and its `\NOVA\STORE.IMG` holds the

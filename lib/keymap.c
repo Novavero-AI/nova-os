@@ -67,6 +67,11 @@ _Static_assert(sizeof unshifted == CHARACTER_CODES + 1,
 _Static_assert(sizeof shifted == CHARACTER_CODES + 1,
                "a character for every code below CHARACTER_CODES");
 
+/* The characters a key can give: the printable ASCII from the space to
+   the tilde. */
+#define PRINTABLE_FIRST 0x20
+#define PRINTABLE_LAST 0x7E
+
 /* The bits of KEYBOARD.held. */
 #define HELD_LEFT_SHIFT 0x1
 #define HELD_RIGHT_SHIFT 0x2
@@ -174,6 +179,21 @@ UINT32 keys_event(KEYBOARD *keyboard, UINT32 code, UINT32 value,
         return EDIT_INSERT;
     }
     return edit_key(code);
+}
+
+UINT32 keys_window_edit(UINT32 code, UINT32 value, const UINT8 *text,
+                        UINT32 text_length, UINT8 *character)
+{
+    *character = 0;
+    if (value == INPUT_KEY_RELEASED)
+        return EDIT_NONE;
+    if (text_length == 0)
+        return edit_key(code);
+    if (text_length != 1 || text[0] < PRINTABLE_FIRST ||
+        text[0] > PRINTABLE_LAST)
+        return EDIT_NONE;
+    *character = text[0];
+    return EDIT_INSERT;
 }
 
 int keys_attention(const KEYBOARD *keyboard, UINT32 code)

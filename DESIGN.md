@@ -132,7 +132,8 @@ CI checks every pull request and every push to main:
   it runs `tools/check-masks.c`, `tools/check-fade.c`,
   `tools/check-pointer.c`, `tools/check-driver-end.c`,
   `tools/check-text.c`, `tools/check-endpoint.c`,
-  `tools/check-backdrop.c`, `tools/check-outline.c`,
+  `tools/check-backdrop.c`, `tools/check-panel-window.c`,
+  `tools/check-outline.c`,
   `tools/check-compose.c`, `tools/check-window.c`,
   `tools/check-mapping.c`, `tools/check-route.c`,
   `tools/check-backlog.c`, `tools/check-keyroute.c`, `tools/check-nvo.c`,
@@ -156,19 +157,24 @@ CI checks every pull request and every push to main:
   the events its lines report ([log.md](docs/spec/log.md)), and a test
   disk's report, in KTAP, every test passing: the kernel's self-tests,
   the first process's checks of its calls, the data disk's check, the
-  test program from `/store` and the boot disk's read. Then, sent
-  through QEMU's monitor, a tablet's moves, clicks and wheel turns and
-  a mouse's moves must reach the console, and, typed through it, the
-  first boot's account is created on the fresh data disk and the shell
-  runs `whoami`; the session then fills the console's panel, and the
-  wheel scrolls it back and forward, each screen checked equal to the
-  one `ci/screens.c` draws on the host with the console's own drawing
-  code, the panel made from the kernel's background on `disk.img` and
-  computed on `test.img`. Each of these sessions ends with logout,
-  which login must report. A boot of the test disk boots the same data
-  disk again, logs in with that account, which it must still hold, and
-  its data disk's check reads back what the first boot wrote. Other boots of `disk.img`
-  corrupt the data disk's GPT, and the log must show the file system
+  test program from `/store` and the boot disk's read. The console
+  draws in a window on the compositor, and login's prompt, checked
+  before any account is made, must equal the screen `ci/screens.c`
+  draws on the host from the console's own window pixels composed with
+  the compositor's library code, with the pointer where the tablet last
+  was. Then, sent through QEMU's monitor, a tablet's moves, clicks and
+  wheel turns and a mouse's moves must reach the compositor, which logs
+  no position, and, typed through it, the first boot's account is
+  created on the fresh data disk and the shell runs `whoami`; the
+  session then fills the console's panel, and the wheel scrolls it back
+  and forward through the window, each screen checked equal to the one
+  `ci/screens.c` draws, the compositor's wallpaper made from the kernel's
+  background on `disk.img` and computed on `test.img`. Each of these
+  sessions ends with logout, which login must report. A boot of the test
+  disk boots the same data disk again, logs in with that account, which
+  it must still hold, and its data disk's check reads back what the
+  first boot wrote. Other boots of `disk.img` corrupt the data disk's
+  GPT, and the log must show the file system
   service refusing the disk. A boot of `specimen.img` takes QMP's
   screendump once the type specimen has drawn, which must equal its
   prototype's render pixel for pixel. A boot of `logout.img`, whose
@@ -177,11 +183,13 @@ CI checks every pull request and every push to main:
   as it ends the session, and a second session, logged into after the
   first, running programs as the first did. A boot of `fallback.img`
   must show the compositor take the display and end at each of its two
-  starts, restarted once and then given up, each input driver started
-  again for the second start, the screen Limb alone after the
-  compositor's first frame and the console draw the display after it,
-  with no other failure line, and then goes on as the test disk's boot
-  does, logging in through the console's keys. A boot of `window.img`
+  starts, just after the first frame that shows the console's window,
+  restarted once and then given up, each input driver started again for
+  the second start, the screen, from the compositor's first display
+  line, Limb alone or the console's window over it, and the console draw
+  the display after the compositor, with no other failure line, and
+  then goes on as the test disk's boot does, logging in through the
+  console's keys. A boot of `window.img`
   must show the compositor issue a test client's connection and the
   client's window made, its first buffer shown and its second shown
   with the first released, with no close of the window or the

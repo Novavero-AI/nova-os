@@ -7,11 +7,16 @@ checks what boot.py makes of them: the lines docs/spec/display.md D19's
 rule 9 has the fallback boot report, each as often as it gives, and the
 same boot with the input drivers' ends read before the compositor's; the
 failure lines the fallback boot accepts, each as often as it gives and
-each alone, and no failure line in any other mode; the console's display
-lines of the other boots, which a display after the compositor is not;
-the lines of the window boot, each of which it requires, and a failure
-line of the test client, which fails it; the compositor's refusals of an
-endpoint's message and the console's lines for an endpoint, which fail it;
+each alone, and no failure line in any other mode; the console's window,
+which each end of the compositor must come after; the wallpaper,
+connection and window lines of the system boot, each of which it
+requires, and the console's display after the compositor, which is the
+fallback boot's alone; the lines of the window boot, each of which it
+requires, and a failure line of the test client, which fails it; the
+compositor's refusals of an endpoint's message and the console's lines
+for an endpoint or a pointer event, which fail every boot that runs on the
+compositor; the screen match_screen asks ci/screens.c for, the console in
+a window with the pointer where the tablet is, or the console alone;
 where boot.py puts the window boot's pointer places on the screens the boots
 run, against places worked out by hand here from display.md D6, D10 and
 D11, and the steps taken through them: the lines the client must log for
@@ -35,7 +40,11 @@ checks show how KeyScript reads a log against that model, not that the
 model is what the compositor and the client do: the model is written from
 display.md D11 and D12, and the boot is what tests the compositor against
 it; the screens a boot waits for, which poll_screen takes from QMP's
-screendump until one is the wanted image or SCREEN_TIMEOUT passes; and
+screendump until one is the wanted image or SCREEN_TIMEOUT passes, and
+the fallback boot's first screen, Limb alone or the console's window
+over Limb, each asked of ci/screens.c as the boot asks, taken until it
+is one and given up on with the nearer's differing pixels if it is
+neither; and
 the usage errors of a mode that needs a whole data disk and those of a
 mode that takes none. Prints each check that fails, and a count; the
 exit status is nonzero if any did.
@@ -77,13 +86,19 @@ CONSOLE = ("nova-console: display screen=1280x800 cell=8x16 grid=80x30 "
 CONNECTION = ("nova-compositor: connection issued number=1 label=%s mark=no "
               "layers=%s rights=none")
 WINDOW_CONNECTION = CONNECTION % ("wintest", "system")
+CONSOLE_CONNECTION = CONNECTION % ("console", "system")
+CONSOLE_WINDOW = "nova-console: window screen=1280x800 size=660x496"
 WINDOW_MADE = "nova-wintest: window screen=1280x800 size=640x400"
 COMPOSITOR_INPUT = ["nova-compositor: input kind=keyboard",
                     "nova-compositor: input kind=pointer",
                     "nova-compositor: input kind=pointer x=0..32767 "
                     "y=0..32767"]
 INPUT_REFUSALS = ["nova-compositor: input message refused status=0",
-                  "nova-console: input kind=keyboard"]
+                  "nova-console: input kind=keyboard",
+                  "nova-console: pointer move mode=absolute axes=xy",
+                  "nova-console: pointer press button=left",
+                  "nova-console: pointer release button=left",
+                  "nova-console: pointer wheel direction=up"]
 KEY_TIME_STEP = 3.0
 ATTENTION = "nova-compositor: attention"
 SHOWN = "nova-wintest: shown frame=%d"
@@ -120,10 +135,11 @@ def fallback_log(boot):
     drivers started again between them and after them, and the console's
     display."""
     exit_code = boot.COMPOSITOR_EXIT_TEST
-    return ([REFUSED, DISPLAY % "computed", ENDED % exit_code,
-             COMPOSITOR_RESTARTED]
+    return ([REFUSED, DISPLAY % "computed", CONSOLE_CONNECTION,
+             CONSOLE_WINDOW, ENDED % exit_code, COMPOSITOR_RESTARTED]
             + [driver_restarted(f, CLIENT_RESTARTED) for f in FUNCTIONS]
-            + [DISPLAY % "computed", ENDED % exit_code, COMPOSITOR_GIVEN_UP]
+            + [DISPLAY % "computed", CONSOLE_CONNECTION, CONSOLE_WINDOW,
+               ENDED % exit_code, COMPOSITOR_GIVEN_UP]
             + [driver_restarted(f, CLIENT_CHANGED) for f in FUNCTIONS]
             + [CONSOLE % ("computed", " after=compositor")])
 
@@ -140,13 +156,26 @@ def drivers_first_log(boot):
         return [line for f in FUNCTIONS
                 for line in (DRIVER_ENDED % f, DRIVER_WAITING % f)]
 
-    return ([REFUSED, DISPLAY % "computed"] + ends()
+    return ([REFUSED, DISPLAY % "computed", CONSOLE_CONNECTION,
+             CONSOLE_WINDOW] + ends()
             + [ENDED % exit_code, COMPOSITOR_RESTARTED]
             + [driver_restarted(f, CLIENT_RESTARTED) for f in FUNCTIONS]
-            + [DISPLAY % "computed"] + ends()
+            + [DISPLAY % "computed", CONSOLE_CONNECTION, CONSOLE_WINDOW]
+            + ends()
             + [ENDED % exit_code, COMPOSITOR_GIVEN_UP]
             + [driver_restarted(f, CLIENT_CHANGED) for f in FUNCTIONS]
             + [CONSOLE % ("computed", " after=compositor")])
+
+
+def system_log(tests):
+    """The lines of the system boot that these checks are about, in the
+    order it reports them, but for startup done, which the replay ends
+    with: the wallpaper from the kernel's background, or on a test disk
+    computed after the refusal of the background, the console's connection
+    and its window, and the compositor's input lines."""
+    return ([STORE_SERVING, BACKGROUND] + ([REFUSED] if tests else [])
+            + [DISPLAY % ("computed" if tests else "section"),
+               CONSOLE_CONNECTION, CONSOLE_WINDOW] + COMPOSITOR_INPUT)
 
 
 def window_log():
@@ -326,6 +355,37 @@ def polled(boot, shots, wanted, timeout=REPLAY_SECONDS):
     return images, qmp.dumps
 
 
+def first_frame(boot, shots, timeout=REPLAY_SECONDS):
+    """What match_first_frame gives for the dumps in shots: the name it
+    returns and how many dumps it took, and the screens it asked
+    ci/screens.c for, where Limb alone is drawn as the pixels 7 and the
+    console's window as the pixels 9; or the message it fails with, after
+    timeout seconds."""
+    qmp = Screendumps(shots)
+    asked = []
+
+    def drew(_, __, kind, width, height, inputs):
+        asked.append((kind, inputs))
+        fill = {boot.LIMB_SCREEN: 7, boot.CONSOLE_WINDOW_SCREEN: 9}[kind]
+        return bytes([fill]) * (PIXEL_BYTES * width * height)
+
+    with tempfile.TemporaryDirectory() as scratch, \
+            unittest.mock.patch.object(boot, "SCREEN_TIMEOUT", timeout), \
+            unittest.mock.patch.object(boot, "draw_screen", drew), \
+            contextlib.redirect_stdout(io.StringIO()):
+        try:
+            name = boot.match_first_frame(qmp, scratch, None)
+        except boot.BootFailed as failure:
+            return str(failure), asked
+    return (name, qmp.dumps), asked
+
+
+def ppm_pixels(pixels):
+    """A binary PPM of SCREEN_WIDTH x SCREEN_HEIGHT pixels, the bytes of
+    pixels."""
+    return b"P6\n%d %d\n255\n" % (SCREEN_WIDTH, SCREEN_HEIGHT) + pixels
+
+
 def failure_lines(log):
     """The lines of log that report a failure, which the fallback boot
     accepts."""
@@ -497,20 +557,25 @@ def main():
             FALLBACK, failure_lines(log) + [driver_restarted(None,
                                                              CLIENT_CHANGED)])
 
-    # The console's display lines of the other boots are not a display
-    # after the compositor, and a display after it is none of theirs.
-    drawn = boot.CONSOLE_DRAWN
+    # The system boot's wallpaper is the kernel's background on the system
+    # disk and computed on a test disk, after the refusal of the
+    # background, and the console's display after the compositor is the
+    # fallback boot's alone.
+    drawn = boot.COMPOSITOR_DRAWN
+    wallpaper = {kind: parse(DISPLAY % kind) for kind in ("section",
+                                                          "computed")}
+    expect("a section wallpaper is the system disk's",
+           drawn[False][0].matches(wallpaper["section"]), True)
+    expect("a computed wallpaper is not the system disk's",
+           drawn[False][0].matches(wallpaper["computed"]), False)
+    expect("a computed wallpaper is a test disk's",
+           drawn[True][1].matches(wallpaper["computed"]), True)
+    expect("a section wallpaper is not a test disk's",
+           drawn[True][1].matches(wallpaper["section"]), False)
     plain = {backdrop: parse(CONSOLE % (backdrop, ""))
              for backdrop in ("section", "computed")}
     after = {backdrop: parse(CONSOLE % (backdrop, " after=compositor"))
              for backdrop in ("section", "computed")}
-    other = {"section": drawn[False][0], "computed": drawn[True][1]}
-    for backdrop in ("section", "computed"):
-        expect("a %s display is the system boot's" % backdrop,
-               other[backdrop].matches(plain[backdrop]), True)
-        expect("a %s display after the compositor is not the system "
-               "boot's" % backdrop,
-               other[backdrop].matches(after[backdrop]), False)
     expect("a computed display after the compositor is the fallback "
            "boot's", boot.CONSOLE_AFTER.matches(after["computed"]), True)
     expect("a computed display is not the fallback boot's",
@@ -557,10 +622,13 @@ def main():
                 window_required)
         for mode in sorted(boot.DEFAULT_TIMEOUTS):
             expect("%s mode refuses a line that says %s" % (mode, name),
-                   replay(boot, mode, [line]), mode != WINDOW)
-    expect("the window boot refuses the close lines and no other boot does",
+                   replay(boot, mode, [line]),
+                   mode not in ("system", "persist", "logout", WINDOW))
+    expect("the boots that run on the compositor refuse the close lines and "
+           "no other does",
            [mode for mode in sorted(boot.DEFAULT_TIMEOUTS)
-            if boot.refused_lines(mode)], [WINDOW])
+            if boot.refused_lines(mode)],
+           ["logout", "persist", "system", WINDOW])
 
     # The compositor reads each endpoint and the console none, so a line
     # of the console for an endpoint, or a message the compositor refuses,
@@ -571,6 +639,158 @@ def main():
         refused("the window boot with %s before its window is made"
                 % line[:60], WINDOW,
                 window[:after] + [line] + window[after:], window_required)
+
+    # The system boot, in a window: each of its lines is required, and a
+    # console's line for an input or a pointer event, which it does not
+    # log in a window, or a close the compositor makes of its window or
+    # connection, fails every boot that runs on the compositor.
+    for tests in (False, True):
+        system = system_log(tests)
+        system_required = boot.SYSTEM_LINES + boot.COMPOSITOR_DRAWN[tests]
+        replayed("the system boot's lines are reported%s"
+                 % (" on a test disk" if tests else ""), "system", system,
+                 system_required)
+        for index, line in enumerate(system):
+            refused("the system boot%s without line %d (%s)"
+                    % (" on a test disk" if tests else "", index, line[:48]),
+                    "system", system[:index] + system[index + 1:],
+                    system_required)
+    for mode in ("system", "persist", "logout"):
+        for line in INPUT_REFUSALS + [WINDOW_CLOSED, CONNECTION_CLOSED]:
+            refused("%s mode with %s" % (mode, line[:60]), mode,
+                    system_log(False) + [line], boot.SYSTEM_LINES
+                    + boot.COMPOSITOR_DRAWN[False])
+    for line in INPUT_REFUSALS[1:]:
+        replayed("the fallback boot's console logs %s once it has the "
+                 "display" % line[:50], FALLBACK, [line])
+    system = system_log(False)
+    system_required = boot.SYSTEM_LINES + boot.COMPOSITOR_DRAWN[False]
+    for name, old, new in (
+            ("a console window with no size", CONSOLE_WINDOW,
+             CONSOLE_WINDOW.replace(" size=660x496", "")),
+            ("a connection of the test client's label", CONSOLE_CONNECTION,
+             WINDOW_CONNECTION),
+            ("a connection with other layers", CONSOLE_CONNECTION,
+             CONNECTION % ("console", "system,app")),
+            ("a connection with rights", CONSOLE_CONNECTION,
+             CONSOLE_CONNECTION.replace("rights=none", "rights=attention")),
+            ("a computed wallpaper", DISPLAY % "section",
+             DISPLAY % "computed")):
+        refused("the system boot with " + name, "system",
+                [new if line == old else line for line in system],
+                system_required)
+    window_made = serial_after(boot, "system", [CONSOLE_WINDOW]).window
+    expect("the console's window line's keys are kept as the window's",
+           window_made, {"screen": "1280x800", "size": "660x496"})
+    refused("the window boot with a window made by the console", WINDOW,
+            window + [CONSOLE_WINDOW], window_required)
+    for tablet_at in (boot.POINTER_AT, boot.WHEEL_AT):
+        for axis, value in tablet_at.items():
+            leaked = serial_after(
+                boot, "system",
+                ["nova-compositor: pointer move mode=absolute %s=%d"
+                 % (axis, value)]).leaked
+            expect("a pointer line of the compositor that holds the "
+                   "tablet's %s, %d, is noted" % (axis, value),
+                   bool(leaked), True)
+    replayed("the fallback boot requires the console's input lines",
+             FALLBACK, [STORE_SERVING, BACKGROUND] + [
+                 line.replace("compositor", "console")
+                 for line in COMPOSITOR_INPUT], boot.FALLBACK_STARTUP_LINES)
+    refused("the fallback boot with the compositor's input lines in the "
+            "console's place", FALLBACK,
+            [STORE_SERVING, BACKGROUND] + COMPOSITOR_INPUT,
+            boot.FALLBACK_STARTUP_LINES)
+
+    # The boot waits for the compositor's pointer lines where the console is
+    # in a window and the console's where it has the device.
+    waits = []
+
+    class Recorder:
+        def wait_for(self, lines, deadline):
+            waits.append({line.component for line in lines})
+
+    with unittest.mock.patch.object(boot, "send_events"):
+        boot.point(Recorder(), None, window_made)
+        boot.point(Recorder(), None, None)
+    expect("the pointer's lines are the compositor's in a window and the "
+           "console's out of one", waits,
+           [{"nova-compositor"}, {"nova-console"}])
+
+    # The login prompt screen is matched with the pointer where the tablet
+    # last was, and with what login writes: the account's creation on a
+    # first boot, and its prompt to log in later.
+    prompts = []
+
+    def matched(qmp, scratch, screens, inputs, steady, geometry=None,
+                at=None):
+        prompts.append((inputs, at))
+
+    with unittest.mock.patch.object(boot, "match_screen", matched):
+        for first in (True, False):
+            boot.check_prompt(None, "", "", False,
+                              boot.Geometry((1280, 800), (660, 496)),
+                              first)
+    expect("the login prompt screens are login's text with the pointer "
+           "where the tablet was", prompts,
+           [(["write", "nova-os has no accounts yet. Create the "
+              "administrator's account.\nname: "], boot.POINTER_AT),
+            (["write", "login: "], boot.POINTER_AT)])
+
+    # The console's window is made before each end of the compositor in
+    # the fallback boot, and so is the first end, even with every line
+    # there.
+    ended = [i for i, line in enumerate(log) if line.startswith(ENDED[:20])
+             and "exit=" in line]
+    windows = [i for i, line in enumerate(log) if line == CONSOLE_WINDOW]
+    for number, (end, window) in enumerate(zip(ended, windows)):
+        swapped = list(log)
+        swapped[end], swapped[window] = log[window], log[end]
+        refused("the fallback boot with the console's window %d made after "
+                "the compositor's end %d" % (number + 1, number + 1),
+                FALLBACK, swapped, required)
+
+    # What match_screen asks screens to draw: the console in a window with
+    # the pointer at the pixel the tablet's place gives, in the window
+    # boots, and the console alone where it has the display. The pixels are
+    # worked out by hand: POINTER_AT is 13579 * 1280 * 256 / 32768 = 135790
+    # 256ths across, the pixel 530, and 24680 * 800 * 256 / 32768 = 154250
+    # down, the pixel 602.
+    drawn_screens = []
+
+    def drew(screens, scratch, kind, width, height, inputs):
+        drawn_screens.append((kind, inputs))
+        return b""
+
+    def polled_draw(qmp, shot, draw):
+        draw(1280, 800)
+        return [b""], [b""]
+
+    prompt_geometry = boot.Geometry((1280, 800), (660, 496))
+    with unittest.mock.patch.object(boot, "draw_screen", drew), \
+            unittest.mock.patch.object(boot, "poll_screen", polled_draw):
+        boot.match_screen(None, "", "", ["write", "a"], False,
+                          prompt_geometry, boot.POINTER_AT)
+        boot.match_screen(None, "", "", ["write", "a"], False)
+    expect("the console in a window is drawn with the pointer at the "
+           "tablet's place, and the console alone with none",
+           drawn_screens,
+           [("console-window", ["write", "a", "caret", "on", "pointer",
+                                "530", "602"]),
+            ("console-window", ["write", "a", "caret", "off", "pointer",
+                                "530", "602"]),
+            ("console", ["write", "a", "caret", "on"]),
+            ("console", ["write", "a", "caret", "off"])])
+    # The wheel's place lies in the console's window, whose size the panel
+    # gives, worked out by hand for 80 columns of cells a hundredth of the
+    # screen's height across and 30 rows: 660 x 496, 1320 x 992 and 1484 x
+    # 1116, at the three sizes the boots run.
+    for screen, size in (((1280, 800), (660, 496)),
+                         ((2560, 1600), (1320, 992)),
+                         ((2880, 1800), (1484, 1116))):
+        window = boot.Geometry(screen, size)
+        expect("the wheel's place lies in the console's window on %dx%d"
+               % screen, window.over_window(boot.WHEEL_AT), True)
 
     # A log built from key_script's events is read as the boot reads it:
     # the check of KeyScript against its own model's output, which is
@@ -883,6 +1103,33 @@ def main():
            result and result[1], 2)
     expect("a screen that never is the wanted one is given up on",
            polled(boot, [ppm(1)], [7], timeout=0), None)
+
+    # The fallback boot's first screen is Limb alone or the console's
+    # window over Limb, each asked of ci/screens.c as the boot draws it,
+    # polled until it is one, and given up on if it is neither, with the
+    # pixels of the nearer that differ.
+    window_pixels = bytes([9]) * (PIXEL_BYTES * SCREEN_WIDTH * SCREEN_HEIGHT)
+    near_window = ppm_pixels(bytes([1] * PIXEL_BYTES * 2)
+                             + window_pixels[PIXEL_BYTES * 2:])
+    asked_both = [(boot.LIMB_SCREEN, []),
+                  (boot.CONSOLE_WINDOW_SCREEN, [boot.CARET, "off"])]
+    result, asked = first_frame(boot, [ppm(7)])
+    expect("the first frame may be Limb alone", result, ("Limb alone", 1))
+    expect("Limb alone and the window are drawn as the boot asks", asked,
+           asked_both)
+    result, _ = first_frame(boot, [ppm(9)])
+    expect("the first frame may be the console's window over Limb", result,
+           ("the console's window over Limb", 1))
+    result, _ = first_frame(boot, [ppm(1), near_window, ppm(9)])
+    expect("a dump that is neither is taken again until one is", result,
+           ("the console's window over Limb", 3))
+    result, _ = first_frame(boot, [ppm(1)], timeout=0)
+    expect("a first frame that is neither is given up on, with a count of "
+           "the pixels that differ from each",
+           "in %d pixels" % (SCREEN_WIDTH * SCREEN_HEIGHT) in result, True)
+    result, _ = first_frame(boot, [near_window], timeout=0)
+    expect("and the count is the nearer one's",
+           "in 2 pixels" in result, True)
 
     # A mode that needs a whole data disk says so, without one.
     for mode in ("fallback", "persist"):

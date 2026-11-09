@@ -936,6 +936,8 @@ static void frame(void)
     if (window.frame_owed) {
         backlog_frame(&window.backlog, time);
         window.frame_owed = 0;
+        if (host->options & COMPOSITOR_OPTION_EXIT_TEST)
+            process_exit(COMPOSITOR_EXIT_TEST);
     }
 }
 

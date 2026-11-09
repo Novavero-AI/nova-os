@@ -16,12 +16,12 @@
    sizing and driver handles. Each virtio input function, up to
    INPUT_DEVICES_MAX, goes to a \nova\virtinp.exe of its own, which runs
    on: once its device is live it reports with an endpoint, which init
-   hands to their client, the console, \nova\console.exe, whose bootstrap
-   message console.c writes (docs/spec/input.md, docs/spec/console.md); or,
-   where the first process starts a compositor, \nova\compose.exe,
-   whose bootstrap message compositor.c writes, which is their client
-   instead until it is given up, and then the console is
-   (docs/spec/display.md D2, D3).
+   hands to their client: the compositor, \nova\compose.exe, whose
+   bootstrap message compositor.c writes, on every disk but the
+   specimen's, until it is given up, and then the console,
+   \nova\console.exe, whose bootstrap message console.c writes, which is
+   their client alone where no compositor runs (docs/spec/input.md,
+   docs/spec/console.md, docs/spec/display.md D2, D3).
 
    init supervises the drivers and the console for the life of the
    system (ipc.md I10), and the programs it keeps running that are not

@@ -41,9 +41,9 @@ _Static_assert(sizeof(BOOTSTRAP_BACKGROUND) == 16, "one layout on every target")
 /** The bytes of the answer to CONSOLE_SETUP_BACKGROUND. */
 #define CONSOLE_PREPARED_SIZE 4
 
-/** The messages the control channel queues: the options, the background,
-    the display or the display after a compositor, and a session for each
-    the console serves. */
+/** The messages the control channel queues: the options, the background
+    or a connection, the display or the display after a compositor, and a
+    session for each the console serves. */
 #define CONSOLE_CONTROL_CAPACITY (CONSOLE_SESSIONS + 3)
 
 /** ui.reduce-motion: the caret does not blink. */
@@ -85,8 +85,8 @@ _Static_assert(offsetof(CONSOLE_REPLY, length) == 4, "one layout on every target
 typedef struct {
     UINT32 transaction; /**< 0 */
     /** CONSOLE_SETUP_DISPLAY, CONSOLE_SETUP_SESSION,
-        CONSOLE_SETUP_BACKGROUND, CONSOLE_SETUP_DISPLAY_AFTER or
-        CONSOLE_SETUP_OPTIONS */
+        CONSOLE_SETUP_BACKGROUND, CONSOLE_SETUP_CONNECTION,
+        CONSOLE_SETUP_DISPLAY_AFTER or CONSOLE_SETUP_OPTIONS */
     UINT32 kind;
 } CONSOLE_SETUP;
 
@@ -308,6 +308,9 @@ static inline UINT32 console_bootstrap_endpoint_encode(UINT32 transaction,
 #define CONSOLE_SETUP_SESSION 2
 /** The kernel's background, before the display. */
 #define CONSOLE_SETUP_BACKGROUND 3
+/** A display connection, on which the console makes its window while a
+    compositor runs (console.md C2; display.md D5). */
+#define CONSOLE_SETUP_CONNECTION 4
 /** The display after a compositor, whose last frame the screen still
     shows (console.md C2). */
 #define CONSOLE_SETUP_DISPLAY_AFTER 5
@@ -580,6 +583,72 @@ static inline UINT32 console_control_prepared_encode(UINT32 transaction,
 /** Check a message received on the channel: returns OK, or
     ERR_INVALID_ARGS at the first rule of its description it breaks
     (docs/spec/interface.md P10).
+    A display connection, on which the console makes its window while a
+    compositor runs (console.md C2; display.md D5). */
+static inline UINT32 console_control_connection_check(const void *bytes,
+                                                      UINT32 byte_count,
+                                                      const RECEIVED_HANDLE *handles,
+                                                      UINT32 handle_count)
+{
+    const CONSOLE_SETUP *body = (const CONSOLE_SETUP *)bytes;
+
+    if ((UINT64)byte_count < 8)
+        return ERR_INVALID_ARGS;
+    if ((UINT64)body->kind != (UINT64)(CONSOLE_SETUP_CONNECTION))
+        return ERR_INVALID_ARGS;
+    if ((UINT64)body->transaction != (UINT64)0)
+        return ERR_INVALID_ARGS;
+    if ((UINT64)byte_count != 8)
+        return ERR_INVALID_ARGS;
+    if ((UINT64)handle_count != 1)
+        return ERR_INVALID_ARGS;
+    if ((UINT64)handles[0].type != (UINT64)TYPE_CHANNEL ||
+        ((UINT64)handles[0].rights & (UINT64)(CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT)) != (UINT64)(CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT))
+        return ERR_INVALID_ARGS;
+    return OK;
+}
+
+/** Lay the message out in bytes, which is aligned to 8 bytes and
+    holds at least the direction's BYTES_MAX: returns OK with the
+    message's size in *byte_count, or ERR_INVALID_ARGS with 0 there
+    if it breaks the description (docs/spec/interface.md P14).
+    A display connection, on which the console makes its window while a
+    compositor runs (console.md C2; display.md D5). */
+static inline UINT32 console_control_connection_encode(const CONSOLE_SETUP *body,
+                                                       const UINT32 *handles,
+                                                       UINT32 handle_count,
+                                                       HANDLE_TRANSFER *transfers,
+                                                       void *bytes,
+                                                       UINT32 *byte_count)
+{
+    CONSOLE_SETUP *out = (CONSOLE_SETUP *)bytes;
+    UINT8 *p = (UINT8 *)bytes;
+    UINT64 i;
+
+    *byte_count = 0;
+    if ((UINT64)handle_count < 1 ||
+        (UINT64)handle_count > 1)
+        return ERR_INVALID_ARGS;
+    for (i = 0; i < 8; i++)
+        p[i] = ((const UINT8 *)body)[i];
+    out->kind = (UINT32)CONSOLE_SETUP_CONNECTION;
+    {
+        const UINT64 total = 8;
+
+        if ((UINT64)out->transaction != (UINT64)0)
+            return ERR_INVALID_ARGS;
+        if (total != 8)
+            return ERR_INVALID_ARGS;
+    }
+    transfers[0].handle = handles[0];
+    transfers[0].rights = CHANNEL_RIGHT_READ | CHANNEL_RIGHT_WRITE | RIGHT_WAIT | RIGHT_TRANSFER;
+    *byte_count = (UINT32)8;
+    return OK;
+}
+
+/** Check a message received on the channel: returns OK, or
+    ERR_INVALID_ARGS at the first rule of its description it breaks
+    (docs/spec/interface.md P10).
     The display after a compositor, whose last frame the screen still
     shows (console.md C2). */
 static inline UINT32 console_control_display_after_check(const void *bytes,
@@ -728,6 +797,8 @@ static inline UINT32 console_control_request_check(const void *bytes,
         return console_control_session_check(bytes, byte_count, handles, handle_count);
     if (selector == (UINT64)CONSOLE_SETUP_BACKGROUND)
         return console_control_background_check(bytes, byte_count, handles, handle_count);
+    if (selector == (UINT64)CONSOLE_SETUP_CONNECTION)
+        return console_control_connection_check(bytes, byte_count, handles, handle_count);
     if (selector == (UINT64)CONSOLE_SETUP_DISPLAY_AFTER)
         return console_control_display_after_check(bytes, byte_count, handles, handle_count);
     if (selector == (UINT64)CONSOLE_SETUP_OPTIONS)

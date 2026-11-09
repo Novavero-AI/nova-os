@@ -44,11 +44,12 @@ while the boot screen's spinner turns:
    releases the display; the first process sends the display to the
    console, whose first draw is a copy of its prepared panel.
 
-Where a compositor runs, the background and the display go to it
-instead, after the release, and steps 2 to 4 send the console
-nothing: the first process reports its startup done without waiting,
-as [display.md D19](display.md#d19-the-build-plan)'s phase 3
-arrangement gives, rule 2.
+Where a compositor runs, which is every disk but the specimen's, the
+background and the display go to it instead, after the release, and
+steps 2 to 4 send the console nothing: the first process reports its
+startup done without waiting, as
+[display.md D19](display.md#d19-the-build-plan)'s phase 3 arrangement
+gives, rule 2.
 
 The kernel holds its handles to the sections until the fade's last
 frame. The first process holds its own from the kernel's message until
@@ -109,6 +110,16 @@ panel, so nothing of the compositor's last frame stays.
 - **Why the console as the fallback:** it draws a whole screen from its
   own memory with no client, so a machine whose compositor fails still
   shows its owner a console to log in at, read the log and fix it.
+- **Why the console takes a background it is never sent:**
+  `CONSOLE_SETUP_BACKGROUND`, its answer and the console's preparation
+  from it are in `interfaces/console.desc` and the console, but a
+  compositor runs on every disk but the specimen's, whose console takes
+  no display, so no first process sends the background to a console.
+  Steps 2 to 4 above and C5's section path are exercised by no boot and
+  no host check. Its cost is a message and code that nothing runs, to
+  keep correct by reading. Not taken: removing them with the step that
+  puts the console in a window; its cost is a change of protocol, and of
+  steps 2 to 4 above and C5's section path, in a step about the window.
 - **Cost:** the first process could draw over the console; it already
   holds the authority over every device (ipc.md I6, Cost). Programs a
   session showed when the compositor was given up run on unseen. The
@@ -166,7 +177,11 @@ restarted after the release gets the display once it has started, and
 no background. Until the display comes the console draws nothing, but
 serves its sessions and keeps what they write, and draws it all when
 it does; on a screen too narrow for 80 columns, lines written before
-then are cut at its width.
+then are cut at its width. A compositor runs on every disk but the
+specimen's, so the console is sent a connection to it once both have
+started ([display.md D19](display.md#d19-the-build-plan), rule 2, step 4),
+and the display after the compositor once the compositor is given up,
+or, if the console starts after that, the display.
 
 A program gets a session from the first process: it creates a channel
 of `CONSOLE_SESSION_CAPACITY` messages, sends one end to the console and
@@ -223,7 +238,9 @@ panel; it takes keys from its window's channel rather than from an
 input driver's endpoint. It lays its panel out as in direct mode, for
 the screen `DISPLAY_SCREEN` gives
 ([display.md D6](display.md#d6-windows-and-buffers)), and asks for a
-window of the panel's box's size on the `PANEL` surface. When its
+window of the panel's box's size on the `PANEL` surface, which it
+presents one frame at a time, as the compositor's frame event for the
+last allows, into the buffer the compositor has released. When its
 connection closes it does not end: it keeps its sessions and what they
 write, and waits on the control channel for a new connection or for
 the display after the compositor. Its
@@ -249,6 +266,19 @@ light as `gfx/raster.c` mixes, by `c` over that cover. One function in
 too. A panel in a window need not match one drawn directly: each is
 matched against the host's render of its own path.
 
+A window's frame damages the smallest rectangle of the window that holds
+every cell that differs from the frame last presented, a character or
+the caret's presence, and draws only the cells that differ from what the
+buffer it draws in last showed, every cell in a buffer it has drawn
+nothing in; the first frame, and the first after a configure, damage
+the window whole. A
+configure of another size than the one it asked for, which D6 allows the
+compositor to give, and a screen too small to lay the panel out on, end
+the window and its connection with a refusal, logged as
+[display.md D19](display.md#d19-the-build-plan), rule 8, gives; the
+console then waits as it does when a connection closes. A step that
+fails ends them likewise, logged as a failure.
+
 - **Why the keyboard's client:** the console is where keys are typed,
   and the platform driver already supervises the client and hands it a
   restarted driver's endpoint (input.md K4).
@@ -264,6 +294,21 @@ matched against the host's render of its own path.
   draws.
 - **Why a steady caret is lit:** a caret that stopped in its hidden
   half would show the reader nothing of where the line is edited.
+- **Why a frame damages the cells that changed:** the caret's blink and
+  a typed character change one cell, and a rectangle of the cells that
+  differ spares the compositor composing, and the console drawing, the
+  rest of the panel; the two buffers alternate, so each remembers what
+  it shows and is drawn where it differs, not where the last frame did.
+  Its cost is the cells' state kept for each buffer. Not taken: presenting
+  the whole window each frame; its cost is the whole panel composed at
+  every blink.
+- **Why a window of another size is refused:** the console lays its panel
+  out for its box and draws it there, so a window of another size is one
+  it has no layout for, and drawing the panel cut by the window's edge
+  would show a screen no one chose. Its cost is no console window on a
+  screen where the compositor gives less than the box. Not taken: laying
+  the panel out again for the size given; its cost is a second layout
+  rule, which direct mode and the host's render would need too.
 - **Why one program in two modes:** the console is the one program that
   shows text with no compositor, and the shell's whole interface is its
   session protocol, so one program keeps one font, one line editor and
@@ -317,11 +362,30 @@ is never given to a read: the console gives the keyboard to login's
 session, which the first process marks as login's when it gives it, so
 the keys that follow reach login. A pointing device's wheel scrolls the
 panel three lines a detent, back or forward through what it has shown
-([input.md K2](input.md#k2-key-events-and-pointer-reports)).
+([input.md K2](input.md#k2-key-events-and-pointer-reports)). In a
+window the keys come as `WINDOW_KEY` events with their text, the
+compositor having applied the modifiers and the keymap, and edit as the
+keys do here, and the compositor sends the secure attention key to no
+window ([display.md D12](display.md#d12-the-secure-attention-key-and-global-keys));
+the wheel comes in a `WINDOW_POINTER` event in 120ths of a detent
+([display.md D10](display.md#d10-the-pointer), rule 5), and only while
+the pointer is over the window or a button pressed in it is held
+([display.md D11](display.md#d11-routing-input), rule 3), so a turn with
+the pointer elsewhere scrolls nothing. The console adds each turn to the
+part of a detent it has turned and not scrolled, scrolls three lines for
+each 120 that makes, and keeps the rest.
 
 - **Why a US layout:** QEMU's keyboard reports positions, which evdev
   names by their US labels; another layout is a table more, and choosing
   one is a setting nothing offers.
+- **Why a wheel's parts are kept:** a pointing device may turn in parts
+  of a detent, and dropping each part would scroll never, where a whole
+  detent a time scrolls three lines as direct mode does. The part kept
+  has the sign of the turn, so a turn back cancels a part forward. Its
+  cost is a line that scrolls when the parts of several turns make a
+  detent, not at the turn that began it. Not taken: scrolling a line for
+  each 40 of 120; its cost is a scroll of other than three lines a
+  detent.
 - **Why the secure attention key goes to login:** a program can draw a
   picture of login's prompt, but no program receives the key, so a
   person who presses it first knows that what follows is login's.
@@ -429,7 +493,10 @@ since the kernel's image is Limb exactly (`tools/check-backdrop.c`).
 The display's line, `nova-console: display`, names which with
 `backdrop=section` or `backdrop=computed`, and gives the preparation's
 `prepare_ms` and the drawing's `draw_ms`; the line of a display after a
-compositor (C2) ends with `after=compositor`.
+compositor (C2) ends with `after=compositor`. Where a compositor runs
+it takes the background by the same label and size rule
+([display.md D2](display.md#d2-who-holds-the-display)), and the console
+computes its backdrop only once it has the display after the compositor.
 
 On a test disk ([disk-layout.md](disk-layout.md#files)) the first
 process tells the console of a display a row taller than the one it
@@ -454,11 +521,11 @@ tall as it is wide, and its width is the screen's height divided by
   customized have no image that is, so computing stays the path that
   always works and the image only spares it.
 - **Why the test disk's mismatch:** every boot CI makes of the test
-  disk, on three processor models and under KVM, then draws its panel
-  by computing, and every boot of the system disk from the image; each
-  screen of both is matched against the same render of `ci/screens.c`,
-  and `ci/boot.py` checks each boot's `backdrop`, with no disk or boot
-  job more.
+  disk, on three processor models and under KVM, then has its compositor
+  compute the wallpaper, and every boot of the system disk make it from
+  the image; each screen of both is matched against the same render of
+  `ci/screens.c`, and `ci/boot.py` checks each boot's `wallpaper`, and
+  the fallback boot's `backdrop`, with no disk or boot job more.
 - **Why the line says `after=compositor`:** the compositor's last frame
   is Limb as the kernel's fade left it, so the screen cannot show
   whether the console drew the whole screen or its panel alone. The key
@@ -469,9 +536,9 @@ tall as it is wide, and its width is the screen's height divided by
   other.
 - **Cost:** the boot protocol passes no physical size, so a large
   screen of low density shows larger text than it needs. The test
-  disk's console never takes the image, so only the system disk's boots
-  check that path, and on the test disk the panel comes after the fade
-  as long as computing takes.
+  disk's compositor never takes the image, so only the system disk's
+  boots check that path, and on the test disk the wallpaper comes after
+  the fade as long as computing takes.
 - **Not taken:** a marker file of its own, on a disk of its own, that
   asks for the mismatch. Its cost is a disk image and a boot job more
   for the check the test disk already makes.
@@ -503,7 +570,11 @@ one call, which the kernel writes in one piece. A motion of the kind the
 pointer line logged last noted, absolute or relative, whatever its axes,
 and a line the same as that one, are left out, so that a run of motion,
 or of turns one way, is one line, naming the axes of the run's first
-report. The console draws no pointer.
+report. The console draws no pointer. A console in a window is handed no
+endpoint, takes its keys, and its wheel while the pointer is over the
+window (C3), from its window, and logs none of these lines; the
+compositor, which is the endpoints' client, logs them
+([display.md D19](display.md#d19-the-build-plan), rule 8).
 
 - **Why no position:** a position is what a click chooses, as a key's
   code is what it types, and the console logs neither. Once anything on
