@@ -144,7 +144,8 @@ CI checks every pull request and every push to main:
   `ci/check-boot.py`, which replays serial lines through `ci/boot.py` to
   check which lines the fallback and window boots require, which
   failure lines the fallback boot accepts, which lines the window boot
-  refuses, in what order the window boot's key lines must come, and how
+  refuses, in what order the window boot's pointer and key lines must
+  come, and how
   the screens a boot waits for are polled, and
   actionlint over the workflows.
 - **Boot** boots the reproduced disks under QEMU with Ubuntu 24.04's
@@ -186,10 +187,15 @@ CI checks every pull request and every push to main:
   with the first released, with no close of the window or the
   connection by the compositor; QMP's screendump, once the second
   is shown, must equal the screen `ci/screens.c` draws for the window
-  with the library code the compositor composes with; and the keys it
-  then types over QMP must reach the client in order as the keyboard
-  rules of `docs/spec/display.md` give them, with the secure attention
-  key logged by the compositor and sent to no window.
+  with the library code the compositor composes with; the tablet's
+  moves, clicks and wheel turns, and a drag out of the window, sent over
+  QMP, must reach the client as the entry, pointer events and leave the
+  pointer rules of `docs/spec/display.md` give, with the screen equal to
+  the one `ci/screens.c` draws with the arrow at the pixel the tablet's
+  value gives, which a mouse's relative motion must not change; and the
+  keys it then types over QMP must reach the client in order as the
+  keyboard rules of `docs/spec/display.md` give them, with the secure
+  attention key logged by the compositor and sent to no window.
 - **Chain** boots `chain.img` and checks that each step of the bootstrap
   chain passes in its test report and each pinned link matches.
 

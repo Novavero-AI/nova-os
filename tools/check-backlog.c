@@ -23,6 +23,12 @@
    takes none is stalled at the deadline and not a nanosecond before. Random
    cases come from a fixed seed, so a failure is the same one every run.
 
+   The bytes the compositor sends for each message (backlog_encode) are
+   checked against the wire layout display.desc gives, written here as
+   offsets: each kind's fields, a key's text, a pointer's buttons, and the
+   refusal of a message that breaks its description or is of no kind the
+   channel carries.
+
    cc -std=c11 -I include -I lib -I gfx tools/check-backlog.c lib/backlog.c */
 
 #include <stdio.h>
@@ -960,6 +966,210 @@ static void check_stall_laws(void)
     }
 }
 
+/* ------------------------------------------------------------------------
+   The bytes */
+
+/* The wire layout of each message the window's channel carries, from
+   interfaces/display.desc as the generated header's offsets give it: every
+   message opens with a transaction (always 0) and its kind, 4 bytes each,
+   and the fields follow, little-endian. */
+#define WIRE_KIND_AT 4
+#define WIRE_HEADER_BYTES 8
+#define WIRE_CONFIGURE_BYTES 28
+#define WIRE_RELEASED_BYTES 12
+#define WIRE_FRAME_BYTES 16
+#define WIRE_KEY_BYTES 32 /* then the text */
+#define WIRE_POINTER_BYTES 64
+#define WIRE_BUTTONS_AT 20
+#define WIRE_BUTTON_AT 24
+#define WIRE_BUTTON_BYTES 4
+#define WIRE_POINTER_TIME_AT 56
+#define WIRE_ENTER_BYTES 24
+#define WIRE_ENTER_TIME_AT 16
+#define POISON_BYTE 0xAA
+
+typedef union {
+    UINT64 aligned;
+    UINT8 bytes[DISPLAY_WINDOW_TO_CLIENT_BYTES_MAX];
+} WIRE;
+
+/* The width bytes at offset, little-endian. */
+static UINT64 wire_at(const WIRE *wire, unsigned offset, unsigned width)
+{
+    UINT64 value = 0;
+
+    while (width-- > 0)
+        value = value << 8 | wire->bytes[offset + width];
+    return value;
+}
+
+/* message, encoded over bytes that hold something else, is size bytes
+   that the window's channel takes as an event of kind, and opens with a
+   transaction of 0 and that kind. */
+static void check_wire(const BACKLOG_MESSAGE *message, WIRE *wire,
+                       UINT32 kind, UINT32 size)
+{
+    UINT32 got_size = 0, which = 0, status;
+
+    memset(wire, POISON_BYTE, sizeof *wire);
+    status = backlog_encode(message, wire->bytes, &got_size);
+    check(status == OK && got_size == size,
+          "a message is encoded as the bytes of its kind", kind, got_size);
+    check(display_window_event_check(wire->bytes, got_size, 0, 0, &which) ==
+                  OK &&
+              which == kind,
+          "and they are the window's event of that kind", kind, which);
+    check(wire_at(wire, 0, WIRE_KIND_AT) == 0 &&
+              wire_at(wire, WIRE_KIND_AT, WIRE_KIND_AT) == kind,
+          "with a transaction of 0 and the kind", kind, 0);
+}
+
+static void check_encode_state(void)
+{
+    BACKLOG_MESSAGE message;
+    WIRE wire;
+
+    memset(&message, 0, sizeof message);
+    message.kind = WINDOW_CONFIGURE;
+    message.body.configure = configure_of(5);
+    check_wire(&message, &wire, WINDOW_CONFIGURE, WIRE_CONFIGURE_BYTES);
+    check(wire_at(&wire, 8, 4) == 5 && wire_at(&wire, 12, 4) == 105 &&
+              wire_at(&wire, 16, 4) == 55 && wire_at(&wire, 20, 4) == 4 &&
+              wire_at(&wire, 24, 4) == (5 & WINDOW_STATES),
+          "a configure's serial, size, scale and state are carried", 0, 0);
+
+    memset(&message, 0, sizeof message);
+    message.kind = WINDOW_RELEASED;
+    message.body.released.buffers = 0x5;
+    check_wire(&message, &wire, WINDOW_RELEASED, WIRE_RELEASED_BYTES);
+    check(wire_at(&wire, 8, 4) == 0x5, "the buffers released are carried", 0,
+          0);
+
+    memset(&message, 0, sizeof message);
+    message.kind = WINDOW_FRAME;
+    message.body.frame.time = 0x0123456789ABCDEFull;
+    check_wire(&message, &wire, WINDOW_FRAME, WIRE_FRAME_BYTES);
+    check(wire_at(&wire, 8, 8) == 0x0123456789ABCDEFull,
+          "a frame's time is carried", 0, 0);
+
+    memset(&message, 0, sizeof message);
+    message.kind = WINDOW_DROPPED;
+    check_wire(&message, &wire, WINDOW_DROPPED, WIRE_HEADER_BYTES);
+}
+
+/* A key carries its text, as many bytes as it says: none, one, and the two
+   of a letter that is more than one. */
+static void check_encode_key(void)
+{
+    static const char *const texts[] = {"", "k", "\xC3\xA9"};
+    BACKLOG_MESSAGE message;
+    WIRE wire;
+    unsigned i, j;
+
+    for (i = 0; i < sizeof texts / sizeof texts[0]; i++) {
+        unsigned length = (unsigned)strlen(texts[i]);
+
+        message.kind = WINDOW_KEY;
+        message.body.input = key_event(9);
+        message.body.input.body.key.event.text_length = length;
+        message.body.input.body.key.event.modifiers = DISPLAY_MODIFIER_ALT;
+        memcpy(message.body.input.body.key.text, texts[i], length);
+        check_wire(&message, &wire, WINDOW_KEY, WIRE_KEY_BYTES + length);
+        check(wire_at(&wire, 8, 2) == 9 &&
+                  wire_at(&wire, 12, 4) == INPUT_KEY_PRESSED &&
+                  wire_at(&wire, 16, 4) == DISPLAY_MODIFIER_ALT &&
+                  wire_at(&wire, 20, 4) == length &&
+                  wire_at(&wire, 24, 8) == 9,
+              "a key's code, value, modifiers, length and time are carried",
+              length, 0);
+        for (j = 0; j < length; j++)
+            check(wire_at(&wire, WIRE_KEY_BYTES + j, 1) ==
+                      (UINT8)texts[i][j],
+                  "and each byte of its text", length, j);
+    }
+}
+
+/* A pointer carries its position, wheel, each button changed and time, and
+   an enter its position and time, and a leave nothing. */
+static void check_encode_pointer(void)
+{
+    BACKLOG_MESSAGE message;
+    WIRE wire;
+    unsigned i;
+
+    message.kind = WINDOW_POINTER;
+    message.body.input = click_event(4);
+    message.body.input.body.pointer.x = -300;
+    message.body.input.body.pointer.wheel = -240;
+    message.body.input.body.pointer.buttons = 3;
+    for (i = 0; i < 3; i++) {
+        message.body.input.body.pointer.button[i].code = (UINT16)(0x110 + i);
+        message.body.input.body.pointer.button[i].value =
+            i == 1 ? INPUT_KEY_RELEASED : INPUT_KEY_PRESSED;
+    }
+    check_wire(&message, &wire, WINDOW_POINTER, WIRE_POINTER_BYTES);
+    check(wire_at(&wire, 8, 4) == (UINT32)-300 && wire_at(&wire, 12, 4) == 80 &&
+              wire_at(&wire, 16, 4) == (UINT32)-240 &&
+              wire_at(&wire, WIRE_BUTTONS_AT, 4) == 3 &&
+              wire_at(&wire, WIRE_POINTER_TIME_AT, 8) == 4,
+          "a pointer's position, wheel, button count and time are carried", 0,
+          0);
+    for (i = 0; i < 3; i++)
+        check(wire_at(&wire, WIRE_BUTTON_AT + i * WIRE_BUTTON_BYTES, 2) ==
+                      0x110 + i &&
+                  wire_at(&wire, WIRE_BUTTON_AT + i * WIRE_BUTTON_BYTES + 2,
+                          2) ==
+                      (i == 1 ? INPUT_KEY_RELEASED : INPUT_KEY_PRESSED),
+              "and each button's code and value", i, 0);
+
+    message.kind = WINDOW_ENTER;
+    message.body.input = enter_event(6);
+    message.body.input.body.enter.y = -77;
+    check_wire(&message, &wire, WINDOW_ENTER, WIRE_ENTER_BYTES);
+    check(wire_at(&wire, 8, 4) == 60 && wire_at(&wire, 12, 4) == (UINT32)-77 &&
+              wire_at(&wire, WIRE_ENTER_TIME_AT, 8) == 6,
+          "an enter's position and time are carried", 0, 0);
+
+    message.kind = WINDOW_LEAVE;
+    message.body.input = leave_event(8);
+    check_wire(&message, &wire, WINDOW_LEAVE, WIRE_HEADER_BYTES);
+}
+
+/* A message that breaks its description, or is of no kind the channel
+   carries, is refused with no size, whatever bytes the caller holds. */
+static void check_encode_refused(void)
+{
+    static const UINT32 kinds[] = {0, WINDOW_LEAVE + 1, 0x1FF, 0xFFFFFFFFu};
+    BACKLOG_MESSAGE message;
+    WIRE wire;
+    UINT32 size = 77;
+    unsigned i;
+
+    memset(&message, 0, sizeof message);
+    for (i = 0; i < sizeof kinds / sizeof kinds[0]; i++) {
+        message.kind = kinds[i];
+        size = 77;
+        check(backlog_encode(&message, wire.bytes, &size) == ERR_INVALID_ARGS &&
+                  size == 0,
+              "a message of a kind the channel does not carry is refused",
+              kinds[i], size);
+    }
+    message.kind = WINDOW_POINTER;
+    message.body.input = motion_event(1);
+    message.body.input.body.pointer.buttons = INPUT_REPORT_BUTTONS + 1;
+    size = 77;
+    check(backlog_encode(&message, wire.bytes, &size) == ERR_INVALID_ARGS &&
+              size == 0,
+          "a pointer holding more buttons than a report is refused", 0, size);
+    message.kind = WINDOW_KEY;
+    message.body.input = key_event(1);
+    message.body.input.body.key.event.text_length = WINDOW_KEY_TEXT_MAX + 1;
+    size = 77;
+    check(backlog_encode(&message, wire.bytes, &size) == ERR_INVALID_ARGS &&
+              size == 0,
+          "a key whose text is longer than a key's is refused", 0, size);
+}
+
 static void check_tables(void)
 {
     check_order();
@@ -972,6 +1182,10 @@ static void check_tables(void)
     check_closed();
     check_send_results();
     check_stall_laws();
+    check_encode_state();
+    check_encode_key();
+    check_encode_pointer();
+    check_encode_refused();
 }
 
 /* ------------------------------------------------------------------------

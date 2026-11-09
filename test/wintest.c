@@ -3,11 +3,12 @@
    surface, waits for the window's first configure, draws a buffer for it
    and presents it, then draws a second buffer, with a square changed, and
    presents that with the square as damage, waiting each time for the
-   frame that shows the present. It logs each step, then each key its
-   window is sent, and holds the window until the compositor closes it or
-   its connection (docs/spec/display.md D5 to D7 and D11, rule 2). Any
-   step that fails, and any event of the window that is not a key, ends it
-   WINTEST_EXIT_FAILED, logged. */
+   frame that shows the present. It logs each step and each key, entry,
+   pointer event and leave its window is sent, those that come while it
+   waits as those after, and holds the window until the compositor closes
+   it or its connection (docs/spec/display.md D5 to D7 and D11, rules 2
+   and 3). Any step that fails, and any event of the window that is not one
+   of those, ends it WINTEST_EXIT_FAILED, logged. */
 
 #include "display_protocol.h"
 #include "log.h"
@@ -56,6 +57,14 @@ static const MODIFIER_NAME modifier_names[] = {
     {DISPLAY_MODIFIER_ALT, "alt"},
     {DISPLAY_MODIFIER_SUPER, "super"},
 };
+
+/* evdev's BTN_LEFT, and the names a pointer line gives it and the seven
+   codes after it, as the console's lines name a button; a code past them
+   is written as its number. */
+#define BTN_LEFT 0x110
+static const char *const button_names[] = {
+    "left", "right", "middle", "side", "extra", "forward", "back", "task"};
+#define BUTTON_NAMES (sizeof button_names / sizeof button_names[0])
 
 static MAPPING mapping = {HANDLE_INVALID, MAPPINGS_BASE};
 static UINT32 connection = HANDLE_INVALID;
@@ -186,20 +195,6 @@ static UINT32 next_event(void)
     return which;
 }
 
-/* The serial and size of the window's first configure. */
-static UINT32 take_configure(UINT32 *width, UINT32 *height)
-{
-    const WINDOW_CONFIGURE_EVENT *event =
-        (const WINDOW_CONFIGURE_EVENT *)incoming.bytes;
-    UINT32 which = next_event();
-
-    if (which != WINDOW_CONFIGURE)
-        fail("the first event is not a configure", which);
-    *width = event->width;
-    *height = event->height;
-    return event->serial;
-}
-
 /* Draw frame of a width x height window into a new buffer, its rows
    WINTEST_STRIDE_PAD pixels longer than the window is wide, in whole
    pages and in sections of SECTION_MAX_SIZE bytes but the last, mapped one
@@ -279,30 +274,6 @@ static void present(UINT32 number, UINT32 serial, const WINDOW_RECT *rectangle)
         fail("present", status);
 }
 
-/* Read the events that answer a present of buffer number: the release of
-   the buffers in released, a mask, if it is not 0, and then the frame that
-   shows the present. Each is logged. */
-static void await_frame(UINT32 number, UINT32 released)
-{
-    const WINDOW_RELEASED_EVENT *event =
-        (const WINDOW_RELEASED_EVENT *)incoming.bytes;
-    UINT32 which = next_event();
-
-    if (released) {
-        if (which != WINDOW_RELEASED || event->buffers != released)
-            fail("the release is not of the buffers expected", which);
-        say("nova-wintest: released buffers=");
-        say_number(event->buffers);
-        say("\r\n");
-        which = next_event();
-    }
-    if (which != WINDOW_FRAME)
-        fail("the event is not the frame that shows the present", which);
-    say("nova-wintest: shown frame=");
-    say_number(number);
-    say("\r\n");
-}
-
 static const char *value_name(UINT32 value)
 {
     switch (value) {
@@ -346,6 +317,144 @@ static void log_key(void)
     say("\r\n");
 }
 
+/* n in decimal, with a minus sign where it is below 0. */
+static void say_signed(INT32 n)
+{
+    if (n < 0)
+        say("-");
+    say_number(n < 0 ? (UINT64)(-(INT64)n) : (UINT64)n);
+}
+
+static void say_button(UINT32 code)
+{
+    if (code >= BTN_LEFT && code - BTN_LEFT < BUTTON_NAMES)
+        say(button_names[code - BTN_LEFT]);
+    else
+        say_number(code);
+}
+
+/* Log the pointer event in incoming, the fields of a WINDOW_POINTER as it
+   carries them: the pointer's place across and down the window and the
+   wheel's turn, each a signed whole number of the unit its key names (256ths
+   of a pixel and of 120ths of a detent), the buttons changed, each its name
+   and its new state, comma-joined, or none, and the time the driver took
+   the report's end. */
+static void log_pointer(void)
+{
+    const WINDOW_POINTER_EVENT *event =
+        (const WINDOW_POINTER_EVENT *)incoming.bytes;
+    UINT32 i;
+
+    say("nova-wintest: pointer x_256ths=");
+    say_signed(event->x);
+    say(" y_256ths=");
+    say_signed(event->y);
+    say(" wheel_120ths=");
+    say_signed(event->wheel);
+    say(" buttons=");
+    for (i = 0; i < event->buttons; i++) {
+        if (i)
+            say(",");
+        say_button(event->button[i].code);
+        say(event->button[i].value == INPUT_KEY_PRESSED ? ":pressed"
+                                                        : ":released");
+    }
+    if (!event->buttons)
+        say("none");
+    say(" time_ms=");
+    timing_say_ms(event->time);
+    say("\r\n");
+}
+
+/* Log the entry in incoming: the pointer's place in the window and the
+   time, as log_pointer does. */
+static void log_enter(void)
+{
+    const WINDOW_ENTER_EVENT *event =
+        (const WINDOW_ENTER_EVENT *)incoming.bytes;
+
+    say("nova-wintest: enter x_256ths=");
+    say_signed(event->x);
+    say(" y_256ths=");
+    say_signed(event->y);
+    say(" time_ms=");
+    timing_say_ms(event->time);
+    say("\r\n");
+}
+
+/* Log the input event of kind which in incoming, and return 1; for any
+   other kind, return 0. */
+static int log_input(UINT32 which)
+{
+    switch (which) {
+    case WINDOW_KEY:
+        log_key();
+        return 1;
+    case WINDOW_POINTER:
+        log_pointer();
+        return 1;
+    case WINDOW_ENTER:
+        log_enter();
+        return 1;
+    case WINDOW_LEAVE:
+        say("nova-wintest: leave\r\n");
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* The window's next event that is not input, in incoming; returns its
+   kind. A window is sent the pointer's entry and moves once a present of
+   it is shown, which is before its frame message, so input can come among
+   the answers to a present: it is logged as the end of the run logs it. */
+static UINT32 next_answer(void)
+{
+    UINT32 which = next_event();
+
+    while (log_input(which))
+        which = next_event();
+    return which;
+}
+
+/* The serial and size of the window's first configure. */
+static UINT32 take_configure(UINT32 *width, UINT32 *height)
+{
+    const WINDOW_CONFIGURE_EVENT *event =
+        (const WINDOW_CONFIGURE_EVENT *)incoming.bytes;
+    UINT32 which = next_answer();
+
+    if (which != WINDOW_CONFIGURE)
+        fail("the first event is not a configure", which);
+    *width = event->width;
+    *height = event->height;
+    return event->serial;
+}
+
+/* Read the events that answer a present of buffer number: the release of
+   the buffers in released, a mask, if it is not 0, and then the frame that
+   shows the present. Each is logged, and any input between them. */
+static void await_frame(UINT32 number, UINT32 released)
+{
+    const WINDOW_RELEASED_EVENT *event =
+        (const WINDOW_RELEASED_EVENT *)incoming.bytes;
+    UINT32 which = next_answer();
+
+    if (released) {
+        if (which != WINDOW_RELEASED || event->buffers != released)
+            fail("the release is not of the buffers expected", which);
+        say("nova-wintest: released buffers=");
+        say_number(event->buffers);
+        say("\r\n");
+        which = next_answer();
+    }
+    if (which != WINDOW_FRAME)
+        fail("the event is not the frame that shows the present", which);
+    say("nova-wintest: shown frame=");
+    say_number(number);
+    say("\r\n");
+}
+
 _Noreturn void wintest_main(UINT32 bootstrap, UINT64 argument)
 {
     UINT32 screen_width, screen_height, wanted_width, wanted_height;
@@ -381,8 +490,7 @@ _Noreturn void wintest_main(UINT32 bootstrap, UINT64 argument)
     for (;;) {
         UINT32 which = next_event();
 
-        if (which != WINDOW_KEY)
-            fail("an event that is not a key", which);
-        log_key();
+        if (!log_input(which))
+            fail("an event that is not input", which);
     }
 }

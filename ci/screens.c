@@ -29,7 +29,11 @@
 
    window   Limb computed as the compositor computes its wallpaper, under
             the window the test client (test/wintest.h) shows when it has
-            presented its second frame. It takes no INPUT. The window is
+            presented its second frame. It takes no INPUT, or one, "pointer
+            COLUMN ROW": the pointer's image, the theme's arrow
+            (look.md V15) at the screen's scale, drawn once over the
+            whole screen composed, its hotspot on the top left corner of
+            the pixel at COLUMN and ROW. The window is
             made, sized and placed by lib/window.c from the size the
             client asks for on a screen this size, filled with the
             client's pixels, and composed over the wallpaper by
@@ -41,9 +45,11 @@
             specification says: that it reads a buffer by its stride and
             not its width, shows the cover the client sets, places the
             window and composes the damage of a second frame over the
-            first, and that the client's messages reach the compositor
-            whole. A mistake in lib/compose.c or lib/window.c shows on
-            both sides alike and goes unseen here.
+            first, that the client's messages reach the compositor
+            whole, and that the pointer is drawn over every band it
+            touches, as it is over the finished screen. A mistake in
+            lib/compose.c or lib/window.c shows on both sides alike and
+            goes unseen here.
 
    cc -std=c11 -O2 -Wall -Wextra -pedantic -I include -I gfx -I console \
      -I lib -I test -o screens ci/screens.c console/text.c console/view.c \
@@ -88,6 +94,8 @@
 #define INPUT_WRITE "write"
 #define INPUT_WHEEL "wheel"
 #define INPUT_CARET "caret"
+#define INPUT_POINTER_AT "pointer"
+#define POINTER_ARGUMENTS 3
 #define CARET_ON "on"
 #define CARET_OFF "off"
 
@@ -286,10 +294,53 @@ static UINT32 *window_pixels(UINT32 width, UINT32 height)
     return pixels;
 }
 
+/* The theme's pointer, as a default (look.md V15). */
+static const INT32 pointer_body_points[] = THEME_POINTER_BODY_DEFAULT_POINTS;
+static const UINT8 pointer_body_flags[] = THEME_POINTER_BODY_DEFAULT_FLAGS;
+static const UINT32 pointer_body_ends[] = THEME_POINTER_BODY_DEFAULT_ENDS;
+static const INT32 pointer_edge_points[] = THEME_POINTER_EDGE_DEFAULT_POINTS;
+static const UINT8 pointer_edge_flags[] = THEME_POINTER_EDGE_DEFAULT_FLAGS;
+static const UINT32 pointer_edge_ends[] = THEME_POINTER_EDGE_DEFAULT_ENDS;
+
+/* Draw the pointer's image with its hotspot on the top left corner of the
+   pixel (column, row) over the whole screen, as one band of its own
+   rectangle: the screen's words are 0x00RRGGBB, which PIXEL_BGR gives.
+   Returns 0 if the image cannot be drawn. */
+static int draw_pointer(const SCREEN *screen, OUTLINE *work, long column,
+                        long row)
+{
+    COMPOSE_POINTER image;
+    COMPOSE_BAND band;
+
+    image.body.points = pointer_body_points;
+    image.body.flags = pointer_body_flags;
+    image.body.ends = pointer_body_ends;
+    image.body.point_count = THEME_POINTER_BODY_DEFAULT_POINT_COUNT;
+    image.body.contours = THEME_POINTER_BODY_DEFAULT_CONTOURS;
+    image.edge.points = pointer_edge_points;
+    image.edge.flags = pointer_edge_flags;
+    image.edge.ends = pointer_edge_ends;
+    image.edge.point_count = THEME_POINTER_EDGE_DEFAULT_POINT_COUNT;
+    image.edge.contours = THEME_POINTER_EDGE_DEFAULT_CONTOURS;
+    image.body_ink = THEME_POINTER_BODY_INK_DEFAULT;
+    image.edge_ink = THEME_POINTER_EDGE_INK_DEFAULT;
+    image.edge_percent = THEME_POINTER_EDGE_OPACITY_DEFAULT;
+    band.pixels = screen->pixels;
+    band.stride = screen->stride;
+    band.rect.left = band.rect.top = 0;
+    band.rect.right = screen->width;
+    band.rect.bottom = screen->height;
+    return compose_pointer(work, &image, &band, column, row,
+                           window_scale((UINT32)screen->height));
+}
+
 /* Compose the window over the wallpaper, the whole screen, with the panel
-   material and corners the compositor gives a window of the PANEL surface.
-   Returns 0 if the window cannot be made or there is no memory. */
-static int compose_window(const SCREEN *screen, const UINT32 *wallpaper)
+   material and corners the compositor gives a window of the PANEL surface,
+   and the pointer over it where pointer, if it is not 0, gives the pixel
+   of its hotspot, a column and a row. Returns 0 if the window cannot be
+   made, the pointer drawn or there is no memory. */
+static int compose_window(const SCREEN *screen, const UINT32 *wallpaper,
+                          const long *pointer)
 {
     static COMPOSE_MATERIAL material;
     static COMPOSE_CORNERS corners;
@@ -338,8 +389,11 @@ static int compose_window(const SCREEN *screen, const UINT32 *wallpaper)
         whole.left = whole.top = 0;
         whole.right = screen->width;
         whole.bottom = screen->height;
-        compose_frame(screen, &under, &placed, 1, &whole, memory, TILE_ROWS);
-        composed = 1;
+        compose_frame(screen, &under, &placed, 1, &whole, memory, TILE_ROWS, 0);
+        composed = !pointer ||
+                   draw_pointer(screen, work, pointer[0], pointer[1]);
+        if (!composed)
+            fprintf(stderr, "screens: window: the pointer cannot be drawn\n");
     } else {
         fprintf(stderr, "screens: window: no memory for the window\n");
     }
@@ -352,11 +406,16 @@ static int compose_window(const SCREEN *screen, const UINT32 *wallpaper)
 static int window_screen(const SCREEN *screen, int count, char **inputs)
 {
     UINT32 *wallpaper;
+    long at[2];
     int drawn = 0;
 
-    (void)inputs;
-    if (count != 0) {
-        fprintf(stderr, "screens: window: takes no input\n");
+    if (count != 0 &&
+        !(count == POINTER_ARGUMENTS &&
+          strcmp(inputs[0], INPUT_POINTER_AT) == 0 &&
+          number(inputs[1], 0, (long)(screen->width - 1), &at[0]) &&
+          number(inputs[2], 0, (long)(screen->height - 1), &at[1]))) {
+        fprintf(stderr, "screens: window: takes no input, or \"%s COLUMN "
+                        "ROW\" within the screen\n", INPUT_POINTER_AT);
         return 0;
     }
     wallpaper = limb_wallpaper(screen);
@@ -364,7 +423,7 @@ static int window_screen(const SCREEN *screen, int count, char **inputs)
         fprintf(stderr, "screens: window: no Limb on a screen this size\n");
         return 0;
     }
-    drawn = compose_window(screen, wallpaper);
+    drawn = compose_window(screen, wallpaper, count ? at : 0);
     free(wallpaper);
     return drawn;
 }

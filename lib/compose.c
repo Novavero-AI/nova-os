@@ -24,7 +24,15 @@
    and in no other row. A square of twice the radius itself would hold
    both arcs of a fractional radius in the column where they meet, where
    a larger window has the straight edge. Each square is made once per
-   radius, and a window of another size reads it by offset. */
+   radius, and a window of another size reads it by offset.
+
+   The pointer's image is drawn over each finished band that holds a pixel
+   of its box, whole and cut by the band, so a screen composed in bands of
+   any height is the screen composed whole with the image drawn over it.
+   Moving the pointer damages the box at its old place and at its new, each
+   in whole blocks, which is every pixel a frame over them must write for
+   the image to be at its new place and at no other
+   (tools/check-compose.c checks both). */
 
 #include "compose.h"
 #include "limb.h"
@@ -352,14 +360,38 @@ const char *compose_wallpaper_refusal(const BOOTSTRAP_BACKGROUND *background,
     return 0;
 }
 
+/* Whether two rectangles share a pixel. */
+static int overlap(const RECT *a, const RECT *b)
+{
+    return a->left < b->right && b->left < a->right && a->top < b->bottom &&
+           b->top < a->bottom;
+}
+
+/* Draw the pointer's image over band, if the pixels it touches (image) are
+   any of the band's, since drawing it over a band it does not touch changes
+   nothing and costs the tracing of its outlines. */
+static void draw_cursor(const COMPOSE_CURSOR *cursor, const RECT *image,
+                        const COMPOSE_BAND *band)
+{
+    if (overlap(image, &band->rect))
+        compose_pointer(cursor->work, cursor->image, band, cursor->x,
+                        cursor->y, cursor->quarters);
+}
+
 void compose_frame(const SCREEN *screen, const COMPOSE_WALLPAPER *wallpaper,
                    const COMPOSE_WINDOW *windows, UINT32 count,
-                   const RECT *rect, UINT32 *memory, INT64 rows)
+                   const RECT *rect, UINT32 *memory, INT64 rows,
+                   const COMPOSE_CURSOR *cursor)
 {
+    RECT image;
+    int pointer = cursor != 0 && cursor->placed;
     INT64 top;
 
     if (rows < 1)
         return;
+    if (pointer)
+        pointer = compose_pointer_box(cursor->work, cursor->image, cursor->x,
+                                      cursor->y, cursor->quarters, &image);
     for (top = rect->top; top < rect->bottom; top += rows) {
         RECT written;
         COMPOSE_BAND band;
@@ -372,6 +404,8 @@ void compose_frame(const SCREEN *screen, const COMPOSE_WALLPAPER *wallpaper,
         band.stride = screen->width;
         band.rect = compose_blocks(screen, &written);
         compose_band(&band, wallpaper, windows, count);
+        if (pointer)
+            draw_cursor(cursor, &image, &band);
         compose_write(&band, screen, &written);
     }
 }
@@ -386,7 +420,7 @@ void compose_wallpaper_frame(const SCREEN *screen,
     whole.top = 0;
     whole.right = screen->width;
     whole.bottom = screen->height;
-    compose_frame(screen, wallpaper, 0, 0, &whole, memory, rows);
+    compose_frame(screen, wallpaper, 0, 0, &whole, memory, rows, 0);
 }
 
 /* ------------------------------------------------------------------------
@@ -604,4 +638,28 @@ int compose_pointer_box(OUTLINE *work, const COMPOSE_POINTER *pointer,
     grow_to_lines(&found, &any, work);
     *box = found;
     return 1;
+}
+
+UINT32 compose_cursor_move(COMPOSE_CURSOR *cursor, const SCREEN *screen,
+                           INT64 x, INT64 y, RECT boxes[2])
+{
+    RECT before, after;
+    UINT32 count = 0;
+
+    if (cursor->placed && cursor->x == x && cursor->y == y)
+        return 0;
+    if (!compose_pointer_box(cursor->work, cursor->image, x, y,
+                             cursor->quarters, &after))
+        return 0;
+    /* The image was accepted at the old place, and the image and the scale
+       have not changed, so its box is found again. */
+    if (cursor->placed &&
+        compose_pointer_box(cursor->work, cursor->image, cursor->x, cursor->y,
+                            cursor->quarters, &before))
+        boxes[count++] = compose_blocks(screen, &before);
+    boxes[count++] = compose_blocks(screen, &after);
+    cursor->placed = 1;
+    cursor->x = x;
+    cursor->y = y;
+    return count;
 }

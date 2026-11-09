@@ -161,8 +161,8 @@ void route_report(ROUTE *route, UINT32 source, const INPUT_DEVICE *device,
 
 /** Decide again, with the pointer where it is, for a window that has
     changed under a pointer that has not moved since, which no report
-    says: one that has shown its first frame, or moved, or changed its
-    size. Sets *routed to the WINDOW_ENTER, stamped time, or the
+    says: one whose first present is shown, or that has moved, or changed
+    its size. Sets *routed to the WINDOW_ENTER, stamped time, or the
     WINDOW_LEAVE, that the window's now having or not having the pointer
     gives, or to none. The same rules as route_report's decide it, so a
     held pointer gives none. */

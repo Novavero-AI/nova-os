@@ -958,9 +958,9 @@ channel, and to no other:
    console's table ([console.md C3](console.md#c3-keys)) moved into a
    library both use. A game reads codes; a text field reads text.
 3. **The pointer** goes to the topmost window under it, in coordinates
-   relative to that window. A window is under the pointer once it has
-   shown a frame ([D19](#d19-the-build-plan), rule 5), when the pixel the
-   pointer's position rounds down to ([D10](#d10-the-pointer), rule 4) is
+   relative to that window. A window is under the pointer once a present
+   of it is shown ([D7](#d7-presenting-and-pacing), rule 4), when the pixel
+   the pointer's position rounds down to ([D10](#d10-the-pointer), rule 4) is
    one of its pixels, those of its left and top edges in and those of its
    right and bottom edges out. There is one pointer, whatever devices
    move it, and a button held on any of them holds it. A button is one
@@ -982,8 +982,8 @@ channel, and to no other:
    button is held, or while a button pressed in it is held, so a drag
    that leaves it sends no leave, and the last release is sent before
    the leave. An entry carries the pointer's position and comes before
-   the pointer event of the report that caused it; a window that shows
-   its first frame, or moves, or changes size under a pointer that has
+   the pointer event of the report that caused it; a window whose first
+   present is shown, or that moves, or changes size under a pointer that has
    not moved is sent its entry or its leave then. Whether a window has
    the pointer is judged when the report is done, buttons and all, and
    the wheel goes to the window that has the pointer then. A window that
@@ -1651,8 +1651,8 @@ login's session as it does on its own
    `compositor/`, as the console is from `console/`; it logs as
    `nova-compositor` and the platform driver names it `compositor`, as
    `virtinp.exe` logs as `nova-virtio-input`. What it computes without
-   a call, composing bands, materials, corners and the pointer's image,
-   is `lib/compose.c`, which
+   a call, composing bands, materials, corners, the pointer's image and
+   what a move of the pointer damages, is `lib/compose.c`, which
    `tools/check-compose.c` checks on the host, in CI beside
    `tools/check-masks.c`; the rules of a window, its size and place and
    whether a buffer or a present is valid and what a present damages
@@ -1661,7 +1661,8 @@ login's session as it does on its own
    checks likewise; which window a pointer's report goes to and what it
    is sent ([D10](#d10-the-pointer), rule 4, and [D11](#d11-routing-input),
    rule 3) is `lib/route.c`, what waits for a window's channel
-   (D11, rule 7) is `lib/backlog.c`, and which key events a window is
+   (D11, rule 7) and the bytes of each message it is sent are
+   `lib/backlog.c`, and which key events a window is
    sent and which are the secure attention key's
    ([D12](#d12-the-secure-attention-key-and-global-keys) and rule 6) is
    `lib/keyroute.c`, which `tools/check-route.c`,
@@ -1783,18 +1784,32 @@ login's session as it does on its own
      modifier held, the other keyboards' included, and leaves Caps Lock as
      it was. The presses sent stay recorded, and the window is sent no
      release for them.
-   - **The pointer's** reports are read and logged (rule 8), and the
-     compositor routes none to a window yet. Routed, its buttons and the
-     wheel go to the window that has the pointer
-     ([D11](#d11-routing-input), rule 3), the wheel in 120ths of a detent
-     ([D10](#d10-the-pointer), rule 5), and the console scrolls its panel
-     three lines a detent as it does in direct mode. Relative motion
-     moves no pointer yet (D10, rule 6).
-7. **The pointer** is not drawn until the first absolute report that
-   sets both axes, and then with its hotspot on the top left corner of
+   - **The pointer's** reports are read, logged (rule 8) and routed. The
+     one pointer every pointing device moves, and what a window is sent
+     of it, are `lib/route.c`'s ([D10](#d10-the-pointer), rule 4, and
+     [D11](#d11-routing-input), rule 3): the window's entry, its
+     pointer events, with the position relative to the window and the
+     wheel in 120ths of a detent (D10, rule 5), and its leave, each
+     queued behind the window's other input (D11, rule 7). The source of
+     a button is the input endpoint it came on, and an endpoint that
+     closes lets go its buttons. A window whose first present is shown
+     under a pointer that has not moved is sent its entry then, and a
+     window that closes has no pointer. The console, once it is the
+     window's client, scrolls its panel three lines a detent as it does
+     in direct mode. Relative motion moves no pointer yet (D10, rule 6).
+7. **The pointer** is not drawn until both its axes have been set, by the
+   absolute reports of one device or of several (D10, rule 4), and then
+   with its hotspot on the top left corner of
    the pixel the position rounds down to, from
    [look.md V15](look.md#v15-the-pointer)'s contours at the screen's
-   scale. A motion damages the image's old and new boxes.
+   scale, over the wallpaper and over every window, the one it is over
+   and any other. `lib/compose.c` draws it: a frame draws the whole image
+   over each band that holds a pixel of it, so the screen is the one
+   composed without it with the image drawn over, whatever part of the
+   screen the frame is of. A motion damages the image's old and new boxes,
+   each in whole blocks of the output, and a report that leaves the
+   position in the same pixel damages nothing. A relative motion moves
+   no pointer (rule 6), so it damages nothing.
 8. **The log,** in [log.md T1](log.md#t1-lines)'s form, each line as
    given and its keys in this order:
    - `nova-compositor: display screen=2880x1800 wallpaper=section
@@ -1922,7 +1937,8 @@ login's session as it does on its own
       rectangle; waits for the release of the buffer 0, and then for the
       frame;
     - holds the window until the compositor closes it or its connection,
-      and logs each event it is sent, which must be a key.
+      and logs each event it is sent, which must be a key, a pointer
+      event, an entry or a leave.
 
     Its pixels, from `test/wintest.h`: the top eighth of the window has
     cover 0 over a colour the material must hide; the next eighth has half
@@ -1937,9 +1953,20 @@ login's session as it does on its own
     `shift`, `control`, `alt` and `super` of those held, comma-joined,
     or `none`, its `text` the key's text, quoted as
     [log.md T1](log.md#t1-lines) gives a value, empty for a key that gives
-    none, and its `time_ms` the time as rule 8's `at_ms` gives it; a
-    step that fails ends it, logged as `nova-wintest: failed
-    step="window request" status=15`.
+    none, and its `time_ms` the time as rule 8's `at_ms` gives it; for each
+    pointer event, `nova-wintest: pointer x_256ths=37790 y_256ths=25573
+    wheel_120ths=-120 buttons=left:pressed time_ms=6960.5`, its `x_256ths`
+    and `y_256ths` the event's position across and down from the window's
+    left and top, in 256ths of a pixel, and its `wheel_120ths` the wheel's
+    turn in 120ths of a detent, each signed, its `buttons` each button the
+    event changes, by evdev's name from `BTN_LEFT` to `BTN_TASK`
+    ([console.md C6](console.md#c6-the-pointer)) or by its code past
+    them, with `:pressed` or `:released`, comma-joined, or `none`, and its
+    `time_ms` a key's; for each entry,
+    `nova-wintest: enter x_256ths=77990 y_256ths=50548 time_ms=6874.3`,
+    its position and time as a pointer event's; and for each leave,
+    `nova-wintest: leave`; a step that fails ends it, logged as
+    `nova-wintest: failed step="window request" status=15`.
 
     The CI boot of `window.img`, `ci/boot.py window`, requires, each once:
     - the lines of the system boot up to the display's release, but for
@@ -1956,11 +1983,33 @@ login's session as it does on its own
     - the compositor's input line for each of the three input functions,
       as the system boot requires the console's, and the pointer's
       events that boot sends, each logged as console.md C6 gives with
-      `nova-compositor:` and none of them reaching the client;
-    - the keys of `WINDOW_KEYS` in `ci/boot.py`, sent by QMP's
-      `input-send-event`, since `send-key` releases keys in an order of
-      its own: the client's `key` line for each event the window must be
-      sent, in order, and the compositor's `attention` line for each
+      `nova-compositor:`;
+    - the pointer, sent by QMP's `input-send-event` at tablet values whose
+      places `ci/boot.py` works out from D6, D10 and D11's text and not
+      from the code it checks: the tablet is placed away from the window,
+      then moved onto it and about it, each of the three buttons is
+      clicked, the wheel is turned up and down, a button is held while the
+      pointer is dragged out of the window and released there, a button is
+      pressed away from the window and released over it, and the mouse
+      moves. The client's `enter`, `pointer` and `leave` lines are
+      required in the order D11 gives, each the next due, at the places
+      and with the buttons and the wheel the model gives, so a line out
+      of turn or not sent fails the boot, as does a line after the last;
+      the time of each must not be before the one before it. The
+      compositor must log each pointer line that boot sends. No other time
+      is checked. QMP's `screendump` must equal `ci/screens.c`'s `window`
+      screen with the arrow drawn at the pixel D10 gives for the tablet's
+      value, within `SCREEN_TIMEOUT`, after the tablet is placed away from
+      the window, after the move onto it, and after the mouse's relative
+      motion, the compositor's line for which is read first, and the last
+      must then stay so for `STEADY_SECONDS`, which shows that the motion
+      moved no pointer in that time;
+    - the keys of `WINDOW_KEYS` in `ci/boot.py`, sent after the pointer by
+      QMP's `input-send-event`, since `send-key` releases keys in an order
+      of its own, and no `enter`, `pointer` or `leave` line of the client's
+      may come while they are typed: the client's `key` line for each
+      event the window must be sent, in order, and the compositor's
+      `attention` line for each
       press of the secure attention key, each before the client's line for
       the first key sent after it. Each line is checked as it is read, and
       read until the client's line for the last letter's release: a `key`
@@ -2012,6 +2061,23 @@ login's session as it does on its own
     are `tools/check-keyroute.c`'s alone, which checks `lib/keyroute.c`
     against a model written apart from it and against laws of its decisions
     that keep no record of the presses sent.
+    The pointer lines show that the compositor takes the tablet's reports
+    and the mouse's, sends the window what D11 gives for the sequences
+    listed, in the coordinates D10 and D6 give, and that the screen shows
+    the arrow at the pixel D10 gives, over the window, with no image left
+    at a place the pointer has left. They do not show the entry a window is
+    sent when a present of it is first shown under a pointer that has not
+    moved, the buttons let go when a pointing device's endpoint closes, or
+    the sequences the boot does not send: `tools/check-route.c` checks those of
+    `lib/route.c` against a model written apart from it, and the
+    compositor's calls of them at a window's first present and an
+    endpoint's close are read and not run. Nor do they show a pointer that
+    moves more than once between two frames, or the frames' pixels where
+    the arrow is cut by the screen or lies over a window's edge:
+    `tools/check-compose.c` checks the arrow's frames and the damage of a
+    move against the whole frame composed with the arrow over it, and
+    `tools/check-backlog.c` the bytes of each message the window is sent,
+    against the wire layout the description gives.
 
 - **Why a test client in the console's place:** the compositor must
   serve a connection and a window before the console can be its client,
@@ -2193,6 +2259,89 @@ login's session as it does on its own
   first present, the window is sent keys earlier than they say. Not taken:
   from the first present; its cost is a window that its configure told has
   the focus being sent no key, and a second rule for when the focus begins.
+- **Why a move within a pixel damages nothing:** D10's rule 4 gives the
+  position a fraction of a pixel and rule 7 says a motion damages the
+  image's old and new places, and D19's rule 7 puts the hotspot on the
+  pixel the position rounds down to, so a report can move the position and
+  leave the image where it was. `compose_cursor_move` answers a move to the
+  pixel the image is on with no box, and the compositor schedules no frame
+  for it; the window is sent the position whole whatever the image does.
+  Its cost is none that rule 7's rounding does not already have: the image
+  shows the pixel and not the fraction. Not taken: damaging the old and new
+  boxes for every report; its cost is a frame composed and written for
+  every report of a tablet whose range gives a pixel about 11 units, which
+  changes no pixel.
+- **Why the pointer's two boxes join the frame's one rectangle:** a move
+  adds the image's old box and its new, each cut by the screen and widened
+  to whole blocks of the output, to the damage the next frame composes
+  (the note on the damage between two frames), and several moves between
+  two frames add several. Its cost is that a move longer than the image
+  composes the rectangle that holds both boxes, up to the whole screen for
+  a move from one side to the other, where D9's row for the pointer's motion
+  counts two images, and that the rectangle holds several moves' boxes where
+  more than one come between two frames. Not taken: a rectangle for each
+  box; its cost is the list and the rule for a merge past its length that
+  the note on the damage between two frames declines.
+- **Why a compositor that starts has no pointer until both its axes are
+  set:** rule 7 draws the pointer once both axes have been set, by the
+  absolute reports of one device or of several, as D10's rule 4 gives it a
+  place. A restarted compositor is a new process that has seen none, though
+  the tablet's last position still stands in the device. The pointer is
+  over no window and has no image until reports have set both axes again.
+  Its cost is that a restart leaves the pointer unseen until it is moved.
+  Not taken: asking the drivers for the device's position; its cost is a
+  request and a reply in the input protocol for a position the device gives
+  with the next report.
+- **Why an endpoint's place in the table is its source of buttons:** D11's
+  rule 3 makes a button one source's, a source being an input endpoint.
+  The compositor numbers a source by the place of its endpoint among the
+  `INPUT_DEVICES_MAX` it reads, the number `lib/route.c` takes. A place is
+  given up only after the buttons of its endpoint are let go
+  (`route_source_gone`), so a later endpoint that takes the place holds
+  none of the earlier one's. Its cost is that a source number names an
+  endpoint only while it lives. Not taken: a number for each endpoint ever
+  handed; its cost is a count that nothing else reads, and a table to
+  keep it in.
+- **Why the entry comes when a present is shown, not when its frame is
+  composed:** D11's rule 3 sends a window whose first present is shown,
+  under a pointer that has not moved, its entry then. `lib/route.c` judges
+  a window under the pointer from the window's record, whose shown buffer is
+  set when the present is shown (D7, rule 4), and the frame that composes it
+  comes at the next pacing (D7, rule 3), so a report between the two already
+  treats the window as under the pointer. The compositor calls
+  `route_settle` when the present that first shows the window is shown, so
+  that the entry comes before any pointer event the window is sent, as D11
+  gives. Its cost is that a window may be sent its entry, and the pointer
+  events after it, up to `FRAME_NS` before its pixels are on the screen and
+  before its `WINDOW_FRAME`, which the frame sends: a client may be sent
+  pointer events before its first frame message. An entry made then, or a
+  release made by an endpoint's close, is stamped with the time the
+  compositor made it, which the route takes as an argument, where a
+  report's events are stamped with the time the driver took the report's
+  end. A second cost is that an event the compositor makes itself can be
+  later than a report the driver took before it and the compositor read
+  after it, so the times a window is sent can fall by that difference. Not
+  taken: waiting for the frame; its cost is a second state between the
+  present and the frame in which a report's events would come before the
+  entry.
+- **Why a message the encoder refuses ends the compositor:** the window's
+  channel carries, besides the key, the pointer event, entry and leave of
+  D11's rule 3, which `backlog_encode` lays out with the generated encoder
+  of each kind, the compositor's one function for the bytes and the host
+  check's. A message that breaks its description, or is of a kind the
+  channel does not carry, is refused with no size. The compositor made the
+  message, so the refusal is its own fault and not the window's: it logs
+  `nova-compositor: window message encode failed status=N` and ends
+  `COMPOSITOR_EXIT_FAILED`, as it does where a wait fails. Its cost is that
+  the compositor ends if it ever makes such a message, which the route's
+  four kinds, with at most `INPUT_REPORT_BUTTONS` buttons, and a key's text
+  within `WINDOW_KEY_TEXT_MAX` cannot. Not taken: a stalled close, which
+  leaves the message owed and closes the window with the reason `stalled`
+  after `WINDOW_STALL_NS`; its cost is a compositor that spins for that
+  time, since the channel stays writable, and a close that blames the
+  window for the compositor's fault. Not taken: dropping the message; its
+  cost is a window that is not sent what D11 says it must be, with no sign
+  of why.
 - **Why an input endpoint is read at most its capacity at a time:** the
   compositor never waits for a client (D11, rule 7) and serves the control
   channel, the window's channel, the frame and every endpoint in turn.

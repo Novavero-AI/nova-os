@@ -11,7 +11,9 @@
     A finished band is written to the
     framebuffer in the screen's order, row by row, in whole 64-byte
     blocks. The pointer's image is drawn over a band from the theme's
-    outlines at the screen's scale, by lib/outline.c.
+    outlines at the screen's scale, by lib/outline.c, last, so over every
+    window; a frame draws it where a COMPOSE_CURSOR says the pointer is,
+    and compose_cursor_move says what a move of it damages.
 
     Integer arithmetic only, with no machine dependence, so a host build
     composes the pixels nova-os does (tools/check-compose.c), and every
@@ -168,6 +170,25 @@ typedef struct {
                               what lies beneath, 0 to COMPOSE_PERCENT */
 } COMPOSE_POINTER;
 
+/** The pointer as a frame draws it (display.md D19, rule 7): the theme's
+    image at the screen's scale, the memory drawing it takes, and the
+    pixel its hotspot is on once it has a place. Until it has one, which
+    is the first move compose_cursor_move is given, no frame draws it. A
+    zero COMPOSE_CURSOR but for image, quarters and work is a pointer
+    with no place. */
+typedef struct {
+    const COMPOSE_POINTER *image; /**< the theme's pointer */
+    UINT32 quarters;              /**< the screen's scale, in
+                                       COMPOSE_QUARTERS to a scale of 1 */
+    OUTLINE *work;                /**< the memory filling takes, which
+                                       outline.h says is large */
+    UINT32 placed;                /**< nonzero once the pointer has a
+                                       place */
+    INT64 x;                      /**< the column of the pixel whose top
+                                       left corner is the hotspot */
+    INT64 y;                      /**< its row */
+} COMPOSE_CURSOR;
+
 /** Make the corners of radius, in OUTLINE_ONE units, 256ths of a pixel,
     as outline_rounded_rect takes it, so the console panel's radius at
     an 18 pixel cell, 22 pixels, is 5632: the coverage of a square of
@@ -248,17 +269,24 @@ const char *compose_wallpaper_refusal(const BOOTSTRAP_BACKGROUND *background,
 
 /** Compose rect of the screen, which lies within it, in bands of rows
     rows from its top: each band composed in memory (compose_band) from
-    the wallpaper and the count windows, lowest first, and written in
-    whole blocks (compose_write), so that pixels beside rect's, in the
-    blocks it touches, are written too, with the pixels the frame has
-    there. memory holds the screen's width times rows pixels, room for a
-    band whose blocks reach the width of the screen. The wallpaper is as
-    wide as the screen and at least as high; with rows below 1, or a rect
-    with no pixel, nothing is written. Makes no stores visible: the caller
-    calls gfx_flush. */
+    the wallpaper and the count windows, lowest first, then the pointer's
+    image drawn over it (compose_pointer) where cursor, if it is not 0,
+    has a place, and written in whole blocks (compose_write), so that
+    pixels beside rect's, in the blocks it touches, are written too, with
+    the pixels the frame has there. A band the image's pixels
+    (compose_pointer_box) do not touch is not drawn on, and one it does
+    has the image drawn whole, cut by the band, so the screen's pixels
+    are those of the whole screen composed and the image drawn over it,
+    whatever rect is. memory holds the screen's width times rows pixels,
+    room for a band whose blocks reach the width of the screen. The
+    wallpaper is as wide as the screen and at least as high; with rows
+    below 1, or a rect with no pixel, nothing is written. An image that
+    compose_pointer refuses is drawn nowhere. Makes no stores visible: the
+    caller calls gfx_flush. */
 void compose_frame(const SCREEN *screen, const COMPOSE_WALLPAPER *wallpaper,
                    const COMPOSE_WINDOW *windows, UINT32 count,
-                   const RECT *rect, UINT32 *memory, INT64 rows);
+                   const RECT *rect, UINT32 *memory, INT64 rows,
+                   const COMPOSE_CURSOR *cursor);
 
 /** Write the wallpaper alone to the whole screen, a frame with no
     window, in bands of rows rows from the top: each band composed in
@@ -295,5 +323,22 @@ int compose_pointer(OUTLINE *work, const COMPOSE_POINTER *pointer,
     opacity or the hotspot. */
 int compose_pointer_box(OUTLINE *work, const COMPOSE_POINTER *pointer,
                         INT64 x, INT64 y, UINT32 quarters, RECT *box);
+
+/** Move the pointer, which a frame draws where cursor says, to the pixel
+    (x, y) of screen: the hotspot is that pixel's top left corner, wherever
+    in the pixel the pointer's position is (display.md D19, rule 7), so a
+    move within a pixel changes nothing. Sets boxes[0] and boxes[1] to
+    what the move damages and returns how many it set: 0 where the
+    pointer is on that pixel already, 1 for the first move, which gives
+    it a place, and 2 after that, the image's old place and its new. Each
+    box is compose_pointer_box's for the pixel, as compose_blocks gives it
+    for screen, so that a frame composed over the rectangle that holds
+    them, with cursor, shows the image at its new place and at no other. It
+    returns 0 with cursor unchanged where compose_pointer_box refuses the
+    image at the scale, which then is drawn nowhere; the compositor never
+    meets that, for the theme's arrow is within the rasterizer's reach at
+    every scale a screen it draws on gives. */
+UINT32 compose_cursor_move(COMPOSE_CURSOR *cursor, const SCREEN *screen,
+                           INT64 x, INT64 y, RECT boxes[2]);
 
 #endif

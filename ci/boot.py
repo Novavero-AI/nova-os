@@ -102,9 +102,22 @@ screen is made by the same library code the compositor composes with,
 so it shows that the compositor reads, places and composes what the
 client drew as the specification says, not that the library's rules
 are right, which tools/check-compose.c and tools/check-window.c check.
-The client holds its window and its connection for the whole boot, so a
-line that says the compositor closed either fails the boot. No console
-draws, no input is sent and no account is made. In specimen
+Then, sent through QMP, the tablet is placed away from the window and
+moved onto it and about it, each button is clicked, the wheel turns up
+and down, a button is pressed and the pointer dragged out of the window
+before it is released, a button is pressed away from the window and
+released over it, and the mouse moves. The client must log, in order and as display.md D11 gives
+them, its entry, its pointer events and its leave, at the places
+display.md D10 and D6 give for the values sent, and the compositor must
+log each of the pointer's lines. The screen must come to equal, within
+SCREEN_TIMEOUT, the one ci/screens.c draws with the pointer drawn at the
+pixel D10 gives for the tablet's value, after the tablet is placed, after
+it enters the window, and after the mouse's relative motion, which moves
+no pointer, where it must also stay so for STEADY_SECONDS. Then keys are
+typed through QMP, and the client must be sent them as display.md D11 and
+D12 give. The client holds its window and its connection for the whole
+boot, so a line that says the compositor closed either fails the boot.
+No console draws and no account is made. In specimen
 mode, the boot of specimen.img
 must report the display given to the type specimen from /store and the
 specimen drawn; then QMP's screendump, kept at SCREEN.ppm if given,
@@ -413,15 +426,17 @@ SYSTEM_LINES = STARTUP_LINES + INPUT_LINES
 # buffer, a bit of the mask of buffers. The window is on screen once the
 # client logs the second frame; the screen is then checked. The input
 # drivers' endpoints are the compositor's, which logs a line for each as
-# the console does, and the keys and the pointer's events that the boot
-# then sends are those of WINDOW_KEYS and POINTER_EVENTS below.
+# the console does, and the pointer's events and the keys that the boot
+# then sends are those of pointer_steps and WINDOW_KEYS below.
 WINDOW_SHOWN = Event("nova-wintest: shown frame=2")
+WINDOW_MADE = Event("nova-wintest: window", screen=SCREEN_SIZE,
+                    size=SCREEN_SIZE)
 WINDOW_LINES = STARTUP_LINES + [
     Event('nova-compositor: background refused reason="another size"'),
     COMPOSITOR_DISPLAY,
     Event("nova-compositor: connection issued number=1 label=wintest "
           "mark=no layers=system rights=none"),
-    Event("nova-wintest: window", screen=SCREEN_SIZE, size=SCREEN_SIZE),
+    WINDOW_MADE,
     Event("nova-wintest: shown frame=1"),
     Event("nova-wintest: released buffers=1"),
     WINDOW_SHOWN,
@@ -916,7 +931,8 @@ class KeyScript:
     next, and that each attention line's is not before that of the
     client's line for the last key sent before it and not after that of
     its line for the first key sent after it, where there are such keys.
-    It checks no other time."""
+    It checks no other time. The pointer does not move while the keys are
+    typed, so a pointer line of the client fails the boot."""
 
     def __init__(self, events, attentions):
         self.events = events
@@ -930,6 +946,10 @@ class KeyScript:
             self.take_key(parsed)
         elif parsed[:2] == tuple(ATTENTION_LINE.split(": ")):
             self.take_attention(parsed)
+        elif parsed[0] == "nova-wintest" and parsed[1] in (
+                CLIENT_POINTER_EVENTS):
+            raise BootFailed("the window was sent a pointer event while the "
+                             "keys were typed: %s" % describe(parsed))
 
     def take_key(self, parsed):
         index = len(self.client)
@@ -978,6 +998,279 @@ class KeyScript:
                                  "after the key pressed after it, at %.1f "
                                  "ms" % (number + 1, at, self.client[count]))
 
+# The pointer the window boot moves over the test client's window
+# (docs/spec/display.md D10, D11 and D19's rule 11), as steps: what each
+# sends through QMP, one input-send-event for each item of events, what the
+# window must then be sent, the pointer's place the screen must show after
+# it, if any, and, if it is to, that the screen must hold still for
+# STEADY_SECONDS. A place is a tablet's two values, which the tablet gives
+# its 0 to TABLET_MAX, and are chosen against the window's place, which D6
+# gives for a window half the screen across and high (test/wintest.h) on a
+# screen of any size the boots run: OUTSIDE lies left of and above the
+# window, ENTRY, MOVED and DRAG inside it, BELOW left of and below it and
+# LAST inside it. The values are ones no other line of the log holds
+# (UNLOGGED).
+OUTSIDE = {"x": 4001, "y": 2003}
+ENTRY = {"x": 15991, "y": 13003}
+MOVED = {"x": 11971, "y": 9007}
+DRAG = {"x": 20011, "y": 17009}
+BELOW = {"x": 2003, "y": 29017}
+LAST = {"x": 13999, "y": 11003}
+POINTER_PLACES = [OUTSIDE, ENTRY, MOVED, DRAG, BELOW, LAST]
+RELATIVE_MOTION = {"x": 7, "y": -3}
+
+# The units of a pointer's place and of the wheel as a window is sent them
+# (DISPLAY_POSITION_ONE and DISPLAY_WHEEL_DETENT in
+# include/display_protocol.h; display.md D10, rules 4 and 5), and the size
+# of the tablet's axis, its values 0 to TABLET_MAX.
+POSITION_ONE = 256
+WHEEL_DETENT = 120
+TABLET_RANGE = TABLET_MAX + 1
+
+# The window's strip and the share of the screen's height its middle is put
+# at (display.md D6, Placement), in percent.
+STRIP = 0
+PLACEMENT_PERCENT = 40
+
+# The lines the test client logs for the pointer (test/wintest.c).
+ENTER_LINE = "nova-wintest: enter"
+POINTER_LINE = "nova-wintest: pointer"
+LEAVE_LINE = "nova-wintest: leave"
+CLIENT_POINTER_EVENTS = ("enter", "pointer", "leave")
+COMPOSITOR = "nova-compositor"
+
+# The pointer's pixel is passed to ci/screens.c for the window's screen.
+POINTER_INPUT = "pointer"
+
+
+class Geometry:
+    """The screen and the window on it, in pixels, as the test client logs
+    them in its window line, and the window's place, which display.md D6
+    gives: the left is (W - w) / 2, and the top is
+    S + (H - S) * 40 / 100 - h / 2, raised to at least S and lowered to at
+    most H - h where that is not below S, in integers rounded down."""
+
+    def __init__(self, screen, size):
+        self.screen_width, self.screen_height = screen
+        self.width, self.height = size
+        self.left = (self.screen_width - self.width) // 2
+        top = (STRIP + (self.screen_height - STRIP) * PLACEMENT_PERCENT // 100
+               - self.height // 2)
+        top = max(top, STRIP)
+        if self.screen_height - self.height >= STRIP:
+            top = min(top, self.screen_height - self.height)
+        self.top = top
+
+    @classmethod
+    def of(cls, keys):
+        """The geometry of the keys of the client's window line."""
+        return cls(size_of(keys["screen"]), size_of(keys["size"]))
+
+    def place(self, at):
+        """The tablet place at on the screen, across and down, in 256ths
+        of a pixel and rounded down: display.md D10, rule 4, with an axis
+        that runs from 0 to TABLET_MAX."""
+        return (at["x"] * self.screen_width * POSITION_ONE // TABLET_RANGE,
+                at["y"] * self.screen_height * POSITION_ONE // TABLET_RANGE)
+
+    def pixel(self, at):
+        """The pixel the pointer's place rounds down to, column and row."""
+        return tuple(value // POSITION_ONE for value in self.place(at))
+
+    def relative(self, at):
+        """The place at in the window, in 256ths of a pixel, as a window is
+        sent it: less its edges, so below 0 and past its size outside it
+        (display.md D11, rule 6)."""
+        across, down = self.place(at)
+        return (across - self.left * POSITION_ONE,
+                down - self.top * POSITION_ONE)
+
+    def over_window(self, at):
+        """Whether the pixel of the place at is one of the window's, those
+        of its left and top edges in and those of its right and bottom
+        edges out (display.md D11, rule 3)."""
+        column, row = self.pixel(at)
+        return (self.left <= column < self.left + self.width
+                and self.top <= row < self.top + self.height)
+
+
+def size_of(text):
+    """The width and height in pixels of a WIDTHxHEIGHT key of a line."""
+    width, height = text.split("x")
+    return int(width), int(height)
+
+
+def enter_event(geometry, at):
+    """The client's line for its entry at the tablet's place at."""
+    across, down = geometry.relative(at)
+    return Event(ENTER_LINE, x_256ths=str(across), y_256ths=str(down),
+                 time_ms=TIME_MS)
+
+
+def pointer_event(geometry, at, wheel=0, buttons=()):
+    """The client's line for a pointer event at the tablet's place at, the
+    wheel turned by wheel detents and the buttons changed each a button's
+    name, a colon and pressed or released."""
+    across, down = geometry.relative(at)
+    return Event(POINTER_LINE, x_256ths=str(across), y_256ths=str(down),
+                 wheel_120ths=str(wheel * WHEEL_DETENT),
+                 buttons=",".join(buttons) or "none", time_ms=TIME_MS)
+
+
+LEAVE_EVENT = Event(LEAVE_LINE)
+RELATIVE_LINE = Event("%s: pointer move mode=relative axes=xy" % COMPOSITOR)
+
+
+class PointerStep:
+    """What the boot sends and then waits for: events, each sent as one
+    input-send-event; lines, the client's lines the window must be sent for
+    them; wait, the Events to read before going on, the last of lines unless
+    it is empty; screen, the tablet place whose pixel the screen must show
+    the pointer at, or None; and hold, whether that screen must then hold
+    still."""
+
+    def __init__(self, events, lines, wait=None, screen=None, hold=False):
+        self.events = events
+        self.lines = lines
+        self.wait = lines[-1:] if wait is None else wait
+        self.screen = screen
+        self.hold = hold
+
+
+def pointer_steps(geometry):
+    """The steps of the window boot's pointer, a model written from
+    display.md D10 and D11 and not from the code it checks:
+
+    - the tablet is placed away from the window: the pointer is drawn,
+      over no window, and the window is sent nothing;
+    - it moves onto the window: the window is sent its entry, and no
+      pointer event, since the move that enters is its entry alone;
+    - it moves about the window: a motion;
+    - each button is clicked: a pointer event for the press and one for
+      the release, at the place the pointer is at, with no motion;
+    - the wheel turns up and down: a turn of one detent each way, in 120ths
+      of a detent;
+    - a button is pressed, the pointer moves out of the window and the
+      button is released there: the window is sent the press, the motion,
+      which is held to it and so past its edges, the release, and then its
+      leave, which the last release puts after it and not as the pointer
+      crosses the edge;
+    - a button is pressed away from the window, the pointer moves onto the
+      window and the button is released: the press is held to no window, so
+      the window is sent no press and no release, and no pointer event but
+      its entry, which the release, the last, makes;
+    - it moves about the window again, and the mouse's relative motion
+      follows, which moves no pointer and is sent no window: the screen
+      must still show the pointer where the tablet put it, and hold."""
+    steps = [
+        PointerStep([move("abs", OUTSIDE)], [], screen=OUTSIDE),
+        PointerStep([move("abs", ENTRY)], [enter_event(geometry, ENTRY)],
+                    screen=ENTRY),
+        PointerStep([move("abs", MOVED)], [pointer_event(geometry, MOVED)]),
+    ]
+    for name in BUTTONS:
+        steps.append(PointerStep(
+            [button(name, True), button(name, False)],
+            [pointer_event(geometry, MOVED, buttons=[name + ":pressed"]),
+             pointer_event(geometry, MOVED, buttons=[name + ":released"])]))
+    steps += [
+        PointerStep([button("wheel-up", True), button("wheel-up", False),
+                     button("wheel-down", True), button("wheel-down", False)],
+                    [pointer_event(geometry, MOVED, wheel=1),
+                     pointer_event(geometry, MOVED, wheel=-1)]),
+        PointerStep([move("abs", DRAG), button("left", True),
+                     move("abs", BELOW), button("left", False)],
+                    [pointer_event(geometry, DRAG),
+                     pointer_event(geometry, DRAG, buttons=["left:pressed"]),
+                     pointer_event(geometry, BELOW),
+                     pointer_event(geometry, BELOW, buttons=["left:released"]),
+                     LEAVE_EVENT]),
+        PointerStep([button("left", True), move("abs", ENTRY),
+                     button("left", False)],
+                    [enter_event(geometry, ENTRY)]),
+        PointerStep([move("abs", LAST)], [pointer_event(geometry, LAST)]),
+        PointerStep([move("rel", RELATIVE_MOTION)], [], wait=[RELATIVE_LINE],
+                    screen=LAST, hold=True),
+    ]
+    return steps
+
+
+def check_pointer_places(geometry):
+    """Fail unless the places are where pointer_steps wants them on
+    geometry: OUTSIDE and BELOW outside the window, and the rest in it."""
+    for name, at, inside in (("OUTSIDE", OUTSIDE, False),
+                             ("ENTRY", ENTRY, True), ("MOVED", MOVED, True),
+                             ("DRAG", DRAG, True), ("BELOW", BELOW, False),
+                             ("LAST", LAST, True)):
+        if geometry.over_window(at) != inside:
+            raise BootFailed("the pointer's place %s is %s the %dx%d window "
+                             "at %d,%d on a %dx%d screen, not %s it"
+                             % (name, "outside" if inside else "inside",
+                                geometry.width, geometry.height,
+                                geometry.left, geometry.top,
+                                geometry.screen_width, geometry.screen_height,
+                                "inside" if inside else "outside"))
+    if len({geometry.pixel(at) for at in POINTER_PLACES}) != len(
+            POINTER_PLACES):
+        raise BootFailed("two of the pointer's places are one pixel on a "
+                         "%dx%d screen" % (geometry.screen_width,
+                                           geometry.screen_height))
+
+
+class PointerScript:
+    """The lines the window boot's pointer must make (pointer_steps),
+    checked as the Serial reads them: the test client's enter, pointer and
+    leave lines, each compared with the next of the steps' lines, so that
+    a line that is not that one fails the boot at it, and finish fails it
+    if fewer were read than the steps give; and the compositor's pointer
+    lines, of which finish checks that each of pointer_lines's was logged.
+    Only the lines read before the boot ends are checked, so a client line
+    past the last fails the boot only if it was read. finish also checks
+    that the times of the client's lines do not fall from one to the next.
+    It checks no other time."""
+
+    def __init__(self, steps):
+        self.events = [line for step in steps for line in step.lines]
+        self.client = []
+        self.compositor = []
+
+    def take(self, parsed):
+        """Check a line, parsed, of the boot."""
+        if (parsed[0] == "nova-wintest"
+                and parsed[1] in CLIENT_POINTER_EVENTS):
+            self.take_client(parsed)
+        elif parsed[0] == COMPOSITOR and parsed[1].startswith("pointer "):
+            self.compositor.append(parsed)
+
+    def take_client(self, parsed):
+        index = len(self.client)
+        if index >= len(self.events):
+            raise BootFailed("a pointer line after the last that was sent: "
+                             "%s" % describe(parsed))
+        if not self.events[index].matches(parsed):
+            raise BootFailed("pointer line %d is %s; the window should be "
+                             "sent %s" % (index + 1, describe(parsed),
+                                          describe_event(self.events[index])))
+        self.client.append(parsed)
+
+    def finish(self):
+        """Check that every line has been read, and the times."""
+        if len(self.client) != len(self.events):
+            raise BootFailed("%d of %d pointer lines were read"
+                             % (len(self.client), len(self.events)))
+        times = [float(parsed[2]["time_ms"]) for parsed in self.client
+                 if "time_ms" in parsed[2]]
+        for earlier, later in zip(times, times[1:]):
+            if later < earlier:
+                raise BootFailed("a pointer line's time, %.1f ms, is before "
+                                 "the one before it, %.1f ms"
+                                 % (later, earlier))
+        for event in pointer_lines(COMPOSITOR):
+            if not any(event.matches(parsed) for parsed in self.compositor):
+                raise BootFailed("the compositor did not log %s"
+                                 % describe_event(event))
+
+
 # What no line of the log may hold: the password, each word of the names
 # and lines typed for the file commands, words no other line of the log
 # holds, so that a log of any of them is found, but for the wheel's
@@ -1006,6 +1299,11 @@ UNLOGGED = ([(literal(ACCOUNT_PASSWORD), "the account's password")]
                + " ".join([FIRST_DRAFT] + FINAL_LINES).split()]
             + [(whole_number(value), "the pointer's %s" % axis)
                for axis, value in POINTER_AT.items()])
+
+# The window boot's pointer places, which the compositor must not log
+# either, and the client logs only relative to its window.
+WINDOW_UNLOGGED = [(whole_number(value), "the pointer's %s, %d" % (axis, value))
+                   for at in POINTER_PLACES for axis, value in at.items()]
 
 # The accounts service hashes each password with Argon2id over 64 MiB in
 # 3 passes, which takes about 12 seconds under TCG on an Apple M2 and
@@ -1388,14 +1686,20 @@ class Serial:
     accepted_failures take it, and a line that matches one of the mode's
     refused_lines fails it. Each of watches, pairs of an Event and a
     function of no arguments, calls the function once, when the first
-    line that matches the Event is read. While script, a KeyScript, is
-    set, each line is checked against it as it is read."""
+    line that matches the Event is read. While script, a KeyScript or a
+    PointerScript, is set, each line is checked against it as it is read.
+    The keys of the test client's window line, once it is read, are kept in
+    window, and the window boot's pointer places are among the lines'
+    unlogged words."""
 
     def __init__(self, stream, log, report, size, mode, watches=()):
         self.script = None
+        self.window = None
         self.lines = queue.Queue()
         self.start = time.monotonic()
         self.leaked = set()
+        self.unlogged = UNLOGGED + (WINDOW_UNLOGGED if mode == "window"
+                                    else [])
         self.report = report
         self.size = size
         self.accepted = Accepted(accepted_failures(mode))
@@ -1409,7 +1713,7 @@ class Serial:
             log.write(raw)
             log.flush()
             text = raw.rstrip(b"\r\n").replace(b"\r", b"")
-            self.leaked.update(what for unlogged, what in UNLOGGED
+            self.leaked.update(what for unlogged, what in self.unlogged
                                if unlogged.search(text))
             self.lines.put(text.decode("ascii", "replace"))
         self.lines.put(None)
@@ -1456,6 +1760,8 @@ class Serial:
                                  + line[LINE_START.search(line).start():])
             if self.script:
                 self.script.take(parsed)
+            if WINDOW_MADE.matches(parsed):
+                self.window = parsed[2]
             if BACKGROUND.matches(parsed):
                 check_spinner(parsed[2], line)
             if self.size and any(d.matches(parsed) for d in DISPLAYS):
@@ -1544,16 +1850,21 @@ def type_line(qmp, text, shown=True):
         qmp.execute("send-key", keys=[{"type": "qcode", "data": name}])
 
 
-def point(serial, qmp, lines=POINTER_LINES):
-    """Send the pointer's events and wait for lines, those of the console
-    unless the compositor's are given."""
+def send_events(qmp, events):
+    """Send events, one QMP input-send-event, which QEMU ends with one
+    SYN_REPORT, and print them."""
+    print("          input-send-event %s"
+          % ", ".join("%s %s" % (e["type"], " ".join(
+              str(v) for v in e["data"].values())) for e in events),
+          flush=True)
+    qmp.execute("input-send-event", events=events)
+
+
+def point(serial, qmp):
+    """Send the pointer's events and wait for the console's lines."""
     for events in POINTER_EVENTS:
-        print("          input-send-event %s"
-              % ", ".join("%s %s" % (e["type"], " ".join(
-                  str(v) for v in e["data"].values())) for e in events),
-              flush=True)
-        qmp.execute("input-send-event", events=events)
-    serial.wait_for(lines, time.monotonic() + KEY_TIMEOUT)
+        send_events(qmp, events)
+    serial.wait_for(POINTER_LINES, time.monotonic() + KEY_TIMEOUT)
 
 
 def run_commands(serial, qmp, commands, data):
@@ -1832,12 +2143,54 @@ def key_event(item):
         "key": {"type": "qcode", "data": item[:-1]}}}
 
 
-def drive_window(serial, qmp_path):
-    """Over QMP, send the pointer's events, which the compositor must log
-    and send to no window, and then WINDOW_KEYS, and read the window test
-    client's key lines and the compositor's attention lines as key_script
-    gives them, until the client has logged the last key's, which every
-    key before it has reached the window or been taken ahead of."""
+def match_pointer(qmp, scratch, screens, geometry, at, hold):
+    """Take QMP's screendump until it equals the window's screen
+    ci/screens.c draws with the pointer at the pixel the tablet's place at
+    gives on geometry's screen, or SCREEN_TIMEOUT passes; and, with hold,
+    until it has held still for STEADY_SECONDS."""
+    shot = os.path.abspath(os.path.join(scratch, SCREEN_COPY))
+    column, row = geometry.pixel(at)
+    wanted, digests = poll_screen(
+        qmp, shot,
+        lambda width, height: [draw_screen(
+            screens, scratch, WINDOW_SCREEN, width, height,
+            [POINTER_INPUT, str(column), str(row)])])
+    if hold:
+        hold_screen(qmp, shot, wanted, digests)
+
+
+def drive_pointer(serial, qmp, scratch, screens, geometry):
+    """Over QMP, send the steps of pointer_steps, and after each read the
+    lines it waits for, the client's lines checked in order as they come,
+    and match the screen where it says; then check that every line came.
+    The compositor's pointer lines are checked to have been logged."""
+    check_pointer_places(geometry)
+    steps = pointer_steps(geometry)
+    script = PointerScript(steps)
+    serial.script = script
+    for step in steps:
+        for events in step.events:
+            send_events(qmp, events)
+        if step.wait:
+            serial.wait_for(step.wait, time.monotonic() + KEY_TIMEOUT)
+        if step.screen:
+            match_pointer(qmp, scratch, screens, geometry, step.screen,
+                          step.hold)
+    serial.script = None
+    script.finish()
+    print("          the window was sent %d pointer lines in order, and the "
+          "compositor logged each of the pointer's lines"
+          % len(script.events), flush=True)
+
+
+def drive_window(serial, qmp_path, scratch, screens):
+    """Over QMP, move the pointer as pointer_steps gives, and then send
+    WINDOW_KEYS, and read the window test client's key lines and the
+    compositor's attention lines as key_script gives them, until the client
+    has logged the last key's, which every key before it has reached the
+    window or been taken ahead of."""
+    if serial.window is None:
+        raise BootFailed("the test client's window line was not read")
     events, attentions = key_script(WINDOW_KEYS)
     script = KeyScript(events, attentions)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
@@ -1845,7 +2198,8 @@ def drive_window(serial, qmp_path):
         connection.connect(qmp_path)
         with connection.makefile("rwb") as stream:
             qmp = Qmp(stream)
-            point(serial, qmp, pointer_lines("nova-compositor"))
+            drive_pointer(serial, qmp, scratch, screens,
+                          Geometry.of(serial.window))
             serial.script = script
             for step in WINDOW_KEYS:
                 print("          input-send-event keys %s" % step,
@@ -2253,7 +2607,7 @@ def boot(args, scratch, log, data_drive, data_lines, first):
         if args.mode == "specimen":
             check_specimen(qmp_path, scratch, args.fonts, args.screen)
         if args.mode == "window":
-            drive_window(serial, qmp_path)
+            drive_window(serial, qmp_path, scratch, screens)
         if args.mode in ("system", "fallback", "persist"):
             drive(serial, qmp_path, os.path.join(scratch, DATA_COPY),
                   accounts, first, screens, scratch, args.tests)

@@ -70,6 +70,48 @@ void backlog_push(BACKLOG *backlog, const WINDOW_INPUT *event)
 }
 
 /* ------------------------------------------------------------------------
+   The bytes. */
+
+UINT32 backlog_encode(const BACKLOG_MESSAGE *message, void *bytes,
+                      UINT32 *size)
+{
+    const WINDOW_INPUT *input = &message->body.input;
+    DISPLAY_HEADER header;
+
+    /* A message with no body is the header alone, whose transaction is 0
+       as an event's is. */
+    header.transaction = 0;
+    header.kind = 0;
+    switch (message->kind) {
+    case WINDOW_CONFIGURE:
+        return display_window_configure_encode(&message->body.configure, bytes,
+                                               size);
+    case WINDOW_RELEASED:
+        return display_window_released_encode(&message->body.released, bytes,
+                                              size);
+    case WINDOW_FRAME:
+        return display_window_frame_encode(&message->body.frame, bytes, size);
+    case WINDOW_DROPPED:
+        return display_window_dropped_encode(&header, bytes, size);
+    case WINDOW_KEY:
+        return display_window_key_encode(&input->body.key.event,
+                                         input->body.key.text,
+                                         input->body.key.event.text_length,
+                                         bytes, size);
+    case WINDOW_POINTER:
+        return display_window_pointer_encode(&input->body.pointer, bytes,
+                                             size);
+    case WINDOW_ENTER:
+        return display_window_enter_encode(&input->body.enter, bytes, size);
+    case WINDOW_LEAVE:
+        return display_window_leave_encode(&header, bytes, size);
+    default:
+        *size = 0;
+        return ERR_INVALID_ARGS;
+    }
+}
+
+/* ------------------------------------------------------------------------
    The state. */
 
 void backlog_configure(BACKLOG *backlog,

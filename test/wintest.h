@@ -8,8 +8,8 @@
 
    It makes one window on the SYSTEM layer, as the console's will be, gives
    two buffers, presents the first whole and the second with one damage
-   rectangle, logs each key its window is sent, and holds the window until
-   the compositor closes it. */
+   rectangle, logs each key, entry, pointer event and leave its window is
+   sent, and holds the window until the compositor closes it. */
 
 #ifndef NOVA_WINTEST_H
 #define NOVA_WINTEST_H
