@@ -497,7 +497,8 @@ channel window
     body WINDOW_CONFIGURE_EVENT
   end
 
-  # Input events were dropped: treat the key state as unknown (D11,
+  # Input events were dropped: treat the key and button state as
+  # unknown and the pointer as outside until the next entry (D11,
   # rule 7).
   event dropped WINDOW_DROPPED 0x103
     body DISPLAY_HEADER

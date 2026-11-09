@@ -863,9 +863,12 @@ change.
    with `VIRTIO_INPUT_CFG_ABS_INFO` (VIRTIO 1.4 5.8.4).
 4. **Position.** The compositor maps an absolute axis from its range
    onto the screen: x is `(value - min) * width / (max - min + 1)`, in
-   pixels and 256ths of a pixel, clamped to the screen. With QEMU's
-   range a pixel of a 2880-pixel screen is about 11 tablet units, so the
-   position has a fraction.
+   pixels and 256ths of a pixel, rounded down, clamped to the screen: a
+   value outside the range is taken as the nearest end of it, so the
+   position lies in the screen's last pixel at most. With QEMU's range a
+   pixel of a 2880-pixel screen is about 11 tablet units, so the
+   position has a fraction. The pointer has a position once both axes
+   have been set, and until then it is over no window.
 5. **The wheel** is sent to windows in 120ths of a detent, as evdev's
    high-resolution wheel codes count (evdev, `REL_WHEEL_HI_RES`), so a
    device with a finer wheel needs no change of protocol; QEMU's
@@ -955,10 +958,43 @@ channel, and to no other:
    console's table ([console.md C3](console.md#c3-keys)) moved into a
    library both use. A game reads codes; a text field reads text.
 3. **The pointer** goes to the topmost window under it, in coordinates
-   relative to that window. A button pressed in a window holds the
-   pointer to it until every button is released, so a drag that leaves
-   the window still reaches it. A window learns when the pointer enters
-   and leaves it.
+   relative to that window. A window is under the pointer once it has
+   shown a frame ([D19](#d19-the-build-plan), rule 5), when the pixel the
+   pointer's position rounds down to ([D10](#d10-the-pointer), rule 4) is
+   one of its pixels, those of its left and top edges in and those of its
+   right and bottom edges out. There is one pointer, whatever devices
+   move it, and a button held on any of them holds it. A button is one
+   source's and one code's, a source being an input endpoint
+   ([input.md K3](input.md#k3-the-report-and-the-client)), and at most
+   `INPUT_REPORT_BUTTONS` (8) are held at once: a press of a button held,
+   a release of one not held, and a press with no room, whose release is
+   then a release of one not held, change nothing. A window is sent a
+   button by its code, whichever source it is on: a press when no source
+   held the code, a release when the last source that held it lets go,
+   so two devices that both have `BTN_LEFT` give a window one press and
+   one release. A button pressed in a window holds the pointer to it
+   until every button is released, so a drag that leaves the window
+   still reaches it. A button pressed over no window holds the pointer
+   to none until every button is released, and a press while a button is
+   held goes where the hold is, so a window is never sent a release of
+   a press it was not sent. A window learns when the pointer enters and
+   leaves it: it has the pointer while the pointer is under it and no
+   button is held, or while a button pressed in it is held, so a drag
+   that leaves it sends no leave, and the last release is sent before
+   the leave. An entry carries the pointer's position and comes before
+   the pointer event of the report that caused it; a window that shows
+   its first frame, or moves, or changes size under a pointer that has
+   not moved is sent its entry or its leave then. Whether a window has
+   the pointer is judged when the report is done, buttons and all, and
+   the wheel goes to the window that has the pointer then. A window that
+   closes has no pointer, and a button held to it is held to none; a
+   report that finds no window is treated as that, and sends nothing. An
+   input endpoint that closes, as a driver's failure closes it
+   ([input.md K4](input.md#k4-supervision)), lets go its source's
+   buttons: each code that thereby goes up is released to a window the
+   hold is to, in one pointer event at the pointer's place, in the order
+   the buttons were pressed, and the window then has the pointer or has
+   not as after a report.
 4. **A popup** opens only while its parent window has the focus. While
    open it holds the pointer and the keyboard; a click outside it closes
    it, the compositor tells its window, and the click goes nowhere. It
@@ -974,19 +1010,28 @@ channel, and to no other:
    edge, where the pointer stops, does show a window how far it lies
    from that edge.
 7. **Backlog.** The compositor never waits for a client. Input events a
-   window's channel cannot take wait in the compositor, at most
-   `WINDOW_BACKLOG` (64); motions are merged into the newest; past the
-   limit the oldest are dropped and the window is told, with
-   `WINDOW_DROPPED`, to treat its key state as unknown, as evdev's
-   `SYN_DROPPED` tells a client (evdev, `EV_SYN`). Configures, releases
-   and frame messages are state, not events: the compositor keeps each
-   window's latest configure and frame, and the set of its buffers
-   released since it last told the window, which one `WINDOW_RELEASED`
-   names whole, and sends them when the channel has room, so none is
-   lost. A window whose channel stays full for `WINDOW_STALL_NS`
-   (2 seconds) is closed, and the log says so. Replies on a connection
-   wait the same way, at most `CONNECTION_PENDING_MAX` (16), past which
-   the connection is closed.
+   window's channel cannot take wait in the compositor, behind those that
+   wait, at most `WINDOW_BACKLOG` (64). A motion, a pointer event that
+   changes no button and turns no wheel, is merged into the newest event
+   that waits if that is a motion, and takes its place. Past the limit
+   the oldest event is dropped and the window is told, with one
+   `WINDOW_DROPPED` however many were dropped before it is sent, to
+   treat its key and button state as unknown, and the pointer as outside
+   until its next entry, as evdev's `SYN_DROPPED` tells a client
+   (evdev, `EV_SYN`). Configures, releases and frame messages are
+   state, not events: the compositor keeps each window's latest
+   configure and frame, and the set of its buffers released since it
+   last told the window, which one `WINDOW_RELEASED` names whole, and
+   sends them when the channel has room, so none is lost. A window is
+   sent the configure, the release and the frame, in that order, then
+   the `WINDOW_DROPPED` it is owed, then the events, oldest first. A
+   window whose channel stays full for `WINDOW_STALL_NS` (2 seconds),
+   from the first send it refuses until the channel takes a message, is
+   closed, and the log says so; a channel whose other end has closed is
+   no stall, and its window is closed and nothing is logged
+   ([D19](#d19-the-build-plan), rule 8). Replies on a connection wait
+   the same way, at most `CONNECTION_PENDING_MAX` (16), past which the
+   connection is closed.
 
 - **Why:** a key reaches the one window the user chose and nothing
   else, so no program learns what another's user types; the pointer's
@@ -1002,11 +1047,59 @@ channel, and to no other:
   and cannot access other clients' surfaces"
   ([Wayland](README.md#display-and-interface-design-references),
   `Protocol.md`).
+- **Why a button pressed over no window holds the pointer to none:** a
+  client builds its idea of which buttons are down from the changes it is
+  sent, so it must be sent a release only of a press it was sent. A drag
+  that begins on the screen's background and crosses a window would
+  otherwise give the window a release of a button it never saw pressed.
+  A press while another button is held goes where the hold is, for the
+  same reason: the hold ends when every button is up, and what it was
+  given while it lasted is whole.
+- **Why a button is a source's and a code, and a window is sent a
+  code:** a window builds its idea of the buttons down from the changes
+  it is sent, and two devices may each have a left button. Counting
+  buttons would send the first device's release while the second still
+  held the code, and sending each device's own changes would send a
+  press of a button the window sees down. By code the window sees one
+  press and one release, and the hold lasts until every device has let
+  go.
+- **Why a source that goes lets go its buttons:** a driver that restarts
+  has lost the releases of the buttons it held, and the pointer would
+  stay held to a window for ever by a button no one holds.
+- **Why the wheel waits for the end of the report:** a report that
+  releases the last button of a hold and turns the wheel gives the turn
+  to the window the pointer is then over, the one whose entry the report
+  sends; a window held to and left is sent its release and its leave and
+  no turn after them, as though the pointer were still over it.
+- **Why the leave waits for the last release:** a window that is held a
+  button has the pointer wherever it is, so a drag that leaves it and
+  is released outside sees its release as a pointer event and then its
+  leave. Were the leave sent as the pointer crosses the edge, the
+  window would be sent the rest of the drag after it was told the
+  pointer had gone.
+- **Why the state goes before the events:** the events after a
+  configure are read in the state it gives, a key after a configure that
+  gives the focus is the focus's, and a client that draws on a frame
+  draws for the configure it has, so a frame behind a configure it has
+  not read is a drawing wasted. A `WINDOW_DROPPED` goes just before the
+  events because they are those that came after what it says was
+  dropped.
+- **Why a stall is a channel that takes nothing:** the rule's word is
+  that the channel stays full, so the clock runs from the first send it
+  refuses and stops when it takes one, however long it was full before,
+  and a client that reads slowly but reads is never closed for it.
 - **Cost:** a program cannot see input outside its windows for any
   purpose, so a screen reader or an automation tool needs a grant from
   the user through the system ([ui.md U10](ui.md#u10-accessibility)); a
   window that wants the focus without a user action waits for one; a
-  menu cannot open in a window the user has not chosen.
+  menu cannot open in a window the user has not chosen; a drag that
+  begins on the background and crosses a window gives the window
+  nothing until its buttons are up; a press with eight buttons held is
+  ignored; a drop of the oldest events can lose a press, a release, an
+  entry or a leave, which `WINDOW_DROPPED` does not name, so a window
+  that was told of a drop loses what it knew of its buttons and of where
+  the pointer is, and learns them again from its next press, release and
+  entry.
 - **Not taken:** X11's core protocol, in which "Multiple clients can
   select input on the same window" and an event "will be reported to
   all interested clients", and `QueryKeymap` returns "the logical state
@@ -1018,7 +1111,14 @@ channel, and to no other:
   (`SendInput`, [Windows](README.md#display-and-interface-design-references)),
   which is every program of the user's at its level. Their cost is a
   keylogger, or a program that types into another, as an ordinary
-  program.
+  program. In the hold and the backlog: a leave sent as a drag crosses
+  the window's edge and an entry as it returns, whose cost is a window
+  sent pointer events outside an entry and a leave anyway, for the hold
+  must reach it; a press over a window while a button pressed over none
+  is held taking the pointer to the window, whose cost is a window sent
+  buttons that began where it could not see them; and dropping motions
+  before other events past the limit, which would keep the release a
+  drop of the oldest loses but is a second rule beside the oldest's.
 
 ## D12. The secure attention key and global keys
 
@@ -1558,7 +1658,11 @@ login's session as it does on its own
    whether a buffer or a present is valid and what a present damages
    ([D6](#d6-windows-and-buffers), [D7](#d7-presenting-and-pacing) and
    rules 4 and 5), are `lib/window.c`, which `tools/check-window.c`
-   checks likewise. The console's keymap moves from
+   checks likewise; which window a pointer's report goes to and what it
+   is sent ([D10](#d10-the-pointer), rule 4, and [D11](#d11-routing-input),
+   rule 3) is `lib/route.c`, and what waits for a window's channel
+   (D11, rule 7) is `lib/backlog.c`, which `tools/check-route.c` and
+   `tools/check-backlog.c` check likewise. The console's keymap moves from
    `console/keys.c` to `lib/keymap.c`, and the console's cell rule,
    `height / CELLS_PER_HEIGHT` within `FONT_WIDTH_MIN` and
    `FONT_WIDTH_MAX`, moves from `console/panel.c` to `gfx/font.h`; the
@@ -1643,13 +1747,14 @@ login's session as it does on its own
    read, and a present of a buffer never given, close the window; a
    damage rectangle is cut to its buffer.
 6. **Input.** A key event carries `lib/keymap.c`'s text. The pointer,
-   its buttons and the wheel go to the window under it, the wheel in
+   its buttons and the wheel go to the window that has the pointer
+   ([D11](#d11-routing-input), rule 3), the wheel in
    120ths of a detent ([D10](#d10-the-pointer), rule 5), and the
    console scrolls its panel three lines a detent as it does in direct
    mode. Relative motion moves no pointer yet (D10, rule 6).
-7. **The pointer** is not drawn until the first absolute report, and
-   then with its hotspot on the top left corner of the pixel the
-   position rounds down to, from
+7. **The pointer** is not drawn until the first absolute report that
+   sets both axes, and then with its hotspot on the top left corner of
+   the pixel the position rounds down to, from
    [look.md V15](look.md#v15-the-pointer)'s contours at the screen's
    scale. A motion damages the image's old and new boxes.
 8. **The log,** in [log.md T1](log.md#t1-lines)'s form, each line as

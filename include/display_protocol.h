@@ -1578,7 +1578,8 @@ static inline UINT32 display_connection_event_check(const void *bytes,
 #define WINDOW_FRAME 0x101
 /** The window's size, scale and state (D7, rule 4). */
 #define WINDOW_CONFIGURE 0x102
-/** Input events were dropped: treat the key state as unknown (D11,
+/** Input events were dropped: treat the key and button state as
+    unknown and the pointer as outside until the next entry (D11,
     rule 7). */
 #define WINDOW_DROPPED 0x103
 /** A key, with the text it gives under the keymap (D11, rule 2). */
@@ -1992,7 +1993,8 @@ static inline UINT32 display_window_configure_encode(const WINDOW_CONFIGURE_EVEN
 /** Check a message received on the channel: returns OK, or
     ERR_INVALID_ARGS at the first rule of its description it breaks
     (docs/spec/interface.md P10).
-    Input events were dropped: treat the key state as unknown (D11,
+    Input events were dropped: treat the key and button state as
+    unknown and the pointer as outside until the next entry (D11,
     rule 7). */
 static inline UINT32 display_window_dropped_check(const void *bytes,
                                                   UINT32 byte_count,
@@ -2020,7 +2022,8 @@ static inline UINT32 display_window_dropped_check(const void *bytes,
     holds at least the direction's BYTES_MAX: returns OK with the
     message's size in *byte_count, or ERR_INVALID_ARGS with 0 there
     if it breaks the description (docs/spec/interface.md P14).
-    Input events were dropped: treat the key state as unknown (D11,
+    Input events were dropped: treat the key and button state as
+    unknown and the pointer as outside until the next entry (D11,
     rule 7). */
 static inline UINT32 display_window_dropped_encode(const DISPLAY_HEADER *body,
                                                    void *bytes,
