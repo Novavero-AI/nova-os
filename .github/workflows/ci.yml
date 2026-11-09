@@ -238,6 +238,7 @@ jobs:
             ${{ runner.temp }}/reproduce/test.img
             ${{ runner.temp }}/reproduce/chain.img
             ${{ runner.temp }}/reproduce/specimen.img
+            ${{ runner.temp }}/reproduce/logout.img
             ${{ runner.temp }}/reproduce/data.img
             ${{ runner.temp }}/reproduce/inter/*.nvf
           if-no-files-found: error
@@ -291,7 +292,11 @@ jobs:
   # The chain and specimen disks are test disks too. The specimen boot
   # takes QMP's screendump once the type specimen has drawn, keeps it as
   # an artifact, and checks it against the specimen's prototype,
-  # rendered from the fonts the reproduce job built.
+  # rendered from the fonts the reproduce job built. The logout disk is
+  # a system disk whose session runs a program in the shell's place that
+  # starts programs and ends without waiting for them; the boot checks
+  # that login stops each of them as it ends the session, and that a
+  # second session, logged into after the first, runs programs as it did.
   boot:
     name: ${{ matrix.name }}
     needs: reproduce
@@ -392,6 +397,11 @@ jobs:
             tests: true
             accel: tcg
             fonts: disk-images/inter
+            minutes: 15
+          - name: Boot (logout)
+            mode: logout
+            disk: logout.img
+            accel: tcg
             minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

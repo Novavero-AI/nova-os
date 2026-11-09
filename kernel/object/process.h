@@ -26,7 +26,6 @@
     (THREAD_RIGHT_START | THREAD_RIGHT_TERMINATE | RIGHT_DUPLICATE |      \
      RIGHT_TRANSFER | RIGHT_WAIT)
 
-typedef struct PROCESS PROCESS;
 typedef struct USER_THREAD USER_THREAD;
 
 /* What one process_map call mapped: size bytes at address, pages of
@@ -41,11 +40,15 @@ struct PROCESS {
     OBJECT object;
     WAITABLE waitable;
     JOB *job;     /* held for the process's life */
+    PROCESS *next_in_job; /* in job's processes, from job_add_process on */
+    PROCESS **link_in_job;
+    PROCESS *next_unfinished; /* in job_kill's list of processes to finish */
     UINT32 options; /* PROCESS_OPTION_32_BIT, _WRITE_EXECUTE */
     UINT64 space; /* the physical address of its top page table */
     HANDLE_TABLE *handles;
     UINT32 state; /* PROCESS_STATE_NEW, _RUNNING or _TERMINATED */
-    UINT32 terminating; /* from process_terminate's start on */
+    UINT32 terminating; /* from the first process_stop, or the last
+                           thread's exit, on */
     UINT32 exit_code;
     UINT32 threads; /* started and not yet exited, on the list below */
     USER_THREAD *running;
@@ -62,12 +65,13 @@ struct USER_THREAD {
     PROCESS *process; /* held for the thread object's life */
     USER_THREAD *next_running;
     UINT32 started;
+    UINT32 killed; /* before it started: it never will */
 };
 
 /* A new process in job, with an empty address space and handle table,
    and its creator's handle. options are PROCESS_OPTION_ bits, which the
-   caller has checked against its job handle. Returns OK or
-   ERR_NO_MEMORY. */
+   caller has checked against its job handle. Returns OK;
+   ERR_BAD_STATE if job has been killed (job_kill); or ERR_NO_MEMORY. */
 STATUS process_create(JOB *job, UINT32 options, PROCESS **process);
 
 /* Whether the process's threads run in compatibility mode (S11). */
@@ -82,19 +86,19 @@ STATUS process_thread_create(PROCESS *process, USER_THREAD **thread);
    first argument and argument as its second (docs/spec/syscalls.md S8,
    S11). bootstrap is a handle the caller holds, which passes to the
    process's table with rights. Returns OK; ERR_BAD_STATE if process or
-   thread has been started, or process is terminating; ERR_INVALID_ARGS
-   if thread belongs to another process, or entry or stack lies outside
-   what the process's mode allows (S5, S8, S11); or ERR_NO_MEMORY. On
-   failure the caller keeps the handle. */
+   thread has been started, thread has been killed, or process is
+   terminating; ERR_INVALID_ARGS if thread belongs to another process,
+   or entry or stack lies outside what the process's mode allows (S5,
+   S8, S11); or ERR_NO_MEMORY. On failure the caller keeps the handle. */
 STATUS process_start(PROCESS *process, USER_THREAD *thread, UINT64 entry,
                      UINT64 stack, OBJECT *bootstrap, UINT32 rights,
                      UINT64 argument);
 
 /* thread_start: start thread, a further thread of a running process, at
    entry with stack pointer stack and its two arguments (S8). Returns OK;
-   ERR_BAD_STATE if thread has been started, or its process was never
-   started or is terminating; ERR_INVALID_ARGS if entry or stack lies
-   outside what the process's mode allows; or ERR_NO_MEMORY. */
+   ERR_BAD_STATE if thread has been started or killed, or its process
+   was never started or is terminating; ERR_INVALID_ARGS if entry or
+   stack lies outside what the process's mode allows; or ERR_NO_MEMORY. */
 STATUS process_thread_start(USER_THREAD *thread, UINT64 entry, UINT64 stack,
                             UINT64 argument1, UINT64 argument2);
 
@@ -127,16 +131,36 @@ STATUS process_map(PROCESS *process, SECTION *section, UINT64 offset,
    unmaps nothing. */
 STATUS process_unmap(PROCESS *process, UINT64 address, UINT64 size);
 
-/* End process with exit_code (O10). Its threads stop first: each
-   blocked one's wait ends with ERR_CANCELED, none blocks again, and each
-   exits at its next return to user mode instead of returning. Once the
-   last has exited, the kernel closes every handle in the process's
-   table, removes its mappings and asserts PROCESS_TERMINATED, so no
-   thread of the process runs, and none can add a handle, after its
-   handles close. A process with no thread left ends here and now. A
-   process already terminating keeps its first code. A caller that is a
-   thread of process calls process_thread_exit next. */
+/* End process with exit_code (O10): process_stop, then process_finish if
+   that says so. Its threads stop first: each blocked one's wait ends
+   with ERR_CANCELED, none blocks again, and each exits at its next
+   return to user mode instead of returning. Once the last has exited,
+   the kernel closes every handle in the process's table, removes its
+   mappings and asserts PROCESS_TERMINATED, so no thread of the process
+   runs, and none can add a handle, after its handles close. A process
+   with no thread left ends here and now. A process already terminating
+   keeps its first code. A caller that is a thread of process calls
+   process_thread_exit next. */
 void process_terminate(PROCESS *process, UINT32 exit_code);
+
+/* The first part of process_terminate, which cannot block and so can run
+   over many processes with interrupts disabled: mark process
+   terminating with exit_code and stop its threads, unless it is
+   terminating already. Returns 1 if that left it no thread, so that the
+   caller must call process_finish; 0 otherwise, when the last thread to
+   exit finishes it, or when another call has the process in hand. */
+int process_stop(PROCESS *process, UINT32 exit_code);
+
+/* The last part: close the process's handles, remove its mappings and
+   assert PROCESS_TERMINATED, once no thread of it is left. Called once,
+   by whoever process_stop or the last thread's exit told to. */
+void process_finish(PROCESS *process);
+
+/* End thread alone (O10). One that was started stops as its process's
+   threads do, and its process ends as it would when the last thread
+   exits; one that was not started never starts. One that has exited
+   already is left as it is. */
+void process_thread_kill(USER_THREAD *thread);
 
 /* The running user thread is about to return to user mode, with
    interrupts disabled until it does: if its process is terminating, it

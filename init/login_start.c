@@ -4,8 +4,9 @@
    starts each again when it ends (platform_keep). Each start is a new
    process in a new job, given what it holds afresh: the service
    /data/accounts and /users and a control channel, login the store, a
-   store control channel of its own and a job for its sessions with
-   CREATE_PROCESS alone (accounts.md A1, A7).
+   store control channel of its own and a job for its sessions, with
+   CREATE_PROCESS for the shell and CREATE_JOB for the job of each
+   program the shell runs (accounts.md A1, A7).
 
    init keeps its end of the service's control channel and of login's
    bootstrap channel, and after each start of either joins the two with
@@ -42,8 +43,11 @@
 /* Login's store: to read programs, list, and map them executable. */
 #define LOGIN_STORE_RIGHTS (IO_RIGHT_READ | IO_RIGHT_EXECUTE | IO_RIGHT_LIST)
 
-/* The sessions' job, as login holds it: to create processes, no more. */
-#define SESSIONS_JOB_RIGHTS JOB_RIGHT_CREATE_PROCESS
+/* The sessions' job, as login holds it: to create the shell's process and
+   a job for each program, no more. A job login makes carries every job
+   right, TERMINATE among them, whatever the sessions' job's handle
+   does. */
+#define SESSIONS_JOB_RIGHTS (JOB_RIGHT_CREATE_PROCESS | JOB_RIGHT_CREATE_JOB)
 
 /* The service's bootstrap channel queues its one message; its control
    channel the login channels init has handed it and it has yet to take,

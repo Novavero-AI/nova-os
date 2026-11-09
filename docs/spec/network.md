@@ -300,14 +300,13 @@ the console ([input.md K3](input.md#k3-the-report-and-the-client),
 3. **The service breaks the frame protocol.** A driver that finds it
    ends with `VIRTIO_NET_EXIT_CLIENT_BROKE` ([N4](#n4-the-frame-protocol),
    rule 2). The first process starts the driver again without counting
-   a restart against it, and counts one against the service. The kernel
-   has no call that ends a process from outside
-   ([accounts.md A10](accounts.md#a10-supervision)), so a service that
-   breaks the protocol twice within `RESTART_PERIOD_SECONDS` cannot be
-   restarted: the first process gives the network up, its function
-   stopped, and logs that the service is at fault. With `task_kill`
-   ([syscalls.md S8](syscalls.md#s8-the-first-calls), call 26) it would
-   restart the service instead.
+   a restart against it, and counts one against the service, which it
+   ends with `task_kill`
+   ([syscalls.md S8](syscalls.md#s8-the-first-calls), call 26) and
+   starts again. A service that breaks the protocol twice within
+   `RESTART_PERIOD_SECONDS` is given up: the first process gives the
+   network up, its function stopped, and logs that the service is at
+   fault.
 4. **The service ends.** Every grant and socket channel it served
    closes, and each holder sees `PEER_CLOSED`; the connections are gone,
    and their peers learn so by a reset the next time they send or by

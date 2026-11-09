@@ -152,13 +152,18 @@ CI checks every pull request and every push to main:
   wheel scrolls it back and forward, each screen checked equal to the
   one `ci/screens.c` draws on the host with the console's own drawing
   code, the panel made from the kernel's background on `disk.img` and
-  computed on `test.img`. A boot of the test disk boots the same data
+  computed on `test.img`. Each of these sessions ends with logout,
+  which login must report. A boot of the test disk boots the same data
   disk again, logs in with that account, which it must still hold, and
   its data disk's check reads back what the first boot wrote. Other boots of `disk.img`
   corrupt the data disk's GPT, and the log must show the file system
   service refusing the disk. A boot of `specimen.img` takes QMP's
   screendump once the type specimen has drawn, which must equal its
-  prototype's render pixel for pixel.
+  prototype's render pixel for pixel. A boot of `logout.img`, whose
+  session runs a program in the shell's place that starts programs and
+  ends without waiting for them, must show login stopping each of them
+  as it ends the session, and a second session, logged into after the
+  first, running programs as the first did.
 - **Chain** boots `chain.img` and checks that each step of the bootstrap
   chain passes in its test report and each pinned link matches.
 

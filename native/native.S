@@ -91,6 +91,14 @@ thread_exit:
     syscall
     ud2
 
+/* UINT32 task_kill(UINT32 handle) */
+    .globl task_kill
+task_kill:
+    movq %rcx, %r10
+    movl $CALL_TASK_KILL, %eax
+    syscall
+    ret
+
 /* UINT32 debug_write(UINT32 resource, const void *bytes, UINT64 count) */
     .globl debug_write
 debug_write:

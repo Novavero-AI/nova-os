@@ -12,6 +12,12 @@
    starts its test program (storage.md F5, F16). When the shell ends,
    the session ends, and login asks again.
 
+   Each program the shell names runs in a job of its own, made in the
+   sessions' job. Login keeps the job's handle until a later run needs
+   the place of a program that has ended, or the session ends, and then
+   ends every job it still holds, so that no program of one session runs
+   on into the next (objects.md O7).
+
    Its console session and its channel to the accounts service come from
    the first process as setups on login's bootstrap channel, after each
    start of the console, of the service and of login (session.h). When
@@ -70,6 +76,24 @@
 /* What a program login starts holds of itself: MAP, to map sections. */
 #define SELF_RIGHTS (PROCESS_RIGHT_MAP | RIGHT_TRANSFER)
 
+/* The store service serves SERVICE_CLIENTS clients at once, and its
+   control channel and its root start one each; every other is the
+   closure directory of a program running, one per program (storage.md
+   F17). A session therefore runs at most the rest at once, and login
+   refuses a run past them itself, with ERR_NO_RESOURCES, where the
+   store service would refuse it with the same status. Login keeps a job
+   for each, and lets go of the jobs of programs that have ended when a
+   run needs the place, so a session runs any number of programs one
+   after another. */
+#define STORE_STARTING_CLIENTS 2
+#define SESSION_PROGRAMS_MAX (SERVICE_CLIENTS - STORE_STARTING_CLIENTS)
+
+_Static_assert(SERVICE_CLIENTS > STORE_STARTING_CLIENTS,
+               "the store service serves a client for each program");
+
+/* Login's own handle to a program's process, to tell when it has ended. */
+#define WATCH_RIGHTS PROCESS_RIGHT_INSPECT
+
 /* A program's closure: read and list it, and map its files executable. */
 #define CLOSURE_RIGHTS (IO_RIGHT_READ | IO_RIGHT_EXECUTE | IO_RIGHT_LIST)
 
@@ -110,6 +134,19 @@ static UINT32 store_control = HANDLE_INVALID, setups = HANDLE_INVALID;
 static VIEW store_view;
 static LAYOUT_WINDOW layout;
 static char shell_path[SHELL_PATH_MAX + 1];
+
+/* A program the session started: login's handle to its job, which
+   carries TERMINATE, and to its process. A place is free while its job
+   is HANDLE_INVALID, which is the zero of static storage. */
+typedef struct {
+    UINT32 job;
+    UINT32 process;
+} SESSION_PROGRAM;
+
+static SESSION_PROGRAM session_programs[SESSION_PROGRAMS_MAX];
+
+/* Programs take no interrupt vectors: none drives a device. */
+static const JOB_LIMITS no_vectors;
 
 static UINT8 message[CHANNEL_MAX_BYTES];
 static UINT8 request_bytes[CREDENTIALS_REQUEST_MAX];
@@ -349,6 +386,74 @@ static UINT32 accounts_call(UINT32 operation, const SECRET *secret,
 }
 
 /* ------------------------------------------------------------------------
+   The session's programs. */
+
+static int ended(UINT32 process)
+{
+    UINT32 state, exit_code;
+
+    return process_info(process, &state, &exit_code) == OK &&
+           state == PROCESS_STATE_TERMINATED;
+}
+
+static void let_go(SESSION_PROGRAM *program)
+{
+    handle_close(program->process);
+    handle_close(program->job);
+    program->process = HANDLE_INVALID;
+    program->job = HANDLE_INVALID;
+}
+
+/* A place for a program, once the places of programs that have ended are
+   free again; 0 if every program of the session still runs. */
+static SESSION_PROGRAM *vacant_program(void)
+{
+    SESSION_PROGRAM *vacant = 0;
+    UINT32 i;
+
+    for (i = 0; i < SESSION_PROGRAMS_MAX; i++) {
+        SESSION_PROGRAM *program = &session_programs[i];
+
+        if (program->job != HANDLE_INVALID && ended(program->process))
+            let_go(program);
+        if (program->job == HANDLE_INVALID && !vacant)
+            vacant = program;
+    }
+    return vacant;
+}
+
+/* End each program the session started and let go of its job. A program
+   still running is stopped when task_kill returns, and finishes ending,
+   closing its handles, as its last thread leaves the kernel (O10). A job
+   whose kill fails stays held: login's handle is the only one that can
+   end it, so the next logout tries again, and the program keeps its
+   place meanwhile. Returns how many programs were running and are now
+   stopped. */
+static UINT32 end_programs(void)
+{
+    UINT32 stopped = 0, status, i;
+
+    for (i = 0; i < SESSION_PROGRAMS_MAX; i++) {
+        SESSION_PROGRAM *program = &session_programs[i];
+
+        if (program->job == HANDLE_INVALID)
+            continue;
+        if (ended(program->process)) {
+            let_go(program);
+            continue;
+        }
+        status = task_kill(program->job);
+        if (status != OK) {
+            say_status("program kill failed", status);
+            continue;
+        }
+        stopped++;
+        let_go(program);
+    }
+    return stopped;
+}
+
+/* ------------------------------------------------------------------------
    Starting programs. */
 
 static UINT32 debug_log_for_program(UINT32 *resource)
@@ -357,8 +462,8 @@ static UINT32 debug_log_for_program(UINT32 *resource)
 }
 
 /* Load the program whose file is at path in login's view of /store into
-   a new process in the session's job. */
-static UINT32 load(const char *path, PROGRAM *program)
+   a new process in into, a job login holds. */
+static UINT32 load(const char *path, UINT32 into, PROGRAM *program)
 {
     IO_ATTRIBUTES attributes;
     RECEIVED_HANDLE section;
@@ -387,7 +492,7 @@ static UINT32 load(const char *path, PROGRAM *program)
     handle_close(section.handle);
     if (status != OK)
         return status;
-    status = program_load(&layout, job, (const UINT8 *)FILE_WINDOW, size,
+    status = program_load(&layout, into, (const UINT8 *)FILE_WINDOW, size,
                           program);
     unmapped = process_unmap(self, FILE_WINDOW, mapped_size);
     if (status == OK && unmapped != OK) {
@@ -465,12 +570,16 @@ static int store_base(const UINT8 *path, UINT32 length, const UINT8 **base,
     return *base_length > 0 && *base_length <= STORE_BASE_NAME_MAX;
 }
 
-/* Start the program at the path of path_length bytes with a view of its
-   closure under /store and nothing else, and argument_bytes of
-   arguments (launch.h). */
+/* Start the program at the path of path_length bytes in a job of its own,
+   with a view of its closure under /store and nothing else, and
+   argument_bytes of arguments (launch.h). The job is kept in a place of
+   the session's until the session ends or the program has ended and
+   another run needs the place; with none vacant the run is refused with
+   ERR_NO_RESOURCES and *at_limit set, which is the session's own limit,
+   not a failure. */
 static UINT32 run_program(const UINT8 *path, UINT32 path_length,
                           const UINT8 *arguments, UINT32 argument_bytes,
-                          UINT32 *process)
+                          UINT32 *process, int *at_limit)
 {
     static char text[IO_PATH_MAX + 1];
     static UINT8 launch[sizeof(LAUNCH_HEADER) + sizeof(LAUNCH_VIEW_ENTRY) +
@@ -479,39 +588,54 @@ static UINT32 run_program(const UINT8 *path, UINT32 path_length,
     LAUNCH_HEADER *header = (LAUNCH_HEADER *)launch;
     LAUNCH_VIEW_ENTRY *entry = (LAUNCH_VIEW_ENTRY *)(launch + sizeof *header);
     IO_ATTRIBUTES attributes;
+    SESSION_PROGRAM *place;
     PROGRAM program;
     const UINT8 *base;
-    UINT32 base_length, closure, status, i;
+    UINT32 base_length, closure, program_job = HANDLE_INVALID;
+    UINT32 watch = HANDLE_INVALID, status, i;
 
     *process = HANDLE_INVALID;
     if (path_length > IO_PATH_MAX || argument_bytes > LAUNCH_ARGUMENTS_MAX ||
         !store_base(path, path_length, &base, &base_length))
         return ERR_INVALID_ARGS;
+    place = vacant_program();
+    if (!place) {
+        *at_limit = 1;
+        return ERR_NO_RESOURCES;
+    }
     copy((UINT8 *)text, path, path_length);
     text[path_length] = 0;
     status = io_open(store_control, STORE_OPEN_CLOSURE, base, base_length,
                      CLOSURE_RIGHTS, &closure, &attributes);
     if (status != OK)
         return status;
-    status = load(text, &program);
+    status = job_create(job, &no_vectors, &program_job);
+    if (status == OK)
+        status = load(text, program_job, &program);
     if (status != OK) {
+        if (program_job != HANDLE_INVALID)
+            handle_close(program_job);
         handle_close(closure);
         return status;
     }
-    for (i = 0; i <= LAUNCH_FIRST_DIRECTORY; i++)
+    for (i = 0; i <= LAUNCH_FIRST_DIRECTORY; i++) {
+        handles[i].handle = HANDLE_INVALID;
         handles[i].rights = RIGHTS_SAME;
-    handles[LAUNCH_SELF].handle = HANDLE_INVALID;
+    }
     handles[LAUNCH_FIRST_DIRECTORY].handle = closure;
     status = debug_log_for_program(&handles[LAUNCH_DEBUG_LOG].handle);
     if (status == OK)
         status = handle_duplicate(program.process, SELF_RIGHTS,
                                   &handles[LAUNCH_SELF].handle);
+    if (status == OK)
+        status = handle_duplicate(program.process, WATCH_RIGHTS, &watch);
     if (status != OK) {
-        if (handles[LAUNCH_DEBUG_LOG].handle != HANDLE_INVALID)
-            handle_close(handles[LAUNCH_DEBUG_LOG].handle);
-        handle_close(closure);
+        for (i = 0; i <= LAUNCH_FIRST_DIRECTORY; i++)
+            if (handles[i].handle != HANDLE_INVALID)
+                handle_close(handles[i].handle);
         handle_close(program.thread);
         handle_close(program.process);
+        handle_close(program_job);
         return status;
     }
     header->view_count = 1;
@@ -524,9 +648,15 @@ static UINT32 run_program(const UINT8 *path, UINT32 path_length,
     status = start(&program, launch,
                    sizeof *header + sizeof *entry + argument_bytes, handles,
                    LAUNCH_FIRST_DIRECTORY + 1);
-    if (status == OK)
-        *process = program.process;
-    return status;
+    if (status != OK) {
+        handle_close(watch);
+        handle_close(program_job);
+        return status;
+    }
+    place->job = program_job;
+    place->process = watch;
+    *process = program.process;
+    return OK;
 }
 
 /* Serve one request on the launcher channel. Returns 0 if the channel
@@ -541,6 +671,7 @@ static int serve_launcher(UINT32 launcher)
     IO_REPLY reply;
     HANDLE_TRANSFER transfer;
     UINT32 bytes, count, status, process = HANDLE_INVALID;
+    int at_limit = 0;
 
     if (channel_read(launcher, message, sizeof message, received,
                      CHANNEL_MAX_HANDLES, &bytes, &count) != OK)
@@ -561,7 +692,7 @@ static int serve_launcher(UINT32 launcher)
         status = ERR_INVALID_ARGS;
     else
         status = run_program(path, run->path_length, path + run->path_length,
-                             run->argument_bytes, &process);
+                             run->argument_bytes, &process, &at_limit);
     reply.transaction = request->transaction;
     reply.status = status;
     reply.information = 0;
@@ -575,6 +706,11 @@ static int serve_launcher(UINT32 launcher)
     if (status == OK) {
         say("nova-login: program started path=");
         say_value_bytes(path, run->path_length);
+        say("\r\n");
+    } else if (at_limit) {
+        say("nova-login: program start refused reason=\"session limit\" "
+            "limit=");
+        say_number(SESSION_PROGRAMS_MAX);
         say("\r\n");
     } else {
         say_status("program start failed", status);
@@ -673,7 +809,7 @@ static UINT32 start_shell(const ACCOUNTS_USER *user, UINT32 home,
     }
     *launcher = HANDLE_INVALID;
     *session = HANDLE_INVALID;
-    status = load(shell_path, &program);
+    status = load(shell_path, job, &program);
     if (status == OK)
         status = debug_log_for_program(&handles[SESSION_DEBUG_LOG].handle);
     if (status == OK) {
@@ -744,7 +880,7 @@ static void run_session(UINT32 reply_length, UINT32 count)
     SERVED served[SERVED_COUNT];
     WAIT_ENTRY items[SERVED_FIRST_WAIT + SERVED_COUNT];
     UINT32 slot[SERVED_FIRST_WAIT + SERVED_COUNT];
-    UINT32 shell, waits, administrator = HANDLE_INVALID, i, observed;
+    UINT32 shell, waits, administrator = HANDLE_INVALID, i, observed, killed;
     const UINT8 *bytes = message + sizeof(IO_REPLY);
     int keep;
 
@@ -814,8 +950,11 @@ static void run_session(UINT32 reply_length, UINT32 count)
         if (served[i].handle != HANDLE_INVALID)
             handle_close(served[i].handle);
     handle_close(shell);
+    killed = end_programs();
     say("nova-login: session ended name=");
     say_value_bytes(user.name, user.name_length);
+    say(" killed=");
+    say_number(killed);
     say("\r\n");
     show("Logged out.\n\n");
 }

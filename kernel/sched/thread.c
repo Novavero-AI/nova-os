@@ -88,7 +88,10 @@ static THREAD *take_ready(CPU *cpu)
 }
 
 /* Behind every thread with the same deadline, so equal deadlines wake in
-   the order they were set. */
+   the order they were set. Each thread records the pointer that names it,
+   so that remove_timeout takes it off without a search: a process
+   stopped or a job killed ends many timed waits at once, with interrupts
+   disabled. */
 static void add_timeout(CPU *cpu, THREAD *thread)
 {
     THREAD **link = &cpu->timeouts;
@@ -96,18 +99,17 @@ static void add_timeout(CPU *cpu, THREAD *thread)
     while (*link && (*link)->deadline <= thread->deadline)
         link = &(*link)->next_timeout;
     thread->next_timeout = *link;
+    thread->timeout_link = link;
+    if (thread->next_timeout)
+        thread->next_timeout->timeout_link = &thread->next_timeout;
     *link = thread;
 }
 
-static void remove_timeout(CPU *cpu, THREAD *thread)
+static void remove_timeout(THREAD *thread)
 {
-    THREAD **link;
-
-    for (link = &cpu->timeouts; *link; link = &(*link)->next_timeout)
-        if (*link == thread) {
-            *link = thread->next_timeout;
-            return;
-        }
+    *thread->timeout_link = thread->next_timeout;
+    if (thread->next_timeout)
+        thread->next_timeout->timeout_link = thread->timeout_link;
 }
 
 /* ------------------------------------------------------------------------
@@ -216,6 +218,7 @@ static UINT64 init_thread(THREAD *thread, THREAD_ENTRY entry, void *argument,
     thread->state = THREAD_NEW;
     thread->next_ready = 0;
     thread->next_timeout = 0;
+    thread->timeout_link = 0;
     thread->deadline = 0;
     thread->wait_status = OK;
     thread->stack = run;
@@ -333,7 +336,7 @@ void sched_timer_interrupt(void)
         cpu->longest_tick = now - cpu->last_tick;
     cpu->last_tick = now;
     while ((due = cpu->timeouts) != 0 && due->deadline <= now) {
-        cpu->timeouts = due->next_timeout;
+        remove_timeout(due);
         end_wait(cpu, due, ERR_TIMED_OUT);
     }
     if (cpu->current == cpu->idle ? cpu->ready_head != 0
@@ -374,6 +377,6 @@ void sched_end_wait(THREAD *thread, STATUS status)
     if (thread->state != THREAD_BLOCKED)
         return;
     if (thread->deadline != DEADLINE_INFINITE)
-        remove_timeout(cpu, thread);
+        remove_timeout(thread);
     end_wait(cpu, thread, status);
 }

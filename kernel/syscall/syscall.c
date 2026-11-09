@@ -411,6 +411,56 @@ static STATUS thread_exit_call(const UINT64 *arguments, UINT64 *results)
     process_thread_exit();
 }
 
+static void kill_process(OBJECT *process)
+{
+    process_terminate((PROCESS *)process, PROCESS_EXIT_KILLED);
+}
+
+static void kill_thread(OBJECT *thread)
+{
+    process_thread_kill((USER_THREAD *)thread);
+}
+
+static void kill_job(OBJECT *job)
+{
+    job_kill((JOB *)job);
+}
+
+/* What task_kill takes: each type, the right to end one, and how. */
+static const struct {
+    UINT32 type;
+    UINT32 right;
+    void (*kill)(OBJECT *object);
+} killable[] = {
+    {TYPE_PROCESS, PROCESS_RIGHT_TERMINATE, kill_process},
+    {TYPE_THREAD, THREAD_RIGHT_TERMINATE, kill_thread},
+    {TYPE_JOB, JOB_RIGHT_TERMINATE, kill_job},
+};
+
+/* task_kill(handle): a process, a thread or a job. A handle of another
+   type is ERR_WRONG_TYPE, from the last type tried, so each type's
+   attempt is O3's own check: the value, then the type, then the right.
+   The target is only stopping when the call returns (O10). */
+static STATUS task_kill_call(const UINT64 *arguments, UINT64 *results)
+{
+    UINT32 i;
+    STATUS status = ERR_WRONG_TYPE;
+    OBJECT *object;
+
+    (void)results;
+    for (i = 0; i < sizeof killable / sizeof killable[0]; i++) {
+        status = handle_get(caller_handles(), (UINT32)arguments[0],
+                            killable[i].type, killable[i].right, &object);
+        if (status == OK) {
+            killable[i].kill(object);
+            object_release(object);
+        }
+        if (status != ERR_WRONG_TYPE)
+            break;
+    }
+    return status;
+}
+
 /* section_create(size, options): a handle. No option is defined. */
 static STATUS section_create_call(const UINT64 *arguments, UINT64 *results)
 {
@@ -805,6 +855,7 @@ static const CALL_ENTRY calls[CALL_COUNT] = {
     [CALL_THREAD_CREATE] = {thread_create_call, 1, 0},
     [CALL_THREAD_START] = {thread_start_call, 5, 0},
     [CALL_THREAD_EXIT] = {thread_exit_call, 0, 1},
+    [CALL_TASK_KILL] = {task_kill_call, 1, 0},
     [CALL_SECTION_CREATE] = {section_create_call, 2, 0},
     [CALL_PROCESS_MAP] = {process_map_call, 6, 0},
     [CALL_PROCESS_UNMAP] = {process_unmap_call, 3, 0},

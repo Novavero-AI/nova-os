@@ -39,6 +39,7 @@ struct THREAD {
     THREAD_STATE state;
     THREAD *next_ready;
     THREAD *next_timeout;
+    THREAD **timeout_link; /* the pointer that names it on the timeout list */
     UINT64 deadline;    /* of the wait it is blocked in */
     STATUS wait_status; /* how its last wait ended */
     UINT64 stack;       /* physical address of the run's guard page */
@@ -47,8 +48,9 @@ struct THREAD {
     UINT64 switches; /* times the scheduler has switched to it */
     WAITABLE waitable;
     struct PROCESS *process; /* a user thread's process; 0 for a kernel thread */
-    int stopping; /* its process is terminating: it waits no more, and
-                     exits instead of returning to user mode */
+    int stopping; /* it was stopped, by its process terminating or by a
+                     kill of it alone: it waits no more, and exits
+                     instead of returning to user mode */
 };
 
 /* Make thread a new thread that will run entry(argument) and then exit,

@@ -309,15 +309,35 @@ A job holds a quota ([O6](#o6-no-ambient-authority)), and `task_kill` on a
 job terminates every process in it and in its descendants. A job is
 destroyed when it has no processes, no child jobs and no handles.
 
+`task_kill` marks the job and every job under it killed, and stops every
+process in them, in one step that no other thread interleaves. A killed
+job stays killed: `process_create` and `job_create` fail in it with
+`ERR_BAD_STATE`, so a process that was in a call when the kill came
+cannot add to the job after it. A job already killed, or with no process
+left, is killed again with no effect and no error. Each process the kill
+stops terminates as [O10](#o10-object-lifetime) says, with the exit code
+`PROCESS_EXIT_KILLED`.
+
 - **Why:** a crashed driver must be restarted cleanly (DESIGN.md), which
   means stopping every process it started; a job does that in one call.
   The same tree carries the kernel-memory quota and the authority to
-  create processes.
+  create processes. A job that stays killed lets a supervisor tell a job
+  it has emptied from one a late call refilled.
 - **Cost:** one more object type, and a tree the kernel walks on
-  termination.
+  termination, with interrupts disabled as every change to the tree is
+  on one processor, so a kill takes as long as the tree under it is
+  large: it visits each job, process and started thread once, at most
+  one for each page of memory the tree holds.
 - **Not taken:** quotas per process with no tree, set by the creator. Its
   cost is that a supervisor cannot reliably stop processes a child started
-  without its knowledge. NT's job objects group processes for limits and
+  without its knowledge. A job that takes processes again after a kill: a
+  creation in a call that began before the kill cannot be ordered against
+  it, so the supervisor could not know the job was empty. A `TERMINATED`
+  signal on a job, asserted once it is killed and empty: it would let a
+  supervisor wait for a job without holding each of its processes, at the
+  cost of a check on every departure from a job's lists, which cascades
+  up the tree when the departure empties a parent; a supervisor waits on
+  the `TERMINATED` of the processes it holds. NT's job objects group processes for limits and
   termination ([Job Objects][ms-jobs]); Zircon's jobs also carry policy
   ([Job][zx-job]).
 
@@ -392,12 +412,11 @@ the object's type, bit 23 is the synthetic `HANDLE_CLOSED`, and bits 24 to
 |---|---|
 | Process | `TERMINATED` (0) |
 | Thread | `TERMINATED` (0) |
-| Job | `TERMINATED` (0): terminated and empty |
 | Channel | `READABLE` (0), `WRITABLE` (1), `PEER_CLOSED` (2) |
 | Event | user signals only |
 
-Sections, ports, resources, interrupts, initiators and pins are not
-waitable; a port is read with `port_wait`, and an interrupt delivers port
+Jobs, sections, ports, resources, interrupts, initiators and pins are
+not waitable; a port is read with `port_wait`, and an interrupt delivers port
 packets ([ipc.md](ipc.md#i7-interrupts)). In the first set only events have
 user signals, set and cleared with `object_signal`.
 
@@ -488,7 +507,11 @@ user signals, set and cleared with `object_signal`.
    resumes the thread or lets the process terminate. Termination records
    the exit code and stops every thread first: a blocked thread's wait
    ends, no thread blocks again, and each exits when it would next return
-   to user mode, a call in progress finishing first. Once the last thread
+   to user mode, a call in progress finishing first. The exit code of a
+   process that `task_kill` ends is `PROCESS_EXIT_KILLED` (0x100), which
+   no fault gives, since a fault's is its exception vector, below 0x100.
+   A thread that `task_kill` ends is a thread that exits, so the process
+   ends with exit code 0 if it was the last. Once the last thread
    has exited, the kernel closes every handle in the table, removes the
    mappings and asserts `TERMINATED`, so no thread of the process runs,
    and none can add a handle such as a pin ([ipc.md I8](ipc.md#i8-dma)),
@@ -507,7 +530,10 @@ user signals, set and cleared with `object_signal`.
 - **Why:** reference counting releases resources at a definite point that
   a driver restart or a process exit can rely on, and makes every kernel
   pointer to an object safe for as long as it is held.
-- **Cost:** endpoints carried in each other's queues (one endpoint queued
+- **Cost:** the exit code alone does not say how a process ended: one
+  that exits with 0x100 reads as killed, and one that exits with a number
+  below 0x100 reads as a fault of that vector. Endpoints carried in each
+  other's queues (one endpoint queued
   on a second while the second is queued on the first) form a cycle that,
   once their peers close, nothing can read and nothing frees; the memory
   stays charged to the writers' jobs. The kernel rejects only the direct
@@ -519,7 +545,12 @@ user signals, set and cleared with `object_signal`.
   is deleted or revoked (seL4 2.4, 3.2), with revocation of every derived
   capability. Its cost here is a capability derivation tree in the core;
   nova-os has no revocation, and access a holder might lose is given
-  through a server that can cut it off.
+  through a server that can cut it off. A third result of `process_info`
+  that says how the process ended, as exit, fault or kill, which would
+  let a kill's exit code be 0 and keep a program's own codes apart from
+  vectors; [shell.md L12](shell.md#l12-exit-status-and-the-outcome-of-a-pipeline)
+  rule 2 tells the three apart by how `process_info` reports the end, and
+  S8's two results do so only by the code's range.
 
 ## References
 

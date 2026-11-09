@@ -91,6 +91,7 @@
 #define CALL_THREAD_CREATE 23           /**< thread_create() */
 #define CALL_THREAD_START 24            /**< thread_start() */
 #define CALL_THREAD_EXIT 25             /**< thread_exit() */
+#define CALL_TASK_KILL 26               /**< task_kill() */
 #define CALL_SECTION_CREATE 27          /**< section_create() */
 #define CALL_PROCESS_MAP 28             /**< process_map() */
 #define CALL_PROCESS_UNMAP 29           /**< process_unmap() */
@@ -296,6 +297,15 @@
 #define PROCESS_STATE_NEW 1        /**< created and not yet started */
 #define PROCESS_STATE_RUNNING 2    /**< started */
 #define PROCESS_STATE_TERMINATED 3 /**< terminated */
+/** @} */
+
+/** @name Process exit codes
+    The exit code of a process that did not choose its own. A fault ends
+    a process with its exception vector, which is below 0x100, and
+    task_kill ends it with PROCESS_EXIT_KILLED, so the two never meet.
+    A process can still exit with any number, this one included.
+    @{ */
+#define PROCESS_EXIT_KILLED 0x100 /**< ended by task_kill() */
 /** @} */
 
 /** @name Channel limits

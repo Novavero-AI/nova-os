@@ -3,8 +3,8 @@
 # TinyCC, compiled from its source by the host's C compiler, links the
 # loader, the kernel and every program; tools the host compiler builds
 # convert Inter's faces to nova-os fonts and write the store image, the
-# system's boot disk, the test disk, the specimen disk, the chain disk
-# and an empty data disk (docs/spec/disk-layout.md).
+# system's boot disk, the test disk, the specimen disk, the chain disk,
+# the logout disk and an empty data disk (docs/spec/disk-layout.md).
 # SHA256SUMS gives the sha256 of every file in OUT that a build must
 # reproduce, and the build checks each file it downloads against its
 # line there before anything reads it.
@@ -275,9 +275,10 @@ tcc i386 -shared -Wl,-subsystem=native -Wl,-e=ntdll_entry \
 program init.exe init_main -I native -I lib -I drivers -I kernel/random \
   -I store -I test init/init.c init/chain.c init/compat.c init/view.c \
   init/platform.c init/store.c init/console.c init/data.c \
-  init/login_start.c init/specimen_start.c init/tests.c drivers/pci.c \
-  drivers/virtio_pci.c store/reader.c lib/path.c lib/program.c lib/log.c \
-  lib/ktap.c native/native.S kernel/random/sha256.c
+  init/login_start.c init/specimen_start.c init/tests.c init/kill.c \
+  drivers/pci.c drivers/virtio_pci.c store/reader.c lib/path.c \
+  lib/program.c lib/log.c lib/ktap.c native/native.S \
+  kernel/random/sha256.c
 program virtblk.exe virtio_blk_main -I native -I lib -I drivers \
   drivers/virtio_blk.c drivers/virtio_driver.c drivers/virtio_pci.c \
   drivers/pci.c lib/log.c native/native.S
@@ -314,11 +315,25 @@ program specimen.exe specimen_main -I native -I lib -I gfx -I test \
   lib/mapping.c lib/path.c lib/log.c gfx/gfx.c gfx/flush.c gfx/raster.c \
   gfx/limb.c native/native.S
 
+# The logout disk's two programs: the victim, which a session's program
+# runs and which stays running, and the driver, which stands in for the
+# shell and records the victim's store path, so the victim's package is
+# written before the driver is linked.
+program victim.exe victim_main -I native -I lib -I test test/victim.c \
+  lib/log.c native/native.S
+victim=$(cd -- "$out" && ./mknar victim victim dir bin exec bin/victim.exe \
+  victim.exe)
+program driver.exe driver_main -I native -I lib -I test \
+  -D "VICTIM_PATH=\"/store/$victim/bin/victim.exe\"" test/driver.c \
+  lib/path.c lib/log.c native/native.S
+
 # The store image's paths: nova-services, the programs the image's
 # header names for the first process to start; greeting; hello, the
 # test program, which refers to the greeting and links to it;
 # nova-session, the accounts service, login and the shell; Inter's
 # fonts; and specimen, the type specimen, which refers to the fonts.
+# The logout disk's store image holds nova-services, victim, and its own
+# nova-session, whose shell is the driver.
 cd -- "$out"
 services=$(./mknar services nova-services dir bin \
   exec bin/store.exe store.exe exec bin/namespace.exe namespace.exe)
@@ -334,11 +349,30 @@ services=$(./mknar services nova-services dir bin \
   services.narinfo services.nar hello.narinfo hello.nar \
   session.narinfo session.nar fonts.narinfo fonts.nar \
   specimen.narinfo specimen.nar
+./mknar logout-session nova-session dir bin exec bin/accounts.exe \
+  accounts.exe exec bin/login.exe login.exe exec bin/shell.exe driver.exe
+mkdir -p logout
+./mkstore logout/store.img "$services" services.narinfo services.nar \
+  victim.narinfo victim.nar logout-session.narinfo logout-session.nar
 
 # The system's boot disk holds the loader and, in \NOVA\, these files.
 set -- BOOTX64.EFI kernel.exe init.exe ntdll.dll virtblk.exe virtinp.exe \
   console.exe store.img fs.exe
 ./mkimage disk.img disk.vhdx "$@"
+
+# The logout disk holds the system disk's files but for its store image,
+# which holds a session whose program is the driver.
+logout_disk() {
+  for file in "$@"; do
+    shift
+    case $file in
+      store.img) file=logout/store.img ;;
+    esac
+    set -- "$@" "$file"
+  done
+  ./mkimage logout.img logout.vhdx "$@"
+}
+logout_disk "$@"
 
 # The test disk holds the same files, the data disk's check, TESTS, an
 # empty file, which makes the kernel and the first process run their

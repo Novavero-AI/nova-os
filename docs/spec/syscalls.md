@@ -497,6 +497,9 @@ The root job holds every vector the kernel has for message-signalled
 interrupts. The other quotas O6 lists join the record as the kernel
 enforces them.
 
+`process_create` and `job_create` fail with `ERR_BAD_STATE` in a job
+`task_kill` has killed ([objects.md O7](objects.md#o7-jobs)).
+
 `process_create`'s options are `PROCESS_OPTION_32_BIT` (1), whose threads
 run 32-bit code (S11), and `PROCESS_OPTION_WRITE_EXECUTE` (2), whose
 mappings may be writable and executable at once
@@ -549,9 +552,25 @@ Zircon's `zx_cprng_draw` has no error condition but an invalid buffer,
 for which it terminates the caller ([cprng_draw][zx-cprng]).
 
 `thread_start` starts a further thread of a process `process_start` has
-started; it fails with `ERR_BAD_STATE` if the thread has been started, or
-if its process was never started or has begun terminating
+started; it fails with `ERR_BAD_STATE` if the thread has been started or
+killed, or if its process was never started or has begun terminating
 ([objects.md O10](objects.md#o10-object-lifetime)).
+
+`task_kill` takes a handle to a process, a thread or a job, and checks it
+as [objects.md O3](objects.md#o3-handles) orders: the value, then the
+type, then the type's `TERMINATE` right. It returns once the target is
+stopping, not once it has ended, so a caller that needs the end waits for
+`PROCESS_TERMINATED` or `THREAD_TERMINATED` of a process or thread it
+holds; a job has no signal ([objects.md O9](objects.md#o9-waiting)).
+Killing a target that has ended or is ending is not an error, so a kill
+that races an exit cannot tell which came first. A process ends with the
+exit code `PROCESS_EXIT_KILLED`; a thread ends alone, and one killed
+before it started never starts, so `thread_start` and `process_start`
+fail on it with `ERR_BAD_STATE`; a job's processes, and those of the jobs
+under it, end, and the job takes no process or child job afterwards
+([objects.md O7](objects.md#o7-jobs), [O10](objects.md#o10-object-lifetime)).
+A thread may kill its own process, thread or job: the call returns, and
+the thread exits when it would next return to user mode.
 
 A new thread, from `process_start` or `thread_start`, begins at `entry`
 with RCX and RDX holding its two arguments, every other general-purpose

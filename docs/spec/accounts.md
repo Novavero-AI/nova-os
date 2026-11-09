@@ -322,7 +322,21 @@ notification service
 ([display.md D20](display.md#d20-notifications)). Login answers with the program's
 process, with `INSPECT` and `WAIT`, by which the shell waits for its
 end and reads its exit code. A program run so gets none of the
-session's handles.
+session's handles. Login keeps the job's handle in a place of the
+session's, for up to `SESSION_PROGRAMS_MAX` programs at once: six, the
+store service's eight clients less the two it starts with, since each
+program's closure directory is a client
+([storage.md F17](storage.md#f17-limits-on-clients)). A run with no
+place vacant is refused with `ERR_NO_RESOURCES`, and login logs the
+refusal as the session's limit. A place is vacant once its program has
+ended, and login lets go of the job of an ended program when a run
+needs the place or the session ends, so a session runs any number of
+programs one after another. At logout it ends every job still running
+with `task_kill` ([objects.md O7](objects.md#o7-jobs)), so no program
+runs on past its session while login lasts to the logout, and logs how
+many it stopped. A job whose `task_kill` fails stays held, since login's handle
+is the only one that can end it, and its program keeps its place; login
+logs the failure and tries again at the next logout.
 
 From display.md's phase 4, while a compositor runs, login also mints
 the session's display
@@ -335,9 +349,7 @@ terminal, a console in window mode, on `LAUNCHER_TERMINAL`
 At logout it closes the session's connection, its network control
 channel and every display grant and notification channel, so every
 window, connection, capture and notification of the session goes at
-once, and ends each job it made for the session's programs with
-`task_kill` ([objects.md O7](objects.md#o7-jobs)), so none of them
-runs on into the next session with its handles. Login waits on one port for
+once. Login waits on one port for
 every channel it serves and blocks on none of them, so it answers the
 secure attention key while a password is checked.
 
@@ -382,9 +394,14 @@ other end the HUD holds.
   reach the user's files; every console request of the shell's costs
   a second message and a switch to login; login stays in every session,
   serving every one of its channels on one port; login needs
-  `CREATE_JOB` on the sessions' job. Programs a shell started run on
-  after it ends, since the kernel has no call to end a job's
-  processes.
+  `CREATE_JOB` on the sessions' job, and holds a job handle for each
+  program that runs, so a session runs no more than six at once. Only login
+  ends a session's programs: if login itself ends, the programs it
+  started run on in the sessions' job, which nothing holds a handle to
+  end, and each keeps its client of the store service, so the next
+  session has that many fewer places than six, and none after six such
+  programs until the system restarts. The first process makes the job
+  and could keep a handle to end it; it keeps none.
 - **Not taken:** a child that inherits its parent's handles, as NT
   handle inheritance and Unix file descriptors do. Its cost is a
   program holding handles nobody chose for it (objects.md O6). A
@@ -506,7 +523,7 @@ next, so:
 
 | What ends | What follows |
 |---|---|
-| Login | A new login with a new session and login channel; the service drops the old channel. A shell login ran loses its relayed console and launcher and ends at its next request |
+| Login | A new login with a new session and login channel; the service drops the old channel. A shell login ran loses its relayed console and launcher and ends at its next request. The programs of the old session run on: nothing ends their job ([A7](#a7-the-session)) |
 | The service | A new service with a new login channel, which login takes when its old one fails: login says the service restarted and asks again. An administrator's session loses its administrator channel |
 | The console | The console's restart, and a new session for login, which carries on, a session in progress included |
 | The compositor | A new compositor, in the attention state, and a new connection for login, which shows its screen again before it answers the session's grant channels, through which the session's programs reconnect ([display.md D3](display.md#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)); a session that was locked stays locked |
@@ -535,6 +552,9 @@ session as it was, and the console's restart is as the table gives.
   that hangs stops the supervisor with it; none of the three is itself
   supervised.
 - **Not taken:** restarting login and the service together as one
-  unit. Its cost is a second service writing `/data/accounts` beside
-  the first, which runs on until the last channel to it closes, since
-  the kernel has no call that ends a process from outside.
+  unit. Its cost is that the failure of either ends the other's work
+  too, a session in progress or the requests in flight, which a
+  hand-over of channels keeps; and a second service writing
+  `/data/accounts` beside the first, which runs on until the last
+  channel to it closes, unless the first process ends it with
+  `task_kill`.

@@ -113,6 +113,13 @@ files and add their own:
 | The chain disk, `chain.img` | The inputs of the bootstrap check, the chain the first process runs from the seed | The first process runs the chain ([compat.md C4](compat.md#c4-files)) |
 | The fallback disk, `fallback.img` | `\NOVA\COMPFAIL`, an empty file | The compositor exits once it has shown the console's window, each time it starts, so the console takes the display after it ([display.md D19](display.md#d19-the-build-plan), the phase 3 arrangement) |
 
+The logout disk, `logout.img`, is a system disk, not a test disk: it
+holds the system disk's files, and its `\NOVA\STORE.IMG` holds the
+`nova-services` path, a `nova-session` path whose `bin/shell.exe` is a
+driver in the shell's place, and a program the driver starts. Its boot
+checks that login stops the programs a session started when the session
+ends ([accounts.md A7](accounts.md#a7-the-session)).
+
 The chain disk's inputs:
 
 ```

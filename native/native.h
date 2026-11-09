@@ -40,6 +40,17 @@ UINT32 process_info(UINT32 process, UINT32 *state, UINT32 *exit_code);
     the last. */
 _Noreturn void thread_exit(void);
 
+/** End the process, thread or job handle names, which needs the type's
+    TERMINATE right (O3, O7, O10). A process ends with exit code
+    PROCESS_EXIT_KILLED; a thread ends alone, and a thread not yet
+    started never starts; a job ends every process in it and in the jobs
+    under it, and takes no process or child job afterwards. The call
+    returns once the target is stopping, not ended: wait for
+    PROCESS_TERMINATED or THREAD_TERMINATED. A target already ended or
+    ending is not an error, since a kill that races an exit must not
+    report which came first. */
+UINT32 task_kill(UINT32 handle);
+
 /** Write count bytes, at most DEBUG_WRITE_MAX_BYTES, to the kernel's debug
     log. Needs RESOURCE_RIGHT_USE on a resource that covers the debug log. */
 UINT32 debug_write(UINT32 resource, const void *bytes, UINT64 count);

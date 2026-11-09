@@ -7,7 +7,8 @@
    data disk's file system service, whose /data and /users the namespace
    then publishes beside /store (data.c). On a test disk it also runs
    its tests and reports them (tests.h): its checks of the answers of
-   the calls it has against the cases their contracts name, the data
+   the calls it has against the cases their contracts name, task_kill's
+   against processes it starts for the purpose (kill.c), the data
    disk's check (data.c), a test program from /store (store.c),
    stage0-pe32's chain from its seed as 32-bit processes when the boot
    volume holds the chain's inputs (chain.c), and the virtio block
@@ -433,7 +434,7 @@ static const char *check_clock(void)
 
 /* The calls test: init's checks of the calls it makes against the cases
    their contracts name, stopping at the first that does not hold. */
-static void test_calls(UINT32 bootstrap)
+static void test_calls(UINT32 bootstrap, UINT32 job)
 {
     const char *failure = check_arguments(bootstrap);
 
@@ -445,6 +446,8 @@ static void test_calls(UINT32 bootstrap)
         failure = check_watches();
     if (!failure)
         failure = check_clock();
+    if (!failure)
+        failure = kill_check(self, job);
     tests_report(INIT_TEST_CALLS, failure ? KTAP_FAILED : KTAP_PASSED,
                  failure);
 }
@@ -474,7 +477,7 @@ _Noreturn void init_main(UINT32 bootstrap, UINT64 argument)
     job = read_bootstrap(bootstrap);
     tests_begin();
     if (tests_enabled())
-        test_calls(bootstrap);
+        test_calls(bootstrap, job);
     data_start(&platform, job);
     check(store_run(job, debug_log, &store_image, &services),
           "the store service and the namespace server did not start");

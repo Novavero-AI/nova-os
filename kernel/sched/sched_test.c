@@ -2,9 +2,11 @@
    thread of its own beside the spinner's and checks, in order: that busy
    threads which never block all run under preemption, and that their
    exits free their stacks; that sleepers wake no earlier than their
-   deadlines and within the bound test_deadlines states; and that waits follow
-   docs/spec/objects.md O9, a wait on several events waking for the one
-   signalled. It runs on a test disk, and reports through selftest.h. */
+   deadlines and within the bound test_deadlines states; that a timed wait
+   a signal ends early leaves the other deadlines in place; and that waits
+   follow docs/spec/objects.md O9, a wait on several events waking for the
+   one signalled. It runs on a test disk, and reports through
+   selftest.h. */
 
 #include "thread.h"
 #include "cpu.h"
@@ -45,6 +47,13 @@
 #define TIMEOUT_MS 5
 #define POLL_MS 1
 
+/* The early-wakeup test's waiters have deadlines EARLY_STEP_MS apart, so
+   that the test ends three of them long before the first deadline: the
+   step is long for a host that stalls the emulated processor between the
+   waiters blocking and the signals. */
+#define EARLY_WAITERS 4
+#define EARLY_STEP_MS 500
+
 /* Written to each freed guard page. */
 #define GUARD_PROBE 0x6e6f7661ULL
 
@@ -58,6 +67,16 @@ typedef struct {
     UINT64 start, period;
     UINT64 early, max_late;
 } SLEEPER;
+
+typedef struct {
+    THREAD thread;
+    EVENT event;
+    UINT64 deadline;
+    UINT64 ended;
+    STATUS status;
+} EARLY;
+
+static EARLY early[EARLY_WAITERS];
 
 static BUSY busy[BUSY_THREADS];
 static volatile int busy_stop;
@@ -263,6 +282,55 @@ static void test_wait_rules(void)
     event_signal(&events[0], USER_SIGNAL(0), 0);
 }
 
+static void early_main(void *argument)
+{
+    EARLY *early_waiter = argument;
+    UINT32 observed;
+
+    early_waiter->status =
+        wait_one(&early_waiter->event.waitable, USER_SIGNAL(0),
+                 early_waiter->deadline, &observed);
+    early_waiter->ended = clock_monotonic();
+}
+
+/* Four threads wait on events of their own with deadlines in order, the
+   list of deadlines the scheduler keeps. A signal ends the wait of the
+   second, then of the last, then of the first, which takes each from the
+   middle, the end and the head of the list; each ends with OK, and the
+   third, left alone and the one entry the list then holds, times out at
+   its own deadline. */
+static void test_early_wakeups(void)
+{
+    static const UINT64 ended_early[] = {1, 3, 0};
+    UINT64 i, limit, base = clock_monotonic();
+
+    for (i = 0; i < EARLY_WAITERS; i++) {
+        event_init(&early[i].event);
+        early[i].deadline = base + (i + 1) * EARLY_STEP_MS * NS_PER_MS;
+        create(&early[i].thread, early_main, &early[i]);
+        start(&early[i].thread);
+    }
+    limit = clock_monotonic() + JOIN_LIMIT_NS;
+    for (i = 0; i < EARLY_WAITERS; i++)
+        while (early[i].thread.state != THREAD_BLOCKED) {
+            if (clock_monotonic() > limit)
+                fail("a timed waiter did not block");
+            sleep_ms(POLL_MS);
+        }
+    for (i = 0; i < sizeof ended_early / sizeof ended_early[0]; i++)
+        event_signal(&early[ended_early[i]].event, 0, USER_SIGNAL(0));
+    for (i = 0; i < EARLY_WAITERS; i++)
+        join(&early[i].thread);
+    for (i = 0; i < sizeof ended_early / sizeof ended_early[0]; i++)
+        if (early[ended_early[i]].status != OK ||
+            early[ended_early[i]].ended >= early[ended_early[i]].deadline)
+            fail("a timed wait a signal ended did not end with OK before "
+                 "its deadline");
+    if (early[2].status != ERR_TIMED_OUT || early[2].ended < early[2].deadline)
+        fail("a timed wait left after others ended early did not time out "
+             "at its deadline");
+}
+
 /* A thread waits on three events for signals 0, 1 and 2 of each in turn.
    A signal it did not ask for, on the first event, must leave it
    blocked; signal 1 on the second must end its wait, with the first
@@ -300,6 +368,7 @@ void sched_self_test(void *spinner)
 {
     test_preemption(spinner);
     test_deadlines();
+    test_early_wakeups();
     test_wait_many();
     selftest_passed(SELFTEST_THREAD);
 }

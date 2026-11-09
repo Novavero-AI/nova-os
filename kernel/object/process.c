@@ -46,7 +46,7 @@ static void destroy(OBJECT *object)
 
     paging_space_destroy(process->space);
     handle_table_destroy(process->handles);
-    object_release(&process->job->object);
+    job_remove_process(process);
     page_free_mapped(process);
 }
 
@@ -74,7 +74,6 @@ STATUS process_create(JOB *job, UINT32 options, PROCESS **out)
     }
     object_init(&process->object, &process_type);
     waitable_init(&process->waitable);
-    object_retain(&job->object);
     process->job = job;
     process->options = options;
     process->state = PROCESS_STATE_NEW;
@@ -83,6 +82,15 @@ STATUS process_create(JOB *job, UINT32 options, PROCESS **out)
     process->threads = 0;
     process->running = 0;
     process->mapping_count = 0;
+    /* The process joins its job last, with nothing left to set up: a job
+       kill that has begun already refuses it, and one that begins
+       after finds it whole. */
+    if (job_add_process(process) != OK) {
+        paging_space_destroy(process->space);
+        page_free_mapped(process->handles);
+        page_free_mapped(process);
+        return ERR_BAD_STATE;
+    }
     *out = process;
     return OK;
 }
@@ -132,6 +140,7 @@ STATUS process_thread_create(PROCESS *process, USER_THREAD **out)
     user->process = process;
     user->fpu = fpu;
     user->started = 0;
+    user->killed = 0;
     *out = user;
     return OK;
 }
@@ -182,7 +191,7 @@ STATUS process_start(PROCESS *process, USER_THREAD *thread, UINT64 entry,
     UINT32 index;
 
     if (process->state != PROCESS_STATE_NEW || process->terminating ||
-        thread->started)
+        thread->started || thread->killed)
         status = ERR_BAD_STATE;
     else if (thread->process != process ||
              !start_allowed(process, entry, stack))
@@ -214,8 +223,8 @@ STATUS process_thread_start(USER_THREAD *thread, UINT64 entry, UINT64 stack,
     UINT64 flags = save_and_disable_interrupts();
     STATUS status = OK;
 
-    if (thread->started || process->state != PROCESS_STATE_RUNNING ||
-        process->terminating)
+    if (thread->started || thread->killed ||
+        process->state != PROCESS_STATE_RUNNING || process->terminating)
         status = ERR_BAD_STATE;
     else if (!start_allowed(process, entry, stack))
         status = ERR_INVALID_ARGS;
@@ -377,7 +386,7 @@ STATUS process_unmap(PROCESS *process, UINT64 address, UINT64 size)
 /* The last step, once no thread of the process is left: the space is
    cleared before the sections go, so no translation of a section's page
    outlives the reference that keeps the page. */
-static void finish(PROCESS *process)
+void process_finish(PROCESS *process)
 {
     UINT64 flags = save_and_disable_interrupts();
     UINT32 count = process->mapping_count, i;
@@ -396,26 +405,51 @@ static void finish(PROCESS *process)
 
 /* A thread not yet blocked when it is stopped finds stopping set when it
    next would block or return to user mode. */
-void process_terminate(PROCESS *process, UINT32 exit_code)
+int process_stop(PROCESS *process, UINT32 exit_code)
 {
     UINT64 flags = save_and_disable_interrupts();
     USER_THREAD *thread;
-    UINT32 left;
+    int unfinished = 0;
 
-    if (process->terminating) {
-        restore_interrupts(flags);
-        return;
+    if (!process->terminating) {
+        process->terminating = 1;
+        process->exit_code = exit_code;
+        for (thread = process->running; thread;
+             thread = thread->next_running) {
+            thread->thread.stopping = 1;
+            sched_end_wait(&thread->thread, ERR_CANCELED);
+        }
+        unfinished = process->threads == 0;
     }
-    process->terminating = 1;
-    process->exit_code = exit_code;
-    for (thread = process->running; thread; thread = thread->next_running) {
+    restore_interrupts(flags);
+    return unfinished;
+}
+
+void process_terminate(PROCESS *process, UINT32 exit_code)
+{
+    if (process_stop(process, exit_code))
+        process_finish(process);
+}
+
+/* A thread that was started is stopped as process_stop stops it, and
+   leaves the running list as any stopped thread does; its end asserts
+   THREAD_TERMINATED once its stack is free (thread.c). One that was not
+   started has no stack to free, so its end is here: it never starts, and
+   THREAD_TERMINATED is asserted at once. */
+void process_thread_kill(USER_THREAD *thread)
+{
+    UINT64 flags = save_and_disable_interrupts();
+
+    if (!thread->started) {
+        if (!thread->killed) {
+            thread->killed = 1;
+            waitable_update(&thread->thread.waitable, 0, THREAD_TERMINATED);
+        }
+    } else {
         thread->thread.stopping = 1;
         sched_end_wait(&thread->thread, ERR_CANCELED);
     }
-    left = process->threads;
     restore_interrupts(flags);
-    if (left == 0)
-        finish(process);
 }
 
 void process_user_return(void)
@@ -465,7 +499,7 @@ _Noreturn void process_thread_exit(void)
     }
     restore_interrupts(flags);
     if (left == 0)
-        finish(process);
+        process_finish(process);
     thread_exit();
 }
 
