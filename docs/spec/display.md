@@ -513,6 +513,77 @@ A message carries at most `CHANNEL_MAX_HANDLES` (64) handles
 window is at most the screen's size in each dimension, and at most
 7680 x 4320.
 
+**Where a buffer is mapped.** The compositor keeps one range of its
+address space for each of a window's buffer numbers, 128 MiB, the most
+a buffer holds. It maps a buffer given under a number at the start of
+that number's range, after it has unmapped the buffer the range held,
+and unmaps a window's buffers when the window closes. A buffer given
+under the number of the one being read is refused before anything is
+unmapped ([D19](#d19-the-build-plan)'s phase 3 arrangement, rule 5),
+so no pixel a frame reads is unmapped. The addresses its buffers take
+are those ranges, and the one address after them where it maps a
+section to read its size, whatever its clients give and however often.
+
+**How many buffers are mapped.** The kernel keeps at most
+`PROCESS_MAX_MAPPINGS` (128) mappings for a process, one for each
+`process_map` (`kernel/object/process.h`), and refuses the next with
+`ERR_NO_MEMORY`. Before any window the compositor holds 5 for its
+image, one for each run of pages of one protection, which are its
+headers, `.text`, `.rdata`, `.data` and `.pdata`, and 1 for its stack,
+as the loader maps them (`lib/program.c`); one for each section of the
+framebuffer and one for each of the wallpaper
+([D2](#d2-who-holds-the-display), rule 2); and 1 for the band it
+composes in ([D7](#d7-presenting-and-pacing), rule 2). A framebuffer
+whose rows are the screen's width and that starts on a page boundary
+takes the sections a buffer of the screen's size does, the first
+table's, here `s`, and the wallpaper takes as many, so the compositor
+holds `7 + 2s`. A framebuffer with longer rows, or one that starts
+within a page, can take more.
+
+| Screen | Sections of the framebuffer, and of the wallpaper | Mappings the compositor holds | Left of 128 |
+|---|---|---|---|
+| 1280 x 800 | 2 | 5 + 1 + 2 + 2 + 1 = 11 | 117 |
+| 2560 x 1600 | 8 | 5 + 1 + 8 + 8 + 1 = 23 | 105 |
+| 2880 x 1800 | 10 | 5 + 1 + 10 + 10 + 1 = 27 | 101 |
+| 7680 x 4320 | 64 | 5 + 1 + 64 + 64 + 1 = 135 | None |
+
+A buffer given takes mappings twice. The compositor first reads the
+size of each of its sections by mapping the section alone and unmapping
+it, since no call reports a section's size, which takes one mapping
+while the window's buffers are all still mapped. It then unmaps the
+buffer the number held and maps the new one, a mapping for each
+section. So a window's `n` buffers of `b` sections each are mapped,
+and each can be given again, while `7 + 2s + n x b` is at most 127; at
+128 they are mapped, and the next buffer the window gives is refused.
+
+A buffer of the screen's size, its rows the screen's width, has `s`
+sections, so the screen's size decides how many of them a window has
+mapped:
+
+| Buffers of the screen's size | Sections of the screen, at most | Pixels, at most | Mappings then held |
+|---|---|---|---|
+| 3 | 24 | 12,582,912 | 7 + 48 + 72 = 127 |
+| 2 | 30 | 15,728,640 | 7 + 60 + 60 = 127 |
+| 1 | 40 | 20,971,520 | 7 + 80 + 40 = 127 |
+| None, and the compositor starts | 60 | 31,457,280 | 7 + 120 = 127 |
+
+So 1280 x 800, 2560 x 1600 and 2880 x 1800 have room for three, as
+3840 x 2160 has, of 16 sections, and 5120 x 2880, of 29, has room for
+two. On a screen of 41 to 60 sections only the buffers of a smaller
+window are mapped. A screen of more than 60, as 7680 x 4320 is, passes
+the table with the compositor's own mappings: the compositor cannot
+map all of its framebuffer, its wallpaper and its band, and ends
+([D3](#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)).
+
+A buffer the table has no room for is refused. The compositor unmaps
+the sections of it that it had mapped, so nothing of the refused
+buffer stays mapped, and logs `nova-compositor: buffer size read
+failed status=7` where a section's size could not be read, or
+`nova-compositor: buffer map failed status=7` where a section could
+not be mapped, 7 being `ERR_NO_MEMORY`. It then closes the window with
+the reason `buffer` ([D19](#d19-the-build-plan)'s phase 3 arrangement,
+rule 8), which unmaps the window's other buffers.
+
 A pixel is 32 bits, little-endian: the colour in bits 0 to 23 as sRGB
 codes in `PIXEL_BGR`'s order, blue in the lowest byte, and in bits 24
 to 31 its cover, the share of the pixel the window's colour holds over
@@ -542,6 +613,19 @@ screen's order, `PIXEL_RGB` or `PIXEL_BGR`, as it writes.
   pages one page of the kernel's page list holds (`native_abi.h`), and
   mapped one after another the bands are one buffer to both sides, with
   no change to sections.
+- **Why a range for each number:** a client gives a buffer whenever it
+  likes, and a compositor that mapped each at an address no buffer had
+  used would run out of addresses after enough of them, with every
+  buffer given after that refused until it starts again. A range kept
+  for each number bounds the addresses by the numbers and not by what a
+  client does. The buffer a number held is not being read, so it is
+  unmapped before the new one is mapped: the two are never mapped at
+  once, and a number takes one range and the mappings of one buffer.
+- **Why a buffer that does not fit closes its window:** every other
+  buffer the compositor cannot use closes its window
+  ([D19](#d19-the-build-plan)'s phase 3 arrangement, rule 5), so a
+  client meets one answer, and a window left open would hold a number
+  whose buffer is mapped nowhere, for a present to name.
 - **Why a least size:** a window's corners are the coverage of its own
   rounded rectangle ([D8](#d8-composition)), and a corner made once for
   every window of its radius is exact only where no other corner's arc
@@ -566,7 +650,16 @@ screen's order, `PIXEL_RGB` or `PIXEL_BGR`, as it writes.
   process's handles and mappings are bounded by its job's quota alone
   ([objects.md O3](objects.md#o3-handles) and
   [O6](objects.md#o6-no-ambient-authority)), not by a fixed table, which phase 5
-  needs ([D19](#d19-the-build-plan)). A window cannot be made smaller
+  needs ([D19](#d19-the-build-plan)). Until the kernel bounds them so,
+  its table of 128 does: a window is closed when it gives a buffer that
+  does not fit, a screen of more than 40 sections shows no window of its
+  own size, and one of more than 60 is not shown by the compositor at
+  all. A buffer's range is 128 MiB of the compositor's addresses
+  whether or not a buffer is mapped in it, 384 MiB for a window's
+  three, which is addresses and no memory. A buffer given takes the
+  place of the one its number held before it is known to map, so a
+  buffer that is refused leaves its number with none; its window closes
+  either way. A window cannot be made smaller
   than twice its radius across or high: 44 pixels at the console's
   22 pixel radius at 2880 x 1800.
 - **Not taken:** buffers the compositor allocates and lends to clients.
@@ -576,7 +669,14 @@ screen's order, `PIXEL_RGB` or `PIXEL_BGR`, as it writes.
   kernel change for what bands already give, where the protocol takes
   several sections a buffer either way. A window smaller than its
   corners, which are cut to its size. Its cost is corner pixels that
-  part from the coverage of the window's own rounded rectangle.
+  part from the coverage of the window's own rounded rectangle. Each
+  buffer mapped at the next address no mapping has used, and the one it
+  replaces unmapped after it. Its cost is addresses that are never used
+  again, so that a client giving buffers in a loop uses them up, and
+  mappings for two buffers of a number at once. A larger table in the
+  kernel. Its cost is a fixed bound moved and not removed, where
+  phase 5 needs a process's mappings bounded by its job's quota alone
+  ([D19](#d19-the-build-plan)).
 
 ## D7. Presenting and pacing
 
@@ -1732,8 +1832,11 @@ login's session as it does on its own
    whether a buffer or a present is valid and what a present damages
    ([D6](#d6-windows-and-buffers), [D7](#d7-presenting-and-pacing) and
    rules 4 and 5), are `lib/window.c`, which `tools/check-window.c`
-   checks likewise; which window a pointer's report goes to and what it
-   is sent ([D10](#d10-the-pointer), rule 4, and [D11](#d11-routing-input),
+   checks likewise; where a buffer is mapped, in its number's range in
+   place of the one before ([D6](#d6-windows-and-buffers)), is
+   `lib/mapping.c`, which `tools/check-mapping.c` checks likewise;
+   which window a pointer's report goes to and what it is sent
+   ([D10](#d10-the-pointer), rule 4, and [D11](#d11-routing-input),
    rule 3) is `lib/route.c`, what waits for a window's channel
    (D11, rule 7) and the bytes of each message it is sent are
    `lib/backlog.c`, and which key events a window is
@@ -1844,8 +1947,9 @@ login's session as it does on its own
    window shows before that present. A buffer whose stride is below its
    width, or whose sections do not hold `stride` x `height` x 4 bytes
    as D6 bands them, a buffer given under the number of the one being
-   read, and a present of a buffer never given, close the window; a
-   damage rectangle is cut to its buffer.
+   read, a buffer the compositor's mappings have no room for (D6), and
+   a present of a buffer never given, close the window; a damage
+   rectangle is cut to its buffer.
 6. **Input.** The compositor reads every input endpoint it is handed,
    checks each message and logs it as rule 8 gives, and takes the keys of
    every keyboard as one keyboard's.
@@ -1928,7 +2032,10 @@ login's session as it does on its own
      label=console reason=malformed`, for each the compositor closes:
      `malformed` for a message its description refuses, `buffer` and
      `present` for rule 5's, `stalled` for D11's rule 7. A connection or
-     window its holder closes is not logged.
+     window its holder closes is not logged. Before the line of a window
+     closed for a buffer its mappings have no room for comes
+     `nova-compositor: buffer size read failed status=7` or
+     `nova-compositor: buffer map failed status=7`, as D6 gives.
    - `nova-compositor: attention at_ms=1234.5`, once for each press of
      the secure attention key (rule 6), at the time the driver took the
      press, on `clock_monotonic`.

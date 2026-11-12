@@ -28,8 +28,9 @@
 #include "timing.h"
 
 /* Its own memory: the framebuffer's mapping, the wallpaper and a band,
-   each mapped at the next free address from here, far above its image
-   and below its stack. */
+   each mapped at the next free address from here, and then the ranges
+   kept for a window's buffers (serve.c), all far above its image and
+   below its stack. */
 #define MAPPINGS_BASE 0x0000000100000000ULL
 
 #define PIXEL_BYTES 4
@@ -178,7 +179,7 @@ static void take_background(const COMPOSITOR_SETUP_BACKGROUND_MESSAGE *m,
                             const RECEIVED_HANDLE *handles, UINT32 count)
 {
     const char *refusal;
-    UINT64 mapped, begun = timing_now();
+    UINT64 begun = timing_now();
     UINT32 status = OK;
     UINT32 transaction = m->setup.transaction;
 
@@ -192,8 +193,7 @@ static void take_background(const COMPOSITOR_SETUP_BACKGROUND_MESSAGE *m,
         UINT64 bytes = (UINT64)m->background.width * m->background.height *
                        BOOTSTRAP_BACKGROUND_PIXEL_BYTES;
 
-        image = mapping_image(&mapping, handles, count, bytes, &mapped,
-                              &status);
+        image = mapping_image(&mapping, handles, count, bytes, &status);
         if (image) {
             image_format = m->background.format;
             wallpaper_source = WALLPAPER_SECTION;
