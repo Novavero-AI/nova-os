@@ -50,7 +50,25 @@ screendump until one is the wanted image or SCREEN_TIMEOUT passes, and
 the fallback boot's first screen, Limb alone or the console's window
 over Limb, each asked of ci/screens.c as the boot asks, taken until it
 is one and given up on with the nearer's differing pixels if it is
-neither; and
+neither; the compositor's budget lines (docs/spec/display.md D19, rule
+8): a line of each kind in the rule's form, which Serial keeps under its
+kind on a test disk, in every mode; a line with a key lost, added,
+repeated, quoted or out of order, another count of frames, no pixel, a
+time not to the tenth or another kind, each of which fails the boot, as
+does any budget line on a disk that is not a test disk; and
+check_budgets, run against a guest
+that counts what it is sent as the compositor counts frames: it prints
+the second line of each kind that comes after it begins, not a line read
+before it nor the first after, which counts frames from before; it moves
+the tablet between the two places the boot keeps out of the log, and
+then types a letter and Backspace as often as each other, so that the
+prompt is left empty; it gives up at SCREEN_TIMEOUT, before it sends
+anything if the time has passed by then, and after it has, with the
+lines that came counted, if the guest falls silent; its two places are
+one inside the console's window and one below it, more rows apart than
+the pointer's image is high, at the sizes the boots run; and drive makes
+it after the wheel's check and before the logout, on a test disk whose
+console is in a window and has logged in, and on no other; and
 the usage errors of a mode that needs a whole data disk and those of a
 mode that takes none. Prints each check that fails, and a count; the
 exit status is nonzero if any did.
@@ -61,6 +79,7 @@ import importlib.util
 import io
 import os
 import pathlib
+import queue
 import sys
 import tempfile
 import time
@@ -125,6 +144,40 @@ CONNECTION_CLOSED = ("nova-compositor: connection closed number=1 "
 PIXEL_BYTES = 3
 SCREEN_WIDTH = 4
 SCREEN_HEIGHT = 2
+
+# A budget line of the compositor as display.md D19's rule 8 gives it,
+# for a kind, the most pixels and the two times; the two kinds; and, for
+# the guest check_budgets is run against, the frames of each kind the
+# compositor had counted before the boot's own, fewer than a line's 16.
+BUDGET = ("nova-compositor: budget change=%s frames=16 pixels=%d "
+          "total_ms=%s max_ms=%s")
+BUDGET_KINDS = ["pointer", "present"]
+FRAMES_BEFORE = {"pointer": 2, "present": 11}
+FRAMES_A_LINE = 16
+
+# The pixels of a budget line the serial port wrote before check_budgets
+# began, which no line the guest writes for it has.
+EARLIER_PIXELS = 99
+
+# How check_budgets is run against the guest: the time it reads the log
+# for after each move and key, in seconds, in place of BUDGET_PACE, short
+# so that the checks are; the time it is given where it must give up on a
+# guest that has fallen silent, long enough for a line the guest wrote at
+# the first move to be read; and the most events such a guest takes, four
+# times the 150 that time allows at that pace, so that a check_budgets
+# that never gives up fails its check and does not run for ever.
+PACE_SECONDS = 0.002
+GIVE_UP_SECONDS = 0.3
+GIVE_UP_EVENTS = 600
+
+# The frames of each kind a guest had counted that writes its first line
+# of the pointer's kind at the first move it is sent.
+FRAMES_ONE_SHORT = {"pointer": FRAMES_A_LINE - 1, "present": 0}
+
+# The rows the pointer's image covers at the scale of each height the
+# boots run, from look.md V15's table: 23 at scale 1, 46 at 2 and 52 at
+# 2.25.
+ARROW_ROWS = {800: 23, 1600: 46, 1800: 52}
 
 
 def load_boot():
@@ -325,10 +378,11 @@ def replay_pointer(boot, steps, lines):
     return True
 
 
-def serial_after(boot, mode, lines):
-    """The Serial that has read lines, then the sentinel, in mode."""
+def serial_after(boot, mode, lines, report=None):
+    """The Serial that has read lines, then the sentinel, in mode, with
+    report, a test disk's, or with none."""
     stream = [(line + "\r\n").encode("ascii") for line in lines + [SENTINEL]]
-    serial = boot.Serial(stream, io.BytesIO(), None, None, mode)
+    serial = boot.Serial(stream, io.BytesIO(), report, None, mode)
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             serial.wait_for([boot.Event(SENTINEL)],
@@ -419,13 +473,131 @@ def failure_lines(log):
             if "child restarted" in line or "child given up" in line]
 
 
-def replay(boot, mode, lines, wanted=()):
+def budget_line(change, pixels=1472, total="21.0", longest="1.4"):
+    """A budget line of the kind change, in rule 8's form."""
+    return BUDGET % (change, pixels, total, longest)
+
+
+class Feed:
+    """A guest's serial port as a test double: the lines put on it, read
+    as QEMU's standard output is, until it is closed."""
+
+    def __init__(self):
+        self.raw = queue.Queue()
+
+    def put(self, line):
+        self.raw.put((line + "\r\n").encode("ascii"))
+
+    def close(self):
+        self.raw.put(None)
+
+    def __iter__(self):
+        return iter(self.raw.get, None)
+
+
+class SentTooMany(Exception):
+    """A guest was sent more events than it takes."""
+
+
+class Guest:
+    """QMP and a test disk's compositor as a test double for
+    check_budgets. Each input-send-event is kept in sent and counted as
+    one frame of the kind its events make, a move of the tablet a frame of
+    the pointer's and keys a frame of a present's, on top of the frames
+    of each kind in counted, which the compositor had counted before;
+    every FRAMES_A_LINE frames of a kind put that kind's next budget line
+    on feed, its pixels the line's number among its kind's, from 1. It
+    writes at most lines lines of each kind and then falls silent, or
+    every line where lines is None. It takes at most events events, any
+    number where events is None: one more raises SentTooMany."""
+
+    def __init__(self, feed, counted, lines=None, events=None):
+        self.feed = feed
+        self.lines = lines
+        self.events = events
+        self.sent = []
+        self.frames = dict(counted)
+        self.written = dict.fromkeys(counted, 0)
+
+    def execute(self, command, **arguments):
+        assert command == "input-send-event"
+        events = arguments["events"]
+        kinds = {event["type"] for event in events}
+        assert kinds in ({"abs"}, {"key"})
+        if self.events is not None and len(self.sent) == self.events:
+            raise SentTooMany()
+        self.sent.append(events)
+        change = "pointer" if kinds == {"abs"} else "present"
+        self.frames[change] += 1
+        if self.frames[change] % FRAMES_A_LINE:
+            return
+        if self.lines is not None and self.written[change] == self.lines:
+            return
+        self.written[change] += 1
+        self.feed.put(budget_line(change, pixels=self.written[change]))
+
+
+def budgets_checked(boot, before=(), counted=FRAMES_BEFORE, lines=None,
+                    timeout=REPLAY_SECONDS, events=None):
+    """What check_budgets does on a test disk whose serial port has
+    written the lines of before, against a Guest of counted, lines and
+    events, with timeout as its SCREEN_TIMEOUT: what it printed, the
+    message it failed with, or None if the guest was sent more events
+    than it takes; and what the guest was sent."""
+    feed = Feed()
+    guest = Guest(feed, counted, lines, events)
+    serial = boot.Serial(feed, io.BytesIO(), boot.Ktap(), None, "system")
+    printed = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(printed), \
+                unittest.mock.patch.object(boot, "SCREEN_TIMEOUT", timeout), \
+                unittest.mock.patch.object(boot, "BUDGET_PACE",
+                                           PACE_SECONDS):
+            for line in list(before) + [SENTINEL]:
+                feed.put(line)
+            serial.wait_for([boot.Event(SENTINEL)],
+                            time.monotonic() + REPLAY_SECONDS)
+            boot.check_budgets(serial, guest, "1280x800")
+    except boot.BootFailed as failure:
+        return str(failure), guest.sent
+    except SentTooMany:
+        return None, guest.sent
+    finally:
+        feed.close()
+        serial.reader.join()
+    return printed.getvalue(), guest.sent
+
+
+def driven(boot, accounts, tests, window, screens="screens"):
+    """The steps drive makes, by name and in order, with the steps
+    themselves, QMP and its socket stood in for."""
+    steps = []
+
+    def step(name):
+        return lambda *arguments: steps.append(name)
+
+    with unittest.mock.patch.object(boot.socket, "socket"), \
+            unittest.mock.patch.object(boot, "Qmp"), \
+            unittest.mock.patch.object(boot, "point", step("point")), \
+            unittest.mock.patch.object(boot, "check_prompt",
+                                       step("check_prompt")), \
+            unittest.mock.patch.object(boot, "log_in", step("log_in")), \
+            unittest.mock.patch.object(boot, "scroll", step("scroll")), \
+            unittest.mock.patch.object(boot, "check_budgets",
+                                       step("check_budgets")), \
+            unittest.mock.patch.object(boot, "log_out", step("log_out")):
+        boot.drive(None, "qmp.sock", "data.img", accounts, True, screens, "",
+                   tests, window)
+    return steps
+
+
+def replay(boot, mode, lines, wanted=(), report=None):
     """Whether Serial reads lines, then the sentinel, and finds each
     Event in wanted reported as often as it must be, without failing the
     boot, which accepts the failures of mode and refuses the lines it
-    refuses."""
+    refuses; with report, a test disk's, or with none."""
     stream = [(line + "\r\n").encode("ascii") for line in lines + [SENTINEL]]
-    serial = boot.Serial(stream, io.BytesIO(), None, None, mode)
+    serial = boot.Serial(stream, io.BytesIO(), report, None, mode)
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             serial.wait_for(list(wanted) + [boot.Event(SENTINEL)],
@@ -1222,6 +1394,183 @@ def main():
     result, _ = first_frame(boot, [near_window], timeout=0)
     expect("and the count is the nearer one's",
            "in 2 pixels" in result, True)
+
+    # The compositor's budget lines, as display.md D19's rule 8 gives
+    # them: on a test disk each is kept under its kind, in the order
+    # read, in every mode; one not in the rule's form fails the boot; and
+    # any fails a disk that is not a test disk, whose compositor writes
+    # none.
+    kept = serial_after(boot, "system", [
+        budget_line("present", 512, "7.0", "0.5"), budget_line("pointer"),
+        budget_line("present", 2560, "6.2", "1.8")], boot.Ktap()).budgets
+    expect("a test disk's budget lines are kept under their kinds, in the "
+           "order read", kept,
+           {"pointer": [{"change": "pointer", "frames": "16",
+                         "pixels": "1472", "total_ms": "21.0",
+                         "max_ms": "1.4"}],
+            "present": [{"change": "present", "frames": "16",
+                         "pixels": "512", "total_ms": "7.0",
+                         "max_ms": "0.5"},
+                        {"change": "present", "frames": "16",
+                         "pixels": "2560", "total_ms": "6.2",
+                         "max_ms": "1.8"}]})
+    good = budget_line("pointer")
+    for mode in sorted(boot.DEFAULT_TIMEOUTS):
+        expect("%s mode takes a budget line on a test disk" % mode,
+               replay(boot, mode, [good], report=boot.Ktap()), True)
+        expect("%s mode refuses a budget line on a disk that is not a test "
+               "disk" % mode, replay(boot, mode, [good]), False)
+    for name, changed in (
+            ("no pixels", good.replace(" pixels=1472", "")),
+            ("no longest time", good.replace(" max_ms=1.4", "")),
+            ("a key more", good + " min_ms=0.1"),
+            ("its pixels twice, the first of them none",
+             good.replace("pixels=1472", "pixels=0 pixels=1472")),
+            ("its longest time twice", good + " max_ms=1.4"),
+            ("its kind twice",
+             good.replace("change=pointer", "change=pointer change=pointer")),
+            ("its pixels in quotes",
+             good.replace("pixels=1472", 'pixels="1472"')),
+            ("its kind in quotes",
+             good.replace("change=pointer", 'change="pointer"')),
+            ("a time in quotes", good.replace("max_ms=1.4", 'max_ms="1.4"')),
+            ("its times in the other order",
+             good.replace("total_ms=21.0 max_ms=1.4",
+                          "max_ms=1.4 total_ms=21.0")),
+            ("its frames after its pixels",
+             good.replace("frames=16 pixels=1472", "pixels=1472 frames=16")),
+            ("15 frames", good.replace("frames=16", "frames=15")),
+            ("no pixel composed", good.replace("pixels=1472", "pixels=0")),
+            ("pixels that are no count",
+             good.replace("pixels=1472", "pixels=1472.0")),
+            ("a time in whole milliseconds",
+             good.replace("total_ms=21.0", "total_ms=21")),
+            ("a time to the hundredth",
+             good.replace("max_ms=1.4", "max_ms=1.40")),
+            ("another kind", good.replace("change=pointer", "change=key")),
+            ("no kind", good.replace(" change=pointer", ""))):
+        expect("a budget line with %s fails the boot" % name,
+               replay(boot, "system", [changed], report=boot.Ktap()), False)
+
+    # check_budgets, against a guest that counts each move and each key
+    # it is sent as a frame, on top of the frames of each kind it had
+    # counted before, and writes a line for every 16 of a kind. A line
+    # read before it begins is not counted, and of those that come after,
+    # the first counts frames from before, so the second is printed: the
+    # guest's second of each kind, whose pixels are 2, and not the line
+    # of each kind read before, whose pixels are EARLIER_PIXELS.
+    earlier = [budget_line(change, pixels=EARLIER_PIXELS)
+               for change in BUDGET_KINDS]
+    printed, sent = budgets_checked(boot, earlier)
+    expect("the budget printed for each kind is the second line to come "
+           "after the boot's own moves and keys began",
+           [line.strip() for line in printed.splitlines()
+            if line.strip().startswith("the ")],
+           ["the 1280x800 screen's budget for change=%s: frames=16 "
+            "pixels=2 total_ms=21.0 max_ms=1.4" % change
+            for change in BUDGET_KINDS])
+    moves = [[(event["data"]["axis"], event["data"]["value"])
+              for event in events]
+             for events in sent if events[0]["type"] == "abs"]
+    places = [[("x", at["x"]), ("y", at["y"])]
+              for at in (boot.POINTER_AT, boot.WHEEL_AT)]
+    expect("the tablet moves between the two places the boot keeps out of "
+           "the log, in turn",
+           moves, [places[n % 2] for n in range(len(moves))])
+    expect("every move is sent before the first key",
+           [events[0]["type"] for events in sent],
+           ["abs"] * len(moves) + ["key"] * (len(sent) - len(moves)))
+    typed = [[(event["data"]["key"]["data"], event["data"]["down"])
+              for event in events]
+             for events in sent if events[0]["type"] == "key"]
+    letter = [("a", True), ("a", False)]
+    erase = [("backspace", True), ("backspace", False)]
+    expect("a letter and Backspace are typed in turn, each pressed and "
+           "released, as often as each other",
+           typed, [letter, erase] * (len(typed) // 2))
+    # The second line of a kind comes once 32 frames of it are counted:
+    # after 30 moves on top of the 2 counted before, and after 21 keys on
+    # top of the 11, which is 22 since a letter is never left unerased.
+    expect("the moves and keys go on until the second line of each kind "
+           "has come, and stop once it is read",
+           len(moves) >= 30 and len(typed) >= 22, True)
+    # check_budgets gives up once SCREEN_TIMEOUT has passed, and says how
+    # many of the lines came: before it sends anything, where the time
+    # has passed already; after it has sent moves, where the guest writes
+    # no line; and with the one line counted, where the guest writes a
+    # line at the first move and then no more. A guest that is sent more
+    # events than the time allows was not given up on.
+    gave_up = ("after 0 s the compositor has logged %d of the 2 budget "
+               "lines for change=pointer that the boot's moves and keys "
+               "must make")
+    failure, sent = budgets_checked(boot, lines=0, timeout=0)
+    expect("a compositor that writes no budget line is given up on at the "
+           "timeout", failure, gave_up % 0)
+    expect("and nothing is sent once the time has passed", sent, [])
+    failure, sent = budgets_checked(boot, lines=0, timeout=GIVE_UP_SECONDS,
+                                    events=GIVE_UP_EVENTS)
+    expect("a compositor that writes no budget line while the boot moves "
+           "the tablet is given up on once the time passes", failure,
+           gave_up % 0)
+    expect("after the tablet was moved, and no key typed",
+           (len(sent) > 0, {events[0]["type"] for events in sent}),
+           (True, {"abs"}))
+    failure, sent = budgets_checked(boot, counted=FRAMES_ONE_SHORT, lines=1,
+                                    timeout=GIVE_UP_SECONDS,
+                                    events=GIVE_UP_EVENTS)
+    expect("a compositor that writes one line of the pointer's and no more "
+           "is given up on with that line counted", failure, gave_up % 1)
+    expect("after the tablet was moved again", len(sent) > 1, True)
+
+    # The two places, at each size the boots run: the one the wheel is
+    # turned at is inside the console's window, as checked above, and the
+    # other below it, so a frame composes one image over the window and
+    # one over the wallpaper; and they lie more rows apart than the
+    # pointer's image covers, so its two boxes share no pixel. By hand for
+    # 1280 x 800: POINTER_AT is the row 602, as above, and WHEEL_AT is
+    # 13007 * 800 / 32768 = 317.5, the row 317, 285 rows above it, where
+    # the image covers 23; the window's rows are 72 to 567.
+    for screen, size in (((1280, 800), (660, 496)),
+                         ((2560, 1600), (1320, 992)),
+                         ((2880, 1800), (1484, 1116))):
+        window = boot.Geometry(screen, size)
+        rows = [window.pixel(at)[1] for at in (boot.POINTER_AT,
+                                               boot.WHEEL_AT)]
+        expect("the budget's other place lies outside the console's window "
+               "on %dx%d" % screen, window.over_window(boot.POINTER_AT),
+               False)
+        expect("the budget's two places are more rows apart than the "
+               "pointer's image covers on %dx%d" % screen,
+               rows[0] - rows[1] > ARROW_ROWS[screen[1]], True)
+    window = boot.Geometry((1280, 800), (660, 496))
+    expect("the budget's places are the rows 602 and 317 on 1280x800, and "
+           "the window's rows 72 to 567",
+           (window.pixel(boot.POINTER_AT)[1], window.pixel(boot.WHEEL_AT)[1],
+            window.top, window.top + window.height - 1), (602, 317, 72, 567))
+
+    # drive has the budget lines written after the wheel's check and
+    # before the logout, on a test disk whose console is in a window and
+    # has logged in, and at no other boot: not on the system disk, whose
+    # compositor writes none, not where the console has the display, the
+    # fallback boot's, and not where no account is made.
+    in_window = {"screen": "1280x800", "size": "660x496"}
+    expect("a test disk's boot in a window checks the budgets after the "
+           "wheel and before the logout",
+           driven(boot, True, True, in_window),
+           ["point", "check_prompt", "log_in", "scroll", "check_budgets",
+            "log_out"])
+    expect("the persistence boot, which checks no screen, checks the budgets "
+           "after it has logged in",
+           driven(boot, True, True, in_window, screens=None),
+           ["point", "log_in", "check_budgets", "log_out"])
+    expect("the system disk's boot checks no budget",
+           driven(boot, True, False, in_window),
+           ["point", "check_prompt", "log_in", "scroll", "log_out"])
+    expect("a boot whose console has the display checks no budget",
+           driven(boot, True, True, None),
+           ["point", "check_prompt", "log_in", "scroll", "log_out"])
+    expect("a boot that makes no account checks no budget",
+           driven(boot, False, True, in_window, screens=None), ["point"])
 
     # A mode that needs a whole data disk says so, without one.
     for mode in ("fallback", NO_ANSWER, "persist"):

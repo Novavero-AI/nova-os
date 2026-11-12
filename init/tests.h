@@ -42,6 +42,10 @@ int tests_enabled(void);
    for the answer meets its deadline (disk-layout.md, display.md D19). */
 #define TEST_FLAG_NO_ANSWER "NOANSWER"
 
+/* The flag file that makes the compositor log what its frames cost, the
+   budget lines, on a test disk (disk-layout.md, display.md D19). */
+#define TEST_FLAG_BUDGETS "BUDGETS"
+
 /* The flag file that makes the first process start the window test
    client, which makes a window and shows two frames on a test disk, in the
    console's place as the compositor's client (test/wintest.h, display.md

@@ -303,11 +303,14 @@ const char *compose_wallpaper_refusal(const BOOTSTRAP_BACKGROUND *background,
     wallpaper is as wide as the screen and at least as high; with rows
     below 1, or a rect with no pixel, nothing is written. An image that
     compose_pointer refuses is drawn nowhere. Makes no stores visible: the
-    caller calls gfx_flush. */
-void compose_frame(const SCREEN *screen, const COMPOSE_WALLPAPER *wallpaper,
-                   const COMPOSE_WINDOW *windows, UINT32 count,
-                   const RECT *rect, UINT32 *memory, INT64 rows,
-                   const COMPOSE_CURSOR *cursor);
+    caller calls gfx_flush. Returns the pixels it composed, those of
+    every band's rectangle (compose_blocks), which are the pixels it
+    wrote wherever each row of the screen's framebuffer starts a block;
+    0 where nothing is written. */
+UINT64 compose_frame(const SCREEN *screen, const COMPOSE_WALLPAPER *wallpaper,
+                     const COMPOSE_WINDOW *windows, UINT32 count,
+                     const RECT *rect, UINT32 *memory, INT64 rows,
+                     const COMPOSE_CURSOR *cursor);
 
 /** Write the wallpaper alone to the whole screen, a frame with no
     window, in bands of rows rows from the top: each band composed in

@@ -105,7 +105,7 @@ jobs:
           cc -std=c11 -Wall -Wextra -pedantic -Werror \
             -fsanitize=address,undefined -fno-sanitize-recover=all \
             -I include -I lib -o "$RUNNER_TEMP/check-endpoint" \
-            tools/check-endpoint.c lib/endpoint.c
+            tools/check-endpoint.c lib/endpoint.c lib/line.c
           "$RUNNER_TEMP/check-endpoint"
 
       - name: Limb as the console draws it over a whole screen is the kernel's image
@@ -140,7 +140,8 @@ jobs:
             tools/check-compose.c lib/compose.c lib/outline.c \
             console/panel.c console/text.c gfx/gfx.c gfx/font.c \
             gfx/raster.c gfx/limb.c -lm
-          "$RUNNER_TEMP/check-compose" interfaces/display.desc
+          "$RUNNER_TEMP/check-compose" interfaces/display.desc \
+            docs/spec/display.md
 
       - name: A window's size, place, buffers and presents are as display.md D6, D7 and D19 give them
         run: |
@@ -184,6 +185,14 @@ jobs:
             -I include -I lib -I gfx -o "$RUNNER_TEMP/check-keyroute" \
             tools/check-keyroute.c lib/keyroute.c lib/keymap.c
           "$RUNNER_TEMP/check-keyroute"
+
+      - name: Which change a frame is counted under, and what its budget line says, are as display.md D19 gives them
+        run: |
+          cc -std=c11 -Wall -Wextra -pedantic -Werror \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -I include -I lib -o "$RUNNER_TEMP/check-budget" \
+            tools/check-budget.c lib/budget.c lib/line.c
+          "$RUNNER_TEMP/check-budget"
 
       - name: gfx/limb.c draws Limb as its prototype does
         run: design/backgrounds/check-limb.sh
@@ -388,7 +397,11 @@ jobs:
   # phase of its blink on the system disk and, on the test disk, whose
   # NOMOTION makes the caret hold still, lit and unchanging. The secure
   # attention key, sent through QMP, must be logged by the compositor and
-  # leave the screen as it was. The five
+  # leave the screen as it was. On the test disk, whose BUDGETS has the
+  # compositor log what its frames cost, boot.py then moves the tablet
+  # and types until the compositor has logged the budget line of each
+  # kind twice, and prints the second of each; the figures fail no boot.
+  # The five
   # bad-GPT boots change its GPT, a CRC's byte, the entry array's, the
   # pool's entry moved below the usable LBAs, or with them, over the
   # table, or a second entry over it, and check that the file system

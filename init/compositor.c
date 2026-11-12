@@ -93,8 +93,9 @@ void compositor_start(const PLATFORM *platform, UINT32 bootstrap)
 
 /* The options the compositor starts with (display_protocol.h), from the
    flag files a test disk holds: ui.reduce-motion for NOMOTION, leaving
-   after the first frame that shows a window's present for COMPFAIL, and
-   answering no connection for NOANSWER. WINDOW sets none. */
+   after the first frame that shows a window's present for COMPFAIL,
+   answering no connection for NOANSWER, and logging what its frames cost
+   for BUDGETS. WINDOW sets none. */
 static UINT32 options(void)
 {
     UINT32 bits = 0;
@@ -105,6 +106,8 @@ static UINT32 options(void)
         bits |= COMPOSITOR_OPTION_EXIT_TEST;
     if (tests_flag(TEST_FLAG_NO_ANSWER))
         bits |= COMPOSITOR_OPTION_NO_ANSWER_TEST;
+    if (tests_flag(TEST_FLAG_BUDGETS))
+        bits |= COMPOSITOR_OPTION_BUDGETS;
     return bits;
 }
 

@@ -34,8 +34,10 @@ typedef struct {
    COMPOSITOR_OPTION_EXIT_TEST, until a frame shows a window's present,
    and then end it COMPOSITOR_EXIT_TEST. With
    COMPOSITOR_OPTION_NO_ANSWER_TEST no connection is issued or answered.
-   Ends it FAILED, logged, if the corners of a window cannot be made for
-   this screen or a wait fails. */
+   With COMPOSITOR_OPTION_BUDGETS, log what the frames cost, as the
+   budget lines give it (display.md D19, rule 8). Ends it FAILED, logged,
+   if the corners of a window cannot be made for this screen or a wait
+   fails. */
 _Noreturn void serve(const SERVE *context);
 
 /* Log nova-compositor: event and status's number as its status key

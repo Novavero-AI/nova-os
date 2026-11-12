@@ -91,12 +91,13 @@ The system disk, `disk.img`, holds:
 \NOVA\FS.EXE             the file system service, for a data disk
 ```
 
-The test disk, `test.img`, holds the system disk's files and three more:
+The test disk, `test.img`, holds the system disk's files and four more:
 
 ```
 \NOVA\FSTEST.EXE         the data disk's check
 \NOVA\TESTS              an empty file, which makes the disk a test disk
 \NOVA\NOMOTION           an empty file: nothing blinks or moves on a timer
+\NOVA\BUDGETS            an empty file: the compositor logs what its frames cost
 ```
 
 A disk whose `\NOVA\` holds a file named `TESTS`, whatever it holds, is

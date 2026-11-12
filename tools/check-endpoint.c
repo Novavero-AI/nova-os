@@ -6,7 +6,7 @@
    Prints each failure and a count, and exits nonzero if any check fails.
 
    cc -std=c11 -Wall -Wextra -pedantic -I include -I lib \
-     -o check-endpoint tools/check-endpoint.c lib/endpoint.c \
+     -o check-endpoint tools/check-endpoint.c lib/endpoint.c lib/line.c \
      && ./check-endpoint */
 
 #include <stdint.h>

@@ -388,19 +388,20 @@ static void draw_cursor(const COMPOSE_CURSOR *cursor, const RECT *image,
                         cursor->y, cursor->quarters);
 }
 
-void compose_frame(const SCREEN *screen, const COMPOSE_WALLPAPER *wallpaper,
-                   const COMPOSE_WINDOW *windows, UINT32 count,
-                   const RECT *rect, UINT32 *memory, INT64 rows,
-                   const COMPOSE_CURSOR *cursor)
+UINT64 compose_frame(const SCREEN *screen, const COMPOSE_WALLPAPER *wallpaper,
+                     const COMPOSE_WINDOW *windows, UINT32 count,
+                     const RECT *rect, UINT32 *memory, INT64 rows,
+                     const COMPOSE_CURSOR *cursor)
 {
     RECT image;
     int pointer = cursor != 0 && cursor->placed;
+    UINT64 composed = 0;
     INT64 top;
 
     /* A rectangle with no pixel returns before the image's box is found,
        which costs the tracing of its outlines. */
     if (rows < 1 || !has_pixels(rect))
-        return;
+        return 0;
     if (pointer)
         pointer = compose_pointer_box(cursor->work, cursor->image, cursor->x,
                                       cursor->y, cursor->quarters, &image);
@@ -419,7 +420,11 @@ void compose_frame(const SCREEN *screen, const COMPOSE_WALLPAPER *wallpaper,
         if (pointer)
             draw_cursor(cursor, &image, &band);
         compose_write(&band, screen, &written);
+        if (has_pixels(&band.rect))
+            composed += (UINT64)(band.rect.right - band.rect.left) *
+                        (UINT64)(band.rect.bottom - band.rect.top);
     }
+    return composed;
 }
 
 void compose_wallpaper_frame(const SCREEN *screen,

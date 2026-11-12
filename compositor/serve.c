@@ -17,6 +17,11 @@
    D19's rule 6); where the pointer is, once it has a place, is drawn over
    every frame (D19, rule 7, lib/compose.c).
 
+   Where the options say so, each frame that the pointer's motion alone
+   damaged, or that a window's present damaged, is counted with the pixels
+   it composed and the time it took, and lib/budget.c writes the kind's
+   budget line for every BUDGET_FRAMES of them (D9 and D19, rule 8).
+
    Every wait is one object_wait_many on the channels and the time of the
    next frame or the channel's stall, so the compositor never waits for a
    client. Each channel's queue is read for at most its capacity in
@@ -29,6 +34,7 @@
 
 #include "compositor.h"
 #include "backlog.h"
+#include "budget.h"
 #include "display_protocol.h"
 #include "endpoint.h"
 #include "font.h"
@@ -171,6 +177,13 @@ static COMPOSE_CURSOR cursor;
 static RECT damage;
 static COMPOSE_CURSOR_DAMAGE pointer_damage;
 static UINT64 next_frame;
+
+/* What the frames of each kind have cost since the kind's last budget
+   line (D19, rule 8), and whether a present has put a pixel in the
+   frame's one rectangle since the last frame, which makes the next frame
+   one a window's present damaged. */
+static BUDGET budget;
+static UINT32 present_damaged;
 
 static void zero(void *memory, UINT64 count)
 {
@@ -503,6 +516,10 @@ static const char *take_present(void)
         window.frame_owed = 1;
         for (i = 0; i < presented.count; i++)
             window_damage_join(&damage, &presented.damage[i]);
+        /* A present's rectangles each hold a pixel: add_damage in
+           lib/window.c gives none that does not. */
+        if (presented.count != 0)
+            present_damaged = 1;
         if (hidden)
             settle_pointer();
     }
@@ -924,13 +941,18 @@ static int frame_wanted(void)
    something is damaged or owed. The frame's one rectangle is composed,
    and then the pointer's rectangles, each apart, so that nothing between
    them is composed; a pixel in more than one is composed once for each,
-   to the same colour. */
+   to the same colour. With COMPOSITOR_OPTION_BUDGETS the frame is counted
+   under the change that damaged it, with the pixels it composed and its
+   time from the frame's start, begun, to its SFENCE, which holds finding
+   what the frame composes and tracing the pointer's box as well as the
+   bands; the line that the count completes is written once the frame is
+   timed, so that no frame's time holds a line's writing (D19, rule 8). */
 static void frame(void)
 {
     COMPOSE_WINDOW shown;
     RECT rects[COMPOSE_CURSOR_RECTS_MAX];
-    UINT32 count = 0, pointer_count, i;
-    UINT64 begun = timing_now(), time;
+    UINT32 count = 0, pointer_count, change, i;
+    UINT64 begun = timing_now(), time, pixels;
 
     if (!frame_wanted() || begun < next_frame)
         return;
@@ -951,17 +973,22 @@ static void frame(void)
         shown.corners = &corners;
         count = 1;
     }
-    compose_frame(host->screen, host->wallpaper, &shown, count, &damage,
-                  host->band, TILE_ROWS, &cursor);
     pointer_count = compose_cursor_rects(&pointer_damage, rects);
+    change = budget_change(present_damaged, damage.left < damage.right,
+                           pointer_count != 0);
+    pixels = compose_frame(host->screen, host->wallpaper, &shown, count,
+                           &damage, host->band, TILE_ROWS, &cursor);
     for (i = 0; i < pointer_count; i++)
-        compose_frame(host->screen, host->wallpaper, &shown, count, &rects[i],
-                      host->band, TILE_ROWS, &cursor);
+        pixels += compose_frame(host->screen, host->wallpaper, &shown, count,
+                                &rects[i], host->band, TILE_ROWS, &cursor);
     gfx_flush();
     time = timing_now();
+    if (host->options & COMPOSITOR_OPTION_BUDGETS)
+        budget_frame(&budget, change, pixels, time - begun, say);
     next_frame = begun + FRAME_NS;
     damage.left = damage.top = damage.right = damage.bottom = 0;
     zero(&pointer_damage, sizeof pointer_damage);
+    present_damaged = 0;
     if (window.frame_owed) {
         backlog_frame(&window.backlog, time);
         window.frame_owed = 0;

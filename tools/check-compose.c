@@ -50,7 +50,13 @@
      every pixel: a move longer than the image composes its old box and its
      new and leaves every pixel between them as it was, at the pixels D9's
      row counts, a move whose boxes share a pixel composes their join, and
-     moves between two frames compose nothing at the places between.
+     moves between two frames compose nothing at the places between;
+   - the pixels a frame says it composed, which the compositor's budget
+     lines count (D19 rule 8), against the pixels it wrote, counted on the
+     screen, for the frames of rectangles and of the pointer's moves
+     above; and the pixels of the rule's example line, read from
+     docs/spec/display.md, against a move across the screen at the scale
+     of the 2880 x 1800 screen that line is of.
 
    The pointer's outlines, the surfaces' tints and amounts, the edge's
    opacity and TILE_ROWS are read from interfaces/display.desc, which
@@ -63,7 +69,8 @@
    cc -std=c11 -Wall -Wextra -pedantic -I include -I lib -I gfx \
      -I console -o check-compose tools/check-compose.c lib/compose.c \
      lib/outline.c console/panel.c console/text.c gfx/gfx.c gfx/font.c \
-     gfx/raster.c gfx/limb.c -lm && ./check-compose interfaces/display.desc */
+     gfx/raster.c gfx/limb.c -lm && \
+     ./check-compose interfaces/display.desc docs/spec/display.md */
 
 #include <math.h>
 #include <stdio.h>
@@ -163,6 +170,46 @@ static int read_description(const char *path)
         return 0;
     desc_text[size] = 0;
     return 1;
+}
+
+/* The most bytes of the specification the check reads, and where rule
+   8's example of the pointer's budget line starts in it, the key of the
+   line's pixels, and the mark that ends an example. */
+#define SPEC_BYTES_MAX (1 << 20)
+#define EXAMPLE_START "`nova-compositor: budget change=pointer"
+#define EXAMPLE_PIXELS_KEY "pixels="
+#define EXAMPLE_END '`'
+
+/* The scale of the 2880 x 1800 screen the specification's example lines
+   are of, 2.25, in quarters (display.md D9). */
+#define EXAMPLE_QUARTERS 9
+
+/* The pixels rule 8's example of the pointer's budget line gives, as the
+   specification at the path read_example was given holds them; 0 until it
+   is read. */
+static INT64 example_pixels;
+
+/* Read rule 8's example from the specification at path: the number after
+   the pixels key of the first pointer's budget line in it. Returns 0 if
+   the file has no such line or its pixels are not a number above 0. */
+static int read_example(const char *path)
+{
+    FILE *file = fopen(path, "rb");
+    char *text = file ? malloc(SPEC_BYTES_MAX) : 0;
+    size_t size = text ? fread(text, 1, SPEC_BYTES_MAX - 1, file) : 0;
+    const char *line, *end, *key;
+
+    if (file)
+        fclose(file);
+    if (text)
+        text[size] = 0;
+    line = text ? strstr(text, EXAMPLE_START) : 0;
+    end = line ? strchr(line + 1, EXAMPLE_END) : 0;
+    key = line ? strstr(line, EXAMPLE_PIXELS_KEY) : 0;
+    if (end && key && key < end)
+        example_pixels = strtoll(key + strlen(EXAMPLE_PIXELS_KEY), 0, 10);
+    free(text);
+    return example_pixels > 0;
 }
 
 /* The line after the header of setting name, or 0. */
@@ -729,23 +776,27 @@ static const INT64 frame_rows[] = {1, 7, 16, SCENE_HEIGHT + 1};
    that holds a pixel of rect is the one of all, the whole frame as
    0x00RRGGBB, in the screen's order with its unused byte 0 (wrong counts
    those that are not); every other pixel, in the other rows too, is
-   untouched (stray counts those that are not). */
+   untouched (stray counts those that are not). The frame says it composed
+   as many pixels as those blocks hold, which every row of this screen
+   starts one of (miscount is how many more or fewer it says). */
 static void frame_difference(const SCREEN *screen, UINT32 *screen_memory,
                              const COMPOSE_WALLPAPER *wallpaper,
                              const COMPOSE_WINDOW *windows, const RECT *rect,
                              INT64 rows, const COMPOSE_CURSOR *cursor,
-                             const UINT32 *all, INT64 *wrong, INT64 *stray)
+                             const UINT32 *all, INT64 *wrong, INT64 *stray,
+                             INT64 *miscount)
 {
     INT64 band_pixels = (INT64)SCENE_WIDTH * (SCENE_HEIGHT + 1);
     UINT32 *band = malloc((size_t)band_pixels * sizeof(UINT32));
-    INT64 x, y;
+    INT64 x, y, in_blocks = 0;
+    UINT64 composed;
 
     *wrong = 0;
     *stray = 0;
     for (x = 0; x < SCENE_WIDTH * SCENE_HEIGHT; x++)
         screen_memory[x] = SCREEN_BEFORE;
-    compose_frame(screen, wallpaper, windows, SCENE_WINDOWS, rect, band, rows,
-                  cursor);
+    composed = compose_frame(screen, wallpaper, windows, SCENE_WINDOWS, rect,
+                             band, rows, cursor);
     for (y = 0; y < SCENE_HEIGHT; y++) {
         int in_rows = y >= rect->top && y < rect->bottom;
         INT64 first = (y * SCENE_WIDTH + rect->left) / (INT64)BLOCK_PIXELS;
@@ -759,12 +810,15 @@ static void frame_difference(const SCREEN *screen, UINT32 *screen_memory,
                                       colour >> 8 & CHANNEL_MASK,
                                       colour & CHANNEL_MASK);
 
-            if (in_rows && block >= first && block <= last)
+            if (in_rows && block >= first && block <= last) {
                 *wrong += got != wanted;
-            else
+                in_blocks++;
+            } else {
                 *stray += got != SCREEN_BEFORE;
+            }
         }
     }
+    *miscount = (INT64)composed - in_blocks;
     free(band);
 }
 
@@ -773,10 +827,10 @@ static void check_frame_rect(const SCREEN *screen, UINT32 *screen_memory,
                              const COMPOSE_WINDOW *windows, const RECT *rect,
                              INT64 rows, const UINT32 *all)
 {
-    INT64 wrong, stray;
+    INT64 wrong, stray, miscount;
 
     frame_difference(screen, screen_memory, wallpaper, windows, rect, rows, 0,
-                     all, &wrong, &stray);
+                     all, &wrong, &stray, &miscount);
     check(wrong == 0,
           "a frame of a rectangle writes the frame's pixels in every block "
           "of its rows that holds one of the rectangle's",
@@ -784,6 +838,10 @@ static void check_frame_rect(const SCREEN *screen, UINT32 *screen_memory,
     check(stray == 0,
           "a frame of a rectangle writes nothing else",
           rows, stray);
+    check(miscount == 0,
+          "a frame of a rectangle says it composed the pixels of those "
+          "blocks",
+          rect->left * 1000 + rect->top, miscount);
 }
 
 static void check_frame_rects(const SCENE *scene)
@@ -808,6 +866,7 @@ static void check_frame_rects(const SCENE *scene)
         SCREEN screen = {screen_memory, SCENE_WIDTH, SCENE_HEIGHT, SCENE_WIDTH,
                          formats[f]};
         INT64 i, written;
+        UINT64 composed;
 
         for (r = 0; r < FRAME_RECTS; r++)
             for (h = 0; h < FRAME_ROWS; h++)
@@ -816,20 +875,23 @@ static void check_frame_rects(const SCENE *scene)
         for (r = 0; r < sizeof nothing / sizeof nothing[0]; r++) {
             for (i = 0; i < SCENE_WIDTH * SCENE_HEIGHT; i++)
                 screen_memory[i] = SCREEN_BEFORE;
-            compose_frame(&screen, &wallpaper, windows, SCENE_WINDOWS,
-                          &nothing[r], band, 16, 0);
+            composed = compose_frame(&screen, &wallpaper, windows,
+                                     SCENE_WINDOWS, &nothing[r], band, 16, 0);
             for (i = 0, written = 0; i < SCENE_WIDTH * SCENE_HEIGHT; i++)
                 written += screen_memory[i] != SCREEN_BEFORE;
-            check(written == 0, "a frame of a rectangle with no pixel writes "
-                                "nothing",
+            check(written == 0 && composed == 0,
+                  "a frame of a rectangle with no pixel writes nothing and "
+                  "says it composed none",
                   (long long)r, written);
         }
         for (i = 0; i < SCENE_WIDTH * SCENE_HEIGHT; i++)
             screen_memory[i] = SCREEN_BEFORE;
-        compose_frame(&screen, &wallpaper, windows, SCENE_WINDOWS, &whole,
-                      band, 0, 0);
-        check(screen_memory[0] == SCREEN_BEFORE,
-              "a frame in bands of no rows writes nothing", 0, 0);
+        composed = compose_frame(&screen, &wallpaper, windows, SCENE_WINDOWS,
+                                 &whole, band, 0, 0);
+        check(screen_memory[0] == SCREEN_BEFORE && composed == 0,
+              "a frame in bands of no rows writes nothing and says it "
+              "composed none",
+              0, 0);
         free(band);
         free(screen_memory);
         free(all);
@@ -3026,11 +3088,11 @@ static void check_cursor_frames(const CURSOR_RIG *rig, UINT32 *screen_memory)
 
         for (r = 0; r < FRAME_RECTS; r++)
             for (h = 0; h < FRAME_ROWS; h++) {
-                INT64 wrong, stray;
+                INT64 wrong, stray, miscount;
 
                 frame_difference(&rig->screen, screen_memory, &rig->wallpaper,
                                  rig->windows, &frame_rects[r], frame_rows[h],
-                                 &cursor, drawn, &wrong, &stray);
+                                 &cursor, drawn, &wrong, &stray, &miscount);
                 check(wrong == 0,
                       "a frame with the pointer placed is the whole frame "
                       "with the arrow over it, in the blocks it writes",
@@ -3038,6 +3100,10 @@ static void check_cursor_frames(const CURSOR_RIG *rig, UINT32 *screen_memory)
                 check(stray == 0, "a frame with the pointer placed writes "
                                   "nothing else",
                       (long long)(p * FRAME_RECTS + r), stray);
+                check(miscount == 0,
+                      "a frame with the pointer placed says it composed the "
+                      "pixels of the blocks it writes",
+                      (long long)(p * FRAME_RECTS + r), miscount);
             }
         free(drawn);
     }
@@ -3055,12 +3121,13 @@ static void check_cursor_not_drawn(const CURSOR_RIG *rig, UINT32 *screen_memory)
     for (c = 0; c < sizeof cursors / sizeof cursors[0]; c++)
         for (r = 0; r < FRAME_RECTS; r++)
             for (h = 0; h < FRAME_ROWS; h++) {
-                INT64 wrong, stray;
+                INT64 wrong, stray, miscount;
 
                 frame_difference(&rig->screen, screen_memory, &rig->wallpaper,
                                  rig->windows, &frame_rects[r], frame_rows[h],
-                                 cursors[c], rig->all, &wrong, &stray);
-                check(wrong == 0 && stray == 0,
+                                 cursors[c], rig->all, &wrong, &stray,
+                                 &miscount);
+                check(wrong == 0 && stray == 0 && miscount == 0,
                       "a pointer with no place, or one the image is refused "
                       "for, is drawn nowhere",
                       (long long)c, wrong + stray);
@@ -3400,6 +3467,7 @@ typedef struct {
     RECT old_box;  /* the image's box before the moves, from the geometry */
     RECT new_box;  /* its box after them */
     INT64 written; /* the pixels of the screen the frame wrote */
+    INT64 counted; /* the pixels the frame said it composed */
     int right;     /* nonzero if everything checked here held */
 } COMPOSED;
 
@@ -3409,9 +3477,10 @@ typedef struct {
    rows, on a screen that held SCREEN_BEFORE. The rectangles must be those
    D19's note gives for the image's box at from and its box at the last
    place, whatever the places between; every pixel in one of them must be
-   the whole frame's with the arrow at the last place; and every other
-   pixel must be untouched, the pixels between two boxes and those at the
-   places between among them. */
+   the whole frame's with the arrow at the last place; every other pixel
+   must be untouched, the pixels between two boxes and those at the places
+   between among them; and the frame must say it composed as many pixels
+   as it wrote. */
 static COMPOSED moves_compose(const CURSOR_RIG *rig, const THEME_POINTER *theme,
                               UINT32 *screen_memory, const PLACE *from,
                               const PLACE *to, UINT32 count, INT64 rows)
@@ -3438,9 +3507,11 @@ static COMPOSED moves_compose(const CURSOR_RIG *rig, const THEME_POINTER *theme,
     composed.count = compose_cursor_rects(&damage, rects);
     for (x = 0; x < SCENE_WIDTH * SCENE_HEIGHT; x++)
         screen_memory[x] = SCREEN_BEFORE;
+    composed.counted = 0;
     for (i = 0; i < composed.count && i < COMPOSE_CURSOR_RECTS_MAX; i++)
-        compose_frame(&rig->screen, &rig->wallpaper, rig->windows,
-                      SCENE_WINDOWS, &rects[i], memory, rows, &cursor);
+        composed.counted += (INT64)compose_frame(
+            &rig->screen, &rig->wallpaper, rig->windows, SCENE_WINDOWS,
+            &rects[i], memory, rows, &cursor);
     composed.written = 0;
     for (y = 0; y < SCENE_HEIGHT; y++)
         for (x = 0; x < SCENE_WIDTH; x++) {
@@ -3460,7 +3531,8 @@ static COMPOSED moves_compose(const CURSOR_RIG *rig, const THEME_POINTER *theme,
                 stray += got != SCREEN_BEFORE;
         }
     composed.right = are_rects(rects, composed.count, wanted, wanted_count) &&
-                     wrong == 0 && stray == 0;
+                     wrong == 0 && stray == 0 &&
+                     composed.counted == composed.written;
     free(drawn);
     free(memory);
     return composed;
@@ -3469,7 +3541,10 @@ static COMPOSED moves_compose(const CURSOR_RIG *rig, const THEME_POINTER *theme,
 /* A move across the screen, longer than the image, composes the image's
    old box and its new and nothing between them (D19's note), and the
    pixels composed are D9's row: two images of the size V15's table gives
-   at the scale, each widened to whole blocks. */
+   at the scale, each widened to whole blocks. At the scale of a
+   2880 x 1800 screen the frame says it composed the pixels of rule 8's
+   example line: both of this move's boxes start a pixel into a block, as
+   two boxes on that screen can. */
 static void check_cursor_long_move(const CURSOR_RIG *rig,
                                    const THEME_POINTER *theme,
                                    UINT32 *screen_memory, INT64 image_width,
@@ -3513,6 +3588,11 @@ static void check_cursor_long_move(const CURSOR_RIG *rig,
               "a move across the screen composes two images, each in whole "
               "blocks, as D9's row counts",
               two_boxes, 2 * image_width * image_height);
+        check(rig->quarters != EXAMPLE_QUARTERS ||
+                  composed.counted == example_pixels,
+              "a move across the screen at the scale of 2880 x 1800 says it "
+              "composed the pixels of rule 8's example line",
+              composed.counted, example_pixels);
     }
 }
 
@@ -3762,6 +3842,10 @@ int main(int argc, char **argv)
 
     if (!read_description(argc > 1 ? argv[1] : "interfaces/display.desc")) {
         printf("cannot read the interface description\n");
+        return 2;
+    }
+    if (!read_example(argc > 2 ? argv[2] : "docs/spec/display.md")) {
+        printf("cannot read rule 8's example line from the specification\n");
         return 2;
     }
     make_light();

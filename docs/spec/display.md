@@ -805,8 +805,7 @@ whole screen write-combining, the work of a material over the
 wallpaper. At that commit the line's `draw_ms` timed Limb's drawing
 alone; it now times Limb's setup, its bands' allocation and the drawing
 together, 87.3 ms under KVM in CI run 42448319244 at `825db58`, where a
-fade frame took 2.6 ms. Phase 3's own lines replace these figures as
-the baseline.
+fade frame took 2.6 ms.
 
 | Measured at 1280 x 800 | KVM, one boot | QEMU's TCG, ten boots on QEMU's default processor, Skylake-Client and `-cpu max` |
 |---|---|---|
@@ -827,7 +826,8 @@ at partial cover, so it leaves out nearly all the decode, mix and
 encode of a pixel of partial cover, and all of the second write that
 composing in a band and copying it adds
 ([D7](#d7-presenting-and-pacing)), both of which the console's window
-meets at every glyph's edge; phase 3 measures them.
+meets at every glyph's edge; the compositor's budget lines, below,
+measure them.
 
 The budgets, at 60 Hz, a frame of 16.7 ms:
 
@@ -856,11 +856,28 @@ Memory, in the compositor and the programs, at each size:
 | 2560 x 1600 | 15.6 MiB | 31.3 MiB | 160 KiB |
 | 2880 x 1800 | 19.8 MiB | 39.6 MiB | 180 KiB |
 
-Phase 3 ([D19](#d19-the-build-plan)) measures the first two rows of the
-budgets at all three sizes under KVM, and at 1280 x 800 under TCG, and
-logs them, as the kernel logs its fade; a budget the measurement
-misses is a defect to fix or a figure to change here, said in the
-change.
+The compositor logs what the frames of the first two rows cost on a test
+disk, as the kernel logs its fade ([D19](#d19-the-build-plan), rule 8),
+and a boot of one prints a line of each kind: sixteen frames that its
+own moves or keys made, the most pixels one of them composed, the
+longest of them and their times together. From CI run 43256660869 on
+GitHub's `ubuntu-24.04` runners, one boot each:
+
+| Screen | Under | The pointer moves: pixels | Longest | All sixteen | A key typed: pixels | Longest | All sixteen |
+|---|---|---|---|---|---|---|---|
+| 1280 x 800 | KVM | 1,472 | 0.1 ms | 1.5 ms | 512 | under 0.1 ms | 0.5 ms |
+| 2560 x 1600 | KVM | 4,416 | 0.5 ms | 4.0 ms | 1,024 | under 0.1 ms | 0.6 ms |
+| 2880 x 1800 | KVM | 4,992 | 0.6 ms | 10.0 ms | 1,728 | 0.1 ms | 2.6 ms |
+| 1280 x 800 | TCG, `-cpu max` | 1,472 | 1.8 ms | 27.9 ms | 512 | 0.5 ms | 7.4 ms |
+| 1280 x 800 | TCG, Skylake-Client | 1,472 | 1.0 ms | 15.8 ms | 512 | 0.6 ms | 5.6 ms |
+| 1280 x 800 | TCG, QEMU's default processor | 1,472 | 0.9 ms | 14.0 ms | 512 | 0.3 ms | 4.5 ms |
+
+The key is a letter typed, or erased, at the shell's prompt in the
+console's window, which presents what the key changed. In that run a
+typed key was within its budget at every size, the pointer's move took
+up to 0.6 ms at 2880 x 1800, against a budget of 0.1, and every frame
+under TCG was within a frame. A budget a measurement misses is a defect
+to fix or a figure to change here, said in the change.
 
 - **Why:** a pointer and typing within a fraction of a frame is what
   makes an interface feel immediate, and both are small changes; the
@@ -1723,7 +1740,10 @@ login's session as it does on its own
    sent and which are the secure attention key's
    ([D12](#d12-the-secure-attention-key-and-global-keys) and rule 6) is
    `lib/keyroute.c`, which `tools/check-route.c`,
-   `tools/check-backlog.c` and `tools/check-keyroute.c` check likewise.
+   `tools/check-backlog.c` and `tools/check-keyroute.c` check likewise;
+   and which change a frame is counted under and what its budget line
+   says (rule 8) is `lib/budget.c`, which `tools/check-budget.c` checks
+   likewise.
    The console's keymap moves from
    `console/keys.c` to `lib/keymap.c`, and the console's cell rule,
    `height / CELLS_PER_HEIGHT` within `FONT_WIDTH_MIN` and
@@ -1924,15 +1944,37 @@ login's session as it does on its own
      step that fails; each of the three ends the window and its
      connection, and the console waits for the next connection
      (console.md C2).
-   - On a test disk, `nova-compositor: budget change=pointer frames=16
-     pixels=3744 total_ms=0.9 max_ms=0.1` for frames the pointer's
+   - On a test disk that carries `\NOVA\BUDGETS`, an empty file, as
+     `test.img` and every disk made from its files does
+     ([disk-layout.md](disk-layout.md#files)), the first process sets
+     `COMPOSITOR_OPTION_BUDGETS` in the compositor's options at every
+     start (rule 2), and that bit is how the compositor knows to count
+     its frames: with it clear, as on the system disk, it counts none
+     and writes no such line. With it set,
+     `nova-compositor: budget change=pointer frames=16 pixels=4992
+     total_ms=10.0 max_ms=0.6` for frames the pointer's
      motion alone damaged, and `change=present` for frames a window's
-     present damaged: `pixels` the most composed in one of them, each
-     frame timed from its first band to its `SFENCE`. Each is written
+     present damaged, whatever else damaged them; a frame neither
+     damaged, as one a closing window alone did, is counted under
+     neither. `pixels` is the most composed in one of them, counted in
+     the whole blocks of the output a frame composes
+     ([D8](#d8-composition)), so the example's 4,992 are two images of
+     36 x 52 at 2880 x 1800, each three blocks of 16 pixels across; a
+     pixel that lies both in the frame's one rectangle and in one of
+     the pointer's is counted once for each, as it is composed.
+     `total_ms` is their times together and `max_ms` the longest, each
+     frame timed from the frame's start to its `SFENCE`. Each is written
      once `BUDGET_FRAMES` (16) frames of its kind have been composed
-     since its last. `ci/boot.py` moves the pointer and types keys
-     until both lines have come or `SCREEN_TIMEOUT` passes, and prints
-     them. It fails no boot for a figure over [D9](#d9-budgets)'s
+     since its last. On a boot of such a disk, once it has logged in
+     through the console's window, `ci/boot.py` moves the tablet
+     between two places whose images share no pixel until the pointer's
+     line has come twice, then types a letter and Backspace in turn at
+     the shell's prompt until the present's has, or until
+     `SCREEN_TIMEOUT` passes, which fails the boot, and prints the
+     second line of each with the screen's size (the note on the second
+     budget line). A budget line that is not in this form fails any
+     boot, and so does one on a disk that is not a test disk. It fails
+     no boot for a figure over [D9](#d9-budgets)'s
      budget, since a shared runner's time varies; such a figure is a
      defect to fix or a budget to change there.
 9. **Restarts and the fallback.** The console in a window never ends
@@ -2048,7 +2090,8 @@ login's session as it does on its own
     client, `\NOVA\WINTEST.EXE`, built from `test/wintest.c`, is the
     compositor's client in the console's place; `window.img` is the test
     disk with both added. The first process starts the compositor as rule
-    2 gives, with no option set, so that it does not exit, and starts the
+    2 gives, with the options the test disk's flag files set and none for
+    `WINDOW`, so that it does not exit, and starts the
     client in the root job, keeping it running as it does login. For each
     start of the client it issues a connection as rule 2's step 4 does,
     with the label `wintest`, no mark, `SYSTEM` alone and no rights,
@@ -2548,6 +2591,51 @@ login's session as it does on its own
   give-up is tested without the window it gives up on. The window test
   sets no option, so a boot of `window.img` is of a compositor that
   runs.
+- **Why an option tells the compositor to log its budgets:** rule 8's
+  budget lines are a test disk's, and the compositor is handed no boot
+  file, so it cannot tell a test disk from the system's. The first
+  process holds the boot files: it honours `\NOVA\BUDGETS` on a test
+  disk alone, as it does every flag file, and sets
+  `COMPOSITOR_OPTION_BUDGETS` in the options it sends at each start
+  (rule 2), as it sets `COMPOSITOR_OPTION_EXIT_TEST` for `COMPFAIL`
+  (rule 9). The compositor counts a frame and writes a line only with
+  that bit set. `test.img` carries the file, so the disks that hold its
+  files carry it too: the specimen disk starts no compositor; the
+  fallback disk's compositor ends before it has composed
+  `BUDGET_FRAMES` frames of a kind; the no-answer disk's has no client
+  to present and is given up before its boot moves the tablet; the
+  window disk's writes a line once it has composed that many, which
+  takes more frames than `ci/boot.py window` makes; and the chain
+  disk's writes a line whenever `BUDGET_FRAMES` frames of a kind have
+  come, which its boot, a test disk's, accepts. Its cost is a flag file
+  on every test disk, a bit of the options, and a line written to the
+  log from the compositor's loop after every `BUDGET_FRAMES` frames of
+  a kind, which the frame after it waits for; the line is written once
+  its frame is timed, so it is in no frame's time. Not taken: the lines
+  on every disk; their cost is that write in the system's log for every
+  `BUDGET_FRAMES` frames of a pointer that moves, where no check reads
+  it. Not taken: the compositor reading the flag file itself; its cost
+  is the boot files mapped into a second program, where the first
+  process alone holds them, as
+  [console.md C2](console.md#c2-starting-the-console) has it for the
+  console's option.
+- **Why the boot prints the second budget line of each kind:** a line
+  counts the `BUDGET_FRAMES` frames of its kind before it, whenever
+  they were composed, so the first to come once `ci/boot.py` begins to
+  move the tablet, or to type, may count frames from earlier in the
+  boot: the frame that first placed the pointer, which composes one
+  image, or a turn of the wheel, which changes most of the console's
+  window. The line after it counts only frames the boot's own moves or
+  keys made: a move between two places whose images share no pixel,
+  one of them over the console's window, and a letter typed or erased,
+  the changes of [D9](#d9-budgets)'s first two rows. `ci/boot.py`
+  reads the log for `BUDGET_PACE` (50 ms), three frames, after each
+  move and each key, so that each is composed in a frame of its own
+  where the guest keeps up; changes that share a frame are counted
+  once, and it goes on until the lines have come. Its cost is twice
+  `BUDGET_FRAMES` frames of each kind in each such boot, a few seconds.
+  Not taken: the first line; its cost is a `pixels` and a `max_ms` that
+  are most of a window's where one earlier frame was.
 - **Why the connection is issued once the console and the compositor
   have both started:** a connection needs the compositor to answer and
   the console to take its end, and the platform driver starts either

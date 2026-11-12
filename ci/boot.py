@@ -28,8 +28,9 @@ boot must run missing or skipped: the kernel's self-tests, the first
 process's checks of its calls, the test program from /store and the
 boot disk's read, the data disk's check with a data disk whose GPT is
 whole, and in chain mode the chain, each of its steps and each pinned
-link. Without --tests, a report anywhere in the log fails the boot, and
-the kernel must report its random number generator's self-test
+link. Without --tests, a report anywhere in the log fails the boot, as
+does a budget line of the compositor, which only a test disk's writes,
+and the kernel must report its random number generator's self-test
 passing. chain, fallback, noanswer, window and specimen take only a test
 disk, and fallback, noanswer and persist a whole data disk.
 
@@ -72,7 +73,15 @@ compiler, CC if set. The secure attention key, sent through QMP, must be
 logged by the compositor and leave the screen as it was. On a test disk, whose first process sets ui.reduce-motion
 for its flag file NOMOTION (docs/spec/display.md D19), the caret holds
 steady: each screen must show it lit, and the screen must stay the same
-for STEADY_SECONDS more. In persist mode the same copy of the data disk
+for STEADY_SECONDS more. On a test disk, whose first process also has
+the compositor log what its frames cost for its flag file BUDGETS
+(display.md D19, rule 8), the boot then moves the tablet between two
+places and types a letter and Backspace in turn at the shell's prompt,
+until the compositor has logged the budget line of each kind twice or
+SCREEN_TIMEOUT passes, and prints the second of each with the screen's
+size (check_budgets); a figure over display.md D9's budget fails no
+boot. A budget line that is not in rule 8's form fails any boot. In
+persist mode the same copy of the data disk
 is booted twice: the first boot is system mode's but for the wheel, and the
 second must report the account the first made and, typed again, log in
 with it, run whoami and show the file, which the disk must still hold.
@@ -256,16 +265,26 @@ LINE_START = re.compile(r"%s: " % COMPONENT)
 KEY = re.compile(r' ([a-z][a-z0-9_]*)=(?:"([^"]*)"|([^ "]+))')
 
 
-def parse_line(text):
-    """The component, event and keys of the nova-os line in text, or
-    None."""
+def find_line(text):
+    """The nova-os line in text, as EVENT_LINE matches it where its
+    component starts: its groups are the component, the event and the
+    text of the keys after it. None if text holds no such line."""
     for start in LINE_START.finditer(text):
         match = EVENT_LINE.match(text, start.start())
         if match:
-            return (match.group(1), match.group(2),
-                    {k.group(1): k.group(2) if k.group(2) is not None
-                     else k.group(3) for k in KEY.finditer(match.group(3))})
+            return match
     return None
+
+
+def parse_line(text):
+    """The component, event and keys of the nova-os line in text, or
+    None."""
+    match = find_line(text)
+    if not match:
+        return None
+    return (match.group(1), match.group(2),
+            {k.group(1): k.group(2) if k.group(2) is not None
+             else k.group(3) for k in KEY.finditer(match.group(3))})
 
 
 class Event:
@@ -963,6 +982,59 @@ ATTENTION_MODIFIERS = {"control", "alt"}
 KEY_LINE = "nova-wintest: key"
 ATTENTION_LINE = "nova-compositor: attention"
 TIME_MS = re.compile(r"\d+\.\d")
+
+# The compositor's budget lines (docs/spec/display.md D19, rule 8), which
+# a test disk's compositor writes for the disk's flag file BUDGETS: one
+# kind for the frames the pointer's motion alone damaged and one for
+# those a window's present damaged, each written once BUDGET_FRAMES
+# frames of its kind have been composed since its last. BUDGET_FORM is
+# the text of a line after its component and its event, whole: its keys,
+# each once, bare, in this order and no other: the kind; the frames it
+# counts; the most pixels one of them composed, which is at least one,
+# since a frame that is counted was damaged; and their times together
+# and the longest, in milliseconds to the tenth.
+BUDGET_LINE = ("nova-compositor", "budget")
+BUDGET_FRAMES = 16
+BUDGET_POINTER = "pointer"
+BUDGET_PRESENT = "present"
+BUDGET_FORM = re.compile(
+    r" change=(?P<change>%s|%s) frames=(?P<frames>%d)"
+    r" pixels=(?P<pixels>[1-9][0-9]*)"
+    r" total_ms=(?P<total_ms>%s) max_ms=(?P<max_ms>%s)"
+    % (BUDGET_POINTER, BUDGET_PRESENT, BUDGET_FRAMES, TIME_MS.pattern,
+       TIME_MS.pattern))
+
+# What check_budgets sends to have the compositor compose frames of each
+# kind (display.md D9's first two rows). For the pointer, the tablet moved
+# between two places the boot keeps out of the log (UNLOGGED): POINTER_AT,
+# below the console's window, where point puts the tablet first in every
+# boot, and WHEEL_AT, inside the window, where scroll puts it in a boot
+# that checks the wheel; a boot that does not, the persistence boot,
+# sends WHEEL_AT here first. At every size the boots run the two lie more
+# than a third of the screen's height apart, far more than the pointer's
+# image is high, so the image's box at one shares no pixel with its box
+# at the other, and a frame composes two images.
+# For a present, a letter typed at the shell's prompt and Backspace,
+# which erases it: the console presents the cells each changes, and the
+# prompt is left as it was. Each item is one QMP input-send-event.
+BUDGET_MOVES = [POINTER_AT, WHEEL_AT]
+BUDGET_TYPED = ["a+ a-", "backspace+ backspace-"]
+
+# How many lines of a kind check_budgets waits for: a line counts the
+# BUDGET_FRAMES frames of its kind before it, whenever they were composed,
+# so the first may count frames from before the boot's own moves or keys,
+# and the second counts those alone.
+BUDGET_LINES = 2
+
+# How long check_budgets reads the log after each move and each key
+# before it sends the next, in seconds: three of the compositor's frames
+# of 16.7 ms (FRAME_NS in interfaces/display.desc), so that each is
+# composed in a frame of its own where the guest keeps up. Where it does
+# not, changes that share a frame are counted once, and a letter erased
+# before the console drew it makes no frame; check_budgets goes on until
+# the lines have come, so the pace sets how long that takes and not
+# whether it does.
+BUDGET_PACE = 0.05
 
 
 def describe(parsed):
@@ -1828,11 +1900,16 @@ class Serial:
     The keys of the window line of the test client or of the console, once
     it is read, are kept in window, and the window boot's pointer places
     are among the lines' unlogged words. In the fallback boot, the console
-    makes its window before each end of the compositor."""
+    makes its window before each end of the compositor. The keys of each
+    budget line of the compositor are kept in budgets, under its kind, in
+    the order read; one that is not in the form display.md D19's rule 8
+    gives fails the boot, and so does any without report, since only a
+    test disk's compositor writes them."""
 
     def __init__(self, stream, log, report, size, mode, watches=()):
         self.script = None
         self.window = None
+        self.budgets = {BUDGET_POINTER: [], BUDGET_PRESENT: []}
         self.mode = mode
         self.windows = 0
         self.exits = 0
@@ -1879,41 +1956,83 @@ class Serial:
                 raise BootFailed("QEMU ended; not reported:\n  "
                                  + self.unreported(wanted, seen,
                                                    report_done))
-            print("%8.1f  %s" % (time.monotonic() - self.start, line),
-                  flush=True)
-            if self.report:
-                self.report.feed(line)
-            elif line.strip() == KTAP_VERSION:
-                raise BootFailed("a test report from a disk that is not a "
-                                 "test disk: " + line)
-            parsed = parse_line(line)
-            if not parsed:
-                if LINE_START.search(line):
-                    raise BootFailed("a line not in the log's form "
-                                     "(docs/spec/log.md T1): " + line)
-                continue
-            if reports_failure(parsed) and not self.accepted.take(parsed):
-                raise BootFailed("reported a failure: "
-                                 + line[LINE_START.search(line).start():])
-            if any(event.matches(parsed) for event in self.refused):
-                raise BootFailed("reported a line this boot refuses: "
-                                 + line[LINE_START.search(line).start():])
-            if self.script:
-                self.script.take(parsed)
-            if WINDOW_MADE.matches(parsed) or CONSOLE_WINDOW.matches(parsed):
-                self.window = parsed[2]
-            if self.mode == "fallback":
-                self.check_window_before_end(parsed, line)
-            if BACKGROUND.matches(parsed):
-                check_spinner(parsed[2], line)
-            if self.size and any(d.matches(parsed) for d in DISPLAYS):
-                check_display(parsed[2], line, self.size)
+            parsed = self.take(line)
             for index, event in enumerate(wanted):
                 if event.matches(parsed):
                     seen[index] += 1
-            for watch in [w for w in self.watches if w[0].matches(parsed)]:
-                self.watches.remove(watch)
-                watch[1]()
+
+    def read_for(self, seconds):
+        """Read the lines that have come, and those that come within
+        seconds, checking each as wait_for does."""
+        deadline = time.monotonic() + seconds
+        while True:
+            try:
+                line = self.lines.get(
+                    timeout=max(deadline - time.monotonic(), 0))
+            except queue.Empty:
+                return
+            if line is None:
+                raise BootFailed("QEMU ended")
+            self.take(line)
+
+    def take(self, line):
+        """Print a line read from the guest and check it, as the class
+        says; its component, event and keys, or None for a line that is
+        not nova-os's."""
+        print("%8.1f  %s" % (time.monotonic() - self.start, line),
+              flush=True)
+        if self.report:
+            self.report.feed(line)
+        elif line.strip() == KTAP_VERSION:
+            raise BootFailed("a test report from a disk that is not a "
+                             "test disk: " + line)
+        parsed = parse_line(line)
+        if not parsed:
+            if LINE_START.search(line):
+                raise BootFailed("a line not in the log's form "
+                                 "(docs/spec/log.md T1): " + line)
+            return None
+        if reports_failure(parsed) and not self.accepted.take(parsed):
+            raise BootFailed("reported a failure: "
+                             + line[LINE_START.search(line).start():])
+        if any(event.matches(parsed) for event in self.refused):
+            raise BootFailed("reported a line this boot refuses: "
+                             + line[LINE_START.search(line).start():])
+        if self.script:
+            self.script.take(parsed)
+        if WINDOW_MADE.matches(parsed) or CONSOLE_WINDOW.matches(parsed):
+            self.window = parsed[2]
+        if parsed[:2] == BUDGET_LINE:
+            self.take_budget(line)
+        if self.mode == "fallback":
+            self.check_window_before_end(parsed, line)
+        if BACKGROUND.matches(parsed):
+            check_spinner(parsed[2], line)
+        if self.size and any(d.matches(parsed) for d in DISPLAYS):
+            check_display(parsed[2], line, self.size)
+        for watch in [w for w in self.watches if w[0].matches(parsed)]:
+            self.watches.remove(watch)
+            watch[1]()
+        return parsed
+
+    def take_budget(self, line):
+        """Keep the keys of line, a budget line of the compositor, under
+        the line's kind. Fail if the disk is not a test disk, whose
+        compositor alone writes one, or if the text after the line's
+        event is not, whole, what display.md D19's rule 8 gives
+        (BUDGET_FORM), which a key lost, added, repeated, quoted or out
+        of order is not."""
+        text = line[LINE_START.search(line).start():]
+        if not self.report:
+            raise BootFailed("a budget line from a disk that is not a test "
+                             "disk: " + text)
+        form = BUDGET_FORM.fullmatch(find_line(line).group(3))
+        if not form:
+            raise BootFailed("a budget line that is not in the form "
+                             "docs/spec/display.md D19's rule 8 gives: "
+                             + text)
+        keys = form.groupdict()
+        self.budgets[keys["change"]].append(keys)
 
     def check_window_before_end(self, parsed, line):
         """Fail if parsed, a line of the fallback boot, is an end of the
@@ -2072,15 +2191,70 @@ def log_out(serial, qmp):
     serial.wait_for([session_ended(0)], time.monotonic() + KEY_TIMEOUT)
 
 
+def check_budgets(serial, qmp, screen):
+    """Have the compositor of a test disk write its budget lines
+    (docs/spec/display.md D19, rule 8), and print them: with the shell at
+    its prompt in the console's window, send each of BUDGET_MOVES in turn
+    until BUDGET_LINES lines for the pointer have been read since the
+    first move, then each of BUDGET_TYPED in turn until as many for a
+    present have been read since the first key, reading the log for
+    BUDGET_PACE after each, and print the last of each kind, the line
+    whose frames the boot's own moves or keys made, with screen, the
+    screen's size as the console's window line gives it. A letter is
+    always sent with the Backspace that erases it, so the prompt is left
+    empty. Fail if SCREEN_TIMEOUT passes before the lines have come. A
+    figure over display.md D9's budget fails nothing: a shared runner's
+    time varies, and the figures are printed to be read.
+
+    The lines read before a kind's first move or key are not counted,
+    and every line of the kind that the compositor wrote before then has
+    been read by then: it composes a frame of the pointer's only when the
+    boot moves the tablet, which the boot last did before it logged in or
+    turned the wheel, and no window presents while the tablet alone
+    moves, which takes far longer than a line takes to arrive."""
+    changes = [
+        (BUDGET_POINTER, [move("abs", at) for at in BUDGET_MOVES],
+         " and ".join("abs %d %d" % (at["x"], at["y"])
+                      for at in BUDGET_MOVES)),
+        (BUDGET_PRESENT, [[key_event(item) for item in keys.split()]
+                          for keys in BUDGET_TYPED],
+         " and ".join("keys " + keys for keys in BUDGET_TYPED))]
+    deadline = time.monotonic() + SCREEN_TIMEOUT
+    serial.read_for(0)
+    for change, sends, sent in changes:
+        lines = serial.budgets[change]
+        wanted = len(lines) + BUDGET_LINES
+        print("          input-send-event %s, in turn, until %d budget "
+              "lines for change=%s" % (sent, BUDGET_LINES, change),
+              flush=True)
+        while len(lines) < wanted:
+            if time.monotonic() >= deadline:
+                raise BootFailed(
+                    "after %d s the compositor has logged %d of the %d "
+                    "budget lines for change=%s that the boot's moves and "
+                    "keys must make" % (SCREEN_TIMEOUT,
+                                        len(lines) + BUDGET_LINES - wanted,
+                                        BUDGET_LINES, change))
+            for events in sends:
+                qmp.execute("input-send-event", events=events)
+                serial.read_for(BUDGET_PACE)
+        print("          the %s screen's budget for change=%s: %s"
+              % (screen, change, " ".join(
+                  "%s=%s" % item for item in lines[wanted - 1].items()
+                  if item[0] != "change")), flush=True)
+
+
 def drive(serial, qmp_path, data, accounts, first, screens, scratch,
-          steady, window):
+          tests, window):
     """Over QMP: send the pointer's events, then, with accounts, and with
     screens, the program ci/screens.c builds to, check the login prompt
     as check_prompt does, create the account or log in with it as log_in
     does, and with screens check the wheel as scroll does, with the caret
-    steady or not; then, with accounts, end the session as log_out does.
-    window is the keys of the console's window line where the console is in
-    a window, or None."""
+    steady on a test disk, which tests says the disk is, and not on
+    another; then, with accounts, on a test disk whose console is in a
+    window, have the compositor write its budget lines as check_budgets
+    does, and end the session as log_out does. window is the keys of the
+    console's window line where the console is in a window, or None."""
     geometry = Geometry.of(window) if window else None
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(QMP_TIMEOUT)
@@ -2089,12 +2263,14 @@ def drive(serial, qmp_path, data, accounts, first, screens, scratch,
             qmp = Qmp(stream)
             point(serial, qmp, window)
             if accounts and screens:
-                check_prompt(qmp, scratch, screens, steady, geometry, first)
+                check_prompt(qmp, scratch, screens, tests, geometry, first)
             if accounts:
                 log_in(serial, qmp, data, first)
             if screens:
-                scroll(serial, qmp, data, screens, scratch, steady,
+                scroll(serial, qmp, data, screens, scratch, tests,
                        geometry)
+            if accounts and tests and window:
+                check_budgets(serial, qmp, window["screen"])
             if accounts:
                 log_out(serial, qmp)
 

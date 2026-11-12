@@ -79,49 +79,12 @@ UINT32 endpoint_take(INPUT_DEVICE *device, const void *message,
 /* ------------------------------------------------------------------------
    Lines. */
 
-/* A line of the log built whole, then written with one call, which the
-   kernel writes in one piece, so that no other process's line lands
-   among its pieces. A line longer than the buffer is cut short, before
-   the LINE_END bytes its end and the NUL take. */
-typedef struct {
-    char text[DEBUG_WRITE_MAX_BYTES];
-    UINT32 length;
-} LINE;
-
-#define LINE_END 3
-#define DECIMAL_DIGITS_MAX 20
-
-static void line_add(LINE *l, const char *piece)
-{
-    for (; *piece && l->length + LINE_END < sizeof l->text; piece++)
-        l->text[l->length++] = *piece;
-}
-
-static void line_number(LINE *l, UINT64 n)
-{
-    char digits[DECIMAL_DIGITS_MAX + 1];
-    UINT32 at = DECIMAL_DIGITS_MAX;
-
-    digits[at] = 0;
-    do
-        digits[--at] = (char)('0' + n % 10);
-    while (n /= 10);
-    line_add(l, digits + at);
-}
-
+/* Add n to the line, in decimal, after a minus sign if it is below 0. */
 static void line_signed(LINE *l, INT32 n)
 {
     if (n < 0)
         line_add(l, "-");
     line_number(l, n < 0 ? (UINT64)(-(INT64)n) : (UINT64)n);
-}
-
-static void line_write(LINE *l, ENDPOINT_WRITE write)
-{
-    l->text[l->length++] = '\r';
-    l->text[l->length++] = '\n';
-    l->text[l->length] = 0;
-    write(l->text);
 }
 
 static void line_range(LINE *l, const char *key, const INPUT_RANGE *r)
@@ -133,7 +96,7 @@ static void line_range(LINE *l, const char *key, const INPUT_RANGE *r)
 }
 
 void endpoint_describe(const char *component, const INPUT_DEVICE *d,
-                       ENDPOINT_WRITE write)
+                       LINE_WRITE write)
 {
     LINE l;
 
@@ -210,7 +173,7 @@ static int noted(const ENDPOINT_NOTES *notes, UINT32 note)
 /* Log note unless it says what the one before did, so that a run of
    motion of one kind, or of turns one way, is one line. */
 static void pointer_line(ENDPOINT_NOTES *notes, const char *component,
-                         UINT32 note, ENDPOINT_WRITE write)
+                         UINT32 note, LINE_WRITE write)
 {
     UINT32 detail = note & NOTE_DETAIL;
     LINE l;
@@ -247,7 +210,7 @@ static void pointer_line(ENDPOINT_NOTES *notes, const char *component,
 }
 
 void endpoint_pointer(ENDPOINT_NOTES *notes, const char *component,
-                      const INPUT_POINTER *report, ENDPOINT_WRITE write)
+                      const INPUT_POINTER *report, LINE_WRITE write)
 {
     UINT32 i;
 

@@ -136,7 +136,8 @@ CI checks every pull request and every push to main:
   `tools/check-outline.c`,
   `tools/check-compose.c`, `tools/check-window.c`,
   `tools/check-mapping.c`, `tools/check-route.c`,
-  `tools/check-backlog.c`, `tools/check-keyroute.c`, `tools/check-nvo.c`,
+  `tools/check-backlog.c`, `tools/check-keyroute.c`,
+  `tools/check-budget.c`, `tools/check-nvo.c`,
   `tools/check-decimal.c` (on the decimal test cases it downloads, pinned
   by sha256),
   `design/backgrounds/check-limb.sh`, `ci/check-mkinterface.sh`, which
@@ -147,8 +148,9 @@ CI checks every pull request and every push to main:
   which failure lines the fallback and no-answer boots accept, which
   lines the no-answer and window boots refuse, in what order the window
   boot's pointer and key lines must
-  come, and how
-  the screens a boot waits for are polled, and
+  come, how
+  the screens a boot waits for are polled, and which budget lines of the
+  compositor a boot takes and prints, and
   actionlint over the workflows.
 - **Boot** boots the reproduced disks under QEMU with Ubuntu 24.04's
   OVMF, with a copy of `data.img` as the data disk: `disk.img`, the
@@ -170,7 +172,12 @@ CI checks every pull request and every push to main:
   session then fills the console's panel, and the wheel scrolls it back
   and forward through the window, each screen checked equal to the one
   `ci/screens.c` draws, the compositor's wallpaper made from the kernel's
-  background on `disk.img` and computed on `test.img`. Each of these
+  background on `disk.img` and computed on `test.img`. On `test.img`,
+  whose compositor logs what its frames cost, the boot then moves the
+  tablet and types until the compositor has logged the budget line of
+  each kind twice, and prints the second of each
+  ([display.md D19](docs/spec/display.md#d19-the-build-plan), rule 8).
+  Each of these
   sessions ends with logout, which login must report. A boot of the test
   disk boots the same data disk again, logs in with that account, which
   it must still hold, and its data disk's check reads back what the
