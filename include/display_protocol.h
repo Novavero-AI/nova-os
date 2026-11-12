@@ -183,9 +183,14 @@ _Static_assert(sizeof(INPUT_BUTTON) == 4, "one layout on every target");
     arrangement, rule 9). */
 #define COMPOSITOR_OPTION_NO_ANSWER_TEST 0x4
 
+/** Log what the frames cost, the budget lines (D19's phase 3 arrangement,
+    rule 8). */
+#define COMPOSITOR_OPTION_BUDGETS 0x8
+
 /** Every option. */
 #define COMPOSITOR_OPTIONS (COMPOSITOR_OPTION_REDUCE_MOTION | \
-    COMPOSITOR_OPTION_EXIT_TEST | COMPOSITOR_OPTION_NO_ANSWER_TEST)
+    COMPOSITOR_OPTION_EXIT_TEST | COMPOSITOR_OPTION_NO_ANSWER_TEST | \
+    COMPOSITOR_OPTION_BUDGETS)
 
 /** Its supervisor closed its control channel, or the platform driver closed
     the bootstrap channel the input endpoints come on. */

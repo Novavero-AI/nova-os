@@ -184,7 +184,9 @@ draw and, once its driver runs, keeps QEMU from capturing the mouse.
 - `out/test.img` in place of `out/disk.img` boots the system and runs
   its tests, which report on the serial port in KTAP; they write their
   files in the data disk's `/data/fstest`. The console's caret does not
-  blink on it, so that a screen can be compared.
+  blink on it, so that a screen can be compared, and the compositor logs
+  what its frames cost, a line for every 16 that the pointer's motion or
+  a window's present damaged.
 - `out/fallback.img` in place of `out/disk.img` runs the tests and has
   the compositor take the display and end at each start, once it shows
   the console's window, until it is given up and the console takes the

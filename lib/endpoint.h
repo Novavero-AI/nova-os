@@ -7,16 +7,15 @@
     endpoints and log the same lines (docs/spec/display.md D19, rule 8),
     so both use this library.
 
-    Nothing here makes a system call or logs: a line is built whole and
-    handed to a function the caller gives, which writes it. */
+    Nothing here makes a system call or logs: a line is built whole
+    (line.h) and handed to a function the caller gives, which writes
+    it. */
 
 #ifndef NOVA_ENDPOINT_H
 #define NOVA_ENDPOINT_H
 
 #include "input_protocol.h"
-
-/** Writes one log line, NUL-terminated and ending in "\r\n". */
-typedef void (*ENDPOINT_WRITE)(const char *line);
+#include "line.h"
 
 /** The pointer line logged last, which decides whether the next is left
     out (C6). Zero it before a client's first report; one is kept for all
@@ -69,7 +68,7 @@ UINT32 endpoint_take(INPUT_DEVICE *device, const void *message,
     kind=keyboard`, or `input kind=pointer` with each absolute axis's
     range, such as `x=0..32767 y=0..32767` (C6). */
 void endpoint_describe(const char *component, const INPUT_DEVICE *d,
-                       ENDPOINT_WRITE write);
+                       LINE_WRITE write);
 
 /** Write the lines that say what report (which endpoint_is_report
     accepted) does (C6), one for each of: the absolute axes it sets, the
@@ -78,6 +77,6 @@ void endpoint_describe(const char *component, const INPUT_DEVICE *d,
     the same as that one, which updates notes. Nothing of where the
     pointer is or how far it moved is written. */
 void endpoint_pointer(ENDPOINT_NOTES *notes, const char *component,
-                      const INPUT_POINTER *report, ENDPOINT_WRITE write);
+                      const INPUT_POINTER *report, LINE_WRITE write);
 
 #endif

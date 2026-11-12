@@ -289,13 +289,13 @@ program virtinp.exe virtio_input_main -I native -I lib -I drivers \
 program console.exe console_main -I native -I lib -I gfx -I kernel/random \
   console/console.c console/pane.c console/text.c console/view.c \
   console/panel.c gfx/gfx.c gfx/flush.c gfx/raster.c gfx/font.c gfx/limb.c \
-  lib/endpoint.c lib/keymap.c lib/mapping.c lib/timing.c lib/log.c \
-  native/native.S
+  lib/endpoint.c lib/line.c lib/keymap.c lib/mapping.c lib/timing.c \
+  lib/log.c native/native.S
 program compose.exe compositor_main -I native -I lib -I gfx -I compositor \
   compositor/compositor.c compositor/serve.c lib/compose.c lib/outline.c \
   lib/window.c lib/backlog.c lib/route.c lib/endpoint.c lib/keyroute.c \
-  lib/keymap.c lib/mapping.c lib/timing.c lib/log.c gfx/gfx.c gfx/flush.c \
-  gfx/raster.c gfx/limb.c native/native.S
+  lib/keymap.c lib/budget.c lib/line.c lib/mapping.c lib/timing.c \
+  lib/log.c gfx/gfx.c gfx/flush.c gfx/raster.c gfx/limb.c native/native.S
 program wintest.exe wintest_main -I native -I lib -I gfx -I test \
   test/wintest.c lib/mapping.c lib/timing.c lib/log.c native/native.S
 program store.exe store_main -I native -I lib -I kernel/random \
@@ -400,12 +400,15 @@ logout_disk "$@"
 
 # The test disk holds the same files, the data disk's check, TESTS, an
 # empty file, which makes the kernel and the first process run their
-# tests and report them, and NOMOTION, an empty file, which on a test
+# tests and report them, NOMOTION, an empty file, which on a test
 # disk makes the first process set ui.reduce-motion, so that the
-# console's caret holds still for a screen to be compared.
+# console's caret holds still for a screen to be compared, and BUDGETS,
+# an empty file, which on a test disk makes the first process have the
+# compositor log what its frames cost.
 : > TESTS
 : > NOMOTION
-set -- "$@" fstest.exe TESTS NOMOTION
+: > BUDGETS
+set -- "$@" fstest.exe TESTS NOMOTION BUDGETS
 ./mkimage test.img test.vhdx "$@"
 
 # The specimen disk holds the test disk's files and SPECIMEN, an empty
