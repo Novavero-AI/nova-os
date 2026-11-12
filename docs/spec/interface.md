@@ -981,9 +981,9 @@ and its bootstrap channel
    what proves the description reproduces the header.
 2. **The functions.** The console's checks of its bootstrap, control
    and session messages (`console/console.c`), the first process's
-   setups and its check of the console's answer (`init/console.c`), and
-   a client's reads and writes and its check of a line
-   (`lib/console.c`) use the generated functions in place of their own.
+   setups (`init/console.c`), and a client's reads and writes and its
+   check of a line (`lib/console.c`) use the generated functions in
+   place of their own.
    `tools/check-console-protocol.c`, which the Lint job builds with the
    host's compiler and runs, as it runs `tools/check-text.c`, and which
    `ci/clang-warnings.sh`'s list of C11 sources gains, encodes each
@@ -1030,7 +1030,7 @@ service's own.
 
 | Header | Described as | Outside the language |
 |---|---|---|
-| `console_protocol.h` | [P19](#p19-the-consoles-description) | Which display a background must match, its sections' number, and a session's one read at a time (console.md C4, C5) |
+| `console_protocol.h` | [P19](#p19-the-consoles-description) | A session's one read at a time (console.md C4) |
 | `input_protocol.h` | One channel, the driver its server; events selected by the `u16` `type`; the description a `first` event; `INPUT_POINTER`'s `button` an array counted by `buttons`; signed `i32` fields | Which events follow, by the description's kind |
 | `block_protocol.h` | Requests selected by `operation`, each with a `BLOCK_REPLY` reply with `status`; `BLOCK_ATTACH`'s section `travels read write pin transfer needs read write pin`; `invalid server answer` with that reply | The attach first and once. A message under four bytes is closed, where the driver answers it with transaction 0 |
 | `file_protocol.h` | `FILE_REQUEST` requests selected by `operation`; an open's endpoint a handle and its reply `on` the opened channel; reads' and writes' bytes counted by `length` and `information`; `FILE_REPLY`'s `status`, whose 0 is `FILE_OK` | The open's disposition and access, NT's values |
@@ -1056,7 +1056,14 @@ same forms. `native_abi.h` is not described ([P1](#p1-the-parts)).
 **Decided.** `interfaces/console.desc`, as [P17](#p17-the-console-first)'s
 first step commits it, reproducing the hand-written header, is the text
 below. Phase 3 then adds to it [console.md C2](console.md#c2-starting-the-console)'s
-kinds 4 to 6 and makes `CONSOLE_CONTROL_CAPACITY` `CONSOLE_SESSIONS` + 3:
+kinds 4 to 6 and makes `CONSOLE_CONTROL_CAPACITY` `CONSOLE_SESSIONS` + 3.
+Its `background` request and `prepared` reply are marked `retired`
+([P11](#p11-numbers-and-change), rule 3;
+[console.md C1](console.md#c1-the-display-handoff)), so the tracked
+header keeps `CONSOLE_SETUP_BACKGROUND` and
+`CONSOLE_SETUP_BACKGROUND_MESSAGE`, has no function for either message,
+and has no `CONSOLE_PREPARED_SIZE`, which the tracked description does
+not declare:
 
 ```
 # The console's protocols (docs/spec/console.md): a client's session,

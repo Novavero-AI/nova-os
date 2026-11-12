@@ -264,8 +264,8 @@ logs the process's end and exit code if they come.
   ([input.md K3](input.md#k3-the-report-and-the-client)).
 - **Why the background before the report:** the kernel draws while the
   first process starts, so the two overlap wherever the process waits,
-  and the process has the image in time to have the console prepare its
-  panel from it before it reports
+  and the process holds the image before the release, in time to give
+  it to the compositor with the display
   ([console.md C1](console.md#c1-the-display-handoff)).
 - **Cost:** the kernel holds its end of the channel, a page, until the
   fade ends, and a first process that closes its endpoint before it

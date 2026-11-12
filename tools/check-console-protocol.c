@@ -4,10 +4,12 @@
    the values of their tables is the bytes a structure laid out by hand
    holds, with the handles' rights those tables give, and passes its own
    check and its channel's dispatcher; and each message C4 says ends a
-   session, or that C2 refuses, fails its check. A read that comes while
-   the session's earlier read waits is the console's own state, not a
-   message's, and is outside this check. Prints each failure and a count,
-   and exits nonzero if any check fails.
+   session, or that C2 refuses, fails its check. The kind C2 retires, the
+   background, keeps its number, has no function, its answer none either,
+   and is refused by the dispatcher as a kind the channel does not have
+   (P11). A read that comes while the session's earlier read waits is the
+   console's own state, not a message's, and is outside this check. Prints
+   each failure and a count, and exits nonzero if any check fails.
 
    cc -std=c11 -Wall -Wextra -pedantic -I include \
      -o check-console-protocol tools/check-console-protocol.c &&
@@ -42,13 +44,17 @@ _Static_assert(CONSOLE_OPTION_REDUCE_MOTION == 0x1 &&
                    CONSOLE_OPTIONS == CONSOLE_OPTION_REDUCE_MOTION,
                "C2: the options' one bit");
 _Static_assert(CONSOLE_CONTROL_CAPACITY == CONSOLE_SESSIONS + 3,
-               "C2: the control channel queues the options, the background "
-               "or a connection, the display or the display after a "
-               "compositor, and a session for each the console serves");
+               "C2: the control channel queues the options, a connection, "
+               "the display or the display after a compositor, and a "
+               "session for each the console serves");
 
+/* The bytes of the retired background, the control channel's longest
+   message: a setup, the display record and the background's label; and
+   the sections one is given here. */
 #define DISPLAY_RECORD_BYTES 24
 #define BACKGROUND_LABEL_BYTES 16
 #define BACKGROUND_MESSAGE_BYTES (8 + DISPLAY_RECORD_BYTES + BACKGROUND_LABEL_BYTES)
+#define BACKGROUND_SECTIONS 3
 
 static unsigned failures;
 
@@ -99,6 +105,29 @@ static const RECEIVED_HANDLE none[1] = {{0, 0, 0}};
 static int same(const void *got, const UINT8 *want, UINT32 count)
 {
     return memcmp(got, want, count) == 0;
+}
+
+/* The names the retired background and its answer would have. The header
+   makes none, so these are the only definitions: a header that made them
+   would not compile. */
+static UINT32 console_control_background_check(void)
+{
+    return CONSOLE_SETUP_BACKGROUND;
+}
+
+static UINT32 console_control_background_encode(void)
+{
+    return CONSOLE_SETUP_BACKGROUND;
+}
+
+static UINT32 console_control_prepared_check(void)
+{
+    return CONSOLE_SETUP_BACKGROUND;
+}
+
+static UINT32 console_control_prepared_encode(void)
+{
+    return CONSOLE_SETUP_BACKGROUND;
 }
 
 /* A request laid out as C4 gives it, with a transaction, an operation
@@ -279,12 +308,11 @@ static void check_session_refusals(void)
 static void check_control_messages(void)
 {
     CONSOLE_SETUP_DISPLAY_MESSAGE display;
-    CONSOLE_SETUP_BACKGROUND_MESSAGE background;
     CONSOLE_SETUP_OPTIONS_MESSAGE options;
     CONSOLE_SETUP setup;
-    HANDLE_TRANSFER transfers[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
-    UINT32 values[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
-    RECEIVED_HANDLE received[BOOTSTRAP_BACKGROUND_SECTIONS_MAX + 1];
+    HANDLE_TRANSFER transfers[1];
+    UINT32 values[1];
+    RECEIVED_HANDLE received[BACKGROUND_SECTIONS];
     UINT8 want[BACKGROUND_MESSAGE_BYTES];
     UINT32 size = 7, which = 0, status, i;
 
@@ -491,20 +519,9 @@ static void check_control_messages(void)
     check(status == ERR_INVALID_ARGS && size == 0,
           "an options setup with a bit no option has is not encoded");
 
-    /* The background: a setup of kind 3, the display it is to be given,
-       the label, and the kernel's sections with READ. */
-    background.setup.transaction = 0;
-    background.setup.kind = 0;
-    background.display = display.display;
-    background.background.background = 1;
-    background.background.width = 1280;
-    background.background.height = 800;
-    background.background.format = 1;
-    for (i = 0; i < 3; i++)
-        values[i] = 10 + i;
-    status = console_control_background_encode(&background, values, 3,
-                                               transfers, buffer.bytes,
-                                               &size);
+    /* The background, retired: a setup of kind 3, the display, the label
+       and the kernel's sections with READ are refused as a kind the
+       channel does not have, and so is the setup alone. */
     memset(want, 0, sizeof want);
     set32(want + 4, CONSOLE_SETUP_BACKGROUND);
     display_record(want + 8);
@@ -512,55 +529,27 @@ static void check_control_messages(void)
     set32(want + 36, 1280);
     set32(want + 40, 800);
     set32(want + 44, 1);
-    check(status == OK && size == 48 && same(buffer.bytes, want, 48),
-          "a background setup is a setup, the display and the label");
-    check(transfers[2].handle == 12 && transfers[2].rights == SECTION_RIGHT_READ,
-          "the background's sections travel with READ");
-    for (i = 0; i < 3; i++) {
+    for (i = 0; i < BACKGROUND_SECTIONS; i++) {
         received[i].handle = 10 + i;
         received[i].type = TYPE_SECTION;
         received[i].rights = SECTION_RIGHT_READ;
     }
-    check(console_control_request_check(buffer.bytes, 48, received, 3,
-                                        &which) == OK &&
+    check(console_control_request_check(want, BACKGROUND_MESSAGE_BYTES,
+                                        received, BACKGROUND_SECTIONS,
+                                        &which) == ERR_NOT_SUPPORTED &&
               which == CONSOLE_SETUP_BACKGROUND,
-          "a background setup passes and is named the background");
-    check(console_control_request_check(buffer.bytes, 48, received, 0,
-                                        &which) == OK,
-          "a background setup with no section passes");
-    received[1].rights = 0;
-    check(console_control_request_check(buffer.bytes, 48, received, 3,
-                                        &which) == ERR_INVALID_ARGS,
-          "a background section without READ is refused");
-    check(console_control_background_encode(&background, values,
-                                            BOOTSTRAP_BACKGROUND_SECTIONS_MAX +
-                                                1,
-                                            transfers, buffer.bytes,
-                                            &size) == ERR_INVALID_ARGS,
-          "a background of more than 64 sections is refused");
-
-    /* The answer: a transaction of 0 and no handle. */
-    status = console_control_prepared_encode(0, buffer.bytes, &size);
-    memset(want, 0, sizeof want);
-    check(status == OK && size == CONSOLE_PREPARED_SIZE &&
-              same(buffer.bytes, want, 4),
-          "the answer to a background is a transaction of 0");
-    check(console_control_prepared_check(buffer.bytes, 4, none, 0) == OK,
-          "the answer passes its check");
-    check(console_control_prepared_check(buffer.bytes, 4, none, 1) ==
-              ERR_INVALID_ARGS,
-          "an answer that carries a handle is refused");
-    check(console_control_prepared_check(buffer.bytes, 5, none, 0) ==
-              ERR_INVALID_ARGS,
-          "an answer of five bytes is refused");
-    set32(buffer.bytes, 1);
-    check(console_control_prepared_check(buffer.bytes, 4, none, 0) ==
-              ERR_INVALID_ARGS,
-          "an answer with a transaction other than 0 is refused");
-    check(console_control_prepared_encode(1, buffer.bytes, &size) ==
-                  ERR_INVALID_ARGS &&
-              size == 0,
-          "an answer with a transaction other than 0 is not encoded");
+          "a background setup is refused as a kind the channel does not "
+          "have, and named as it is");
+    check(console_control_request_check(want, CONSOLE_SETUP_SIZE, none, 0,
+                                        &which) == ERR_NOT_SUPPORTED &&
+              which == CONSOLE_SETUP_BACKGROUND,
+          "a setup of the background's kind alone is refused the same way");
+    check(console_control_background_check() +
+                  console_control_background_encode() +
+                  console_control_prepared_check() +
+                  console_control_prepared_encode() ==
+              4 * CONSOLE_SETUP_BACKGROUND,
+          "the background and its answer have no functions");
 }
 
 static void check_bootstrap_messages(void)
