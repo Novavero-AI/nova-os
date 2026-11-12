@@ -104,10 +104,13 @@ UINT32 window_scale(UINT32 screen_height);
     without it. */
 UINT32 window_state(UINT32 layer);
 
-/** Grow *total, the rectangle of what is damaged since a frame, to hold
+/** Grow *total, the one rectangle of what windows damage since a frame
+    (display.md D19, the note on the damage between two frames), to hold
     rect. A rectangle with no pixel, whose left is not below its right or
     whose top is not below its bottom, is empty: it adds nothing, and
-    *total is empty until a rectangle with pixels is added to it. */
+    *total is empty until a rectangle with pixels is added to it. The
+    pointer's boxes are not joined to it (compose.h,
+    COMPOSE_CURSOR_DAMAGE). */
 void window_damage_join(RECT *total, const RECT *rect);
 
 /** The size a window asking for width x height gets (D6, Placement): at

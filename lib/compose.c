@@ -29,10 +29,14 @@
    The pointer's image is drawn over each finished band that holds a pixel
    of its box, whole and cut by the band, so a screen composed in bands of
    any height is the screen composed whole with the image drawn over it.
-   Moving the pointer damages the box at its old place and at its new, each
-   in whole blocks, which is every pixel a frame over them must write for
-   the image to be at its new place and at no other
-   (tools/check-compose.c checks both). */
+   Moving the pointer damages the image's box where the last frame drew it
+   and its box where the pointer is now, each in whole blocks, which is
+   every pixel a frame must write for the image to be at its new place and
+   at no other, since no frame drew it at the places of the moves between.
+   A frame composes the two apart where they share no pixel, so that a
+   move across the screen composes two images and nothing between them,
+   and their join where they share one (tools/check-compose.c checks
+   each). */
 
 #include "compose.h"
 #include "limb.h"
@@ -360,7 +364,13 @@ const char *compose_wallpaper_refusal(const BOOTSTRAP_BACKGROUND *background,
     return 0;
 }
 
-/* Whether two rectangles share a pixel. */
+/* Whether rect holds a pixel. */
+static int has_pixels(const RECT *rect)
+{
+    return rect->left < rect->right && rect->top < rect->bottom;
+}
+
+/* Whether two rectangles that each hold a pixel share one. */
 static int overlap(const RECT *a, const RECT *b)
 {
     return a->left < b->right && b->left < a->right && a->top < b->bottom &&
@@ -387,7 +397,9 @@ void compose_frame(const SCREEN *screen, const COMPOSE_WALLPAPER *wallpaper,
     int pointer = cursor != 0 && cursor->placed;
     INT64 top;
 
-    if (rows < 1)
+    /* A rectangle with no pixel returns before the image's box is found,
+       which costs the tracing of its outlines. */
+    if (rows < 1 || !has_pixels(rect))
         return;
     if (pointer)
         pointer = compose_pointer_box(cursor->work, cursor->image, cursor->x,
@@ -640,26 +652,53 @@ int compose_pointer_box(OUTLINE *work, const COMPOSE_POINTER *pointer,
     return 1;
 }
 
-UINT32 compose_cursor_move(COMPOSE_CURSOR *cursor, const SCREEN *screen,
-                           INT64 x, INT64 y, RECT boxes[2])
+void compose_cursor_move(COMPOSE_CURSOR *cursor, const SCREEN *screen,
+                         INT64 x, INT64 y, COMPOSE_CURSOR_DAMAGE *damage)
 {
     RECT before, after;
-    UINT32 count = 0;
 
     if (cursor->placed && cursor->x == x && cursor->y == y)
-        return 0;
+        return;
     if (!compose_pointer_box(cursor->work, cursor->image, x, y,
                              cursor->quarters, &after))
-        return 0;
-    /* The image was accepted at the old place, and the image and the scale
-       have not changed, so its box is found again. */
-    if (cursor->placed &&
-        compose_pointer_box(cursor->work, cursor->image, cursor->x, cursor->y,
-                            cursor->quarters, &before))
-        boxes[count++] = compose_blocks(screen, &before);
-    boxes[count++] = compose_blocks(screen, &after);
+        return;
+    if (!damage->moved) {
+        /* Fields, not an initializer, as in compose_pointer_box. A pointer
+           with no place leaves no box. One with a place was accepted
+           there, and the image and the scale have not changed, so its box
+           is found again. */
+        before.left = 0;
+        before.top = 0;
+        before.right = 0;
+        before.bottom = 0;
+        if (cursor->placed)
+            compose_pointer_box(cursor->work, cursor->image, cursor->x,
+                                cursor->y, cursor->quarters, &before);
+        damage->old = compose_blocks(screen, &before);
+        damage->moved = 1;
+    }
+    damage->now = compose_blocks(screen, &after);
     cursor->placed = 1;
     cursor->x = x;
     cursor->y = y;
+}
+
+UINT32 compose_cursor_rects(const COMPOSE_CURSOR_DAMAGE *damage,
+                            RECT rects[COMPOSE_CURSOR_RECTS_MAX])
+{
+    int old = has_pixels(&damage->old), now = has_pixels(&damage->now);
+    UINT32 count = 0;
+
+    if (old && now && overlap(&damage->old, &damage->now)) {
+        rects[0].left = smaller(damage->old.left, damage->now.left);
+        rects[0].top = smaller(damage->old.top, damage->now.top);
+        rects[0].right = larger(damage->old.right, damage->now.right);
+        rects[0].bottom = larger(damage->old.bottom, damage->now.bottom);
+        return 1;
+    }
+    if (old)
+        rects[count++] = damage->old;
+    if (now)
+        rects[count++] = damage->now;
     return count;
 }

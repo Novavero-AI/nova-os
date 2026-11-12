@@ -802,10 +802,20 @@ The budgets, at 60 Hz, a frame of 16.7 ms:
 
 | Change | Pixels composed at 2880 x 1800 | Budget, KVM or hardware | Under TCG |
 |---|---|---|---|
-| The pointer moves | Two pointer images, the 22-point arrow with its edge ([look.md V15](look.md#v15-the-pointer)) at scale 2.25: 2 x 36 x 52 | 0.1 ms | Within a frame |
+| The pointer moves | Two pointer images, at its old place and at its new, however far apart: the 22-point arrow with its edge ([look.md V15](look.md#v15-the-pointer)) at scale 2.25, 2 x 36 x 52, each widened to whole blocks of the output ([D8](#d8-composition)) | 0.1 ms | Within a frame |
 | A key typed into a field | One line of text, about 1,600 x 54 | 0.5 ms | Within a frame |
 | A window of 1440 x 900 dragged | Its old and new places, at most 2 x 1,296,000 | 8 ms | 10 to 20 frames a second |
 | The whole screen | 5,184,000 | 16 ms, one frame | 5 to 10 frames a second |
+
+The pointer's row is a move whose two boxes share no pixel, however far
+apart they are: a frame composes the image's box at its old place and
+its box at its new, and nothing between them, so a move from one side of
+the screen to the other composes two images. Where the two boxes share a
+pixel, as those of a move shorter than the image do, the frame composes
+their join, the smallest rectangle that holds both: fewer pixels than
+the two boxes for a move of a few pixels, and more for a move down and
+across by nearly the image's size, under four images
+([D19](#d19-the-build-plan), the note on the pointer's two boxes).
 
 Memory, in the compositor and the programs, at each size:
 
@@ -1823,9 +1833,10 @@ login's session as it does on its own
    over each band that holds a pixel of it, so the screen is the one
    composed without it with the image drawn over, whatever part of the
    screen the frame is of. A motion damages the image's old and new boxes,
-   each in whole blocks of the output, and a report that leaves the
-   position in the same pixel damages nothing. A relative motion moves
-   no pointer (rule 6), so it damages nothing.
+   each in whole blocks of the output, which a frame composes apart from
+   its other damage and, where the two share no pixel, from each other;
+   a report that leaves the position in the same pixel damages nothing.
+   A relative motion moves no pointer (rule 6), so it damages nothing.
 8. **The log,** in [log.md T1](log.md#t1-lines)'s form, each line as
    given and its keys in this order:
    - `nova-compositor: display screen=2880x1800 wallpaper=section
@@ -2111,6 +2122,8 @@ login's session as it does on its own
     the arrow is cut by the screen or lies over a window's edge:
     `tools/check-compose.c` checks the arrow's frames and the damage of a
     move against the whole frame composed with the arrow over it, and
+    that a frame after a move writes the image's two boxes, or their join
+    where they share a pixel, and no other pixel, and
     `tools/check-backlog.c` the bytes of each message the window is sent,
     against the wire layout the description gives.
 
@@ -2158,8 +2171,9 @@ login's session as it does on its own
   is there, so the screen is the same as with the rectangles
   composed alone. Its cost is composing what lies between
   rectangles that are far apart: two corners of a window are the whole
-  window. Not taken: a list of the rectangles; its cost is a bound on
-  its length and a rule for a merge past it.
+  window. The pointer's two boxes are not among them (the note on the
+  pointer's two boxes). Not taken: a list of the rectangles; its cost is
+  a bound on its length and a rule for a merge past it.
 - **Why the limit on a connection's windows counts those it holds
   open:** D5 and D6 give a connection at most `CONNECTION_WINDOWS_MAX`
   windows and do not say whether one it has closed counts. The limit
@@ -2283,25 +2297,41 @@ login's session as it does on its own
   position a fraction of a pixel and rule 7 says a motion damages the
   image's old and new places, and D19's rule 7 puts the hotspot on the
   pixel the position rounds down to, so a report can move the position and
-  leave the image where it was. `compose_cursor_move` answers a move to the
-  pixel the image is on with no box, and the compositor schedules no frame
+  leave the image where it was. `compose_cursor_move` records no box for a
+  move to the pixel the image is on, and the compositor schedules no frame
   for it; the window is sent the position whole whatever the image does.
   Its cost is none that rule 7's rounding does not already have: the image
   shows the pixel and not the fraction. Not taken: damaging the old and new
   boxes for every report; its cost is a frame composed and written for
   every report of a tablet whose range gives a pixel about 11 units, which
   changes no pixel.
-- **Why the pointer's two boxes join the frame's one rectangle:** a move
-  adds the image's old box and its new, each cut by the screen and widened
-  to whole blocks of the output, to the damage the next frame composes
-  (the note on the damage between two frames), and several moves between
-  two frames add several. Its cost is that a move longer than the image
-  composes the rectangle that holds both boxes, up to the whole screen for
-  a move from one side to the other, where D9's row for the pointer's motion
-  counts two images, and that the rectangle holds several moves' boxes where
-  more than one come between two frames. Not taken: a rectangle for each
-  box; its cost is the list and the rule for a merge past its length that
-  the note on the damage between two frames declines.
+- **Why the pointer's two boxes are kept apart from the frame's one
+  rectangle:** a move damages the image's old box, where the last frame
+  drew it, and its new box, where the pointer now is, each cut by the
+  screen and widened to whole blocks of the output. The compositor keeps
+  the two beside the one rectangle that holds the frame's other damage
+  (the note on the damage between two frames), joined neither to that
+  rectangle nor to each other, and the next frame composes the rectangle
+  and then the boxes. Where the two boxes share no pixel it composes
+  each of them and nothing between them, so a move from one side of the
+  screen to the other composes two images, as [D9](#d9-budgets)'s row
+  for the pointer's motion counts. Where they share a pixel it composes
+  their join, the smallest rectangle that holds both, so that no pixel
+  of the two is composed twice. Several moves between two frames keep
+  the old box of the first and the new box of the last: no frame drew
+  the image at the places between, so nothing there is composed, and two
+  boxes hold whatever number of moves, with no list and no merge. Its
+  cost is nine numbers of state beside the rectangle's four; a join that
+  holds pixels of neither box, under four images for a move down and
+  across by nearly the image's size; a pixel that lies both in the
+  frame's rectangle and in a box composed twice, to the same colour; and
+  a box composed once to no effect where the pointer moves away between
+  two frames and back to the pixel the last frame drew it on. Not taken:
+  the two boxes joined to the frame's one rectangle; its cost is that a
+  move longer than the image composes the rectangle that holds both
+  boxes, up to the whole screen for a move from one side to the other,
+  where D9's row counts two images, and that the rectangle holds the
+  boxes of every move that comes between two frames.
 - **Why a compositor that starts has no pointer until both its axes are
   set:** rule 7 draws the pointer once both axes have been set, by the
   absolute reports of one device or of several, as D10's rule 4 gives it a

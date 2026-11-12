@@ -42,8 +42,15 @@
      drawn nowhere; and walks of the hotspot, of one to three moves between
      frames, in which frames over only what the moves damage must leave the
      screen as the whole frame composed with the arrow where the pointer is,
-     and each move must return and set the boxes the arrow's geometry and the
-     output's blocks give.
+     and each move must record the boxes the arrow's geometry and the
+     output's blocks give;
+   - what a frame composes for the pointer's moves (D19's note on the
+     pointer's two boxes), against the rectangles that note gives for the
+     boxes the geometry gives, with the pixels they share found by trying
+     every pixel: a move longer than the image composes its old box and its
+     new and leaves every pixel between them as it was, at the pixels D9's
+     row counts, a move whose boxes share a pixel composes their join, and
+     moves between two frames compose nothing at the places between.
 
    The pointer's outlines, the surfaces' tints and amounts, the edge's
    opacity and TILE_ROWS are read from interfaces/display.desc, which
@@ -3060,7 +3067,7 @@ static void check_cursor_not_drawn(const CURSOR_RIG *rig, UINT32 *screen_memory)
             }
 }
 
-/* The smallest rectangle holding both, as the compositor's damage grows. */
+/* The smallest rectangle holding both, which D19's note calls their join. */
 static void join_rects(RECT *total, const RECT *rect)
 {
     if (rect->left >= rect->right || rect->top >= rect->bottom)
@@ -3088,6 +3095,19 @@ static INT64 block_up(INT64 pixels)
 static int has_pixels(const RECT *rect)
 {
     return rect->left < rect->right && rect->top < rect->bottom;
+}
+
+static int same_rect(const RECT *a, const RECT *b)
+{
+    return a->left == b->left && a->top == b->top && a->right == b->right &&
+           a->bottom == b->bottom;
+}
+
+static INT64 pixels_in(const RECT *rect)
+{
+    return has_pixels(rect)
+               ? (rect->right - rect->left) * (rect->bottom - rect->top)
+               : 0;
 }
 
 /* What the pointer's hotspot at pixel (x, y) damages, from the arrow's
@@ -3118,8 +3138,62 @@ static int is_damage(const RECT *got, const RECT *wanted)
 {
     if (!has_pixels(wanted))
         return !has_pixels(got);
-    return got->left == wanted->left && got->top == wanted->top &&
-           got->right == wanted->right && got->bottom == wanted->bottom;
+    return same_rect(got, wanted);
+}
+
+static int holds(const RECT *rect, INT64 x, INT64 y)
+{
+    return x >= rect->left && x < rect->right && y >= rect->top &&
+           y < rect->bottom;
+}
+
+/* Whether two rectangles within the scene share a pixel, found by trying
+   every pixel of the scene and not by comparing their edges, as the
+   composer does. */
+static int share_pixel(const RECT *a, const RECT *b)
+{
+    INT64 x, y;
+
+    for (y = 0; y < SCENE_HEIGHT; y++)
+        for (x = 0; x < SCENE_WIDTH; x++)
+            if (holds(a, x, y) && holds(b, x, y))
+                return 1;
+    return 0;
+}
+
+/* What D19's note on the pointer's two boxes has a frame compose for the
+   image's old box and its new, each within the scene: each that has a
+   pixel, the old first, where they share none, and their join alone where
+   they share one. Returns how many. */
+static UINT32 wanted_rects(const RECT *old_box, const RECT *new_box,
+                           RECT wanted[COMPOSE_CURSOR_RECTS_MAX])
+{
+    UINT32 count = 0;
+
+    if (share_pixel(old_box, new_box)) {
+        wanted[0] = *old_box;
+        join_rects(&wanted[0], new_box);
+        return 1;
+    }
+    if (has_pixels(old_box))
+        wanted[count++] = *old_box;
+    if (has_pixels(new_box))
+        wanted[count++] = *new_box;
+    return count;
+}
+
+/* Whether the count rectangles got are the wanted_count wanted, in order. */
+static int are_rects(const RECT *got, UINT32 count, const RECT *wanted,
+                     UINT32 wanted_count)
+{
+    UINT32 i;
+
+    if (count != wanted_count)
+        return 0;
+    for (i = 0; i < count; i++)
+        if (!same_rect(&got[i], &wanted[i]))
+            return 0;
+    return 1;
 }
 
 /* The pixel a step of a walk moves the hotspot to: where it is, a
@@ -3150,47 +3224,67 @@ static void walk_place(const COMPOSE_CURSOR *cursor, INT64 *x, INT64 *y)
     }
 }
 
+/* The walk's own account of the screen, kept apart from the cursor and
+   its damage: whether the last frame drew the image and with its hotspot
+   on which pixel, and whether a move has come since that frame. */
 typedef struct {
-    INT64 counts; /* moves that returned other than 0, 1 or 2 as stated */
+    int drawn;
+    INT64 x, y;
+    int moved;
+} WALK_SHOWN;
+
+typedef struct {
     INT64 state;  /* moves that left the pointer other than where moved to */
-    INT64 boxes;  /* moves that set boxes other than the geometry's */
+    INT64 boxes;  /* moves that recorded boxes other than the geometry's */
+    INT64 still;  /* moves to the pixel the pointer is on that changed a box */
+    INT64 rects;  /* frames whose rectangles are not those D19's note gives */
 } WALK_FAULTS;
 
-/* One move of the walk: its return, the pointer it leaves and the boxes it
-   sets are what the header says, and what it damages joins damage. */
-static void walk_move(const CURSOR_RIG *rig, const THEME_POINTER *theme,
-                      COMPOSE_CURSOR *cursor, RECT *damage,
-                      WALK_FAULTS *faults)
+static int same_damage(const COMPOSE_CURSOR_DAMAGE *a,
+                       const COMPOSE_CURSOR_DAMAGE *b)
 {
-    RECT untouched = {7, 8, 9, 10}, boxes[2], old_box, new_box;
-    INT64 x, y, was_x = cursor->x, was_y = cursor->y;
-    int was_placed = cursor->placed != 0, same;
-    UINT32 wanted, got, i;
+    return a->moved == b->moved && same_rect(&a->old, &b->old) &&
+           same_rect(&a->now, &b->now);
+}
+
+/* The image's box where the last frame drew it, from the geometry; no
+   pixel where it drew none. */
+static RECT shown_box(const CURSOR_RIG *rig, const THEME_POINTER *theme,
+                      const WALK_SHOWN *shown)
+{
+    RECT none = {0, 0, 0, 0};
+
+    return shown->drawn ? damage_of(theme, rig->quarters, shown->x, shown->y)
+                        : none;
+}
+
+/* One move of the walk: the pointer it leaves is where it moved to, and
+   the damage it records is what the header says: the old box is the
+   image's where the last frame drew it, however many moves have come
+   since, and the new box is the image's at the place moved to. A move to
+   the pixel the pointer is on changes nothing. */
+static void walk_move(const CURSOR_RIG *rig, const THEME_POINTER *theme,
+                      COMPOSE_CURSOR *cursor, COMPOSE_CURSOR_DAMAGE *damage,
+                      WALK_SHOWN *shown, WALK_FAULTS *faults)
+{
+    COMPOSE_CURSOR_DAMAGE before = *damage;
+    RECT old_box, new_box;
+    INT64 x, y;
+    int same;
 
     walk_place(cursor, &x, &y);
-    same = was_placed && x == was_x && y == was_y;
-    wanted = !was_placed ? 1 : same ? 0 : 2;
-    boxes[0] = untouched;
-    boxes[1] = untouched;
-    got = compose_cursor_move(cursor, &rig->screen, x, y, boxes);
-    faults->counts += got != wanted;
+    same = cursor->placed != 0 && x == cursor->x && y == cursor->y;
+    compose_cursor_move(cursor, &rig->screen, x, y, damage);
     faults->state += cursor->placed == 0 || cursor->x != x || cursor->y != y;
-    old_box = damage_of(theme, rig->quarters, was_x, was_y);
+    if (same) {
+        faults->still += !same_damage(damage, &before);
+        return;
+    }
+    shown->moved = 1;
+    old_box = shown_box(rig, theme, shown);
     new_box = damage_of(theme, rig->quarters, x, y);
-    if (wanted == 2)
-        faults->boxes += !is_damage(&boxes[0], &old_box) ||
-                         !is_damage(&boxes[1], &new_box);
-    else if (wanted == 1)
-        faults->boxes += !is_damage(&boxes[0], &new_box) ||
-                         boxes[1].left != untouched.left ||
-                         boxes[1].top != untouched.top;
-    else
-        faults->boxes += boxes[0].left != untouched.left ||
-                         boxes[0].top != untouched.top ||
-                         boxes[1].left != untouched.left ||
-                         boxes[1].top != untouched.top;
-    for (i = 0; i < got && i < 2; i++)
-        join_rects(damage, &boxes[i]);
+    faults->boxes += damage->moved == 0 || !is_damage(&damage->old, &old_box) ||
+                     !is_damage(&damage->now, &new_box);
 }
 
 /* The pixels of the screen's memory that are not colours (0x00RRGGBB) in
@@ -3208,20 +3302,28 @@ static INT64 screen_wrong(const CURSOR_RIG *rig, const UINT32 *screen_memory,
     return wrong;
 }
 
-/* A pointer that moves, and a frame composed over only what its moves
-   damage, leave the screen as the whole frame composed with the arrow where
-   the pointer is: after every step of CURSOR_STEPS, each of one to
+/* A pointer that moves, and a frame composed over only the rectangles its
+   moves give, leave the screen as the whole frame composed with the arrow
+   where the pointer is: after every step of CURSOR_STEPS, each of one to
    CURSOR_MOVES_MAX moves between two frames, to the pixel it is on, a
-   neighbour, anywhere and off the screen. The moves return and set what the
-   geometry says. */
+   neighbour, anywhere and off the screen. The moves record what the
+   geometry says, and the rectangles are those D19's note gives for the
+   box where the last frame drew the image and the box where the pointer
+   is, whatever the places between. Where there is nothing to compose the
+   compositor composes no frame for the pointer, and the damage is kept or,
+   as a frame for other damage would, cleared. */
 static void check_cursor_walk(const CURSOR_RIG *rig, const THEME_POINTER *theme,
                               UINT32 *screen_memory)
 {
+    static const COMPOSE_CURSOR_DAMAGE no_damage = {0, {0, 0, 0, 0},
+                                                    {0, 0, 0, 0}};
     COMPOSE_CURSOR cursor = {&rig->image, rig->quarters, &work, 0, 0, 0};
+    COMPOSE_CURSOR_DAMAGE damage = no_damage;
+    WALK_SHOWN shown = {0, 0, 0, 0};
     RECT whole = {0, 0, SCENE_WIDTH, SCENE_HEIGHT};
     UINT32 *memory = malloc((size_t)SCENE_WIDTH * (SCENE_HEIGHT + 1) *
                             sizeof(UINT32));
-    WALK_FAULTS faults = {0, 0, 0};
+    WALK_FAULTS faults = {0, 0, 0, 0};
     INT64 step, i;
 
     for (i = 0; i < SCENE_WIDTH * SCENE_HEIGHT; i++)
@@ -3233,61 +3335,368 @@ static void check_cursor_walk(const CURSOR_RIG *rig, const THEME_POINTER *theme,
           "pointer",
           rig->quarters, 0);
     for (step = 0; step < CURSOR_STEPS; step++) {
-        RECT damage = {0, 0, 0, 0};
+        RECT rects[COMPOSE_CURSOR_RECTS_MAX], wanted[COMPOSE_CURSOR_RECTS_MAX];
+        RECT none = {0, 0, 0, 0}, old_box = none, new_box = none;
         INT64 moves = 1 + random_below(CURSOR_MOVES_MAX), m;
+        UINT32 count, wanted_count, r;
         UINT32 *drawn;
 
         for (m = 0; m < moves; m++)
-            walk_move(rig, theme, &cursor, &damage, &faults);
-        compose_frame(&rig->screen, &rig->wallpaper, rig->windows,
-                      SCENE_WINDOWS, &damage, memory,
-                      frame_rows[step % (INT64)FRAME_ROWS], &cursor);
+            walk_move(rig, theme, &cursor, &damage, &shown, &faults);
+        if (shown.moved) {
+            old_box = shown_box(rig, theme, &shown);
+            new_box = damage_of(theme, rig->quarters, cursor.x, cursor.y);
+        }
+        wanted_count = wanted_rects(&old_box, &new_box, wanted);
+        count = compose_cursor_rects(&damage, rects);
+        faults.rects += !are_rects(rects, count, wanted, wanted_count);
+        for (r = 0; r < count && r < COMPOSE_CURSOR_RECTS_MAX; r++)
+            compose_frame(&rig->screen, &rig->wallpaper, rig->windows,
+                          SCENE_WINDOWS, &rects[r], memory,
+                          frame_rows[step % (INT64)FRAME_ROWS], &cursor);
         drawn = with_arrow(rig, cursor.x, cursor.y);
         check(screen_wrong(rig, screen_memory, drawn) == 0,
               "frames over what the pointer's moves damage leave the screen "
               "as the whole frame with the arrow where it is",
               rig->quarters, step);
         free(drawn);
+        if (count != 0 || random_below(2)) {
+            damage = no_damage;
+            shown.drawn = 1;
+            shown.x = cursor.x;
+            shown.y = cursor.y;
+            shown.moved = 0;
+        }
     }
-    check(faults.counts == 0,
-          "a move returns 1 for the first, 2 after, and 0 for the pixel the "
-          "pointer is on",
-          rig->quarters, faults.counts);
     check(faults.state == 0, "a move leaves the pointer on the pixel moved to",
           rig->quarters, faults.state);
     check(faults.boxes == 0,
-          "a move sets the arrow's box at the old place and the new, cut by "
-          "the screen and in whole blocks",
+          "a move records the arrow's box where the last frame drew it and "
+          "at the new place, cut by the screen and in whole blocks",
           rig->quarters, faults.boxes);
+    check(faults.still == 0,
+          "a move to the pixel the pointer is on records nothing",
+          rig->quarters, faults.still);
+    check(faults.rects == 0,
+          "a frame composes the pointer's old box and its new apart, or "
+          "their join where they share a pixel",
+          rig->quarters, faults.rects);
     free(memory);
 }
 
-/* A move the image is refused at returns 0, sets no box and leaves the
-   pointer where it was. */
+/* ------------------------------------------------------------------------
+   What a frame composes for the pointer's moves (display.md D9's row for
+   the pointer and D19's note on the pointer's two boxes). */
+
+#define CURSOR_PAIRS 60 /* moves between two places anywhere, each checked */
+
+typedef struct {
+    INT64 x, y;
+} PLACE;
+
+/* What a frame after some moves composed, as moves_compose found it. */
+typedef struct {
+    UINT32 count;  /* the rectangles compose_cursor_rects gave */
+    RECT old_box;  /* the image's box before the moves, from the geometry */
+    RECT new_box;  /* its box after them */
+    INT64 written; /* the pixels of the screen the frame wrote */
+    int right;     /* nonzero if everything checked here held */
+} COMPOSED;
+
+/* A pointer the last frame drew at from, or with no place where from is 0,
+   moves to each of the count places of to in turn, and a frame is then
+   composed over the rectangles compose_cursor_rects gives, in bands of rows
+   rows, on a screen that held SCREEN_BEFORE. The rectangles must be those
+   D19's note gives for the image's box at from and its box at the last
+   place, whatever the places between; every pixel in one of them must be
+   the whole frame's with the arrow at the last place; and every other
+   pixel must be untouched, the pixels between two boxes and those at the
+   places between among them. */
+static COMPOSED moves_compose(const CURSOR_RIG *rig, const THEME_POINTER *theme,
+                              UINT32 *screen_memory, const PLACE *from,
+                              const PLACE *to, UINT32 count, INT64 rows)
+{
+    COMPOSE_CURSOR cursor = {&rig->image, rig->quarters, &work, from != 0,
+                             from ? from->x : 0, from ? from->y : 0};
+    COMPOSE_CURSOR_DAMAGE damage = {0, {0, 0, 0, 0}, {0, 0, 0, 0}};
+    RECT rects[COMPOSE_CURSOR_RECTS_MAX], wanted[COMPOSE_CURSOR_RECTS_MAX];
+    RECT none = {0, 0, 0, 0};
+    UINT32 *memory = malloc((size_t)SCENE_WIDTH * (SCENE_HEIGHT + 1) *
+                            sizeof(UINT32));
+    UINT32 *drawn = with_arrow(rig, to[count - 1].x, to[count - 1].y);
+    UINT32 wanted_count, i;
+    INT64 x, y, wrong = 0, stray = 0;
+    COMPOSED composed;
+
+    for (i = 0; i < count; i++)
+        compose_cursor_move(&cursor, &rig->screen, to[i].x, to[i].y, &damage);
+    composed.old_box =
+        from ? damage_of(theme, rig->quarters, from->x, from->y) : none;
+    composed.new_box =
+        damage_of(theme, rig->quarters, to[count - 1].x, to[count - 1].y);
+    wanted_count = wanted_rects(&composed.old_box, &composed.new_box, wanted);
+    composed.count = compose_cursor_rects(&damage, rects);
+    for (x = 0; x < SCENE_WIDTH * SCENE_HEIGHT; x++)
+        screen_memory[x] = SCREEN_BEFORE;
+    for (i = 0; i < composed.count && i < COMPOSE_CURSOR_RECTS_MAX; i++)
+        compose_frame(&rig->screen, &rig->wallpaper, rig->windows,
+                      SCENE_WINDOWS, &rects[i], memory, rows, &cursor);
+    composed.written = 0;
+    for (y = 0; y < SCENE_HEIGHT; y++)
+        for (x = 0; x < SCENE_WIDTH; x++) {
+            UINT32 got = screen_memory[y * SCENE_WIDTH + x];
+            UINT32 colour = drawn[y * SCENE_WIDTH + x];
+            int inside = 0;
+
+            for (i = 0; i < wanted_count; i++)
+                inside |= holds(&wanted[i], x, y);
+            composed.written += got != SCREEN_BEFORE;
+            if (inside)
+                wrong += got != gfx_pixel(&rig->screen,
+                                          colour >> 16 & CHANNEL_MASK,
+                                          colour >> 8 & CHANNEL_MASK,
+                                          colour & CHANNEL_MASK);
+            else
+                stray += got != SCREEN_BEFORE;
+        }
+    composed.right = are_rects(rects, composed.count, wanted, wanted_count) &&
+                     wrong == 0 && stray == 0;
+    free(drawn);
+    free(memory);
+    return composed;
+}
+
+/* A move across the screen, longer than the image, composes the image's
+   old box and its new and nothing between them (D19's note), and the
+   pixels composed are D9's row: two images of the size V15's table gives
+   at the scale, each widened to whole blocks. */
+static void check_cursor_long_move(const CURSOR_RIG *rig,
+                                   const THEME_POINTER *theme,
+                                   UINT32 *screen_memory, INT64 image_width,
+                                   INT64 image_height)
+{
+    RECT box, between;
+    PLACE from, to;
+    COMPOSED composed;
+    INT64 two_boxes, widest = image_width + 2 * ((INT64)BLOCK_PIXELS - 1);
+    size_t h;
+
+    /* The image lies whole on the screen at both places: a pixel in from
+       the top left corner and a pixel in from the bottom right. */
+    geometric_box(&theme->body, rig->quarters, &box);
+    from.x = 1 - box.left;
+    from.y = 1 - box.top;
+    to.x = SCENE_WIDTH - 1 - box.right;
+    to.y = SCENE_HEIGHT - 1 - box.bottom;
+    for (h = 0; h < FRAME_ROWS; h++) {
+        composed = moves_compose(rig, theme, screen_memory, &from, &to, 1,
+                                 frame_rows[h]);
+        two_boxes = pixels_in(&composed.old_box) +
+                    pixels_in(&composed.new_box);
+        between = composed.old_box;
+        join_rects(&between, &composed.new_box);
+        check(composed.right && composed.count == 2,
+              "a move across the screen composes the image's old box and "
+              "its new, each apart",
+              rig->quarters, composed.count);
+        check(composed.written == two_boxes &&
+                  two_boxes < pixels_in(&between),
+              "a move across the screen composes nothing between the "
+              "image's two boxes",
+              composed.written, pixels_in(&between));
+        check(two_boxes >= 2 * image_width * image_height &&
+                  two_boxes <= 2 * widest * image_height &&
+                  composed.old_box.bottom - composed.old_box.top ==
+                      image_height &&
+                  composed.new_box.bottom - composed.new_box.top ==
+                      image_height,
+              "a move across the screen composes two images, each in whole "
+              "blocks, as D9's row counts",
+              two_boxes, 2 * image_width * image_height);
+    }
+}
+
+/* Moves along a row from one place: every one whose box shares a pixel
+   with the first's composes the join of the two, a rectangle that holds
+   both, and every one past them composes the two apart, the first of
+   those, whose box touches the first's and shares no pixel with it,
+   among them. */
+static void check_cursor_near_moves(const CURSOR_RIG *rig,
+                                    const THEME_POINTER *theme,
+                                    UINT32 *screen_memory)
+{
+    static const PLACE from = {20, 30};
+    INT64 joined = 0, apart = 0, wrong = 0, touching = 0;
+    PLACE to = from;
+
+    for (to.x = from.x + 1; to.x < SCENE_WIDTH - (INT64)BLOCK_PIXELS; to.x++) {
+        COMPOSED composed = moves_compose(rig, theme, screen_memory, &from,
+                                          &to, 1, frame_rows[2]);
+        RECT join = composed.old_box;
+
+        join_rects(&join, &composed.new_box);
+        if (share_pixel(&composed.old_box, &composed.new_box)) {
+            joined++;
+            wrong += !composed.right || composed.count != 1 ||
+                     composed.written != pixels_in(&join);
+        } else {
+            apart++;
+            touching += composed.old_box.right == composed.new_box.left;
+            wrong += !composed.right || composed.count != 2 ||
+                     composed.written != pixels_in(&composed.old_box) +
+                                             pixels_in(&composed.new_box);
+        }
+    }
+    check(joined > 0 && apart > 0 && touching > 0,
+          "the moves along a row reach boxes that share pixels, boxes that "
+          "touch and boxes apart",
+          joined, apart);
+    check(wrong == 0,
+          "boxes that share a pixel compose their join, and boxes that "
+          "share none, touching or not, compose apart",
+          rig->quarters, wrong);
+}
+
+/* A move down and across, shorter than the image, composes the join of
+   its two boxes: one rectangle, which holds pixels of neither box. */
+static void check_cursor_diagonal_move(const CURSOR_RIG *rig,
+                                       const THEME_POINTER *theme,
+                                       UINT32 *screen_memory)
+{
+    static const PLACE from = {40, 20};
+    PLACE to;
+    COMPOSED composed;
+    RECT join;
+
+    to.x = from.x + (INT64)BLOCK_PIXELS;
+    to.y = from.y + 9;
+    composed = moves_compose(rig, theme, screen_memory, &from, &to, 1,
+                             frame_rows[2]);
+    join = composed.old_box;
+    join_rects(&join, &composed.new_box);
+    check(composed.right && composed.count == 1 &&
+              composed.written == pixels_in(&join),
+          "a move whose boxes share a pixel composes their join",
+          rig->quarters, composed.count);
+    /* The pixel in the new box's last column and the old box's first row. */
+    check(holds(&join, composed.new_box.right - 1, composed.old_box.top) &&
+              !holds(&composed.old_box, composed.new_box.right - 1,
+                     composed.old_box.top) &&
+              !holds(&composed.new_box, composed.new_box.right - 1,
+                     composed.old_box.top),
+          "the join of a move down and across holds a pixel of neither box",
+          pixels_in(&join), pixels_in(&composed.old_box));
+}
+
+/* Moves between two frames compose the image's box where the last frame
+   drew it and its box where the pointer ends, and nothing at the places
+   between, which no frame drew it at; a pointer given its place composes
+   its one box; and one that ends where it began composes that box alone. */
+static void check_cursor_moves_between(const CURSOR_RIG *rig,
+                                       const THEME_POINTER *theme,
+                                       UINT32 *screen_memory)
+{
+    static const PLACE from = {8, 6};
+    static const PLACE through[] = {{70, 45}, {130, 8}};
+    static const PLACE back[] = {{130, 8}, {8, 6}};
+    COMPOSED composed;
+    RECT between;
+
+    composed = moves_compose(rig, theme, screen_memory, &from, through, 2,
+                             frame_rows[2]);
+    between = damage_of(theme, rig->quarters, through[0].x, through[0].y);
+    check(composed.right && composed.count == 2 &&
+              composed.written == pixels_in(&composed.old_box) +
+                                      pixels_in(&composed.new_box) &&
+              !share_pixel(&between, &composed.old_box) &&
+              !share_pixel(&between, &composed.new_box),
+          "two moves between two frames compose the box the screen shows "
+          "and the last, and nothing at the place between",
+          rig->quarters, composed.count);
+    composed = moves_compose(rig, theme, screen_memory, 0, through, 1,
+                             frame_rows[2]);
+    check(composed.right && composed.count == 1 &&
+              composed.written == pixels_in(&composed.new_box),
+          "a pointer given its first place composes the image's one box",
+          rig->quarters, composed.count);
+    composed = moves_compose(rig, theme, screen_memory, 0, through, 2,
+                             frame_rows[2]);
+    check(composed.right && composed.count == 1 &&
+              composed.written == pixels_in(&composed.new_box),
+          "a pointer moved again before its first frame composes the box "
+          "at its last place alone",
+          rig->quarters, composed.count);
+    composed = moves_compose(rig, theme, screen_memory, &from, back, 2,
+                             frame_rows[2]);
+    check(composed.right && composed.count == 1 &&
+              composed.written == pixels_in(&composed.old_box),
+          "a pointer that ends where the last frame drew it composes that "
+          "box alone",
+          rig->quarters, composed.count);
+}
+
+/* Moves between two places anywhere, on the screen and past its edges,
+   where a box is cut by the screen or has no pixel: the rectangles and the
+   pixels a frame writes are those D19's note gives. */
+static void check_cursor_pairs(const CURSOR_RIG *rig,
+                               const THEME_POINTER *theme,
+                               UINT32 *screen_memory)
+{
+    INT64 pair, wrong = 0, none = 0;
+
+    for (pair = 0; pair < CURSOR_PAIRS; pair++) {
+        PLACE from, to;
+        COMPOSED composed;
+
+        from.x = random_below(SCENE_WIDTH + 2 * CURSOR_OFF_SCREEN) -
+                 CURSOR_OFF_SCREEN;
+        from.y = random_below(SCENE_HEIGHT + 2 * CURSOR_OFF_SCREEN) -
+                 CURSOR_OFF_SCREEN;
+        to.x = random_below(SCENE_WIDTH + 2 * CURSOR_OFF_SCREEN) -
+               CURSOR_OFF_SCREEN;
+        to.y = random_below(SCENE_HEIGHT + 2 * CURSOR_OFF_SCREEN) -
+               CURSOR_OFF_SCREEN;
+        composed = moves_compose(rig, theme, screen_memory, &from, &to, 1,
+                                 frame_rows[pair % (INT64)FRAME_ROWS]);
+        wrong += !composed.right;
+        none += composed.count == 0;
+    }
+    check(wrong == 0,
+          "a move between any two places composes the rectangles its boxes "
+          "give and nothing else",
+          rig->quarters, wrong);
+    check(none < CURSOR_PAIRS, "the moves between places compose something",
+          rig->quarters, none);
+}
+
+/* A move the image is refused at records nothing and leaves the pointer
+   where it was. */
 static void check_cursor_refusals(const CURSOR_RIG *rig,
                                   const THEME_POINTER *theme)
 {
+    static const COMPOSE_CURSOR_DAMAGE untouched = {0, {7, 8, 9, 10},
+                                                    {7, 8, 9, 10}};
     COMPOSE_POINTER bad = pointer_of(theme);
     COMPOSE_CURSOR cursor = {&rig->image, rig->quarters, &work, 1, 30, 20};
     COMPOSE_CURSOR no_scale = {&rig->image, 0, &work, 1, 30, 20};
     COMPOSE_CURSOR no_image = {&bad, rig->quarters, &work, 0, 0, 0};
-    RECT untouched = {7, 8, 9, 10}, boxes[2] = {{7, 8, 9, 10}, {7, 8, 9, 10}};
+    COMPOSE_CURSOR_DAMAGE damage = untouched;
 
-    check(compose_cursor_move(&cursor, &rig->screen, COMPOSE_COORDINATE_MAX, 5,
-                              boxes) == 0 &&
-              cursor.placed && cursor.x == 30 && cursor.y == 20 &&
-              boxes[0].left == untouched.left,
+    compose_cursor_move(&cursor, &rig->screen, COMPOSE_COORDINATE_MAX, 5,
+                        &damage);
+    check(cursor.placed && cursor.x == 30 && cursor.y == 20 &&
+              same_damage(&damage, &untouched),
           "a move to a hotspot the arrow cannot be traced at is refused and "
           "leaves the pointer",
           rig->quarters, 0);
-    check(compose_cursor_move(&no_scale, &rig->screen, 31, 20, boxes) == 0 &&
-              no_scale.x == 30 && no_scale.y == 20 &&
-              boxes[0].left == untouched.left,
+    compose_cursor_move(&no_scale, &rig->screen, 31, 20, &damage);
+    check(no_scale.x == 30 && no_scale.y == 20 &&
+              same_damage(&damage, &untouched),
           "a move at a scale of 0 is refused and leaves the pointer",
           rig->quarters, 0);
     bad.edge_percent = COMPOSE_PERCENT + 1;
-    check(compose_cursor_move(&no_image, &rig->screen, 31, 20, boxes) == 0 &&
-              no_image.placed == 0 && boxes[0].left == untouched.left,
+    compose_cursor_move(&no_image, &rig->screen, 31, 20, &damage);
+    check(no_image.placed == 0 && same_damage(&damage, &untouched),
           "a move of an image that is refused leaves the pointer with no "
           "place",
           rig->quarters, 0);
@@ -3330,6 +3739,13 @@ static void check_cursor(const SCENE *scene)
             check_cursor_frames(&rig, screen_memory);
             check_cursor_not_drawn(&rig, screen_memory);
             check_cursor_walk(&rig, &theme, screen_memory);
+            check_cursor_long_move(&rig, &theme, screen_memory,
+                                   arrow_table[q].width,
+                                   arrow_table[q].height);
+            check_cursor_near_moves(&rig, &theme, screen_memory);
+            check_cursor_diagonal_move(&rig, &theme, screen_memory);
+            check_cursor_moves_between(&rig, &theme, screen_memory);
+            check_cursor_pairs(&rig, &theme, screen_memory);
             check_cursor_refusals(&rig, &theme);
             free(rig.all);
         }
