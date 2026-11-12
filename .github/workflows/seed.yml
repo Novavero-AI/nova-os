@@ -8,11 +8,16 @@ name: Seed
 # toolchains: curl fetches the sources build.sh names, git archives the
 # tree, and Python compares the hashes.
 #
+# The sources the ladder is built from come from nova-nix's public cache,
+# which nova-nix's CI publishes them to, and not from their upstream
+# hosts. The job fails if the cache cannot be asked. The builds name no
+# substituter, so they take nothing else from it and build every rung
+# here.
+#
 # The ladder from the seed takes about 18 minutes on windows-latest, more
 # than the rest of CI together, so a pull request runs this only when it
 # changes the job or a script the job runs. Every push to main runs it,
-# and a weekly run catches a change in the runner's image or in a source
-# the ladder fetches.
+# and a weekly run catches a change in the runner's image.
 
 on:
   push:
@@ -45,10 +50,14 @@ jobs:
     timeout-minutes: 60
     env:
       # nova-nix's release, and the commit whose recipes it builds: the
-      # release ships recipes from before tinycc-native, and nova-nix.exe
-      # is built from the same sources at both.
+      # release ships recipes from before tinycc-native and the list of
+      # their sources, and its nova-nix.exe evaluates the later ones.
       NOVA_NIX_VERSION: 0.10.0.0
-      NOVA_NIX_REV: 8e1244a89a7cd43806da42229b0286f2690fa257
+      NOVA_NIX_REV: 1ce5a616285cd51b58af44b2129726b42386b3ae
+      # nova-nix's public cache and the key it signs with, as nova-nix's
+      # ci.yml gives them.
+      CACHE_URL: https://cache.novavero.ai
+      CACHE_PUBLIC_KEY: cache.novavero.ai-1:9gQ7tLWMM+2tdC9H5sKMJltDIPfD7X2GWlZe8Aa8hHQ=
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,6 +78,13 @@ jobs:
       - name: Provision the store root
         shell: pwsh
         run: New-Item -ItemType Directory -Force -Path C:\nix\store | Out-Null
+
+      # nova-nix's own script realises every source its recipes fetch,
+      # each from the cache where the cache holds it, so the builds below
+      # find their sources in the store and fetch none.
+      - name: Take the ladder's sources from the public cache
+        working-directory: nova-nix
+        run: bash .github/cache/realise-sources.sh nova-nix
 
       # build prints the out path as its last stdout line. tinycc-native
       # reads its headers from C_INCLUDE_PATH and its runtime and import
