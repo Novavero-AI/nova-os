@@ -112,22 +112,20 @@ typedef struct {
     UINT32 frame_owed;
 } WINDOW;
 
-/* An input driver's endpoint, HANDLE_INVALID for a free slot: the
-   device its description gave, whose kind is 0 until it has come, and
-   whether a key event has come on it. */
+/* An input driver's endpoint, HANDLE_INVALID for a free slot, and the
+   device its description gave, whose kind is 0 until it has come. */
 typedef struct {
     UINT32 endpoint;
     INPUT_DEVICE device;
-    UINT32 keys;
 } INPUT;
 
 static CONNECTION connection;
 static WINDOW window;
 static UINT32 issued;
 
-/* What the keyboards have done, as one keyboard, the one pointer every
-   pointing device moves, and the pointer line logged last, for all the
-   pointers. */
+/* What the keyboards have done, as one keyboard whose modifiers are those
+   any of them holds, the one pointer every pointing device moves, and the
+   pointer line logged last, for all the pointers. */
 static INPUT inputs[INPUT_DEVICES_MAX];
 static KEYROUTE keyboards;
 static ROUTE route;
@@ -310,15 +308,22 @@ static void move_cursor(void)
                         route.y / DISPLAY_POSITION_ONE, &pointer_damage);
 }
 
+/* The number of input's endpoint as a source of modifier keys or of
+   buttons (D19, rule 6): its place among the inputs, which a later
+   endpoint takes over only after the close that lets go what this one
+   held (close_input). */
+static UINT32 source_of(const INPUT *input)
+{
+    return (UINT32)(input - inputs);
+}
+
 /* A pointer report of input's endpoint: what the window is sent, and the
-   pointer's image moved (D19, rule 6). Each endpoint is a source of
-   buttons by its place, which a later endpoint takes over only after the
-   close that lets go its buttons (close_input). */
+   pointer's image moved (D19, rule 6). */
 static void take_report(const INPUT *input, const INPUT_POINTER *report)
 {
     ROUTED routed;
 
-    route_report(&route, (UINT32)(input - inputs), &input->device,
+    route_report(&route, source_of(input), &input->device,
                  (UINT32)host->screen->width, (UINT32)host->screen->height,
                  route_window(), report, &routed);
     send_routed(&routed);
@@ -331,8 +336,8 @@ static void pointer_gone(const INPUT *input)
 {
     ROUTED routed;
 
-    route_source_gone(&route, (UINT32)(input - inputs), route_window(),
-                      timing_now(), &routed);
+    route_source_gone(&route, source_of(input), route_window(), timing_now(),
+                      &routed);
     send_routed(&routed);
 }
 
@@ -756,16 +761,17 @@ static UINT32 window_has_focus(void)
            (window_state(window.record.layer) & WINDOW_STATE_FOCUSED) != 0;
 }
 
-/* A key event of a keyboard: the secure attention key is logged, once for
+/* A key event of the keyboard of input's endpoint, which holds the
+   modifier keys it presses: the secure attention key is logged, once for
    each press, and sent to no window; any other press is queued for the
    window with the focus, or dropped where none has it; and a repeat or a
    release is queued only if its press was (lib/keyroute.c). */
-static void take_key(INPUT *input, const INPUT_EVENT *event)
+static void take_key(const INPUT *input, const INPUT_EVENT *event)
 {
     WINDOW_INPUT routed;
 
-    input->keys = 1;
-    switch (keyroute_event(&keyboards, event, window_has_focus(), &routed)) {
+    switch (keyroute_event(&keyboards, source_of(input), event,
+                           window_has_focus(), &routed)) {
     case KEYROUTE_WINDOW:
         backlog_push(&window.backlog, &routed);
         break;
@@ -801,14 +807,14 @@ static int take_input(INPUT *input, UINT32 byte_count)
     }
 }
 
-/* Close input's endpoint and free its place. A keyboard that sent keys
-   leaves no modifier held and no press waiting for its release
-   (keyroute_gone), and a pointing device no button held (pointer_gone). */
+/* Close input's endpoint and free its place. A keyboard lets go the
+   modifier keys it held, and those another keyboard holds stay held
+   (keyroute_gone); an endpoint that sent no key held none. A pointing
+   device lets go its buttons (pointer_gone). */
 static void close_input(INPUT *input)
 {
     handle_close(input->endpoint);
-    if (input->keys)
-        keyroute_gone(&keyboards);
+    keyroute_gone(&keyboards, source_of(input));
     if (input->device.kind == INPUT_DEVICE_POINTER)
         pointer_gone(input);
     zero(input, sizeof *input);

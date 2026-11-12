@@ -76,13 +76,11 @@ typedef struct {
     UINT64 order;
 } SESSION;
 
-/* An input driver's endpoint, HANDLE_INVALID for a free slot; the device
-   its description gave, whose kind is 0 until it has come; and whether a
-   key event has come on it. */
+/* An input driver's endpoint, HANDLE_INVALID for a free slot, and the
+   device its description gave, whose kind is 0 until it has come. */
 typedef struct {
     UINT32 endpoint;
     INPUT_DEVICE device;
-    UINT32 keys;
 } INPUT;
 
 /* A key typed while no read waits, kept for the next. */
@@ -305,11 +303,14 @@ static void edit_key(UINT32 edit, UINT8 character)
     }
 }
 
-static void key(const INPUT_EVENT *event)
+/* A key event of the keyboard whose endpoint is input index, which
+   numbers it among the keyboards: a modifier key it presses is its own to
+   hold, and the modifiers held are those any keyboard holds (C3). */
+static void key(int index, const INPUT_EVENT *event)
 {
     UINT8 character;
-    UINT32 edit = keys_event(&modifiers, event->code, event->value,
-                             &character);
+    UINT32 edit = keys_event(&modifiers, (UINT32)index, event->code,
+                             event->value, &character);
 
     edit_key(edit, character);
 }
@@ -596,15 +597,14 @@ static void take_bootstrap(void)
     process_exit(EXIT_FAILED);
 }
 
-/* Close input endpoint index; a key held on it as its driver ended is
-   released. */
+/* Close input endpoint index and free its place. A keyboard lets go the
+   modifier keys it held, and those another keyboard holds stay held (C3);
+   an endpoint that sent no key held none. */
 static void close_input(int index)
 {
     close_if_open(&inputs[index].endpoint);
-    if (inputs[index].keys)
-        modifiers.held = 0;
+    keys_gone(&modifiers, (UINT32)index);
     inputs[index].device.kind = 0;
-    inputs[index].keys = 0;
 }
 
 /* Take one message of byte_count bytes, in message, from input endpoint
@@ -620,8 +620,7 @@ static int take_input(int index, UINT32 byte_count)
         endpoint_describe(LOG_COMPONENT, &input->device, say);
         return 1;
     case ENDPOINT_KEY:
-        input->keys = 1;
-        key(&message.event);
+        key(index, &message.event);
         return 1;
     case ENDPOINT_REPORT:
         pointer(&message.report);
