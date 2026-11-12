@@ -170,6 +170,16 @@ supervises a driver ([ipc.md I10](ipc.md#i10-driver-failure-and-restart)):
 one that ends is started again, unless it was restarted within the
 last 60 seconds, when it is given up.
 
+A compositor that runs and has not answered a connection the first
+process issued, by the deadline that wait has
+([D19](#d19-the-build-plan)'s phase 3 arrangement, rule 2, step 4),
+counts as one that has ended. The first process logs the missed
+deadline and ends the compositor with `task_kill` on its process
+([objects.md O10](objects.md#o10-object-lifetime)), and that end is the
+supervisor's as any other is: the compositor is started again, or given
+up if it was restarted within the last 60 seconds. A missed deadline
+gives no compositor up by itself.
+
 When the compositor ends:
 
 1. The kernel closes its handles. Its framebuffer mappings and sections
@@ -229,16 +239,35 @@ its exit from the process handle it holds
   from its own memory with no client, and is what
   [console.md](console.md) has boot; a machine whose compositor fails
   still lets its owner log in, read the log and fix it.
+- **Why a compositor that does not answer is ended:** a compositor that
+  runs and never answers holds the screen while no client can be given
+  a connection, and the first process cannot tell one that is slow from
+  one that is stuck. Ending it makes the case the one the supervisor
+  already handles, so there is one restart policy and one way to the
+  fallback, and `task_kill` needs nothing of a process that may be
+  stuck, as a driver's restart needs nothing of a dead driver
+  ([ipc.md I10](ipc.md#i10-driver-failure-and-restart)). A compositor
+  that was slow once has its second start.
 - **Cost:** a restart loses every window's place, and a program that
   does not handle `PEER_CLOSED` on its connection loses its windows for
   good. A program shown when the compositor is given up runs on unseen
   until logout ends it
   ([accounts.md A7](accounts.md#a7-the-session)). Between the
   compositor's end and its successor's first frame, the screen shows a
-  stale frame.
+  stale frame. A compositor ended at the deadline loses what a crash
+  loses, though it may have been about to answer, and one that never
+  answers holds the screen for two deadlines and a restart, about a
+  minute, before the console takes it.
 - **Not taken:** ending every graphical program with the compositor,
   as a Wayland compositor's crash usually ends its clients. Its cost is
   a session's unsaved work lost to a fault that is not the session's.
+  Logging the missed deadline and abandoning the connection, with the
+  compositor left running. Its cost is a compositor that holds the
+  screen with no console window and no fallback, since nothing then
+  gives it up. Giving the compositor up at the first missed deadline.
+  Its cost is a second way to the fallback beside the restart policy's,
+  and the display lost until the next boot to one slow start, which a
+  restart cures.
 
 ## D4. The console in a window and as the fallback
 
@@ -1662,7 +1691,7 @@ releases CI boots with.
 |---|---|---|---|
 | 1. The pointer | `virtio-tablet-pci` in the README and CI; one input driver per function; pointer reports ([D10](#d10-the-pointer)); the wheel scrolls the console's panel | | QMP `input-send-event` moves the tablet and turns the wheel; the console's panel shows the earlier lines, matched against the host's render |
 | 2. Outlines and fonts | The outline rasterizer, Inter converted at build time, text layout ([ui.md U2 to U4](ui.md#u2-the-rasterizer)) | | The host check of the C port against its prototype, byte for byte, on a reference sheet and on the specimen at several sizes, and the text's distance from FreeType's; in the guest a test program from `/store` draws the specimen in the console's place on a disk that asks for it, and `ci/boot.py` compares its `screendump` with the prototype's render pixel for pixel |
-| 3. The compositor with one surface | `compose.exe` takes the display; the console in a window, its one client; the software pointer; materials; budgets logged ([D2](#d2-who-holds-the-display) to [D9](#d9-budgets)); all as the phase 3 arrangement below gives | The interface description language and its generator ([interface.md](interface.md)); the pointer's image ([look.md V15](look.md#v15-the-pointer)) | The login prompt in the console's window, with the pointer, matched against the host's render at every size the boots run; on the system disk the compositor's display line says `wallpaper=section`, and the composer's host check shows that a frame of the wallpaper alone writes the wallpaper's pixels, so the first frame changes nothing on the screen; the fallback boot shows the console's fallback, Limb over the whole screen and the panel, matched, and logs in on it; the budget lines at each size |
+| 3. The compositor with one surface | `compose.exe` takes the display; the console in a window, its one client; the software pointer; materials; budgets logged ([D2](#d2-who-holds-the-display) to [D9](#d9-budgets)); all as the phase 3 arrangement below gives | The interface description language and its generator ([interface.md](interface.md)); the pointer's image ([look.md V15](look.md#v15-the-pointer)) | The login prompt in the console's window, with the pointer, matched against the host's render at every size the boots run; on the system disk the compositor's display line says `wallpaper=section`, and the composer's host check shows that a frame of the wallpaper alone writes the wallpaper's pixels, so the first frame changes nothing on the screen; the fallback boot shows the console's fallback, Limb over the whole screen and the panel, matched, and logs in on it; the no-answer boot shows a compositor that answers no connection ended at its deadline, restarted once and given up; the budget lines at each size |
 | 4. The graphical login | Login's window, `ACCOUNTS_LIST`, the strip, the attention state and the secure attention key, the session's connection and logout ([D5](#d5-connections-labels-and-layers), [D12](#d12-the-secure-attention-key-and-global-keys), [D13](#d13-the-graphical-login)); a terminal at each login, the console in window mode with its shell in text, without a frame until phase 5, until the HUD can ask for one | `task_kill` on a job ([objects.md O7](objects.md#o7-jobs)), so logout ends the session's programs; the toolkit's widgets and layout login's screen uses ([ui.md U7](ui.md#u7-widgets), [U8](ui.md#u8-layout)), drawn with the system theme's defaults ([ui.md U9](ui.md#u9-theming-from-tokens)); the secure screen and the secure and system marks ([look.md](look.md#not-designed)) | The login screen with its list matched; the account created and logged into by QMP keys; the secure attention key from the session's terminal shows login's secure screen, and keys typed after it reach no session program; after logout the screen is the login screen again; the password appears nowhere in the log |
 | 5. Windows | Many windows, popups and children, frames and labels, focus, stacking, damage and release, copy and paste ([D5](#d5-connections-labels-and-layers) to [D7](#d7-presenting-and-pacing), [D11](#d11-routing-input), [D15](#d15-capture-copy-and-paste)) | A process's handles and mappings bounded by its job's quota alone, not by fixed tables ([objects.md O3](objects.md#o3-handles), [D6](#d6-windows-and-buffers)); popups and menus ([look.md](look.md#not-designed)) | A test program opens two windows with known patterns; QMP drags one and clicks the other; screens matched; the program logs which window got which key, and a key typed at one never reaches the other; a popup asked for from a window without the focus is refused |
 | 6. The HUD | The HUD and its key, launching, finding, settings and nvo commands ([ui.md U11](ui.md#u11-the-hud)) | The nvo interpreter and a session in values mode ([shell.md L7](shell.md#l7-pipelines), rule 7); the settings service ([shell.md L24](shell.md#l24-settings-and-service-commands)); the store's registrations, from which the launcher reads a program's declarations ([storage.md F8](storage.md#f8-the-store-volume)) | The HUD key opens it; a typed command's table matched against the host's render; a program launched from it gets the focus |
@@ -1750,6 +1779,17 @@ login's session as it does on its own
       ([console.md C2](console.md#c2-starting-the-console)). With any
       other status it logs `nova-init: connection refused status=N`, and
       the console has no display until the compositor is given up.
+      The wait ends `COMPOSITOR_CONNECT_DEADLINE_SECONDS` (30 seconds,
+      `init/compositor.h`) after it began, whatever else the compositor
+      has sent meanwhile. A compositor that has not answered by then
+      counts as one that has ended
+      ([D3](#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)):
+      the first process logs `nova-init: connection wait failed
+      status=10`, `ERR_TIMED_OUT`, and ends the compositor with
+      `task_kill` on its process. The compositor's end is then logged
+      `nova-init: child ended name=compositor exit=256`,
+      `PROCESS_EXIT_KILLED`, and rule 9 follows as for any end: it is
+      started again, or given up.
 3. **No attention state and no strip.** The compositor starts out of
    the attention state and draws no strip, so the area below the strip
    is the whole screen ([D6](#d6-windows-and-buffers)). It reserves the
@@ -1965,6 +2005,39 @@ login's session as it does on its own
    goes on to as the test disk's boot does, typed through the console's
    keys, with each screen it matches, is the evidence that the console
    has the drivers' endpoints.
+
+   On a test disk that carries `\NOVA\NOANSWER`, the first process sets
+   `COMPOSITOR_OPTION_NO_ANSWER_TEST` at every start, and the compositor
+   takes each `COMPOSITOR_CONNECT`, closes the end it carried and sends
+   no `connected`, while it serves its endpoints and its frames as it
+   otherwise would. The first process ends it at the deadline of rule
+   2's step 4, at each of its two starts, so it is restarted once and
+   then given up
+   ([D3](#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)).
+   `noanswer.img` is the test disk with `\NOVA\NOANSWER` added. Its CI
+   boot, `ci/boot.py noanswer`, requires, with the counts given:
+   - `nova-compositor: background refused reason="another size"` once;
+   - the compositor's input line for each of the three input functions,
+     from its first start, which shows that it serves while it does not
+     answer;
+   - for each of the compositor's two starts, `nova-compositor: display`
+     with `wallpaper=computed`, `nova-init: connection wait failed
+     status=10` and `nova-init: child ended name=compositor exit=256`;
+   - `nova-init: child restarted name=compositor` once and
+     `nova-init: child given up name=compositor` once;
+   - for each of the three input drivers, `nova-init: child restarted`
+     once with `reason="its client restarted"`;
+   - the console's `display` line with `backdrop=computed` and
+     `after=compositor`, and its input line for each input function.
+
+   A `nova-compositor: connection issued` line or a `nova-console:
+   window` line fails the boot, since no connection is answered. Of the
+   lines that report a failure it accepts those the fallback boot
+   accepts and the two `connection wait failed` lines, and any other
+   fails it. It then goes on as the fallback boot does, to the login
+   typed through the console's keys. The boot checks no time: the lines
+   it prints carry the time each was read, which shows how long each
+   wait was.
 10. **What phase 4 removes:** the `console` connection, the console's
     window beside the compositor, and a secure attention key that does
     nothing. `CONSOLE_SETUP_CONNECTION`, `CONSOLE_SETUP_DISPLAY_AFTER`
@@ -2484,6 +2557,49 @@ login's session as it does on its own
   to start login, as it waits for the window test client's. Not taken:
   issuing it from the compositor's start alone, which would send it to a
   console that has not started.
+- **Why the wait for `connected` is 30 seconds:** the compositor
+  answers once it has taken the display and drawn its first frame, so
+  the wait is as long as its start, and where it computes Limb that is
+  nearly all Limb. From the compositor's start to its answer, as the
+  times `ci/boot.py` prints give them, boots of `fallback.img` at commit
+  `d9464cd` under QEMU 11.1.3's TCG on an Apple M2 took 0.8 and 1.1 s at
+  1280 x 800, and 4.0 to 4.6 s over four starts at 2880 x 1800, the
+  largest screen the boots run, of which Limb was 3.1 to 3.2 s.
+  [D9](#d9-budgets)'s TCG boots on GitHub's runners computed Limb at
+  1280 x 800 in 531 to 1,026 ms, against 610 to 622 ms in these, so a
+  runner may take 1.7 times as long, about 8 s at 2880 x 1800; under
+  KVM, D9 puts Limb there at about a quarter of a second. Thirty
+  seconds is over six times the slowest start measured and nearly four
+  times that figure for a runner, which leaves room for a compositor
+  that shares the processor with busy programs, since a deadline missed
+  by a compositor that works costs the display. It is also half of
+  [ipc.md I10](ipc.md#i10-driver-failure-and-restart)'s minute, which it
+  must stay under: a compositor started again that does not answer
+  either is then down again within a minute of its restart, and is
+  given up. Its cost is that the first process supervises nothing else
+  while it waits, so a compositor that never answers holds back login's
+  start by the deadline, and every other restart by it again at its
+  second start; and that a compositor whose first frame takes longer
+  than the deadline is ended though it works, which under that TCG,
+  scaled by pixels and not measured, is a screen of about seven times
+  2880 x 1800's. Not taken: a deadline of a few seconds, near the
+  slowest start measured; its cost is a working compositor ended and
+  then given up on a slow or busy machine, which is worse than the wait
+  it saves. A deadline of a minute or more; its cost is a compositor
+  that never answers started again for ever, since each end would come
+  after the restart period.
+- **Why `COMPOSITOR_OPTION_NO_ANSWER_TEST` leaves the compositor
+  serving:** the deadline is for a compositor that runs and does not
+  answer, so the test's compositor takes the display, draws its first
+  frame and reads its endpoints, which its input lines show, and only
+  the answer is missing. The first process then ends a process that
+  would not have ended by itself. Its cost is that the boot does not
+  show a compositor stuck in a loop or in a wait being ended; `task_kill`
+  needs nothing of the process it ends, and the first process's check of
+  its calls ends one that is blocked in a wait (`init/kill.c`). Not
+  taken: a compositor that stops reading its channels; its cost is a
+  second behaviour in the compositor for a case the first process does
+  not tell apart.
 - **Why this order:** each phase uses what the ones before it built and
   what its row needs first, and each leaves the system working: the
   console draws every screen until phase 3, and remains the fallback

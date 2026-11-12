@@ -1,4 +1,4 @@
-"""Check which lines ci/boot.py's fallback boot requires and accepts.
+"""Check which lines ci/boot.py's boots require, accept and refuse.
 
 Usage: python3 -I ci/check-boot.py
 
@@ -7,7 +7,13 @@ checks what boot.py makes of them: the lines docs/spec/display.md D19's
 rule 9 has the fallback boot report, each as often as it gives, and the
 same boot with the input drivers' ends read before the compositor's; the
 failure lines the fallback boot accepts, each as often as it gives and
-each alone, and no failure line in any other mode; the console's window,
+each alone, and no failure line in any other mode but the no-answer
+boot's; the lines docs/spec/display.md D19's rules 2 and 9 have the
+no-answer boot report, each as often as they give, the first process's
+line for its wait that failed, which that boot alone accepts and once
+for each start of the compositor, the compositor's end, which must be
+its end by task_kill, and a connection issued or a window of the
+console's, which fail it; the console's window,
 which each end of the compositor must come after; the wallpaper,
 connection and window lines of the system boot, each of which it
 requires, and the console's display after the compositor, which is the
@@ -65,6 +71,7 @@ REPLAY_SECONDS = 10
 FUNCTIONS = ["0000:00:03.0", "0000:00:04.0", "0000:00:05.0"]
 OTHER_FUNCTION = "0000:00:06.0"
 FALLBACK = "fallback"
+NO_ANSWER = "noanswer"
 SENTINEL = "nova: startup done"
 USAGE_ERROR = 2
 WINDOW = "window"
@@ -73,6 +80,11 @@ REFUSED = 'nova-compositor: background refused reason="another size"'
 DISPLAY = ("nova-compositor: display screen=1280x800 wallpaper=%s "
            "prepare_ms=1.0 first_frame_ms=1.0")
 ENDED = "nova-init: child ended name=compositor exit=%d"
+# ERR_TIMED_OUT and PROCESS_EXIT_KILLED, as include/native_abi.h gives
+# them: the status of a wait whose deadline passed, and the exit code of
+# a process task_kill ended.
+UNANSWERED = "nova-init: connection wait failed status=10"
+KILLED = ENDED % 0x100
 COMPOSITOR_RESTARTED = "nova-init: child restarted name=compositor"
 COMPOSITOR_GIVEN_UP = ('nova-init: child given up name=compositor '
                        'reason="down again within the restart period"')
@@ -165,6 +177,20 @@ def drivers_first_log(boot):
             + [ENDED % exit_code, COMPOSITOR_GIVEN_UP]
             + [driver_restarted(f, CLIENT_CHANGED) for f in FUNCTIONS]
             + [CONSOLE % ("computed", " after=compositor")])
+
+
+def no_answer_log():
+    """The lines of the no-answer boot that these checks are about, in the
+    order it reports them: each of the compositor's two starts, which the
+    first process ends at its wait's deadline, the first with the
+    compositor's input lines, the second with the drivers started again
+    once its wait is over, and the console's display."""
+    return ([REFUSED, DISPLAY % "computed"] + COMPOSITOR_INPUT
+            + [UNANSWERED, KILLED, COMPOSITOR_RESTARTED,
+               DISPLAY % "computed", UNANSWERED]
+            + [driver_restarted(f, CLIENT_RESTARTED) for f in FUNCTIONS]
+            + [KILLED, COMPOSITOR_GIVEN_UP,
+               CONSOLE % ("computed", " after=compositor")])
 
 
 def system_log(tests):
@@ -454,10 +480,12 @@ def main():
     log = fallback_log(boot)
     required = boot.FALLBACK_LINES
 
-    # The failure lines are the fallback boot's alone.
+    # The failure lines are the fallback boot's, and the no-answer
+    # boot's, which accepts them and its own.
     for mode in sorted(boot.DEFAULT_TIMEOUTS):
         expect("%s mode accepts the fallback boot's failure lines" % mode,
-               replay(boot, mode, failure_lines(log)), mode == FALLBACK)
+               replay(boot, mode, failure_lines(log)),
+               mode in (FALLBACK, NO_ANSWER))
         expect("%s mode accepts failures as the fallback boot does" % mode,
                boot.accepted_failures(mode) == boot.ACCEPTED_FAILURES,
                mode == FALLBACK)
@@ -557,6 +585,70 @@ def main():
             FALLBACK, failure_lines(log) + [driver_restarted(None,
                                                              CLIENT_CHANGED)])
 
+    # The whole no-answer boot is reported, each line as often as it
+    # gives, and no line of it can be missing. Its compositor's end is
+    # one task_kill made, and no other.
+    unanswered = no_answer_log()
+    unanswered_required = boot.NO_ANSWER_LINES
+    replayed("the no-answer boot's lines are reported", NO_ANSWER,
+             unanswered, unanswered_required)
+    for index, line in enumerate(unanswered):
+        refused("the no-answer boot without line %d (%s)"
+                % (index, line[:48]), NO_ANSWER,
+                unanswered[:index] + unanswered[index + 1:],
+                unanswered_required)
+    killed = [i for i, line in enumerate(unanswered) if line == KILLED]
+    for position, index in enumerate(killed):
+        for code in (boot.COMPOSITOR_EXIT_TEST, 3):
+            changed = list(unanswered)
+            changed[index] = ENDED % code
+            refused("the no-answer boot with the compositor's end %d with "
+                    "exit=%d" % (position + 1, code), NO_ANSWER, changed,
+                    unanswered_required)
+    replayed("the no-answer boot with each driver started again for the "
+             "console", NO_ANSWER,
+             unanswered[:-1]
+             + [driver_restarted(f, CLIENT_CHANGED) for f in FUNCTIONS]
+             + unanswered[-1:], unanswered_required)
+
+    # The wait that failed is a failure line, which the no-answer boot
+    # alone accepts, once for each start of the compositor and no more.
+    for mode in sorted(boot.DEFAULT_TIMEOUTS):
+        expect("%s mode accepts a wait for the compositor's answer that "
+               "failed" % mode, replay(boot, mode, [UNANSWERED]),
+               mode == NO_ANSWER)
+    replayed("the no-answer boot accepts the wait that failed twice",
+             NO_ANSWER, [UNANSWERED, UNANSWERED])
+    refused("the no-answer boot does not accept it a third time", NO_ANSWER,
+            [UNANSWERED, UNANSWERED, UNANSWERED])
+    refused("the no-answer boot does not accept a wait that failed with "
+            "another status", NO_ANSWER,
+            [UNANSWERED.replace("status=10", "status=12")])
+    for line in accepted:
+        replayed("the no-answer boot accepts %s alone" % line[:60],
+                 NO_ANSWER, [line])
+        refused("the no-answer boot does not accept %s twice" % line[:60],
+                NO_ANSWER, [line, line])
+    for line in others:
+        refused("the no-answer boot does not accept %s" % line[:70],
+                NO_ANSWER, [line])
+
+    # Its compositor answers no connection, so a connection issued or a
+    # window of the console's fails it, wherever it comes, and fails no
+    # other boot.
+    after = unanswered.index(UNANSWERED)
+    for name, line in (("a connection issued", CONSOLE_CONNECTION),
+                       ("the console's window", CONSOLE_WINDOW)):
+        refused("the no-answer boot with %s at its end" % name, NO_ANSWER,
+                unanswered + [line], unanswered_required)
+        refused("the no-answer boot with %s before its first wait fails"
+                % name, NO_ANSWER,
+                unanswered[:after] + [line] + unanswered[after:],
+                unanswered_required)
+    for mode in sorted(boot.DEFAULT_TIMEOUTS):
+        expect("%s mode refuses a connection issued for the console" % mode,
+               replay(boot, mode, [CONSOLE_CONNECTION]), mode != NO_ANSWER)
+
     # The system boot's wallpaper is the kernel's background on the system
     # disk and computed on a test disk, after the refusal of the
     # background, and the console's display after the compositor is the
@@ -624,11 +716,11 @@ def main():
             expect("%s mode refuses a line that says %s" % (mode, name),
                    replay(boot, mode, [line]),
                    mode not in ("system", "persist", "logout", WINDOW))
-    expect("the boots that run on the compositor refuse the close lines and "
-           "no other does",
+    expect("the boots that run on the compositor and the no-answer boot "
+           "refuse lines and no other does",
            [mode for mode in sorted(boot.DEFAULT_TIMEOUTS)
             if boot.refused_lines(mode)],
-           ["logout", "persist", "system", WINDOW])
+           ["logout", NO_ANSWER, "persist", "system", WINDOW])
 
     # The compositor reads each endpoint and the console none, so a line
     # of the console for an endpoint, or a message the compositor refuses,
@@ -1132,7 +1224,7 @@ def main():
            "in 2 pixels" in result, True)
 
     # A mode that needs a whole data disk says so, without one.
-    for mode in ("fallback", "persist"):
+    for mode in ("fallback", NO_ANSWER, "persist"):
         for extra in ([], ["--data", "data.img", "--corrupt-gpt", "header"]):
             status, message = usage_error(boot, extra + [mode, "disk.img"])
             expect("%s with %s exits with a usage error"
@@ -1154,7 +1246,7 @@ def main():
     expect("window with fonts exits with a usage error", status, USAGE_ERROR)
 
     # The modes that run only on a test disk say so, on another.
-    for mode in ("chain", "fallback", "specimen", WINDOW):
+    for mode in ("chain", "fallback", NO_ANSWER, "specimen", WINDOW):
         status, message = usage_error(boot, ["--data", "data.img", mode,
                                              "disk.img"], tests=False)
         expect("%s without --tests exits with a usage error" % mode, status,

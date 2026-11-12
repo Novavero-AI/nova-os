@@ -179,9 +179,13 @@ _Static_assert(sizeof(INPUT_BUTTON) == 4, "one layout on every target");
     phase 3 arrangement, rule 9). */
 #define COMPOSITOR_OPTION_EXIT_TEST 0x2
 
+/** Answer no COMPOSITOR_CONNECT, and serve on as it would (D19's phase 3
+    arrangement, rule 9). */
+#define COMPOSITOR_OPTION_NO_ANSWER_TEST 0x4
+
 /** Every option. */
 #define COMPOSITOR_OPTIONS (COMPOSITOR_OPTION_REDUCE_MOTION | \
-    COMPOSITOR_OPTION_EXIT_TEST)
+    COMPOSITOR_OPTION_EXIT_TEST | COMPOSITOR_OPTION_NO_ANSWER_TEST)
 
 /** Its supervisor closed its control channel, or the platform driver closed
     the bootstrap channel the input endpoints come on. */

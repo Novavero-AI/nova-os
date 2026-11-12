@@ -4,8 +4,8 @@
 # loader, the kernel and every program; tools the host compiler builds
 # convert Inter's faces to nova-os fonts and write the store image, the
 # system's boot disk, the test disk, the specimen disk, the fallback disk,
-# the window disk, the chain disk, the logout disk and an empty data disk
-# (docs/spec/disk-layout.md).
+# the no-answer disk, the window disk, the chain disk, the logout disk and
+# an empty data disk (docs/spec/disk-layout.md).
 # SHA256SUMS gives the sha256 of every file in OUT that a build must
 # reproduce, and the build checks each file it downloads against its
 # line there before anything reads it.
@@ -420,6 +420,13 @@ set -- "$@" fstest.exe TESTS NOMOTION
 # the console takes the display from it.
 : > COMPFAIL
 ./mkimage fallback.img fallback.vhdx "$@" COMPFAIL
+
+# The no-answer disk holds the test disk's files and NOANSWER, an empty
+# file, which makes the compositor answer no connection, at each start,
+# so that the first process ends it at its deadline, it is given up, and
+# the console takes the display from it.
+: > NOANSWER
+./mkimage noanswer.img noanswer.vhdx "$@" NOANSWER
 
 # The window disk holds the test disk's files, wintest.exe, the window test
 # client, and WINDOW, an empty file, which makes the first process start the

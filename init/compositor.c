@@ -6,7 +6,10 @@
    console's connection, if a console runs, which a compositor started
    again gets as the first did (rule 9). The kernel's background goes
    with the first start alone: a compositor started again computes Limb
-   (D2, rule 2). */
+   (D2, rule 2). The answer to a connection is the one message init waits
+   for, and it waits until a deadline: a compositor that has not answered
+   by then is ended, and its supervisor reads that end as any other
+   (D3). */
 
 #include "compositor.h"
 #include "console.h"
@@ -36,6 +39,11 @@ static const HANDLE_TRANSFER no_handles[1];
    waits for, is told from other messages by its own, which rises. */
 #define BACKGROUND_TRANSACTION 1
 #define FIRST_CONNECT_TRANSACTION 2
+
+/* COMPOSITOR_CONNECT_DEADLINE_SECONDS in the nanoseconds of a deadline. */
+#define NS_PER_SECOND 1000000000ULL
+#define CONNECT_DEADLINE_NS \
+    (COMPOSITOR_CONNECT_DEADLINE_SECONDS * NS_PER_SECOND)
 
 /* What the compositor sends init: its answers and its events, none of
    which carries a handle. */
@@ -84,9 +92,9 @@ void compositor_start(const PLATFORM *platform, UINT32 bootstrap)
 }
 
 /* The options the compositor starts with (display_protocol.h), from the
-   flag files a test disk holds: ui.reduce-motion for NOMOTION, and
-   leaving after the first frame that shows a window's present for
-   COMPFAIL. WINDOW sets none. */
+   flag files a test disk holds: ui.reduce-motion for NOMOTION, leaving
+   after the first frame that shows a window's present for COMPFAIL, and
+   answering no connection for NOANSWER. WINDOW sets none. */
 static UINT32 options(void)
 {
     UINT32 bits = 0;
@@ -95,6 +103,8 @@ static UINT32 options(void)
         bits |= COMPOSITOR_OPTION_REDUCE_MOTION;
     if (tests_flag(TEST_FLAG_COMPOSITOR_FAILS))
         bits |= COMPOSITOR_OPTION_EXIT_TEST;
+    if (tests_flag(TEST_FLAG_NO_ANSWER))
+        bits |= COMPOSITOR_OPTION_NO_ANSWER_TEST;
     return bits;
 }
 
@@ -183,27 +193,39 @@ static void send_display(const PLATFORM *platform)
 
 /* Read the compositor's messages until its answer to the connection
    issued as transaction, whose status and connection number are
-   *answer's. The answers and events that came before, a background's
-   prepared and a connection's closed, are not waited for and are passed
-   over. Returns OK, or the status of the read that failed, with
-   ERR_PEER_CLOSED for a compositor that has closed its end. */
+   *answer's, or until CONNECT_DEADLINE_NS after the call. The answers
+   and events that came before, a background's prepared and a
+   connection's closed, are not waited for and are passed over; the
+   deadline is one time on the clock, so none of them moves it, and it is
+   checked after each, so a compositor that keeps the channel full of
+   them is not waited for beyond it either. A wait that ends for any
+   reason but the deadline goes back to the read, which says what the
+   channel holds. Returns OK; ERR_TIMED_OUT for a compositor that has not
+   answered by the deadline; ERR_PEER_CLOSED for one that has closed its
+   end; or the status of the read or the clock that failed. */
 static UINT32 await_connected(UINT32 transaction,
                               COMPOSITOR_CONNECTED_REPLY *answer)
 {
     const COMPOSITOR_CONNECTED_REPLY *reply =
         (const COMPOSITOR_CONNECTED_REPLY *)incoming.bytes;
     RECEIVED_HANDLE handles[CHANNEL_MAX_HANDLES];
-    UINT32 byte_count, handle_count, observed, status, i;
+    UINT32 byte_count, handle_count, observed, i;
+    UINT64 now, deadline;
+    UINT32 status = clock_monotonic(&now);
     int found;
 
+    if (status != OK)
+        return status;
+    deadline = now + CONNECT_DEADLINE_NS;
     for (;;) {
         status = channel_read(control, incoming.bytes, sizeof incoming.bytes,
                               handles, CHANNEL_MAX_HANDLES, &byte_count,
                               &handle_count);
         if (status == ERR_SHOULD_WAIT) {
-            object_wait_one(control,
-                            CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
-                            DEADLINE_INFINITE, &observed);
+            if (object_wait_one(control,
+                                CHANNEL_READABLE | CHANNEL_PEER_CLOSED,
+                                deadline, &observed) == ERR_TIMED_OUT)
+                return ERR_TIMED_OUT;
             continue;
         }
         if (status != OK)
@@ -219,7 +241,27 @@ static UINT32 await_connected(UINT32 transaction,
             answer->connection = reply->connection;
             return OK;
         }
+        status = clock_monotonic(&now);
+        if (status != OK)
+            return status;
+        if (now >= deadline)
+            return ERR_TIMED_OUT;
     }
+}
+
+/* The compositor has not answered a connection by its deadline, which
+   counts as its end (display.md D3; D19's phase 3 arrangement, rule 2,
+   step 4): log it and end the compositor. The supervisor then reads the
+   end as any other of the compositor's, and starts it again or gives it
+   up as the restart policy allows (platform.c). */
+static void end_unanswering(void)
+{
+    UINT32 status;
+
+    say_status("connection wait failed", ERR_TIMED_OUT);
+    status = platform_end_compositor();
+    if (status != OK)
+        say_status("compositor end failed", status);
 }
 
 UINT32 compositor_connect(const char *label, UINT32 layers, UINT32 rights,
@@ -261,6 +303,8 @@ UINT32 compositor_connect(const char *label, UINT32 layers, UINT32 rights,
     }
     connect_transaction++;
     status = await_connected(transaction, &answer);
+    if (status == ERR_TIMED_OUT)
+        end_unanswering();
     if (status == OK && answer.status != OK) {
         say_status("connection refused", answer.status);
         status = answer.status;

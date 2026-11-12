@@ -104,7 +104,7 @@ a test disk: the kernel and the first process run their tests on it and
 report them in KTAP ([log.md T2](log.md#t2-test-reports)), and the boot
 then goes on as the system's does. A flag file other than `TESTS` acts
 only on a test disk ([display.md D19](display.md#d19-the-build-plan)).
-Four more disks hold the test disk's
+Five more disks hold the test disk's
 files and add their own:
 
 | Disk | Adds | Its boot |
@@ -112,6 +112,7 @@ files and add their own:
 | The specimen disk, `specimen.img` | `\NOVA\SPECIMEN`, an empty file | The first process gives the display to the type specimen from `/store` in the console's place ([console.md C1](console.md#c1-the-display-handoff)) |
 | The chain disk, `chain.img` | The inputs of the bootstrap check, the chain the first process runs from the seed | The first process runs the chain ([compat.md C4](compat.md#c4-files)) |
 | The fallback disk, `fallback.img` | `\NOVA\COMPFAIL`, an empty file | The first process has the compositor exit just after the first frame that shows the console's window, at each of its starts, so the console takes the display after it ([display.md D19](display.md#d19-the-build-plan), rules 2 and 9) |
+| The no-answer disk, `noanswer.img` | `\NOVA\NOANSWER`, an empty file | The first process has the compositor answer no connection, at each of its starts, and ends it at the deadline of its wait for the answer, so it is given up and the console takes the display after it ([display.md D3](display.md#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows) and [D19](display.md#d19-the-build-plan), rules 2 and 9) |
 | The window disk, `window.img` | `\NOVA\WINTEST.EXE`, the window test client, and `\NOVA\WINDOW`, an empty file | The first process starts the compositor and the test client, which makes a window on it in the console's place, and issues the console no connection ([display.md D19](display.md#d19-the-build-plan), rule 11) |
 
 The logout disk, `logout.img`, is a system disk, not a test disk: it

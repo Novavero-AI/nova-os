@@ -96,7 +96,12 @@ static void check_control(void)
                                             &which) == OK &&
               which == COMPOSITOR_SETUP_OPTIONS,
           "the options encode, pass the dispatcher and are named");
-    options.options = 0x4;
+    options.options = COMPOSITOR_OPTIONS;
+    check(display_control_options_encode(&options, buffer.bytes, &size) ==
+                  OK &&
+              size == sizeof options,
+          "every option bit together encodes");
+    options.options = COMPOSITOR_OPTIONS + 1;
     check(display_control_options_encode(&options, buffer.bytes, &size) ==
                   ERR_INVALID_ARGS &&
               size == 0,

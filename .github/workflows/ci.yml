@@ -228,7 +228,7 @@ jobs:
             lib/nvo_decimal.c lib/nvo_syntax.c lib/nvo_value.c
           "$RUNNER_TEMP/check-nvo" docs/spec/shell.md
 
-      - name: boot.py accepts the fallback boot's failure lines and no other
+      - name: boot.py accepts the fallback and no-answer boots' failure lines and no other
         run: python3 -I ci/check-boot.py
 
       - name: The workflows pass actionlint
@@ -334,6 +334,7 @@ jobs:
             ${{ runner.temp }}/reproduce/test.img
             ${{ runner.temp }}/reproduce/chain.img
             ${{ runner.temp }}/reproduce/fallback.img
+            ${{ runner.temp }}/reproduce/noanswer.img
             ${{ runner.temp }}/reproduce/window.img
             ${{ runner.temp }}/reproduce/specimen.img
             ${{ runner.temp }}/reproduce/logout.img
@@ -392,13 +393,20 @@ jobs:
   # pool's entry moved below the usable LBAs, or with them, over the
   # table, or a second entry over it, and check that the file system
   # service refuses the disk and that login does not start without it.
-  # The chain, fallback, window and specimen disks are test disks too. The
+  # The chain, fallback, no-answer, window and specimen disks are test
+  # disks too. The
   # fallback boot has the compositor take the display and end just after
   # the first frame that shows the console's window, at each start, and
   # must report the window made before each end, the compositor restarted
   # once and given up, the console drawing the display after it and no
   # other failure, and show Limb alone or the console's window over it
   # from the compositor's first display line, and then goes on as the test disk's boots do, on the console alone.
+  # The no-answer boot has the compositor take the display and answer no
+  # connection, at each start, and must report the first process's wait
+  # for the answer failed at its deadline and the compositor ended, twice,
+  # the compositor restarted once and given up, the console drawing the
+  # display after it, no connection issued, no window made and no other
+  # failure, and then goes on as the fallback boot does.
   # The window boot has the compositor serve a test client's connection
   # and window in the console's place, and must report them and show, once
   # the client has had its second frame shown, the screen ci/screens.c
@@ -502,6 +510,12 @@ jobs:
           - name: Boot (fallback)
             mode: fallback
             disk: fallback.img
+            tests: true
+            accel: tcg
+            minutes: 15
+          - name: Boot (no answer)
+            mode: noanswer
+            disk: noanswer.img
             tests: true
             accel: tcg
             minutes: 15

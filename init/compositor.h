@@ -11,6 +11,24 @@
 #include "init.h"
 #include "platform.h"
 
+/* How long init waits for the compositor's answer to a connection it
+   issues (display.md D19's phase 3 arrangement, rule 2, step 4), in
+   seconds. A compositor answers once it has taken the display and drawn
+   its first frame, and where it computes Limb that is nearly all of the
+   time: 4.6 seconds from its start to its answer at 2880 x 1800 under
+   QEMU's TCG on an Apple M2, the slowest start measured, of which Limb
+   was 3.2, about 8 seconds scaled to the slowest of CI's runners, and
+   about a quarter of a second for Limb under KVM (D9; D19 gives the
+   measurements). 30 seconds is more than six times the slowest
+   measured, since the compositor shares the processor with every
+   program that is busy and a deadline missed by a compositor that works
+   costs the display. It is also half of the supervisor's
+   RESTART_PERIOD_SECONDS, which it must stay under: a compositor started
+   again that does not answer either is then down again within the
+   period and given up, where a longer deadline would have it started
+   again for ever (platform.c). */
+#define COMPOSITOR_CONNECT_DEADLINE_SECONDS 30
+
 /* Whether a compositor runs on this boot: on every disk but the specimen
    disk, which draws in the console's place. */
 int compositor_wanted(void);
@@ -45,15 +63,18 @@ void compositor_started(const PLATFORM *platform);
 
 /* Issue a connection to the compositor that runs (display.md D19's phase
    3 arrangement, rule 2): the label, no mark, the layers and the rights,
-   on a channel of its own, and wait for the compositor's answer, or for
+   on a channel of its own, and wait for the compositor's answer, for
    its control channel to close, which is a compositor that has ended
-   (rule 9). Returns OK, with *client the client's end of the connection,
-   which the caller sends on to the client with DISPLAY_CONNECTION_RIGHTS;
-   the status the compositor refused with, logged as nova-init: connection
-   refused;
-   or the status of the call that failed, ERR_PEER_CLOSED if the
-   compositor has ended and ERR_BAD_STATE if none runs. *client is
-   HANDLE_INVALID unless OK. */
+   (rule 9), or for COMPOSITOR_CONNECT_DEADLINE_SECONDS, after which the
+   compositor has not answered: that is logged as nova-init: connection
+   wait failed, and the compositor is ended, so that its supervisor
+   starts it again or gives it up as for any end of it (D3). Returns OK,
+   with *client the client's end of the connection, which the caller
+   sends on to the client with DISPLAY_CONNECTION_RIGHTS; the status the
+   compositor refused with, logged as nova-init: connection refused;
+   or the status of the call that failed, ERR_TIMED_OUT if the compositor
+   did not answer, ERR_PEER_CLOSED if it has ended and ERR_BAD_STATE if
+   none runs. *client is HANDLE_INVALID unless OK. */
 UINT32 compositor_connect(const char *label, UINT32 layers, UINT32 rights,
                           UINT32 *client);
 

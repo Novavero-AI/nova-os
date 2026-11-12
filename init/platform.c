@@ -26,7 +26,9 @@
    init supervises the drivers and the console for the life of the
    system (ipc.md I10), and the programs it keeps running that are not
    drivers, the accounts service and login among them (platform_keep).
-   The compositor is supervised as the console is.
+   The compositor is supervised as the console is, and one that does not
+   answer a connection by its deadline is ended (platform_end_compositor),
+   which the supervisor reads as it reads any end of it.
    It waits for them through one port, on which a watch of each one's
    process queues a packet when it ends, and a watch of each input
    driver's bootstrap channel one when it reports. One that ends, or does
@@ -97,6 +99,12 @@ static const JOB_LIMITS driver_limits = {DRIVER_INTERRUPT_VECTORS};
 #define RESTART_PERIOD_SECONDS 60
 #define NS_PER_SECOND 1000000000ULL
 #define RESTART_PERIOD_NS (RESTART_PERIOD_SECONDS * NS_PER_SECOND)
+
+/* A compositor started again that does not answer its connection is
+   ended at its deadline, which must fall within the restart period for
+   it to be given up then (display.md D3). */
+_Static_assert(COMPOSITOR_CONNECT_DEADLINE_SECONDS < RESTART_PERIOD_SECONDS,
+               "a compositor that never answers is given up");
 
 /* The port init waits on queues only watches' packets, none of the user
    packets its capacity counts. */
@@ -1270,6 +1278,11 @@ void platform_start_compositor(const PLATFORM *platform)
     if (console->state == STATE_STOPPED && have_file(console))
         launch(platform, console);
     hand_held(platform);
+}
+
+UINT32 platform_end_compositor(void)
+{
+    return task_kill(children[CHILD_COMPOSITOR].process);
 }
 
 int platform_keep(const PLATFORM *platform, const char *name,

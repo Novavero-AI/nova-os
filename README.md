@@ -189,6 +189,11 @@ draw and, once its driver runs, keeps QEMU from capturing the mouse.
   the compositor take the display and end at each start, once it shows
   the console's window, until it is given up and the console takes the
   display after it.
+- `out/noanswer.img` in place of `out/disk.img` runs the tests and has
+  the compositor take the display and answer no connection, so that the
+  first process ends it at the deadline of its wait for the answer, at
+  each start, until it is given up, about a minute in, and the console
+  takes the display after it.
 - `out/window.img` in place of `out/disk.img` runs the tests and has
   the compositor show a test client's window over Limb with the pointer
   drawn over it, and send it the pointer's events and the keys typed in
@@ -198,7 +203,7 @@ draw and, once its driver runs, keeps QEMU from capturing the mouse.
 - `out/chain.img` in place of `out/disk.img` runs the tests and the
   bootstrap check; under emulation it takes minutes.
 - With `format=vhdx`, the same drive boots `disk.vhdx`, `test.vhdx`,
-  `fallback.vhdx`, `window.vhdx` or `chain.vhdx`.
+  `fallback.vhdx`, `noanswer.vhdx`, `window.vhdx` or `chain.vhdx`.
 - nova-boot draws in the display's native mode, which
   `-vga none -device VGA,edid=on,xres=2560,yres=1600` sets to
   2560 x 1600. For 3840 x 2160, add `refresh_rate=50000,vgamem_mb=32`
