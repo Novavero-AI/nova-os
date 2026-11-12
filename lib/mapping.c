@@ -1,5 +1,6 @@
 /* A program's mappings (mapping.h): sections mapped one after another
-   from the address it chose, each a whole number of pages. */
+   from the address it chose, each a whole number of pages, and ranges
+   of addresses kept from there too, each holding one image at a time. */
 
 #include "mapping.h"
 #include "limb.h"
@@ -108,29 +109,72 @@ static UINT64 band_size(UINT64 bytes, UINT32 index)
     return rest < SECTION_MAX_SIZE ? rest : SECTION_MAX_SIZE;
 }
 
-const void *mapping_image(MAPPING *mapping, const RECEIVED_HANDLE *handles,
-                          UINT32 count, UINT64 bytes, UINT64 *mapped,
-                          UINT32 *status)
+/* Map the count sections of an image of bytes bytes to read, one after
+   another from address, each in whole pages. Returns the bytes mapped;
+   or 0, with nothing of them left mapped and the status of the call
+   that failed in *status. */
+static UINT64 map_image(const MAPPING *mapping, UINT64 address,
+                        const RECEIVED_HANDLE *handles, UINT32 count,
+                        UINT64 bytes, UINT32 *status)
 {
-    const UINT8 *start = 0;
+    UINT64 mapped = 0;
     UINT32 i;
 
-    *mapped = 0;
     for (i = 0; i < count; i++) {
-        const UINT8 *band = mapping_section(mapping, handles[i].handle,
-                                            band_size(bytes, i), MAP_READ,
-                                            status);
+        UINT64 size = whole_pages(band_size(bytes, i));
 
-        if (!band) {
-            if (start)
-                mapping_unmap(mapping, start, *mapped);
+        *status = process_map(mapping->self, handles[i].handle, 0,
+                              address + mapped, size, MAP_READ);
+        if (*status != OK) {
+            if (mapped)
+                process_unmap(mapping->self, address, mapped);
             return 0;
         }
-        if (!start)
-            start = band;
-        *mapped = (UINT64)(mapping->next - (UINT64)start);
+        mapped += size;
     }
-    return start;
+    return mapped;
+}
+
+const void *mapping_image(MAPPING *mapping, const RECEIVED_HANDLE *handles,
+                          UINT32 count, UINT64 bytes, UINT32 *status)
+{
+    UINT64 start = mapping->next;
+    UINT64 mapped = map_image(mapping, start, handles, count, bytes, status);
+
+    if (!mapped)
+        return 0;
+    mapping->next += mapped;
+    return (const void *)start;
+}
+
+void mapping_range_reserve(MAPPING *mapping, MAPPING_RANGE *range)
+{
+    range->base = mapping->next;
+    range->mapped = 0;
+    mapping->next += MAPPING_RANGE_BYTES;
+}
+
+UINT32 mapping_range_clear(const MAPPING *mapping, MAPPING_RANGE *range)
+{
+    UINT32 status = OK;
+
+    if (range->mapped)
+        status = process_unmap(mapping->self, range->base, range->mapped);
+    if (status == OK)
+        range->mapped = 0;
+    return status;
+}
+
+const void *mapping_range_image(const MAPPING *mapping, MAPPING_RANGE *range,
+                                const RECEIVED_HANDLE *handles, UINT32 count,
+                                UINT64 bytes, UINT32 *status)
+{
+    *status = mapping_range_clear(mapping, range);
+    if (*status != OK)
+        return 0;
+    range->mapped =
+        map_image(mapping, range->base, handles, count, bytes, status);
+    return range->mapped ? (const void *)range->base : 0;
 }
 
 /* Whether display describes a screen drawn on: a pixel format known, a

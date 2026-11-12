@@ -153,7 +153,7 @@ jobs:
             console/text.c gfx/gfx.c gfx/font.c gfx/raster.c gfx/limb.c -lm
           "$RUNNER_TEMP/check-window"
 
-      - name: How many bytes a section holds is found from process_map's refusals alone
+      - name: How many bytes a section holds is found from process_map's refusals alone, and a range's images take its addresses alone, one at a time, as display.md D6 gives a window's buffers
         run: |
           cc -std=c11 -Wall -Wextra -pedantic -Werror \
             -fsanitize=address,undefined -fno-sanitize-recover=all \

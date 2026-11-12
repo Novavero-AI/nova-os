@@ -106,15 +106,14 @@ typedef struct {
 
 /* The window served: its channel, HANDLE_INVALID while there is none, its
    rules' record, what waits for the channel, and for each buffer given
-   where it is mapped and how many bytes. frame_owed is nonzero from a
-   present that is shown to the frame that shows it. */
+   where it is mapped, 0 for a number that holds none. frame_owed is
+   nonzero from a present that is shown to the frame that shows it. */
 typedef struct {
     UINT32 channel;
     WINDOW_RECORD record;
     BACKLOG backlog;
     UINT32 waiting;
     const UINT32 *pixels[WINDOW_BUFFERS_MAX];
-    UINT64 mapped[WINDOW_BUFFERS_MAX];
     UINT32 frame_owed;
 } WINDOW;
 
@@ -128,6 +127,12 @@ typedef struct {
 static CONNECTION connection;
 static WINDOW window;
 static UINT32 issued;
+
+/* For each buffer number, the range of addresses every buffer given
+   under it is mapped in, kept once for the compositor's life and for
+   every window it serves, so that the addresses its buffers take are
+   these ranges whatever a client gives (D6, lib/mapping.h). */
+static MAPPING_RANGE buffer_ranges[WINDOW_BUFFERS_MAX];
 
 /* What the keyboards have done, as one keyboard whose modifiers are those
    any of them holds, the one pointer every pointing device moves, and the
@@ -380,14 +385,16 @@ static RECT window_rectangle(void)
     return compose_blocks(host->screen, &rect);
 }
 
+/* Unmap the buffer that number's range holds, if it holds one. A buffer
+   the kernel does not unmap is logged and stays the range's: the next
+   buffer given under the number unmaps it first, or is refused. */
 static void unmap_buffer(UINT32 number)
 {
-    if (window.pixels[number]) {
-        mapping_unmap(host->mapping, window.pixels[number],
-                      window.mapped[number]);
-        window.pixels[number] = 0;
-        window.mapped[number] = 0;
-    }
+    UINT32 status =
+        mapping_range_clear(host->mapping, &buffer_ranges[number]);
+
+    if (status != OK)
+        compositor_say_status("buffer unmap failed", status);
 }
 
 /* Close the window: its channel, and its buffers' mappings, the record of
@@ -463,7 +470,11 @@ static void send_configure(void)
 /* A buffer given to the window, with its sections in handles, which are
    closed whatever the result. Returns the reason the window is to be
    closed for, or 0. The buffer is mapped only once the rules accept it,
-   by the sizes its sections hold. */
+   by the sizes its sections hold, in its number's range, in place of the
+   buffer the range held: the rules refuse the number of the buffer a
+   frame reads (lib/window.c), so no pixel read is unmapped. A buffer the
+   kernel has no mapping left for is refused, with nothing of it left
+   mapped (D6). */
 static const char *take_buffer(const RECEIVED_HANDLE *handles, UINT32 count)
 {
     const WINDOW_BUFFER_REQUEST *request =
@@ -480,18 +491,14 @@ static const char *take_buffer(const RECEIVED_HANDLE *handles, UINT32 count)
     } else if (window_give_buffer(&window.record, request, sizes, count) ==
                OK) {
         UINT64 bytes = window_buffer_size(request->stride, request->height);
-        UINT64 mapped = 0;
-        const void *pixels = mapping_image(host->mapping, handles, count,
-                                           bytes, &mapped, &status);
 
-        if (pixels) {
-            unmap_buffer(number);
-            window.pixels[number] = pixels;
-            window.mapped[number] = mapped;
+        window.pixels[number] =
+            mapping_range_image(host->mapping, &buffer_ranges[number],
+                                handles, count, bytes, &status);
+        if (window.pixels[number])
             reason = 0;
-        } else {
+        else
             compositor_say_status("buffer map failed", status);
-        }
     }
     compositor_close_received(handles, count);
     return reason;
@@ -1104,6 +1111,8 @@ _Noreturn void serve(const SERVE *context)
     window.channel = HANDLE_INVALID;
     for (i = 0; i < INPUT_DEVICES_MAX; i++)
         inputs[i].endpoint = HANDLE_INVALID;
+    for (i = 0; i < WINDOW_BUFFERS_MAX; i++)
+        mapping_range_reserve(host->mapping, &buffer_ranges[i]);
     prepare_windows();
     for (;;) {
         wait_for_work();
