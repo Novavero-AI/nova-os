@@ -1128,7 +1128,7 @@ Some keys belong to the system and never reach a window:
 
 | Keys | What they do | Configurable |
 |---|---|---|
-| Ctrl+Alt+Delete: either Ctrl, either Alt, and Delete (`KEY_DELETE`) or the keypad's Delete (`KEY_KPDOT`) | The secure attention key | No |
+| Ctrl+Alt+Delete: Delete (`KEY_DELETE`) or the keypad's Delete (`KEY_KPDOT`), pressed while either Ctrl and either Alt are held | The secure attention key | No |
 | Super (`KEY_LEFTMETA` or `KEY_RIGHTMETA`) tapped alone, pressed and released with no key between, and Alt+Space | Opens and closes the HUD | A system setting, `desktop.hud-keys`, which holds both |
 | Alt+Tab, Alt+Shift+Tab | Moves the focus through the session's windows | A system setting |
 | Super+1 to Super+9 | Gives the focus to the first to ninth window the strip names | A system setting |
@@ -1138,7 +1138,10 @@ Some keys belong to the system and never reach a window:
 
 The compositor matches them on key events before routing, and sends a
 window neither the press nor the release of a key that completes one; a
-window that had Ctrl and Alt pressed is told they are released. Shift
+window that had Ctrl and Alt pressed is told they are released. One
+press alone completes the secure attention key, Delete's or the keypad's
+Delete's while a Ctrl and an Alt are held: a Delete pressed before them
+is a press like any other, which its window is sent. Shift
 or Super held with the secure attention key do not stop it being that
 key. A reserved key other than the secure attention key is a setting of
 the system, which only an administrator's settings handle changes
@@ -1187,6 +1190,10 @@ the keyboard.
 - **Why Ctrl+Alt+Delete:** it is the combination people know for this
   purpose, and no program here has a use for it. The keypad's Delete
   counts, so a keyboard whose Delete is on its keypad alone can press it.
+- **Why Delete pressed last:** the key is then one press, which the
+  compositor acts on at once and before any other event, and what a
+  window is sent stays whole: every press of Control and Alt and word
+  of their release, and nothing of Delete's.
 - **Why Shift and Super do not stop it:** a program that cannot receive
   the combination must not receive a variant of it either, such as
   Ctrl+Alt+Shift+Delete, which a program could otherwise draw a
@@ -1203,10 +1210,16 @@ the keyboard.
   rebind Print Screen to Enter would take a screenshot at every Enter.
 - **Cost:** a program cannot use the keys reserved; a keyboard with no
   Delete key, on its keypad or off it, cannot press the secure attention
-  key; changing a reserved key needs an administrator.
+  key; changing a reserved key needs an administrator. A program is sent
+  Control, Alt and Delete pressed in any other order, which raises no
+  attention state, and can draw a prompt that asks for one.
 - **Not taken:** global shortcuts any program can register. Its cost is
   a program that registers the keys of another's shortcuts, or of
-  every letter, and reads them. A second combination for keyboards
+  every letter, and reads them. The press that completes Ctrl, Alt and
+  Delete in whatever order they come; its cost is a rule for each key
+  that can complete them, a press of Control or Alt a window is not sent
+  though it is sent their releases, and a Delete it was sent pressed
+  that is then sent no release. A second combination for keyboards
   without Delete; its cost is one more combination taken from every
   program before any such keyboard is a target. A single dedicated key
   for the secure attention key; its cost is a key a keyboard without it
@@ -1778,10 +1791,9 @@ login's session as it does on its own
    - **The secure attention key** is a press of Delete or the keypad's
      Delete while Control and Alt are held, either of each, whatever else
      is held ([D12](#d12-the-secure-attention-key-and-global-keys)). The
-     press is sent to no window and logged (rule 8). D12 names the
-     combination with no order; the compositor takes it in this order
-     only, so a Delete pressed before Control and Alt is a press like any
-     other, which the window is sent.
+     press is sent to no window and logged (rule 8). A Delete pressed
+     before Control and Alt is a press like any other, which the window
+     is sent.
    - **A keyboard's endpoint that closes** after sending a key leaves no
      modifier held, the other keyboards' included, and leaves Caps Lock as
      it was. The presses sent stay recorded, and the window is sent no
@@ -2201,21 +2213,6 @@ login's session as it does on its own
   again. Not taken: a set for each keyboard; its cost is a record for each
   endpoint, and Control on one keyboard that does not combine with a letter
   on another.
-- **Why the secure attention key is a press with Control and Alt already
-  held:** D12 reserves Ctrl+Alt+Delete and sends a window neither the press
-  nor the release of a key that completes it, and names no order. The
-  compositor takes the press of Delete or the keypad's, one or both, while
-  either Control and either Alt are held, with Shift or Super or not. D12
-  is not met for the other orders: with Delete pressed before Control and
-  Alt, the key that completes the combination is Control's or Alt's, which
-  D12 sends no window and this sends, so the window is sent all three keys,
-  no attention state is raised and nothing is logged. Nothing shows the
-  person that the key was not taken, since phase 3 has no secure screen.
-  Not taken: the press that completes the combination, in
-  whatever order the keys come, as D12's words can be read; its cost is a
-  rule for each key that can complete it, a press of Control or Alt that
-  the window is not sent though it is sent their releases, and a Delete it
-  was sent pressed that is then sent no release.
 - **Why a key repeat or release is sent only for a press that was sent:**
   a window builds the keys it believes down from the events it is sent, so
   it must be sent a repeat or a release only of a press it was sent, as
