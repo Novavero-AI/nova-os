@@ -2,9 +2,11 @@
    (docs/spec/console.md C3, docs/spec/display.md D11, rule 2 and D12).
    The codes are the Linux input header's (docs/spec/README.md,
    Devices), which names each key by its unshifted US label. A modifier
-   key's event updates the modifiers held, a character key gives its
-   table's character under them, and the secure attention key is a
-   Delete with Control and Alt held. */
+   key's event updates the modifier keys its keyboard holds, which are
+   recorded for each keyboard; the modifiers held are those any keyboard
+   holds (docs/spec/display.md D19's phase 3 arrangement, rule 6); a
+   character key gives its table's character under them; and the secure
+   attention key is a Delete with Control and Alt held. */
 
 #include "keymap.h"
 #include "display_protocol.h"
@@ -72,7 +74,7 @@ _Static_assert(sizeof shifted == CHARACTER_CODES + 1,
 #define PRINTABLE_FIRST 0x20
 #define PRINTABLE_LAST 0x7E
 
-/* The bits of KEYBOARD.held. */
+/* The bits of a keyboard's word of KEYBOARD.held. */
 #define HELD_LEFT_SHIFT 0x1
 #define HELD_RIGHT_SHIFT 0x2
 #define HELD_LEFT_CONTROL 0x4
@@ -87,7 +89,8 @@ _Static_assert(sizeof shifted == CHARACTER_CODES + 1,
 #define HELD_SUPER (HELD_LEFT_SUPER | HELD_RIGHT_SUPER)
 #define HELD_NO_CHARACTER (HELD_CONTROL | HELD_ALT | HELD_SUPER)
 
-/* The KEYBOARD.held bit for a modifier's code, or 0. */
+/* The bit of a keyboard's word of KEYBOARD.held for a modifier's code, or
+   0. */
 static UINT32 modifier(UINT32 code)
 {
     switch (code) {
@@ -110,6 +113,17 @@ static UINT32 modifier(UINT32 code)
     default:
         return 0;
     }
+}
+
+/* The modifier keys held, by any keyboard: a bit for each key that one of
+   them holds. */
+static UINT32 held_by_any(const KEYBOARD *keyboard)
+{
+    UINT32 held = 0, source;
+
+    for (source = 0; source < INPUT_DEVICES_MAX; source++)
+        held |= keyboard->held[source];
+    return held;
 }
 
 /* The edit an editing key makes, or EDIT_NONE for any other code. */
@@ -145,24 +159,24 @@ static UINT32 edit_key(UINT32 code)
 static UINT8 character_of(const KEYBOARD *keyboard, UINT32 code)
 {
     char plain = unshifted[code];
-    int shift = (keyboard->held & HELD_SHIFT) != 0;
+    int shift = (held_by_any(keyboard) & HELD_SHIFT) != 0;
 
     if (plain >= 'a' && plain <= 'z' && keyboard->caps_lock)
         shift = !shift;
     return (UINT8)(shift ? shifted[code] : plain);
 }
 
-UINT32 keys_event(KEYBOARD *keyboard, UINT32 code, UINT32 value,
-                  UINT8 *character)
+UINT32 keys_event(KEYBOARD *keyboard, UINT32 source, UINT32 code,
+                  UINT32 value, UINT8 *character)
 {
     UINT32 bit = modifier(code);
 
     *character = 0;
     if (bit) {
         if (value == INPUT_KEY_RELEASED)
-            keyboard->held &= ~bit;
+            keyboard->held[source] &= ~bit;
         else
-            keyboard->held |= bit;
+            keyboard->held[source] |= bit;
         return EDIT_NONE;
     }
     if (value == INPUT_KEY_RELEASED)
@@ -173,12 +187,17 @@ UINT32 keys_event(KEYBOARD *keyboard, UINT32 code, UINT32 value,
         return EDIT_NONE;
     }
     if (code < CHARACTER_CODES && unshifted[code]) {
-        if (keyboard->held & HELD_NO_CHARACTER)
+        if (held_by_any(keyboard) & HELD_NO_CHARACTER)
             return EDIT_NONE;
         *character = character_of(keyboard, code);
         return EDIT_INSERT;
     }
     return edit_key(code);
+}
+
+void keys_gone(KEYBOARD *keyboard, UINT32 source)
+{
+    keyboard->held[source] = 0;
 }
 
 UINT32 keys_window_edit(UINT32 code, UINT32 value, const UINT8 *text,
@@ -198,15 +217,18 @@ UINT32 keys_window_edit(UINT32 code, UINT32 value, const UINT8 *text,
 
 int keys_attention(const KEYBOARD *keyboard, UINT32 code)
 {
+    UINT32 held = held_by_any(keyboard);
+
     return (code == CODE_DELETE || code == CODE_KEYPAD_DOT) &&
-           (keyboard->held & HELD_CONTROL) != 0 &&
-           (keyboard->held & HELD_ALT) != 0;
+           (held & HELD_CONTROL) != 0 && (held & HELD_ALT) != 0;
 }
 
 UINT32 keys_modifiers(const KEYBOARD *keyboard)
 {
-    return ((keyboard->held & HELD_SHIFT) ? DISPLAY_MODIFIER_SHIFT : 0) |
-           ((keyboard->held & HELD_CONTROL) ? DISPLAY_MODIFIER_CONTROL : 0) |
-           ((keyboard->held & HELD_ALT) ? DISPLAY_MODIFIER_ALT : 0) |
-           ((keyboard->held & HELD_SUPER) ? DISPLAY_MODIFIER_SUPER : 0);
+    UINT32 held = held_by_any(keyboard);
+
+    return ((held & HELD_SHIFT) ? DISPLAY_MODIFIER_SHIFT : 0) |
+           ((held & HELD_CONTROL) ? DISPLAY_MODIFIER_CONTROL : 0) |
+           ((held & HELD_ALT) ? DISPLAY_MODIFIER_ALT : 0) |
+           ((held & HELD_SUPER) ? DISPLAY_MODIFIER_SUPER : 0);
 }

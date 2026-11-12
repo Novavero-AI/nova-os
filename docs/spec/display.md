@@ -1153,7 +1153,10 @@ window neither the press nor the release of a key that completes one; a
 window that had Ctrl and Alt pressed is told they are released. One
 press alone completes the secure attention key, Delete's or the keypad's
 Delete's while a Ctrl and an Alt are held: a Delete pressed before them
-is a press like any other, which its window is sent. Shift
+is a press like any other, which its window is sent. Ctrl and Alt are
+held while any keyboard holds them, whichever keyboard presses Delete,
+and a keyboard that goes lets go those it held and none that another
+holds ([D19](#d19-the-build-plan)'s phase 3 arrangement, rule 6). Shift
 or Super held with the secure attention key do not stop it being that
 key. A reserved key other than the secure attention key is a setting of
 the system, which only an administrator's settings handle changes
@@ -1805,8 +1808,17 @@ login's session as it does on its own
      press is sent to no window and logged (rule 8). A Delete pressed
      before Control and Alt is a press like any other, which the window
      is sent.
-   - **A keyboard's endpoint that closes** after sending a key leaves no
-     modifier held, the other keyboards' included, and leaves Caps Lock as
+   - **The modifiers held** are those any keyboard holds, one set for
+     them all. The compositor records, for each keyboard's endpoint, the
+     modifier keys that endpoint holds: those it has sent a press or a
+     repeat of and no release since. Shift, Control, Alt or Super is held
+     while any endpoint holds a key of it, so Control held on one keyboard
+     combines with a key pressed on another, and a release lets go the
+     key of the keyboard that sends it and no other's: a modifier key
+     that two keyboards hold stays held until both have released it.
+     Caps Lock is one state, which a press on any keyboard toggles.
+   - **A keyboard's endpoint that closes** lets go the modifier keys it
+     held and none that another keyboard holds, and leaves Caps Lock as
      it was. The presses sent stay recorded, and the window is sent no
      release for them.
    - **The pointer's** reports are read, logged (rule 8) and routed. The
@@ -2104,10 +2116,13 @@ login's session as it does on its own
     endpoints' events, applies the modifiers and the keymap, sends the
     secure attention key's press and release nowhere, and gets each other
     key to the window whole, in the sequences listed. The boot sends
-    presses and releases and no repeat, and the sequences it does not send
-    are `tools/check-keyroute.c`'s alone, which checks `lib/keyroute.c`
-    against a model written apart from it and against laws of its decisions
-    that keep no record of the presses sent.
+    presses and releases and no repeat, from one keyboard, and the
+    sequences it does not send, those of a second keyboard and of a
+    keyboard that goes among them, are `tools/check-keyroute.c`'s alone,
+    which checks `lib/keyroute.c` against a model written apart from it
+    and against laws of its decisions that keep no record of the presses
+    sent; the compositor's numbering of its keyboards and its call at an
+    endpoint's close are read and not run.
     The pointer lines show that the compositor takes the tablet's reports
     and the mouse's, sends the window what D11 gives for the sequences
     listed, in the coordinates D10 and D6 give, and that the screen shows
@@ -2217,17 +2232,36 @@ login's session as it does on its own
   that wants what was held when a modifier key was pressed keeps the event
   before it. Not taken: the modifiers held before the event; its cost is
   that the last event never says what is held now.
-- **Why every keyboard's keys give one set of modifiers:** there is one
-  pointer, whatever devices move it (D11, rule 3), and the console takes
-  every keyboard's keys as one keyboard's. The compositor keeps one set of
-  the modifiers held and of Caps Lock, so Control pressed on one keyboard
-  combines with a key on another. Its cost is that two keyboards cannot be
-  told apart, and that a keyboard that goes clears the modifiers another
-  keyboard holds: Control and Alt held on a second keyboard are forgotten,
-  and the secure attention key is not taken on it until they are pressed
-  again. Not taken: a set for each keyboard; its cost is a record for each
-  endpoint, and Control on one keyboard that does not combine with a letter
-  on another.
+- **Why the modifiers held are those any keyboard holds, recorded for
+  each keyboard:** there is one pointer, whatever devices move it, and a
+  button held on any of them holds it (D11, rule 3). The keyboards type
+  as one keyboard in the same way, for the compositor and for the console
+  ([console.md C3](console.md#c3-keys)): a modifier held on any of them is
+  held, so Control pressed on one keyboard combines with a key on
+  another, and the secure attention key is Delete on any keyboard while
+  Control and Alt are held on any
+  ([D12](#d12-the-secure-attention-key-and-global-keys)). What is held is
+  recorded for each endpoint, as a button is one source's, so a release,
+  and a keyboard that goes, let go what that keyboard held and nothing
+  of another's: Control and Alt held on a second keyboard stay held when
+  the first goes, and the Delete pressed next on the second is the secure
+  attention key, which no window is sent. Caps Lock is a state and not a
+  key held, so it is one for every keyboard. Its cost is a record of the
+  modifier keys held for each endpoint, at most `INPUT_DEVICES_MAX` of
+  them, and that a window cannot tell two keyboards apart. A modifier key
+  that two keyboards hold costs more: the window is sent both presses and
+  the release of the keyboard that lets go first, which says the modifier
+  is still held, and nothing when the second lets go, since a code's
+  release is sent once (the note on a key repeat or release, below), so
+  the last event the window was sent says the modifier is held until its
+  next event. Not taken: one set that every keyboard's keys change and a
+  keyboard that goes clears; its cost is the other keyboards' modifiers
+  cleared with those of the one that goes, so that Control and Alt held
+  on a second keyboard are forgotten and the secure attention key is
+  missed on it, the Delete pressed next going to a window, until they are
+  pressed again. Not taken: a set for each keyboard, which the keys of
+  another keyboard do not read; its cost is Control on one keyboard that
+  does not combine with a letter on another.
 - **Why a key repeat or release is sent only for a press that was sent:**
   a window builds the keys it believes down from the events it is sent, so
   it must be sent a repeat or a release only of a press it was sent, as
@@ -2264,19 +2298,19 @@ login's session as it does on its own
   Alt that come before the secure attention key, as it is for any
   combination of them. Not taken: telling the window at the key; its cost
   is a release for a press whose release is on its way.
-- **Why a keyboard that goes leaves no modifier held, and sends no
+- **Why a keyboard that goes lets go its modifiers, and sends no
   release:** an endpoint that closes has lost the releases of what it held
-  (D11, rule 3, for buttons). The compositor clears the modifiers held and
-  keeps Caps Lock, which is the keyboard's state and not a key held. It
-  keeps the record of presses sent and sends the window no release of a
-  key that was held: a release from another keyboard still reaches the
-  window, which was sent its press. Its cost is that a window that builds
-  the keys down from presses and releases sees a key held that the driver
-  lost until it is pressed and released again, and that the modifiers
-  another keyboard holds are cleared with this one's, as they are one set.
-  Not taken: a release for each key held, as buttons get; its cost is the
-  codes held in the order they were pressed, which a window that reads
-  codes needs and no window of phase 3 does.
+  (D11, rule 3, for buttons). The compositor lets go the modifier keys it
+  recorded for that endpoint and keeps those recorded for every other
+  (the note on the modifiers held, above), and it keeps Caps Lock, which
+  is a state and not a key held. It keeps the record of presses sent and
+  sends the window no release of a key that was held: a release from
+  another keyboard still reaches the window, which was sent its press.
+  Its cost is that a window that builds the keys down from presses and
+  releases sees a key held that the driver lost until it is pressed and
+  released again. Not taken: a release for each key held, as buttons
+  get; its cost is the codes held in the order they were pressed, which
+  a window that reads codes needs and no window of phase 3 does.
 - **Why a key press is dropped where no window has the focus:** a press
   that finds no window, before the window is made or after it has closed,
   changes the modifiers held and goes nowhere, and its repeats and release
@@ -2343,16 +2377,18 @@ login's session as it does on its own
   Not taken: asking the drivers for the device's position; its cost is a
   request and a reply in the input protocol for a position the device gives
   with the next report.
-- **Why an endpoint's place in the table is its source of buttons:** D11's
-  rule 3 makes a button one source's, a source being an input endpoint.
-  The compositor numbers a source by the place of its endpoint among the
-  `INPUT_DEVICES_MAX` it reads, the number `lib/route.c` takes. A place is
-  given up only after the buttons of its endpoint are let go
-  (`route_source_gone`), so a later endpoint that takes the place holds
-  none of the earlier one's. Its cost is that a source number names an
-  endpoint only while it lives. Not taken: a number for each endpoint ever
-  handed; its cost is a count that nothing else reads, and a table to
-  keep it in.
+- **Why an endpoint's place in the table is its source of buttons and of
+  modifier keys:** D11's rule 3 makes a button one source's, a source
+  being an input endpoint, and rule 6 records the modifier keys held for
+  each keyboard's endpoint. The compositor numbers a source by the place
+  of its endpoint among the `INPUT_DEVICES_MAX` it reads, the number
+  `lib/route.c` and `lib/keyroute.c` take. A place is given up only after
+  the buttons and the modifier keys of its endpoint are let go
+  (`route_source_gone`, `keyroute_gone`), so a later endpoint that takes
+  the place holds none of the earlier one's. Its cost is that a source
+  number names an endpoint only while it lives. Not taken: a number for
+  each endpoint ever handed; its cost is a count that nothing else reads,
+  and a table to keep it in.
 - **Why the entry comes when a present is shown, not when its frame is
   composed:** D11's rule 3 sends a window whose first present is shown,
   under a pointer that has not moved, its entry then. `lib/route.c` judges

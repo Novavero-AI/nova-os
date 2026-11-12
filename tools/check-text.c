@@ -3,7 +3,9 @@
    host: writing and wrapping, the line editor, the lines kept for
    scrolling back once an edit has wrapped and been taken back, the US
    layout with Shift and Caps Lock, which modifiers give no character,
-   which hold the secure attention key and which a window is sent, what
+   which hold the secure attention key and which a window is sent, how
+   several keyboards type as one, each letting go its own modifier keys
+   when it releases them or goes, what
    a window's keys edit, and how far the view scrolls, by the wheel's
    detents, by a window's wheel in parts of a detent and to either end,
    and where it shows the caret.
@@ -158,17 +160,33 @@ static void check_kept_lines(void)
         }
 }
 
-static UINT8 key(KEYBOARD *keyboard, UINT32 code, UINT32 value)
+/* The keyboards a client reads, each by the number it gives the
+   keyboard's endpoint. */
+#define FIRST 0
+#define SECOND 1
+
+_Static_assert(SECOND < INPUT_DEVICES_MAX, "the checks' keyboards are ones "
+                                           "a client reads");
+
+/* The character a key event of the keyboard numbered source gives. */
+static UINT8 key_on(KEYBOARD *keyboard, UINT32 source, UINT32 code,
+                    UINT32 value)
 {
     UINT8 character;
 
-    keys_event(keyboard, code, value, &character);
+    keys_event(keyboard, source, code, value, &character);
     return character;
+}
+
+/* The character a key event of the first keyboard gives. */
+static UINT8 key(KEYBOARD *keyboard, UINT32 code, UINT32 value)
+{
+    return key_on(keyboard, FIRST, code, value);
 }
 
 static void check_keys(void)
 {
-    KEYBOARD keyboard = {0, 0};
+    KEYBOARD keyboard = {{0}, 0};
 
     check(key(&keyboard, KEY_A, INPUT_KEY_PRESSED) == 'a', "a");
     key(&keyboard, KEY_LEFT_SHIFT, INPUT_KEY_PRESSED);
@@ -206,26 +224,45 @@ static const UINT32 modifier_keys[] = {
    in order, in reverse, or all and then releasing the others. */
 typedef enum { BY_ORDER, BY_REVERSE, BY_RELEASE, HOLDINGS } HOLDING;
 
-/* A keyboard that holds the modifiers of mask, made by key events alone. */
-static KEYBOARD hold(unsigned mask, HOLDING how)
+/* The keyboard numbered source comes to hold the modifiers of mask, by its
+   key events alone. */
+static void hold_on(KEYBOARD *keyboard, UINT32 source, unsigned mask,
+                    HOLDING how)
 {
-    KEYBOARD keyboard = {0, 0};
     unsigned i;
 
     for (i = 0; i < MODIFIERS; i++) {
         unsigned bit = how == BY_REVERSE ? (unsigned)MODIFIERS - 1 - i : i;
         int wanted = (mask >> bit & 1u) != 0;
 
-        if (how == BY_RELEASE)
-            key(&keyboard, modifier_keys[bit], INPUT_KEY_PRESSED);
-        else if (wanted)
-            key(&keyboard, modifier_keys[bit], INPUT_KEY_PRESSED);
+        if (how == BY_RELEASE || wanted)
+            key_on(keyboard, source, modifier_keys[bit], INPUT_KEY_PRESSED);
     }
     if (how == BY_RELEASE)
         for (i = 0; i < MODIFIERS; i++)
             if (!(mask >> i & 1u))
-                key(&keyboard, modifier_keys[i], INPUT_KEY_RELEASED);
+                key_on(keyboard, source, modifier_keys[i],
+                       INPUT_KEY_RELEASED);
+}
+
+/* A keyboard that holds the modifiers of mask, made by the first keyboard's
+   key events alone. */
+static KEYBOARD hold(unsigned mask, HOLDING how)
+{
+    KEYBOARD keyboard = {{0}, 0};
+
+    hold_on(&keyboard, FIRST, mask, how);
     return keyboard;
+}
+
+/* The modifiers a window is sent while the modifier keys of mask are held:
+   Shift, Control, Alt and Super, each set by either key of its kind. */
+static UINT32 window_modifiers(unsigned mask)
+{
+    return ((mask & MASK_SHIFT) ? DISPLAY_MODIFIER_SHIFT : 0) |
+           ((mask & MASK_CONTROL) ? DISPLAY_MODIFIER_CONTROL : 0) |
+           ((mask & MASK_ALT) ? DISPLAY_MODIFIER_ALT : 0) |
+           ((mask & MASK_SUPER) ? DISPLAY_MODIFIER_SUPER : 0);
 }
 
 static const UINT32 values[] = {INPUT_KEY_RELEASED, INPUT_KEY_PRESSED,
@@ -241,11 +278,7 @@ static void check_modifiers(void)
     for (mask = 0; mask < MASKS; mask++)
         for (how = 0; how < HOLDINGS; how++) {
             KEYBOARD keyboard = hold(mask, (HOLDING)how);
-            UINT32 want = ((mask & MASK_SHIFT) ? DISPLAY_MODIFIER_SHIFT : 0) |
-                          ((mask & MASK_CONTROL) ? DISPLAY_MODIFIER_CONTROL
-                                                 : 0) |
-                          ((mask & MASK_ALT) ? DISPLAY_MODIFIER_ALT : 0) |
-                          ((mask & MASK_SUPER) ? DISPLAY_MODIFIER_SUPER : 0);
+            UINT32 want = window_modifiers(mask);
 
             wrong += keys_modifiers(&keyboard) != want;
             keyboard.caps_lock = 1;
@@ -280,7 +313,8 @@ static void check_attention(void)
                     int before = keys_attention(&keyboard, completing[k]);
                     KEYBOARD copy = keyboard;
 
-                    keys_event(&copy, completing[k], values[v], &character);
+                    keys_event(&copy, FIRST, completing[k], values[v],
+                               &character);
                     wrong += (before != 0) != want ||
                              (keys_attention(&copy, completing[k]) != 0) !=
                                  want;
@@ -295,7 +329,7 @@ static void check_attention(void)
 
 static void check_attention_events(void)
 {
-    KEYBOARD keyboard = {0, 0};
+    KEYBOARD keyboard = {{0}, 0};
 
     check(!keys_attention(&keyboard, KEY_DELETE),
           "Delete alone is not the secure attention key");
@@ -340,8 +374,9 @@ static void check_no_character(void)
                 for (v = 1; v < sizeof values / sizeof values[0]; v++) {
                     KEYBOARD keyboard = hold(mask, (HOLDING)how);
                     UINT8 character;
-                    UINT32 edit = keys_event(&keyboard, characters[k].code,
-                                             values[v], &character);
+                    UINT32 edit = keys_event(&keyboard, FIRST,
+                                             characters[k].code, values[v],
+                                             &character);
                     UINT8 want = silent ? 0
                                  : shift ? characters[k].shifted
                                          : characters[k].plain;
@@ -353,7 +388,8 @@ static void check_no_character(void)
                 KEYBOARD keyboard = hold(mask, (HOLDING)how);
                 UINT8 character;
 
-                wrong += keys_event(&keyboard, edits[k].code, INPUT_KEY_PRESSED,
+                wrong += keys_event(&keyboard, FIRST, edits[k].code,
+                                    INPUT_KEY_PRESSED,
                                     &character) != edits[k].edit ||
                          character != 0;
             }
@@ -365,10 +401,10 @@ static void check_no_character(void)
 
 static void check_super(void)
 {
-    KEYBOARD keyboard = {0, 0};
+    KEYBOARD keyboard = {{0}, 0};
     UINT8 character;
 
-    check(keys_event(&keyboard, KEY_LEFT_SUPER, INPUT_KEY_PRESSED,
+    check(keys_event(&keyboard, FIRST, KEY_LEFT_SUPER, INPUT_KEY_PRESSED,
                      &character) == EDIT_NONE &&
               character == 0,
           "the Super key gives no text of its own");
@@ -389,6 +425,111 @@ static void check_super(void)
     key(&keyboard, KEY_LEFT_SUPER, INPUT_KEY_RELEASED);
     check(key(&keyboard, KEY_A, INPUT_KEY_PRESSED) == 'A',
           "Caps Lock on, Super released, a letter is shifted");
+}
+
+/* Several keyboards type as one (C3): a modifier held on one combines with
+   a key of another, a modifier key that two hold is held until both let
+   go, a release lets go the key of the keyboard that sends it, a keyboard
+   that goes lets go what it held and nothing another holds, so that
+   Control and Alt held on one are the secure attention key's after another
+   has sent a key and gone, and Caps Lock is one state that a going leaves
+   as it was. */
+static void check_keyboards(void)
+{
+    KEYBOARD keyboard = {{0}, 0};
+
+    key_on(&keyboard, FIRST, KEY_LEFT_SHIFT, INPUT_KEY_PRESSED);
+    check(key_on(&keyboard, SECOND, KEY_A, INPUT_KEY_PRESSED) == 'A',
+          "Shift on one keyboard shifts a letter of another");
+    key_on(&keyboard, SECOND, KEY_LEFT_SHIFT, INPUT_KEY_PRESSED);
+    key_on(&keyboard, FIRST, KEY_LEFT_SHIFT, INPUT_KEY_RELEASED);
+    check(key_on(&keyboard, FIRST, KEY_A, INPUT_KEY_PRESSED) == 'A',
+          "a modifier key two keyboards hold is held when one releases it");
+    key_on(&keyboard, SECOND, KEY_LEFT_SHIFT, INPUT_KEY_RELEASED);
+    check(key_on(&keyboard, FIRST, KEY_A, INPUT_KEY_PRESSED) == 'a',
+          "and is not held once both have released it");
+
+    key_on(&keyboard, FIRST, KEY_LEFT_CONTROL, INPUT_KEY_PRESSED);
+    check(key_on(&keyboard, SECOND, KEY_A, INPUT_KEY_PRESSED) == 0,
+          "Control on one keyboard takes the text of a letter of another");
+    key_on(&keyboard, SECOND, KEY_LEFT_CONTROL, INPUT_KEY_RELEASED);
+    check(key_on(&keyboard, SECOND, KEY_A, INPUT_KEY_PRESSED) == 0,
+          "a release lets go no key that another keyboard holds");
+    key_on(&keyboard, FIRST, KEY_LEFT_CONTROL, INPUT_KEY_RELEASED);
+    check(key_on(&keyboard, SECOND, KEY_A, INPUT_KEY_PRESSED) == 'a',
+          "the release of the keyboard that holds a key lets it go");
+
+    key_on(&keyboard, SECOND, KEY_LEFT_CONTROL, INPUT_KEY_PRESSED);
+    key_on(&keyboard, SECOND, KEY_RIGHT_ALT, INPUT_KEY_PRESSED);
+    key_on(&keyboard, FIRST, KEY_LEFT_SHIFT, INPUT_KEY_PRESSED);
+    key_on(&keyboard, FIRST, KEY_A, INPUT_KEY_PRESSED);
+    keys_gone(&keyboard, FIRST);
+    check(keys_attention(&keyboard, KEY_DELETE) &&
+              keys_modifiers(&keyboard) ==
+                  (DISPLAY_MODIFIER_CONTROL | DISPLAY_MODIFIER_ALT),
+          "Control and Alt held on one keyboard are the secure attention "
+          "key's after another has sent a key and gone, and its Shift is "
+          "let go");
+    keys_gone(&keyboard, SECOND);
+    check(!keys_attention(&keyboard, KEY_DELETE) &&
+              keys_modifiers(&keyboard) == 0,
+          "a keyboard that goes lets go the modifier keys it held");
+
+    key_on(&keyboard, FIRST, KEY_CAPS_LOCK, INPUT_KEY_PRESSED);
+    key_on(&keyboard, FIRST, KEY_CAPS_LOCK, INPUT_KEY_RELEASED);
+    check(key_on(&keyboard, SECOND, KEY_A, INPUT_KEY_PRESSED) == 'A',
+          "Caps Lock pressed on one keyboard shifts a letter of another");
+    keys_gone(&keyboard, FIRST);
+    check(keyboard.caps_lock != 0 &&
+              key_on(&keyboard, SECOND, KEY_A, INPUT_KEY_PRESSED) == 'A',
+          "Caps Lock stays on when the keyboard it was pressed on goes");
+}
+
+/* Whether keyboard holds the modifier keys of mask and no other, as the
+   modifiers a window is sent, the secure attention key and a letter's
+   character show it. */
+static int holds(const KEYBOARD *keyboard, unsigned mask)
+{
+    KEYBOARD copy = *keyboard;
+    int attention = (mask & MASK_CONTROL) != 0 && (mask & MASK_ALT) != 0;
+    UINT8 letter = (mask & (MASK_CONTROL | MASK_ALT | MASK_SUPER)) ? 0
+                   : (mask & MASK_SHIFT)                           ? 'A'
+                                                                   : 'a';
+
+    return keys_modifiers(keyboard) == window_modifiers(mask) &&
+           (keys_attention(keyboard, KEY_DELETE) != 0) == attention &&
+           key_on(&copy, SECOND, KEY_A, INPUT_KEY_PRESSED) == letter;
+}
+
+/* The modifiers held are those any keyboard holds, and a keyboard that goes
+   lets go its own: over every pair of subsets of the eight modifier keys,
+   the first keyboard holding one and the second the other, reached three
+   ways in turn, the keys held are those of the two subsets together; with
+   either keyboard gone, the other's subset; and with both gone, none. */
+static void check_two_keyboards(void)
+{
+    unsigned first, second, wrong = 0;
+
+    for (first = 0; first < MASKS; first++)
+        for (second = 0; second < MASKS; second++) {
+            HOLDING how = (HOLDING)((first + second) % HOLDINGS);
+            KEYBOARD both = {{0}, 0}, one;
+
+            hold_on(&both, FIRST, first, how);
+            hold_on(&both, SECOND, second, how);
+            wrong += !holds(&both, first | second);
+            one = both;
+            keys_gone(&one, FIRST);
+            wrong += !holds(&one, second);
+            one = both;
+            keys_gone(&one, SECOND);
+            wrong += !holds(&one, first);
+            keys_gone(&one, FIRST);
+            wrong += !holds(&one, 0);
+        }
+    check(wrong == 0,
+          "the modifiers held are those either of two keyboards holds, and "
+          "a keyboard that goes lets go its own and no other's");
 }
 
 /* WRITTEN lines, each ended, and the empty line after them: WRITTEN + 1
@@ -545,6 +686,8 @@ int main(void)
     check_modifiers();
     check_attention();
     check_attention_events();
+    check_keyboards();
+    check_two_keyboards();
     check_view();
     check_view_caret();
     check_wheel();

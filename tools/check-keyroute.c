@@ -14,22 +14,32 @@
    own; the attention key's press of a code the window was sent an earlier
    press of, on one keyboard and on two that share the state; repeats and
    releases of presses the window was not sent; no window with the focus; a
-   keyboard that goes with keys held, and a window that goes; and each
-   character key's text. Random sessions of events from the keys that
-   matter, the focus coming and going, run beside a model written another
-   way (the modifier keys held kept by code, a flag for each code whose
-   press the window was sent and whose release it was not, the text from a
-   layout table of its own, and the whole event the window is sent built as
-   bytes), and every code's text is compared with it too. The model keeps
-   what the library keeps, so it can share a fault of the algorithm; the
-   third kind cannot. Laws of the decisions, read back over the events a
-   session has decided with no record of presses sent: the attention key's
-   press is decided as such exactly when Delete or the keypad's is pressed
-   with Control and Alt held; a press is sent to the window with the focus
-   and to no window else; a repeat or a release is sent only if the last
-   event of its code the window was sent is a press or a repeat, the window
-   has not closed since and no press of the code was the attention key's
-   since; and one that is not is not sent. And laws of the stream: an
+   keyboard that goes with keys held, and a window that goes; each
+   character key's text; and several keyboards, whose modifiers combine
+   with each other's keys, each letting go its own modifier keys and no
+   other's when it releases them or goes, so that Control and Alt held on
+   one are the attention key's after another has gone, and a modifier key
+   two of them hold is held until both let go. Random sessions of events
+   from the keys that matter, on every keyboard the compositor can read,
+   the focus and the keyboards coming and going, run beside a model
+   written another way (the modifier keys each keyboard holds kept by
+   code, a flag for each code whose press the window was sent and whose
+   release it was not, the text from a layout table of its own, and the
+   whole event the window is sent built as bytes), and every code's text
+   is compared with it too. The model keeps what the library keeps, so it
+   can share a fault of the algorithm; the third kind cannot. Laws of the
+   decisions, read back over the events a session has decided with no
+   record of presses sent or of keys held: a keyboard holds a modifier key
+   from its press or repeat of it until its own release of it or its
+   going, and a modifier is held while any keyboard holds a key of it; the
+   attention key's press is decided as such exactly when Delete or the
+   keypad's is pressed with Control and Alt held; the modifiers of an
+   event the window is sent are those held once it is applied; a press is
+   sent to the window with the focus and to no window else; a repeat or a
+   release is sent only if the last event of its code the window was sent
+   is a press or a repeat, the window has not closed since and no press of
+   the code was the attention key's since; and one that is not is not
+   sent. And laws of the stream: an
    event that is not sent leaves what it was given untouched, and each
    event the window is sent encodes as a message that display.desc's
    generated check accepts, and decodes to the fields it was made from.
@@ -38,8 +48,9 @@
    console.md C2 and C3) is checked beside them: a table of events with
    the edit and character written out by hand, and a law over random
    sessions, that the edit of each WINDOW_KEY the window is sent is the edit
-   keys_event gives the same events given in order to a keyboard of its own,
-   which is the console's direct path, with the same character.
+   keys_event gives the same events, and the same keyboards' goings, given
+   in order to a keyboard of its own, which is the console's direct path,
+   with the same character.
 
    Random cases come from SEEDS seeds, a number of sessions from each, and
    a failure names its seed: the same one every run. Another run is
@@ -128,6 +139,17 @@
 
 #define TIME_STEP 977u
 #define UNTOUCHED 0xA5
+
+/* The keyboards, each by the number the compositor gives its endpoint: as
+   many as it reads endpoints at once. */
+#define KEYBOARDS INPUT_DEVICES_MAX
+#define FIRST 0
+#define SECOND 1
+#define THIRD 2
+#define FOURTH 3
+
+_Static_assert(FOURTH < KEYBOARDS, "the tables' keyboards are ones a "
+                                   "client reads");
 
 static unsigned failures;
 static unsigned long long checks;
@@ -228,7 +250,8 @@ static const MODIFIER_KEY modifier_keys[] = {
 #define MODIFIER_KEYS (sizeof modifier_keys / sizeof modifier_keys[0])
 
 typedef struct {
-    int held[MODIFIER_KEYS]; /* by modifier_keys' order */
+    int held[KEYBOARDS][MODIFIER_KEYS]; /* for each keyboard, by
+                                           modifier_keys' order */
     int caps;
     char sent[CODE_GREATEST + 1]; /* by code: the window has been sent
                                      its press and not its release */
@@ -237,11 +260,12 @@ typedef struct {
 static UINT32 model_modifiers(const MODEL *model)
 {
     UINT32 bits = 0;
-    unsigned i;
+    unsigned keyboard, i;
 
-    for (i = 0; i < MODIFIER_KEYS; i++)
-        if (model->held[i])
-            bits |= modifier_keys[i].bit;
+    for (keyboard = 0; keyboard < KEYBOARDS; keyboard++)
+        for (i = 0; i < MODIFIER_KEYS; i++)
+            if (model->held[keyboard][i])
+                bits |= modifier_keys[i].bit;
     return bits;
 }
 
@@ -291,8 +315,8 @@ typedef struct {
     WINDOW_INPUT input;
 } WANT;
 
-static void model_step(MODEL *model, UINT32 code, UINT32 value, UINT64 time,
-                       UINT32 focused, WANT *want)
+static void model_step(MODEL *model, UINT32 keyboard, UINT32 code,
+                       UINT32 value, UINT64 time, UINT32 focused, WANT *want)
 {
     UINT32 before = model_modifiers(model), after;
     int attention, text_allowed;
@@ -304,7 +328,7 @@ static void model_step(MODEL *model, UINT32 code, UINT32 value, UINT64 time,
                 (before & DISPLAY_MODIFIER_ALT);
     for (i = 0; i < MODIFIER_KEYS; i++)
         if (modifier_keys[i].code == code)
-            model->held[i] = value != RELEASE;
+            model->held[keyboard][i] = value != RELEASE;
     if (code == KEY_CAPS_LOCK && value == PRESS)
         model->caps = !model->caps;
     after = model_modifiers(model);
@@ -332,9 +356,9 @@ static void model_step(MODEL *model, UINT32 code, UINT32 value, UINT64 time,
     }
 }
 
-static void model_gone(MODEL *model)
+static void model_gone(MODEL *model, UINT32 keyboard)
 {
-    memset(model->held, 0, sizeof model->held);
+    memset(model->held[keyboard], 0, sizeof model->held[keyboard]);
 }
 
 static void model_window_gone(MODEL *model)
@@ -388,10 +412,16 @@ typedef struct {
     char text;
 } STEP;
 
-/* The markers for a step that is the keyboard's going, or the window's,
-   not an event. */
-#define GONE 0xFFFF
-#define WINDOW_GONE 0xFFFE
+/* The values of a step that is no event, which lie above an event's: the
+   events after it come from the keyboard its code numbers, which is the
+   first until a step says another; the keyboard its code numbers goes; or
+   the window goes. */
+#define STEP_FROM 0x100
+#define STEP_GONE 0x101
+#define STEP_WINDOW_GONE 0x102
+#define FROM(keyboard) {keyboard, STEP_FROM, 0, 0, 0, 0}
+#define GONE(keyboard) {keyboard, STEP_GONE, 0, 0, 0, 0}
+#define WINDOW_GONE {0, STEP_WINDOW_GONE, 0, 0, 0, 0}
 
 #define CTRL DISPLAY_MODIFIER_CONTROL
 #define ALT DISPLAY_MODIFIER_ALT
@@ -402,7 +432,7 @@ typedef struct {
 #define WITHHELD KEYROUTE_WITHHELD
 
 /* Each sequence runs from a fresh KEYROUTE, with the focus as each step
-   says. */
+   says, its events the first keyboard's until a step says another's. */
 static const STEP typing[] = {
     {KEY_A, PRESS, 1, SENT, 0, 'a'},
     {KEY_A, REPEAT, 1, SENT, 0, 'a'},
@@ -625,7 +655,7 @@ static const STEP presses_are_fresh[] = {
    window has the focus, which erases it as well. */
 static const STEP attention_erases_a_press_sent[] = {
     {KEY_DELETE, PRESS, 1, SENT, 0, 0},
-    {GONE, 0, 0, 0, 0, 0},
+    GONE(FIRST),
     {KEY_LEFT_CONTROL, PRESS, 1, SENT, CTRL, 0},
     {KEY_LEFT_ALT, PRESS, 1, SENT, CTRL | ALT, 0},
     {KEY_DELETE, PRESS, 1, ATTN, 0, 0},
@@ -653,24 +683,144 @@ static const STEP attention_erases_a_press_sent[] = {
    which the window was sent; the second presses Control, Alt and Delete,
    which is the attention key whichever keyboard holds each of its keys, and
    its repeats and its release, and the first keyboard's release of the key
-   it holds, are not sent. The first keyboard then goes, with the second's
-   Control and Alt cleared with it, and the second's release of them is
-   sent. */
+   it holds, are not sent. The first keyboard presses Delete again, the
+   attention key's with the second's Control and Alt, and goes with it held:
+   the second's Control and Alt stay held, each until the second releases
+   it. */
 static const STEP two_keyboards_one_state[] = {
     {KEY_DELETE, PRESS, 1, SENT, 0, 0},
+    FROM(SECOND),
     {KEY_LEFT_CONTROL, PRESS, 1, SENT, CTRL, 0},
     {KEY_RIGHT_ALT, PRESS, 1, SENT, CTRL | ALT, 0},
     {KEY_DELETE, PRESS, 1, ATTN, 0, 0},
     {KEY_DELETE, REPEAT, 1, WITHHELD, 0, 0},
     {KEY_DELETE, RELEASE, 1, WITHHELD, 0, 0},
+    FROM(FIRST),
     {KEY_DELETE, RELEASE, 1, WITHHELD, 0, 0},
     {KEY_DELETE, PRESS, 1, ATTN, 0, 0},
-    {GONE, 0, 0, 0, 0, 0},
+    GONE(FIRST),
+    FROM(SECOND),
     {KEY_DELETE, REPEAT, 1, WITHHELD, 0, 0},
-    {KEY_LEFT_CONTROL, RELEASE, 1, SENT, 0, 0},
+    {KEY_LEFT_CONTROL, RELEASE, 1, SENT, ALT, 0},
     {KEY_RIGHT_ALT, RELEASE, 1, SENT, 0, 0},
     {KEY_DELETE, PRESS, 1, SENT, 0, 0},
     {KEY_DELETE, RELEASE, 1, SENT, 0, 0},
+};
+
+/* One keyboard holds Control and Alt; another sends a key, which reads
+   them, and goes. The Delete the first then presses is the attention key's,
+   since a keyboard that goes lets go its own modifier keys alone, and with
+   Control released a Delete is the window's again. */
+static const STEP attention_after_another_keyboard_goes[] = {
+    {KEY_LEFT_CONTROL, PRESS, 1, SENT, CTRL, 0},
+    {KEY_LEFT_ALT, PRESS, 1, SENT, CTRL | ALT, 0},
+    FROM(SECOND),
+    {KEY_A, PRESS, 1, SENT, CTRL | ALT, 0},
+    GONE(SECOND),
+    FROM(FIRST),
+    {KEY_DELETE, PRESS, 1, ATTN, 0, 0},
+    {KEY_DELETE, RELEASE, 1, WITHHELD, 0, 0},
+    {KEY_KEYPAD_DOT, PRESS, 1, ATTN, 0, 0},
+    {KEY_LEFT_CONTROL, RELEASE, 1, SENT, ALT, 0},
+    {KEY_DELETE, PRESS, 1, SENT, ALT, 0},
+    {KEY_DELETE, RELEASE, 1, SENT, ALT, 0},
+    {KEY_LEFT_ALT, RELEASE, 1, SENT, 0, 0},
+};
+
+/* The modifiers held on one keyboard combine with the keys of another:
+   Shift on the first shifts the second's letter, Control on the second
+   takes the third's text, and Control on the second, Alt on the third and
+   Delete on the fourth are the attention key. Caps Lock, pressed on the
+   fourth, shifts the first's letter. */
+static const STEP modifiers_combine_across_keyboards[] = {
+    {KEY_LEFT_SHIFT, PRESS, 1, SENT, SHIFT, 0},
+    FROM(SECOND),
+    {KEY_A, PRESS, 1, SENT, SHIFT, 'A'},
+    {KEY_A, RELEASE, 1, SENT, SHIFT, 0},
+    {KEY_RIGHT_CONTROL, PRESS, 1, SENT, SHIFT | CTRL, 0},
+    FROM(THIRD),
+    {KEY_C, PRESS, 1, SENT, SHIFT | CTRL, 0},
+    {KEY_C, RELEASE, 1, SENT, SHIFT | CTRL, 0},
+    {KEY_LEFT_ALT, PRESS, 1, SENT, SHIFT | CTRL | ALT, 0},
+    FROM(FOURTH),
+    {KEY_KEYPAD_DOT, PRESS, 1, ATTN, 0, 0},
+    {KEY_KEYPAD_DOT, RELEASE, 1, WITHHELD, 0, 0},
+    FROM(THIRD),
+    {KEY_LEFT_ALT, RELEASE, 1, SENT, SHIFT | CTRL, 0},
+    FROM(SECOND),
+    {KEY_RIGHT_CONTROL, RELEASE, 1, SENT, SHIFT, 0},
+    FROM(FIRST),
+    {KEY_LEFT_SHIFT, RELEASE, 1, SENT, 0, 0},
+    FROM(FOURTH),
+    {KEY_CAPS_LOCK, PRESS, 1, SENT, 0, 0},
+    {KEY_CAPS_LOCK, RELEASE, 1, SENT, 0, 0},
+    FROM(FIRST),
+    {KEY_A, PRESS, 1, SENT, 0, 'A'},
+};
+
+/* A keyboard that goes lets go the modifier keys it held and no other's:
+   the first goes with Shift and Control, and the second's Alt is still
+   held; keyboards that held nothing go, and nothing changes; the second
+   goes, and no modifier is held, by it or by a keyboard that takes a place
+   one of them had. Caps Lock, which the first turned on, stays on through
+   every going. */
+static const STEP a_going_lets_go_its_own[] = {
+    {KEY_CAPS_LOCK, PRESS, 1, SENT, 0, 0},
+    {KEY_LEFT_SHIFT, PRESS, 1, SENT, SHIFT, 0},
+    {KEY_LEFT_CONTROL, PRESS, 1, SENT, SHIFT | CTRL, 0},
+    FROM(SECOND),
+    {KEY_LEFT_ALT, PRESS, 1, SENT, SHIFT | CTRL | ALT, 0},
+    GONE(FIRST),
+    {KEY_A, PRESS, 1, SENT, ALT, 0},
+    GONE(THIRD),
+    GONE(FOURTH),
+    {KEY_A, REPEAT, 1, SENT, ALT, 0},
+    GONE(SECOND),
+    {KEY_A, REPEAT, 1, SENT, 0, 'A'},
+    FROM(FIRST),
+    {KEY_LEFT_SHIFT, PRESS, 1, SENT, SHIFT, 0},
+    {KEY_A, REPEAT, 1, SENT, SHIFT, 'a'},
+};
+
+/* A modifier key that two keyboards hold is held until both let go. The
+   window is sent each press and the first release of the code, which
+   leaves Control held, and no second release, the code's being sent once;
+   a letter gives its text only after both. The same with a going for the
+   first keyboard's release, and for the second's. */
+static const STEP held_until_both_let_go[] = {
+    {KEY_LEFT_CONTROL, PRESS, 1, SENT, CTRL, 0},
+    FROM(SECOND),
+    {KEY_LEFT_CONTROL, PRESS, 1, SENT, CTRL, 0},
+    FROM(FIRST),
+    {KEY_LEFT_CONTROL, RELEASE, 1, SENT, CTRL, 0},
+    {KEY_A, PRESS, 1, SENT, CTRL, 0},
+    {KEY_A, RELEASE, 1, SENT, CTRL, 0},
+    FROM(SECOND),
+    {KEY_LEFT_CONTROL, RELEASE, 1, WITHHELD, 0, 0},
+    {KEY_A, PRESS, 1, SENT, 0, 'a'},
+    {KEY_A, RELEASE, 1, SENT, 0, 0},
+    {KEY_RIGHT_SHIFT, PRESS, 1, SENT, SHIFT, 0},
+    FROM(FIRST),
+    {KEY_RIGHT_SHIFT, REPEAT, 1, SENT, SHIFT, 0},
+    GONE(FIRST),
+    {KEY_A, PRESS, 1, SENT, SHIFT, 'A'},
+    {KEY_A, RELEASE, 1, SENT, SHIFT, 0},
+    GONE(SECOND),
+    {KEY_A, PRESS, 1, SENT, 0, 'a'},
+};
+
+/* A release lets go the key of the keyboard that sends it: the second's
+   release of an Alt the first holds leaves Alt held. The window is sent
+   it, having been sent the code's press, and not the first's own release
+   after it. */
+static const STEP a_release_lets_go_its_own[] = {
+    {KEY_LEFT_ALT, PRESS, 1, SENT, ALT, 0},
+    FROM(SECOND),
+    {KEY_LEFT_ALT, RELEASE, 1, SENT, ALT, 0},
+    {KEY_A, PRESS, 1, SENT, ALT, 0},
+    FROM(FIRST),
+    {KEY_LEFT_ALT, RELEASE, 1, WITHHELD, 0, 0},
+    {KEY_A, REPEAT, 1, SENT, 0, 'a'},
 };
 
 /* No window has the focus: the keys go nowhere but are still held, and the
@@ -701,7 +851,7 @@ static const STEP keyboard_gone[] = {
     {KEY_LEFT_CONTROL, PRESS, 1, SENT, CTRL, 0},
     {KEY_LEFT_ALT, PRESS, 1, SENT, CTRL | ALT, 0},
     {KEY_DELETE, PRESS, 1, ATTN, 0, 0},
-    {GONE, 0, 0, 0, 0, 0},
+    GONE(FIRST),
     {KEY_DELETE, RELEASE, 1, WITHHELD, 0, 0},
     {KEY_LEFT_CONTROL, RELEASE, 1, SENT, 0, 0},
     {KEY_LEFT_ALT, RELEASE, 1, SENT, 0, 0},
@@ -716,14 +866,14 @@ static const STEP keyboard_gone[] = {
 static const STEP window_gone[] = {
     {KEY_LEFT_CONTROL, PRESS, 1, SENT, CTRL, 0},
     {KEY_A, PRESS, 1, SENT, CTRL, 0},
-    {WINDOW_GONE, 0, 0, 0, 0, 0},
+    WINDOW_GONE,
     {KEY_A, REPEAT, 1, WITHHELD, 0, 0},
     {KEY_A, RELEASE, 1, WITHHELD, 0, 0},
     {KEY_LEFT_CONTROL, RELEASE, 1, WITHHELD, 0, 0},
     {KEY_A, PRESS, 1, SENT, 0, 'a'},
     {KEY_A, RELEASE, 1, SENT, 0, 0},
     {KEY_LEFT_CONTROL, PRESS, 1, SENT, CTRL, 0},
-    {WINDOW_GONE, 0, 0, 0, 0, 0},
+    WINDOW_GONE,
     {KEY_A, PRESS, 1, SENT, CTRL, 0},
     {KEY_LEFT_CONTROL, RELEASE, 1, WITHHELD, 0, 0},
     {KEY_A, RELEASE, 1, SENT, 0, 0},
@@ -757,6 +907,16 @@ static const SEQUENCE sequences[] = {
     SEQUENCE_OF("the attention key erases a press sent of its code",
                 attention_erases_a_press_sent),
     SEQUENCE_OF("two keyboards on one state", two_keyboards_one_state),
+    SEQUENCE_OF("attention after another keyboard goes",
+                attention_after_another_keyboard_goes),
+    SEQUENCE_OF("modifiers combine across keyboards",
+                modifiers_combine_across_keyboards),
+    SEQUENCE_OF("a keyboard that goes lets go its own modifiers",
+                a_going_lets_go_its_own),
+    SEQUENCE_OF("a modifier two keyboards hold is held until both let go",
+                held_until_both_let_go),
+    SEQUENCE_OF("a release lets go its keyboard's own key",
+                a_release_lets_go_its_own),
     SEQUENCE_OF("no window", no_window),
     SEQUENCE_OF("a keyboard that goes", keyboard_gone),
     SEQUENCE_OF("a window that goes", window_gone),
@@ -765,6 +925,7 @@ static const SEQUENCE sequences[] = {
 static void check_sequence(const SEQUENCE *sequence)
 {
     static KEYROUTE state;
+    UINT32 keyboard = FIRST;
     unsigned i;
 
     memset(&state, 0, sizeof state);
@@ -775,15 +936,19 @@ static void check_sequence(const SEQUENCE *sequence)
         WINDOW_INPUT routed = untouched(), want = untouched();
         UINT32 got;
 
-        if (step->code == GONE) {
-            keyroute_gone(&state);
+        if (step->value == STEP_FROM) {
+            keyboard = step->code;
             continue;
         }
-        if (step->code == WINDOW_GONE) {
+        if (step->value == STEP_GONE) {
+            keyroute_gone(&state, step->code);
+            continue;
+        }
+        if (step->value == STEP_WINDOW_GONE) {
             keyroute_window_gone(&state);
             continue;
         }
-        got = keyroute_event(&state, &event, step->focused, &routed);
+        got = keyroute_event(&state, keyboard, &event, step->focused, &routed);
         check(got == step->decision, sequence->name, i, got);
         if (step->decision == KEYROUTE_WINDOW) {
             want = make_input(step->code, step->value, step->modifiers, time,
@@ -829,7 +994,8 @@ static unsigned count_sent(KEYROUTE *state, UINT32 *unrecorded)
         INPUT_EVENT event = make_event(code, REPEAT, TIME_STEP);
         WINDOW_INPUT routed = untouched();
 
-        if (keyroute_event(state, &event, 1, &routed) == KEYROUTE_WINDOW)
+        if (keyroute_event(state, FIRST, &event, 1, &routed) ==
+            KEYROUTE_WINDOW)
             sent++;
         else
             *unrecorded = code;
@@ -844,20 +1010,20 @@ static void hold_control_and_alt(KEYROUTE *state)
     INPUT_EVENT alt = make_event(KEY_LEFT_ALT, PRESS, TIME_STEP);
     WINDOW_INPUT routed = untouched();
 
-    keyroute_event(state, &control, 1, &routed);
-    keyroute_event(state, &alt, 1, &routed);
+    keyroute_event(state, FIRST, &control, 1, &routed);
+    keyroute_event(state, FIRST, &alt, 1, &routed);
 }
 
 /* So that each code's bit is seen alone: from a state no sequence of
    events reaches, every press recorded, a release gives up its own bit and
    no other, the attention key's press gives up its own bit and no other, a
-   press gives up none, and a keyboard's going gives up none, which only the
-   window's going does; and from an empty state, a press records its own
-   bit and no other. */
+   press gives up none, and no keyboard's going gives up any, which only
+   the window's going does; and from an empty state, a press records its
+   own bit and no other. */
 static void check_sent_bits(void)
 {
     static KEYROUTE state;
-    unsigned i;
+    unsigned i, keyboard;
     UINT32 unrecorded = 0;
 
     for (i = 0; i < BIT_CODES; i++) {
@@ -867,7 +1033,8 @@ static void check_sent_bits(void)
 
         memset(&state, 0, sizeof state);
         memset(state.sent, 0xFF, sizeof state.sent);
-        check(keyroute_event(&state, &release, 1, &routed) == KEYROUTE_WINDOW,
+        check(keyroute_event(&state, FIRST, &release, 1, &routed) ==
+                  KEYROUTE_WINDOW,
               "the release of a press sent is sent", bit_codes[i], 0);
         check(count_sent(&state, &unrecorded) == CODE_GREATEST &&
                   unrecorded == bit_codes[i],
@@ -875,7 +1042,8 @@ static void check_sent_bits(void)
               unrecorded);
 
         memset(&state, 0, sizeof state);
-        check(keyroute_event(&state, &press, 1, &routed) == KEYROUTE_WINDOW,
+        check(keyroute_event(&state, FIRST, &press, 1, &routed) ==
+                  KEYROUTE_WINDOW,
               "a press is sent", bit_codes[i], 0);
         check(count_sent(&state, &unrecorded) == 1 &&
                   unrecorded != bit_codes[i],
@@ -886,7 +1054,7 @@ static void check_sent_bits(void)
         hold_control_and_alt(&state);
         memset(state.sent, 0xFF, sizeof state.sent);
         if (bit_codes[i] == KEY_DELETE || bit_codes[i] == KEY_KEYPAD_DOT) {
-            check(keyroute_event(&state, &press, 1, &routed) ==
+            check(keyroute_event(&state, FIRST, &press, 1, &routed) ==
                       KEYROUTE_ATTENTION,
                   "a press of Delete or the keypad's with Control and Alt "
                   "held is the attention key's",
@@ -897,7 +1065,7 @@ static void check_sent_bits(void)
                   "alone",
                   bit_codes[i], unrecorded);
         } else {
-            check(keyroute_event(&state, &press, 1, &routed) ==
+            check(keyroute_event(&state, FIRST, &press, 1, &routed) ==
                       KEYROUTE_WINDOW,
                   "any other press with Control and Alt held is sent",
                   bit_codes[i], 0);
@@ -908,7 +1076,8 @@ static void check_sent_bits(void)
 
     memset(&state, 0, sizeof state);
     memset(state.sent, 0xFF, sizeof state.sent);
-    keyroute_gone(&state);
+    for (keyboard = 0; keyboard < KEYBOARDS; keyboard++)
+        keyroute_gone(&state, keyboard);
     check(count_sent(&state, &unrecorded) == CODE_GREATEST + 1u,
           "a keyboard's going gives up no press sent", 0, 0);
     keyroute_window_gone(&state);
@@ -923,9 +1092,12 @@ static void check_sent_bits(void)
    keeps no record of presses sent: where the library's record and the
    model's flags could share a fault, these cannot. */
 
-/* What a session has done at a step: an event, with whether a window had
-   the focus and what was decided for it, a keyboard's going, or the
-   window's. */
+/* What a session has done at a step: an event, with the keyboard it came
+   from, whether a window had the focus and what was decided for it; a
+   keyboard's going, with the keyboard; or the window's. An event's modifier
+   is its code's place in modifier_keys, or MODIFIER_KEYS for a key that is
+   none, which the code alone gives: it is kept so that a reading of the
+   log need not search for it at every step. */
 #define LOGGED_EVENT 0
 #define LOGGED_KEYBOARD_GONE 1
 #define LOGGED_WINDOW_GONE 2
@@ -935,23 +1107,59 @@ typedef struct {
     UINT8 value;
     UINT8 focused;
     UINT8 decision;
+    UINT8 keyboard;
+    UINT8 modifier;
     UINT16 code;
 } LOGGED;
 
-/* Whether the key of code is held at step now: its latest event says so,
-   whatever was decided for it, and a repeat holds it as a press does,
-   unless a keyboard has gone since. */
-static int log_is_held(const LOGGED *log, unsigned now, UINT32 code)
+/* The place of code in modifier_keys, or MODIFIER_KEYS for a key that is
+   no modifier. */
+static unsigned modifier_place(UINT32 code)
 {
     unsigned i;
 
+    for (i = 0; i < MODIFIER_KEYS && modifier_keys[i].code != code; i++)
+        ;
+    return i;
+}
+
+/* The modifiers each keyboard holds at step now, as the DISPLAY_MODIFIER_
+   bits of held[keyboard]: a keyboard holds a modifier key if the latest
+   event of the key's code it gave is not a release, whatever was decided
+   for it, a repeat holding it as a press does, unless the keyboard has gone
+   since. What another keyboard did is not read. One pass back over the log
+   settles each keyboard's hold of each key at the latest word of it. */
+static void log_held(const LOGGED *log, unsigned now, UINT32 held[KEYBOARDS])
+{
+    char settled[KEYBOARDS][MODIFIER_KEYS];
+    unsigned i;
+
+    memset(settled, 0, sizeof settled);
+    memset(held, 0, KEYBOARDS * sizeof held[0]);
     for (i = now; i-- > 0;) {
+        unsigned keyboard = log[i].keyboard, key = log[i].modifier;
+
         if (log[i].kind == LOGGED_KEYBOARD_GONE)
-            return 0;
-        if (log[i].kind == LOGGED_EVENT && log[i].code == code)
-            return log[i].value != RELEASE;
+            memset(settled[keyboard], 1, sizeof settled[keyboard]);
+        if (log[i].kind != LOGGED_EVENT || key == MODIFIER_KEYS ||
+            settled[keyboard][key])
+            continue;
+        settled[keyboard][key] = 1;
+        if (log[i].value != RELEASE)
+            held[keyboard] |= modifier_keys[key].bit;
     }
-    return 0;
+}
+
+/* The modifiers held at step now: those any keyboard holds. */
+static UINT32 log_modifiers(const LOGGED *log, unsigned now)
+{
+    UINT32 held[KEYBOARDS], bits = 0;
+    unsigned keyboard;
+
+    log_held(log, now, held);
+    for (keyboard = 0; keyboard < KEYBOARDS; keyboard++)
+        bits |= held[keyboard];
+    return bits;
 }
 
 /* The value of the last event of code the window was sent before step now,
@@ -986,23 +1194,30 @@ static int log_attention_since(const LOGGED *log, unsigned now, UINT32 code)
     return 0;
 }
 
-/* The laws of the event at step now, the log's last. */
-static void check_laws(const LOGGED *log, unsigned now)
+/* The laws of the event at step now, the log's last, and of *routed, what
+   the window is sent for it if it is sent it. */
+static void check_laws(const LOGGED *log, unsigned now,
+                       const WINDOW_INPUT *routed)
 {
     const LOGGED *event = &log[now];
     UINT32 code = event->code, value = event->value;
-    int attention = value == PRESS &&
-                    (code == KEY_DELETE || code == KEY_KEYPAD_DOT) &&
-                    (log_is_held(log, now, KEY_LEFT_CONTROL) ||
-                     log_is_held(log, now, KEY_RIGHT_CONTROL)) &&
-                    (log_is_held(log, now, KEY_LEFT_ALT) ||
-                     log_is_held(log, now, KEY_RIGHT_ALT));
+    UINT32 before = value == PRESS &&
+                            (code == KEY_DELETE || code == KEY_KEYPAD_DOT)
+                        ? log_modifiers(log, now)
+                        : 0;
+    int attention = (before & DISPLAY_MODIFIER_CONTROL) &&
+                    (before & DISPLAY_MODIFIER_ALT);
     int last, since;
 
     check((event->decision == KEYROUTE_ATTENTION) == attention,
           "the attention key's press is Delete or the keypad's pressed with "
-          "Control and Alt held, and no other event is",
+          "Control and Alt held, by any keyboard, and no other event is",
           code, value);
+    if (event->decision == KEYROUTE_WINDOW)
+        check(routed->body.key.event.modifiers == log_modifiers(log, now + 1),
+              "the modifiers of an event the window is sent are those any "
+              "keyboard holds once it is applied",
+              code, routed->body.key.event.modifiers);
     if (attention)
         return;
     if (!event->focused) {
@@ -1074,25 +1289,29 @@ static UINT32 random_value(void)
 }
 
 /* What a seed's sessions reached, counted so that each is known to reach
-   every decision, a window's text, and a keyboard's going and a window's. */
+   every decision, a window's text, a keyboard's going and a window's, and
+   what only several keyboards give: an attention key whose keyboard does
+   not itself hold both Control and Alt, and a keyboard's going that leaves
+   a modifier held. */
 static unsigned reached[KEYROUTE_WITHHELD + 1];
-static unsigned texts, keyboards_gone, windows_gone;
+static unsigned texts, keyboards_gone, windows_gone, attentions_across,
+    modifiers_outlasting;
 
-/* An event given to the library and to the model: the decision and the
-   event the window is sent are compared with the model's, and so are the
-   modifiers held and Caps Lock. Returns the decision; *routed is what the
-   library made. */
-static UINT32 step_and_compare(KEYROUTE *state, MODEL *model, UINT32 code,
-                               UINT32 value, UINT64 time, UINT32 focused,
-                               WINDOW_INPUT *routed)
+/* An event of keyboard given to the library and to the model: the decision
+   and the event the window is sent are compared with the model's, and so
+   are the modifiers held and Caps Lock. Returns the decision; *routed is
+   what the library made. */
+static UINT32 step_and_compare(KEYROUTE *state, MODEL *model, UINT32 keyboard,
+                               UINT32 code, UINT32 value, UINT64 time,
+                               UINT32 focused, WINDOW_INPUT *routed)
 {
     INPUT_EVENT event = make_event(code, value, time);
     UINT32 got;
     WANT want;
 
     *routed = untouched();
-    model_step(model, code, value, time, focused, &want);
-    got = keyroute_event(state, &event, focused, routed);
+    model_step(model, keyboard, code, value, time, focused, &want);
+    got = keyroute_event(state, keyboard, &event, focused, routed);
     check(got == want.decision, "the decision is the model's", got,
           want.decision);
     if (got == KEYROUTE_WINDOW)
@@ -1104,12 +1323,17 @@ static UINT32 step_and_compare(KEYROUTE *state, MODEL *model, UINT32 code,
     return got;
 }
 
+/* A session's events come from one keyboard, or two, up to as many as there
+   can be, each number as often. With one keyboard every release lets go
+   the key it names, so keys give text often; with more, a modifier that
+   several hold stays held through most releases, so text is rarer and an
+   attention key made across keyboards commoner. */
 static void check_session(void)
 {
     static KEYROUTE state;
     static MODEL model;
     static LOGGED log[SESSION_STEPS];
-    UINT32 focused = 1;
+    UINT32 focused = 1, keyboards = 1 + (UINT32)below(KEYBOARDS);
     unsigned step;
 
     memset(&state, 0, sizeof state);
@@ -1117,16 +1341,22 @@ static void check_session(void)
     memset(log, 0, sizeof log);
     for (step = 0; step < SESSION_STEPS; step++) {
         UINT64 time = (UINT64)(step + 1) * TIME_STEP;
-        UINT32 code, value, got;
+        UINT32 keyboard = (UINT32)below(keyboards), code, value, got;
         WINDOW_INPUT routed;
 
         if (below(40) == 0)
             focused = !focused;
         if (below(70) == 0) {
-            keyroute_gone(&state);
-            model_gone(&model);
+            keyroute_gone(&state, keyboard);
+            model_gone(&model, keyboard);
             log[step].kind = LOGGED_KEYBOARD_GONE;
+            log[step].keyboard = (UINT8)keyboard;
+            check(keys_modifiers(&state.keyboard) ==
+                      log_modifiers(log, step + 1),
+                  "a keyboard's going leaves held what the others hold",
+                  keyboard, keys_modifiers(&state.keyboard));
             keyboards_gone++;
+            modifiers_outlasting += log_modifiers(log, step + 1) != 0;
             continue;
         }
         if (below(90) == 0) {
@@ -1139,9 +1369,11 @@ static void check_session(void)
         }
         code = random_code();
         value = random_value();
-        got = step_and_compare(&state, &model, code, value, time, focused,
-                               &routed);
+        got = step_and_compare(&state, &model, keyboard, code, value, time,
+                               focused, &routed);
         log[step].kind = LOGGED_EVENT;
+        log[step].keyboard = (UINT8)keyboard;
+        log[step].modifier = (UINT8)modifier_place(code);
         log[step].code = (UINT16)code;
         log[step].value = (UINT8)value;
         log[step].focused = (UINT8)focused;
@@ -1156,7 +1388,15 @@ static void check_session(void)
             check(memcmp(&routed, &same, sizeof same) == 0,
                   "an event not sent leaves *routed as it was", code, value);
         }
-        check_laws(log, step);
+        if (got == KEYROUTE_ATTENTION) {
+            UINT32 held[KEYBOARDS];
+
+            log_held(log, step, held);
+            attentions_across +=
+                !((held[keyboard] & DISPLAY_MODIFIER_CONTROL) &&
+                  (held[keyboard] & DISPLAY_MODIFIER_ALT));
+        }
+        check_laws(log, step, &routed);
     }
 }
 
@@ -1166,6 +1406,7 @@ static void check_seed(unsigned n)
 
     memset(reached, 0, sizeof reached);
     texts = keyboards_gone = windows_gone = 0;
+    attentions_across = modifiers_outlasting = 0;
     seed_number = n;
     seed_random(n);
     for (session = 0; session < SESSIONS_PER_SEED; session++)
@@ -1176,10 +1417,13 @@ static void check_seed(unsigned n)
               reached[KEYROUTE_WITHHELD] > SESSIONS_PER_SEED &&
               texts > SESSIONS_PER_SEED &&
               keyboards_gone > SESSIONS_PER_SEED &&
-              windows_gone > SESSIONS_PER_SEED,
-          "a seed's sessions reach every decision, text, and a keyboard's "
-          "going and a window's",
-          reached[KEYROUTE_ATTENTION], reached[KEYROUTE_WITHHELD]);
+              windows_gone > SESSIONS_PER_SEED &&
+              attentions_across > SESSIONS_PER_SEED &&
+              modifiers_outlasting > SESSIONS_PER_SEED,
+          "a seed's sessions reach every decision, text, a keyboard's going "
+          "and a window's, an attention key across keyboards and a going "
+          "that leaves a modifier held",
+          attentions_across, modifiers_outlasting);
     seed_number = NO_SEED;
 }
 
@@ -1225,20 +1469,20 @@ static void check_text_of_every_code(void)
         memset(&state, 0, sizeof state);
         memset(&model, 0, sizeof model);
         if (held & 1)
-            step_and_compare(&state, &model, KEY_LEFT_SHIFT, PRESS, TIME_STEP,
-                             1, &routed);
+            step_and_compare(&state, &model, FIRST, KEY_LEFT_SHIFT, PRESS,
+                             TIME_STEP, 1, &routed);
         if (held & 2)
-            step_and_compare(&state, &model, KEY_CAPS_LOCK, PRESS, TIME_STEP,
-                             1, &routed);
+            step_and_compare(&state, &model, FIRST, KEY_CAPS_LOCK, PRESS,
+                             TIME_STEP, 1, &routed);
         for (code = 0; code <= CODE_GREATEST; code++) {
             if (is_modifier_or_lock(code))
                 continue;
-            step_and_compare(&state, &model, code, PRESS, TIME_STEP, 1,
-                             &routed);
+            step_and_compare(&state, &model, FIRST, code, PRESS, TIME_STEP,
+                             1, &routed);
             with_text += routed.body.key.event.text_length == 1 &&
                          routed.kind == WINDOW_KEY;
-            step_and_compare(&state, &model, code, RELEASE, TIME_STEP, 1,
-                             &routed);
+            step_and_compare(&state, &model, FIRST, code, RELEASE,
+                             TIME_STEP, 1, &routed);
         }
     }
     check(with_text == 4 * layout_keys,
@@ -1322,9 +1566,10 @@ static const UINT32 window_edit_codes[] = {
     KEY_LEFT_ALT,   KEY_LEFT_SUPER,  KEY_CAPS_LOCK, KEY_F1,
     KEY_GRAVE,      KEY_SLASH,       KEY_TAB,       KEY_MAX};
 
-/* Each event of random sessions goes to a KEYROUTE, as the compositor
-   takes it, and to a keyboard of its own, as the console takes it in
-   direct mode; for the events the window is sent, keys_window_edit of the
+/* Each event of random sessions, from any of the keyboards, goes to a
+   KEYROUTE, as the compositor takes it, and to a keyboard of its own, as
+   the console takes it in direct mode, and a keyboard that goes, goes
+   from both; for the events the window is sent, keys_window_edit of the
    WINDOW_KEY is the edit and character keys_event gives. */
 static void check_window_edit_session(unsigned *edits, unsigned *inserts)
 {
@@ -1335,16 +1580,24 @@ static void check_window_edit_session(unsigned *edits, unsigned *inserts)
     memset(&state, 0, sizeof state);
     memset(&direct, 0, sizeof direct);
     for (step = 0; step < SESSION_STEPS; step++) {
+        UINT32 keyboard = (UINT32)below(KEYBOARDS);
         INPUT_EVENT event = make_event(
             window_edit_codes[below(sizeof window_edit_codes /
                                     sizeof window_edit_codes[0])],
             random_value(), (UINT64)(step + 1) * TIME_STEP);
         UINT8 direct_character, window_character;
-        UINT32 direct_edit =
-            keys_event(&direct, event.code, event.value, &direct_character);
+        UINT32 direct_edit;
         WINDOW_INPUT routed;
 
-        if (keyroute_event(&state, &event, 1, &routed) != KEYROUTE_WINDOW)
+        if (below(70) == 0) {
+            keyroute_gone(&state, keyboard);
+            keys_gone(&direct, keyboard);
+            continue;
+        }
+        direct_edit = keys_event(&direct, keyboard, event.code, event.value,
+                                 &direct_character);
+        if (keyroute_event(&state, keyboard, &event, 1, &routed) !=
+            KEYROUTE_WINDOW)
             continue;
         {
             UINT32 window_edit = keys_window_edit(

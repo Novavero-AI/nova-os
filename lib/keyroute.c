@@ -70,15 +70,17 @@ static UINT32 window_is_sent(KEYROUTE *state, const INPUT_EVENT *event)
     }
 }
 
-UINT32 keyroute_event(KEYROUTE *state, const INPUT_EVENT *event,
-                      UINT32 focused, WINDOW_INPUT *routed)
+UINT32 keyroute_event(KEYROUTE *state, UINT32 source,
+                      const INPUT_EVENT *event, UINT32 focused,
+                      WINDOW_INPUT *routed)
 {
     UINT8 character;
     UINT32 pressed_attention =
         event->value == INPUT_KEY_PRESSED &&
         keys_attention(&state->keyboard, event->code);
 
-    keys_event(&state->keyboard, event->code, event->value, &character);
+    keys_event(&state->keyboard, source, event->code, event->value,
+               &character);
     if (pressed_attention) {
         /* The key now held is the attention key's, whose repeats and
            release go nowhere, so a press of this code the window was sent
@@ -94,9 +96,9 @@ UINT32 keyroute_event(KEYROUTE *state, const INPUT_EVENT *event,
     return KEYROUTE_WINDOW;
 }
 
-void keyroute_gone(KEYROUTE *state)
+void keyroute_gone(KEYROUTE *state, UINT32 source)
 {
-    state->keyboard.held = 0;
+    keys_gone(&state->keyboard, source);
 }
 
 void keyroute_window_gone(KEYROUTE *state)

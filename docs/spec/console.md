@@ -331,7 +331,12 @@ its unshifted label, so `KEY_A` (30) gives `a` and `KEY_1` (2) gives
 each press toggles, shifts the letters alone, and Shift with Caps Lock
 gives them unshifted. A repeat (value 2) acts as a press, but does not
 toggle Caps Lock. With Control, Alt or Super held a character key gives
-nothing; the editing keys still edit.
+nothing; the editing keys still edit. The console takes the keys of
+every keyboard it reads as one keyboard's, as the compositor does
+([display.md D19](display.md#d19-the-build-plan)'s phase 3 arrangement,
+rule 6): a modifier is held while any keyboard holds it, and a keyboard
+whose endpoint closes lets go the modifier keys it held and none that
+another holds, and leaves Caps Lock as it was.
 
 While a read waits (C4) the keys edit its line:
 
