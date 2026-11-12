@@ -108,7 +108,7 @@ jobs:
             tools/check-endpoint.c lib/endpoint.c
           "$RUNNER_TEMP/check-endpoint"
 
-      - name: The console's panel from the kernel's background is the one it computes
+      - name: Limb as the console draws it over a whole screen is the kernel's image
         run: |
           cc -std=c11 -Wall -Wextra -pedantic -Werror -I include -I gfx \
             -I console -I lib -o "$RUNNER_TEMP/check-backdrop" \

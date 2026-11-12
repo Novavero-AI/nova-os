@@ -22,11 +22,9 @@ const CONSOLE_SESSION_CAPACITY 16
 const CONSOLE_SESSIONS 8
 # A read's flag: the line is not shown as it is typed, nor is its end.
 const CONSOLE_READ_NO_ECHO 0x1
-# The bytes of the answer to CONSOLE_SETUP_BACKGROUND.
-const CONSOLE_PREPARED_SIZE 4
-# The messages the control channel queues: the options, the background
-# or a connection, the display or the display after a compositor, and a
-# session for each the console serves.
+# The messages the control channel queues: the options, a connection,
+# the display or the display after a compositor, and a session for each
+# the console serves.
 const CONSOLE_CONTROL_CAPACITY CONSOLE_SESSIONS + 3
 
 # The options the first process sets (console.md C2), from flag files on
@@ -59,8 +57,8 @@ end
 struct CONSOLE_SETUP
   u32 transaction = 0  # 0
   # CONSOLE_SETUP_DISPLAY, CONSOLE_SETUP_SESSION,
-  # CONSOLE_SETUP_BACKGROUND, CONSOLE_SETUP_CONNECTION,
-  # CONSOLE_SETUP_DISPLAY_AFTER or CONSOLE_SETUP_OPTIONS
+  # CONSOLE_SETUP_CONNECTION, CONSOLE_SETUP_DISPLAY_AFTER or
+  # CONSOLE_SETUP_OPTIONS
   u32 kind
 end
 
@@ -75,8 +73,9 @@ struct CONSOLE_SETUP_DISPLAY_MESSAGE
   BOOTSTRAP_DISPLAY display  # the display, as nova-boot drew on it
 end
 
-# The setup that offers the console the kernel's background, to
-# prepare its panel from before the display comes (console.md C5).
+# The body of CONSOLE_SETUP_BACKGROUND, a retired message: a setup, the
+# display the console is to be given and the label of the kernel's
+# background.
 struct CONSOLE_SETUP_BACKGROUND_MESSAGE
   CONSOLE_SETUP setup  # CONSOLE_SETUP_BACKGROUND
   # the display the console is to be given
@@ -85,8 +84,7 @@ struct CONSOLE_SETUP_BACKGROUND_MESSAGE
   BOOTSTRAP_BACKGROUND background
 end
 
-# The setup that gives the console its options, before the background
-# and the display.
+# The setup that gives the console its options, before the display.
 struct CONSOLE_SETUP_OPTIONS_MESSAGE
   CONSOLE_SETUP setup                # CONSOLE_SETUP_OPTIONS
   u32 options mask CONSOLE_OPTIONS   # CONSOLE_OPTION_ bits
@@ -122,8 +120,7 @@ end
 
 # The control channel, from the first process: a CONSOLE_SETUP, its
 # kind saying what follows it and what handles it carries. The console
-# answers every CONSOLE_SETUP_BACKGROUND, so its end carries
-# CHANNEL_RIGHT_WRITE as well as CHANNEL_RIGHT_READ and RIGHT_WAIT.
+# answers none of them.
 channel control
   capacity CONSOLE_CONTROL_CAPACITY
   select kind
@@ -144,18 +141,22 @@ channel control
     handle channel travels read write wait needs read write wait
   end
 
-  # The kernel's background, before the display.
+  # The kernel's background, before the display: retired, since no first
+  # process sends it (console.md C1). Its number stays its own, and the
+  # console refuses it as a kind it does not have.
   request background CONSOLE_SETUP_BACKGROUND 3
     body CONSOLE_SETUP_BACKGROUND_MESSAGE
+    retired
     # the background's sections, mapped one after another
     handle section min 0 max BOOTSTRAP_BACKGROUND_SECTIONS_MAX travels read needs read
     reply prepared
   end
 
-  # The answer to a background, once the panel is prepared from it or
-  # it is refused: a transaction ID of 0 and no handles.
+  # The answer to a background, retired with it: a transaction ID of 0
+  # and no handles.
   reply prepared
     body transaction
+    retired
     field transaction = 0
   end
 
@@ -175,7 +176,7 @@ channel control
     handle resource travels use needs none
   end
 
-  # The options, once, before the background and the display.
+  # The options, once, before the display.
   request options CONSOLE_SETUP_OPTIONS 6
     body CONSOLE_SETUP_OPTIONS_MESSAGE
   end

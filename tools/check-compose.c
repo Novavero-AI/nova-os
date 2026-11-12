@@ -1550,8 +1550,8 @@ static int refused_for(UINT32 background, UINT32 width, UINT32 height,
 
 /* The kernel's background is the wallpaper only where it is Limb, in a
    format the composer reads, at the display's size, in the sections an
-   image that size takes; each refusal names its cause, and the console's
-   (docs/spec/console.md C5) are the same words. */
+   image that size takes (docs/spec/display.md D2); each refusal names
+   its cause. */
 static void check_wallpaper_refusals(void)
 {
     const UINT32 w = 1280, h = 800;

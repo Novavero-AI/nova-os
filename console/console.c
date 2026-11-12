@@ -5,11 +5,9 @@
    draws its panel's pixels (pane.c); it takes its keys and the wheel from
    the window and holds no input endpoint (C2). In direct mode it is the
    input drivers' client, which the platform driver starts and hands each
-   input endpoint on its bootstrap channel (C2): the kernel's background
-   comes on the control channel before the display, and the console
-   prepares its panel from it where it matches the display, and answers;
-   otherwise it prepares the panel once the display comes (C5). With the
-   display (C1) it draws the panel and, after every round of messages,
+   input endpoint on its bootstrap channel (C2): once the display comes
+   on the control channel (C1) it prepares its panel, computing Limb
+   under it (C5), draws the panel and, after every round of messages,
    the cells whose text changed and the caret. The display after a
    compositor, which ends window mode, comes the same way.
 
@@ -45,9 +43,8 @@
 #define LOG_COMPONENT "nova-console"
 
 /* Its own memory: the framebuffer's mapping, the backdrop and the masks,
-   and the kernel's background while the backdrop is made from it, each
-   mapped at the next free address from here, far above its image and
-   below its stack. */
+   each mapped at the next free address from here, far above its image
+   and below its stack. */
 #define MAPPINGS_BASE 0x0000000100000000ULL
 
 /* The caret shows for half a second, then hides for as long, while a
@@ -67,10 +64,6 @@
 #define ENTRIES (ENTRY_SESSIONS + CONSOLE_SESSIONS)
 
 #define WAKE_SIGNALS (CHANNEL_READABLE | CHANNEL_PEER_CLOSED)
-
-/* Where the panel's backdrop came from, as the display's line says. */
-#define BACKDROP_SECTION "section"
-#define BACKDROP_COMPUTED "computed"
 
 /* A session: its channel, HANDLE_INVALID for a free slot, and the read
    that waits on it, if one does, numbered in the order reads came. */
@@ -114,16 +107,10 @@ static TYPED typed[CONSOLE_LINE_MAX];
 static UINT32 typed_count;
 static UINT64 back;
 
-/* The panel, prepared for a screen of prepared_width x prepared_height
-   once prepared is set: its layout, its backdrop and masks in memory of
-   their sizes, its inks, where the backdrop came from and how long the
-   preparation took. */
+/* The panel, prepared once the display comes: its layout, its backdrop
+   and masks in memory of their sizes, and its inks. */
 static UINT32 drawing;
 static SCREEN screen;
-static int prepared;
-static INT64 prepared_width, prepared_height;
-static const char *backdrop_source;
-static UINT64 prepare_ns;
 static LAYOUT layout;
 static UINT32 *backdrop;
 static UINT64 backdrop_size;
@@ -143,7 +130,6 @@ static union {
     INPUT_EVENT event;
     INPUT_POINTER report;
     CONSOLE_SETUP_DISPLAY_MESSAGE setup;
-    CONSOLE_SETUP_BACKGROUND_MESSAGE background;
     CONSOLE_SETUP_OPTIONS_MESSAGE options;
     UINT8 bytes[sizeof(CONSOLE_REQUEST) + CONSOLE_WRITE_MAX];
 } message;
@@ -156,12 +142,6 @@ static union {
     CONSOLE_REPLY reply;
     UINT8 bytes[CONSOLE_SESSION_TO_CLIENT_BYTES_MAX];
 } answer;
-
-/* The answer to a background, aligned the same way. */
-static union {
-    UINT64 alignment;
-    UINT8 bytes[CONSOLE_CONTROL_TO_CLIENT_BYTES_MAX];
-} background_answer;
 
 /* Show the caret for CARET_BLINK_NS more. */
 static void caret_show(void)
@@ -454,7 +434,6 @@ static void release_panel(void)
         mapping_unmap(&mapping, masks, masks_size);
     backdrop = 0;
     masks = 0;
-    prepared = 0;
 }
 
 /* Lay the panel out for a width x height screen, with new memory for its
@@ -480,118 +459,21 @@ static UINT32 lay_out(INT64 width, INT64 height)
     return status;
 }
 
-/* With the backdrop made, render the masks and the inks, and note the
-   panel prepared for a width x height screen from source, since
-   started. */
-static void finish_panel(INT64 width, INT64 height, const char *source,
-                         UINT64 started)
-{
-    font_render(layout.cell_width, masks);
-    panel_inks(&inks);
-    panel.backdrop = backdrop;
-    panel.masks = masks;
-    prepared = 1;
-    prepared_width = width;
-    prepared_height = height;
-    backdrop_source = source;
-    prepare_ns = timing_now() - started;
-}
-
-/* Prepare the panel's backdrop from the kernel's background, whose
-   count sections are at handles, once message has shown it matches the
-   display the console is to be given. Logged, with the panel left
-   unprepared, if its memory or the background's mapping fails. */
-static void prepare_from(const CONSOLE_SETUP_BACKGROUND_MESSAGE *m,
-                        const RECEIVED_HANDLE *handles, UINT32 count,
-                        UINT64 started)
-{
-    const BOOTSTRAP_BACKGROUND *b = &m->background;
-    UINT64 bytes = (UINT64)b->width * b->height *
-                   BOOTSTRAP_BACKGROUND_PIXEL_BYTES,
-           mapped;
-    const UINT32 *image;
-    UINT32 status = lay_out(b->width, b->height);
-
-    if (status != OK) {
-        say_status("panel memory failed", status);
-        return;
-    }
-    image = mapping_image(&mapping, handles, count, bytes, &mapped, &status);
-    if (!image) {
-        release_panel();
-        say_status("background map failed", status);
-        return;
-    }
-    panel_backdrop_image(&layout, image, b->width, b->format, backdrop);
-    mapping_unmap(&mapping, image, mapped);
-    finish_panel(b->width, b->height, BACKDROP_SECTION, started);
-}
-
-/* Answer the first process's background, which carried transaction,
-   with the control channel's reply: the panel is prepared or it is
-   refused. */
-static void answer_prepared(UINT32 transaction)
-{
-    UINT32 size, status = console_control_prepared_encode(
-                    transaction, background_answer.bytes, &size);
-
-    if (status == OK)
-        status = channel_write(control, background_answer.bytes, size,
-                               no_handles, 0);
-    if (status != OK)
-        say_status("background answer failed", status);
-}
-
-/* The kernel's background, offered before the display in the message at m
-   (C5), whose check passed: prepare the panel from it where its label
-   matches the display the console is to be given, close its sections,
-   and answer the first process, which waits for the answer before it
-   reports its startup done. A background that does not match, or that
-   holds other sections than its label's image takes, is refused,
-   logged, and answered too, and the panel is prepared once the display
-   comes. */
-static void take_background(const CONSOLE_SETUP_BACKGROUND_MESSAGE *m,
-                            const RECEIVED_HANDLE *handles, UINT32 count)
-{
-    UINT64 started = timing_now();
-    const char *refusal = 0;
-    UINT32 i;
-
-    if (drawing)
-        refusal = "after the display";
-    else
-        refusal = panel_background_refusal(&m->background, &m->display);
-    if (!refusal &&
-        count != bootstrap_background_sections(m->background.width,
-                                               m->background.height))
-        refusal = "wrong sections";
-    if (refusal) {
-        say("nova-console: background refused reason=");
-        say_value(refusal);
-        say("\r\n");
-    } else {
-        prepare_from(m, handles, count, started);
-    }
-    for (i = 0; i < count; i++)
-        handle_close(handles[i].handle);
-    answer_prepared(m->setup.transaction);
-}
-
 /* Who held the display before the console and what the screen shows: the
    kernel, which left Limb, under which the panel is all there is to
    draw, or a compositor, whose last frame stays until Limb is drawn over
    it (C1, C2). */
 typedef enum { HANDOFF_FROM_KERNEL, HANDOFF_FROM_COMPOSITOR } HANDOFF;
 
-/* Take the display through resource, which covers its framebuffer, and
-   draw the panel, prepared now if it was not prepared for a screen this
-   size already, after Limb over the whole screen where the compositor
-   drew before. Any failure is logged, and the console goes on without
+/* Take the display through resource, which covers its framebuffer,
+   prepare the panel for it, its backdrop computed (C5), and draw the
+   panel, after Limb over the whole screen where the compositor drew
+   before. Any failure is logged, and the console goes on without
    drawing. */
 static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d,
                     HANDOFF handoff)
 {
-    UINT64 started = timing_now();
+    UINT64 started = timing_now(), preparing, prepare_ns;
     UINT32 status = drawing ? ERR_NOT_SUPPORTED
                             : mapping_display(&mapping, resource, d, &screen);
 
@@ -606,28 +488,26 @@ static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d,
         say_status("framebuffer map failed", status);
         return;
     }
-    if (!prepared || prepared_width != screen.width ||
-        prepared_height != screen.height) {
-        UINT64 preparing = timing_now();
-
-        status = lay_out(screen.width, screen.height);
-        if (status == ERR_NOT_SUPPORTED) {
-            say("nova-console: display refused reason=\"no room for a "
-                "cell\"\r\n");
-            return;
-        }
-        if (status != OK) {
-            say_status("panel memory failed", status);
-            return;
-        }
-        if (!panel_backdrop(&layout, screen.width, screen.height, backdrop)) {
-            release_panel();
-            say("nova-console: display refused reason=\"no background\"\r\n");
-            return;
-        }
-        finish_panel(screen.width, screen.height, BACKDROP_COMPUTED,
-                     preparing);
+    preparing = timing_now();
+    status = lay_out(screen.width, screen.height);
+    if (status == ERR_NOT_SUPPORTED) {
+        say("nova-console: display refused reason=\"no room for a cell\"\r\n");
+        return;
     }
+    if (status != OK) {
+        say_status("panel memory failed", status);
+        return;
+    }
+    if (!panel_backdrop(&layout, screen.width, screen.height, backdrop)) {
+        release_panel();
+        say("nova-console: display refused reason=\"no background\"\r\n");
+        return;
+    }
+    font_render(layout.cell_width, masks);
+    panel_inks(&inks);
+    panel.backdrop = backdrop;
+    panel.masks = masks;
+    prepare_ns = timing_now() - preparing;
     if (handoff == HANDOFF_FROM_COMPOSITOR && !panel_limb(&screen)) {
         say("nova-console: display refused reason=\"no background\"\r\n");
         return;
@@ -647,9 +527,7 @@ static void display(UINT32 resource, const BOOTSTRAP_DISPLAY *d,
     say_number(layout.columns);
     say("x");
     say_number(layout.rows);
-    say(" backdrop=");
-    say(backdrop_source);
-    say(" prepare_ms=");
+    say(" backdrop=computed prepare_ms=");
     timing_say_ms(prepare_ns);
     say(" draw_ms=");
     timing_say_ms(timing_now() - started);
@@ -852,19 +730,19 @@ static void take_display_after(const RECEIVED_HANDLE *resource,
     display(resource->handle, d, HANDOFF_FROM_COMPOSITOR);
 }
 
-/* The options, a display, the display after a compositor, a connection, a
-   session or the kernel's background from the first process. A message the
-   description does not allow is dropped, with the handles it carried
-   closed; a background that has a reply is answered with the request's
-   transaction alone, so the first process does not wait for it
-   (docs/spec/interface.md P10). */
+/* The options, a display, the display after a compositor, a connection or
+   a session from the first process. A message the description does not
+   allow, one of a retired kind among them, is dropped, with the handles
+   it carried closed (docs/spec/interface.md P10); the channel's limit
+   counts a retired kind's handles, so that such a message is read
+   whole. */
 static void serve_control(void)
 {
-    RECEIVED_HANDLE handles[BOOTSTRAP_BACKGROUND_SECTIONS_MAX];
+    RECEIVED_HANDLE handles[CONSOLE_CONTROL_TO_SERVER_HANDLES_MAX];
     UINT32 byte_count, handle_count = 0, which = CONSOLE_CONTROL_UNNAMED, i;
     UINT32 read_status = channel_read(control, message.bytes,
                                       sizeof message.bytes, handles,
-                                      BOOTSTRAP_BACKGROUND_SECTIONS_MAX,
+                                      CONSOLE_CONTROL_TO_SERVER_HANDLES_MAX,
                                       &byte_count, &handle_count);
     UINT32 status = read_status;
 
@@ -874,9 +752,7 @@ static void serve_control(void)
         status = console_control_request_check(message.bytes, byte_count,
                                                handles, handle_count, &which);
     if (status == OK) {
-        if (which == CONSOLE_SETUP_BACKGROUND)
-            take_background(&message.background, handles, handle_count);
-        else if (which == CONSOLE_SETUP_SESSION)
+        if (which == CONSOLE_SETUP_SESSION)
             add_session(&handles[0]);
         else if (which == CONSOLE_SETUP_OPTIONS)
             set_options(message.options.options);
@@ -888,10 +764,6 @@ static void serve_control(void)
             display(handles[0].handle, &message.setup.display,
                     HANDOFF_FROM_KERNEL);
         return;
-    }
-    if (which == CONSOLE_SETUP_BACKGROUND) {
-        say("nova-console: background refused reason=malformed\r\n");
-        answer_prepared(message.setup.setup.transaction);
     }
     for (i = 0; read_status == OK && i < handle_count; i++)
         handle_close(handles[i].handle);

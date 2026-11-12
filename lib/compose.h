@@ -283,10 +283,7 @@ void compose_write(const COMPOSE_BAND *band, const SCREEN *screen,
     sections sections, cannot be the wallpaper on display, a short phrase
     for the log; or 0 if it can: Limb, in a pixel format the composer
     reads, at the display's size, which Limb takes, in as many sections
-    as an image that size needs (docs/spec/display.md D2 rule 2). The
-    reasons are those the console gives for its panel
-    (docs/spec/console.md C5), but for the panel's own layout, which no
-    wallpaper needs. */
+    as an image that size needs (docs/spec/display.md D2 rule 2). */
 const char *compose_wallpaper_refusal(const BOOTSTRAP_BACKGROUND *background,
                                       const BOOTSTRAP_DISPLAY *display,
                                       UINT32 sections);

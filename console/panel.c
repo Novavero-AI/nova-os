@@ -1,8 +1,7 @@
-/* The panel. Its backdrop is made once, Limb's pixels, read from the
-   kernel's background or computed, mixed with the tint in linear light,
-   so that the framebuffer, which is mapped write-combining and slow to
-   read, is only written; a cell is drawn by mixing its masks' coverage
-   into the backdrop through tables. */
+/* The panel. Its backdrop is computed once, Limb's pixels mixed with the
+   tint in linear light, so that the framebuffer, which is mapped
+   write-combining and slow to read, is only written; a cell is drawn by
+   mixing its masks' coverage into the backdrop through tables. */
 
 #include "panel.h"
 #include "font.h"
@@ -177,57 +176,6 @@ int panel_backdrop(const LAYOUT *layout, INT64 width, INT64 height,
                 limb_pixel(&limb, layout->box.left + x, layout->box.top + y);
     tint_backdrop(layout, backdrop);
     return 1;
-}
-
-const char *panel_background_refusal(const BOOTSTRAP_BACKGROUND *background,
-                                     const BOOTSTRAP_DISPLAY *display)
-{
-    LAYOUT layout;
-
-    if (background->background == BOOTSTRAP_BACKGROUND_NONE)
-        return "no image";
-    if (background->background != BOOTSTRAP_BACKGROUND_LIMB)
-        return "not limb";
-    if (background->format != PIXEL_RGB && background->format != PIXEL_BGR)
-        return "unknown format";
-    if (background->width != display->width ||
-        background->height != display->height)
-        return "another size";
-    if (background->width < LIMB_MIN_SIDE ||
-        background->height < LIMB_MIN_SIDE ||
-        background->width > LIMB_MAX_SIDE ||
-        background->height > LIMB_MAX_SIDE)
-        return "no size";
-    if (!panel_layout(&layout, background->width, background->height))
-        return "no room for a cell";
-    return 0;
-}
-
-/* The image's pixels go into the backdrop with their codes in its
-   order, red from bit 16 and blue from bit 0, gfx_pixel's order undone:
-   a PIXEL_BGR pixel as it is, a PIXEL_RGB one with red and blue
-   swapped. The tint reads only those 24 bits. The format is tested once
-   a row, since TinyCC inlines no call. */
-void panel_backdrop_image(const LAYOUT *layout, const UINT32 *image,
-                          INT64 width, UINT32 format, UINT32 *backdrop)
-{
-    INT64 w = box_width(layout), h = box_height(layout), x, y;
-
-    for (y = 0; y < h; y++) {
-        const UINT32 *row =
-            image + (layout->box.top + y) * width + layout->box.left;
-        UINT32 *out = backdrop + y * w;
-
-        if (format == PIXEL_BGR)
-            for (x = 0; x < w; x++)
-                out[x] = row[x];
-        else
-            for (x = 0; x < w; x++)
-                out[x] = (row[x] & CHANNEL_MASK) << 2 * CHANNEL_BITS |
-                         (row[x] & CHANNEL_MASK << CHANNEL_BITS) |
-                         (row[x] >> 2 * CHANNEL_BITS & CHANNEL_MASK);
-    }
-    tint_backdrop(layout, backdrop);
 }
 
 void panel_inks(INKS *inks)

@@ -111,11 +111,13 @@ a time:
 2. The compositor maps the framebuffer write-combining, in sections of
    at most `SECTION_MAX_SIZE`, and maps the background's sections to
    read, one after another, as its wallpaper, where the label is the
-   wallpaper it shows, Limb, at the screen's size, as the console takes
-   it for its panel ([console.md C5](console.md#c5-the-panel)). It
-   holds them while the wallpaper stays that, and closes them when it
-   computes another: a wallpaper the settings name, or a screen of a
-   new size ([D18](#d18-the-gpu-path)). Where the label does not match,
+   wallpaper it shows: `BOOTSTRAP_BACKGROUND_LIMB`, in `PIXEL_RGB` or
+   `PIXEL_BGR`, at the width and height of the display the first
+   process says it will give, which Limb takes, and where the sections
+   are the ones an image that size takes. It holds them while the
+   wallpaper stays that, and closes them when it computes another: a
+   wallpaper the settings name, or a screen of a new size
+   ([D18](#d18-the-gpu-path)). Where the label does not match,
    and in a compositor started again ([D3](#d3-the-compositors-supervision-its-restart-and-what-a-crash-shows)),
    which gets no background, it computes Limb into its own memory with
    `gfx/limb.c`. Limb's pixels are a function of the screen's size
@@ -148,7 +150,7 @@ a time:
   1280 x 800 under KVM, measured ([D9](#d9-budgets)), and 3.6 s at
   2880 x 1800 under TCG, during which the screen shows the kernel's
   Limb and nothing responds. The kernel draws only what it fades in
-  and never interprets a wallpaper; the label lets each receiver keep
+  and never interprets a wallpaper; the label lets the compositor keep
   the computing path that a setting, a resize and a restart need.
 - **Cost:** Limb's image held for the compositor's life, 3.9 MiB at
   1280 x 800 and 19.8 MiB at 2880 x 1800, and by the first process from
@@ -1714,9 +1716,8 @@ login's session as it does on its own
    console no connection there, and the console, which runs, draws
    nothing. The steps:
    1. The first process reports its startup done
-      ([console.md C1](console.md#c1-the-display-handoff)) without
-      waiting for the console, since no background goes to the console,
-      and holds the kernel's background until step 3.
+      ([console.md C1](console.md#c1-the-display-handoff)) once it has
+      the kernel's background, which it holds until step 3.
    2. Once the kernel has released the display, the platform driver
       starts the compositor in the root job, on a client channel of its
       own, and hands it each input endpoint, those reported before it
@@ -1729,10 +1730,10 @@ login's session as it does on its own
    3. The first process sends the compositor `COMPOSITOR_SETUP_OPTIONS`,
       its bits 0 but those a test disk's flag files set; then
       `COMPOSITOR_SETUP_BACKGROUND`, labelled on a test disk for a
-      display a row taller, as console.md C5 labels the console's, so
-      test disks check the computed Limb and the system disk the
-      kernel's; then `COMPOSITOR_SETUP_DISPLAY`. It waits for no answer
-      between them.
+      display a row taller
+      ([console.md C5](console.md#c5-the-panel)), so test disks check
+      the computed Limb and the system disk the kernel's; then
+      `COMPOSITOR_SETUP_DISPLAY`. It waits for no answer between them.
    4. It sends login's session to the console, whatever follows; the
       console has had its options since it started
       ([console.md C2](console.md#c2-starting-the-console)). Once both
@@ -1845,7 +1846,7 @@ login's session as it does on its own
      wallpaper; `first_frame_ms`, from its start to its first frame's
      `SFENCE`. On a test disk
      `nova-compositor: background refused reason="another size"` comes
-     before it, as the console's does.
+     before it.
    - `nova-compositor: connection issued number=1 label=console mark=no
      layers=system rights=none`, for each connection issued (D17, rule
      5): the layers and the rights each a comma-joined list of their
@@ -1910,7 +1911,7 @@ login's session as it does on its own
    `fallback.img` is the test disk with `\NOVA\COMPFAIL` added. Its CI
    boot requires, with the counts given:
    - `nova-compositor: background refused reason="another size"` once,
-     as the console's is on a test disk;
+     as on every test disk;
    - for each of the compositor's two starts, `nova-compositor: display`
      with `wallpaper=computed`, `nova-compositor: connection issued` for
      the label `console`, the console's `nova-console: window` and then
