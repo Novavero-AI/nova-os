@@ -143,9 +143,10 @@ CI checks every pull request and every push to main:
   runs `tools/check-probe-protocol.c` under the sanitizers,
   `tools/check-console-protocol.c` and `tools/check-display-protocol.c`,
   `ci/check-boot.py`, which replays serial lines through `ci/boot.py` to
-  check which lines the fallback and window boots require, which
-  failure lines the fallback boot accepts, which lines the window boot
-  refuses, in what order the window boot's pointer and key lines must
+  check which lines the fallback, no-answer and window boots require,
+  which failure lines the fallback and no-answer boots accept, which
+  lines the no-answer and window boots refuse, in what order the window
+  boot's pointer and key lines must
   come, and how
   the screens a boot waits for are polled, and
   actionlint over the workflows.
@@ -189,7 +190,12 @@ CI checks every pull request and every push to main:
   line, Limb alone or the console's window over it, and the console draw
   the display after the compositor, with no other failure line, and
   then goes on as the test disk's boot does, logging in through the
-  console's keys. A boot of `window.img`
+  console's keys. A boot of `noanswer.img` must show the compositor
+  take the display and answer no connection, the first process end it
+  at the deadline of its wait at each of its two starts, restart it once
+  and then give it up, and the console draw the display after it, with
+  no connection issued, no window made and no other failure line, and
+  then goes on as the fallback boot does. A boot of `window.img`
   must show the compositor issue a test client's connection and the
   client's window made, its first buffer shown and its second shown
   with the first released, with no close of the window or the

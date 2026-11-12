@@ -91,6 +91,13 @@ int platform_keep(const PLATFORM *platform, const char *name,
    (console.h). */
 void platform_start_compositor(const PLATFORM *platform);
 
+/* End the compositor that runs, which has not answered a connection by
+   its deadline (compositor.h): task_kill on its process, which needs
+   nothing of it. Its end then reaches the supervisor's port as any end
+   of it does, exit code PROCESS_EXIT_KILLED, and it is started again or
+   given up as the restart policy allows. Returns task_kill's status. */
+UINT32 platform_end_compositor(void);
+
 /* Supervise what platform_start left running for the life of the
    system: restart a driver or its client that ends, as the policy
    allows, and hand the client each endpoint a restarted driver reports.

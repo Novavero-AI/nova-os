@@ -15,7 +15,9 @@
 
    A compositor that the options tell to exit for a test, a disk that
    carries COMPFAIL, ends just after the first frame that shows a
-   window's present (serve.c; display.md D19, rule 9). */
+   window's present, and one they tell to give no answer, a disk that
+   carries NOANSWER, answers no connection the first process issues
+   (serve.c; display.md D19, rule 9). */
 
 #include "compositor.h"
 #include "display_protocol.h"

@@ -704,11 +704,19 @@ static UINT32 begin_connection(const COMPOSITOR_CONNECT_REQUEST *request,
     return OK;
 }
 
+/* Issue the connection request asks for, whose compositor end is handle,
+   if none is served, and answer it. With COMPOSITOR_OPTION_NO_ANSWER_TEST
+   the request is taken, its end closed, and no answer sent, so that the
+   first process's wait for one meets its deadline (D19, rule 9). */
 static void issue_connection(const COMPOSITOR_CONNECT_REQUEST *request,
                              UINT32 handle)
 {
     UINT32 status = ERR_NO_RESOURCES;
 
+    if (host->options & COMPOSITOR_OPTION_NO_ANSWER_TEST) {
+        handle_close(handle);
+        return;
+    }
     if (connection.channel == HANDLE_INVALID)
         status = begin_connection(request, handle);
     if (status != OK)

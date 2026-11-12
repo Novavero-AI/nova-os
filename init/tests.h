@@ -37,6 +37,11 @@ int tests_enabled(void);
    (disk-layout.md, display.md D19). */
 #define TEST_FLAG_COMPOSITOR_FAILS "COMPFAIL"
 
+/* The flag file that makes the compositor answer no COMPOSITOR_CONNECT,
+   each time it starts, on a test disk, so that the first process's wait
+   for the answer meets its deadline (disk-layout.md, display.md D19). */
+#define TEST_FLAG_NO_ANSWER "NOANSWER"
+
 /* The flag file that makes the first process start the window test
    client, which makes a window and shows two frames on a test disk, in the
    console's place as the compositor's client (test/wintest.h, display.md

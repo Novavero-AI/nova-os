@@ -33,7 +33,8 @@ void console_started(const PLATFORM *platform);
    the control channel once the compositor has answered. Does nothing
    where no compositor runs, no console does, or the window test client
    holds the compositor in the console's place (rule 11). A compositor
-   that ends before it answers is rule 9's: the connection is issued
+   that ends before it answers, or that compositor_connect ends for not
+   answering by its deadline, is rule 9's: the connection is issued
    again when it is started again. A refusal is logged by
    compositor_connect. */
 void console_connect(void);

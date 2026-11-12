@@ -5,8 +5,8 @@ Usage: python3 -I ci/boot.py --code CODE.fd --vars VARS.fd --log LOG
                              [--tests] [--data DATA [--corrupt-gpt KIND]]
                              [--size WIDTHxHEIGHT]
                              [--fonts FONTS [--screen SCREEN.ppm]]
-                             {system,fallback,window,persist,chain,specimen,
-                              logout} DISK
+                             {system,fallback,noanswer,window,persist,chain,
+                              specimen,logout} DISK
                              [-- QEMU_ARG ...]
 
 Boots DISK with the machine and devices of README.md's Run section,
@@ -30,8 +30,8 @@ boot disk's read, the data disk's check with a data disk whose GPT is
 whole, and in chain mode the chain, each of its steps and each pinned
 link. Without --tests, a report anywhere in the log fails the boot, and
 the kernel must report its random number generator's self-test
-passing. chain, fallback, window and specimen take only a test disk, and
-fallback and persist a whole data disk.
+passing. chain, fallback, noanswer, window and specimen take only a test
+disk, and fallback, noanswer and persist a whole data disk.
 
 In system mode, the boot must report the store service serving, startup
 done, the background drawn, the compositor's display, its wallpaper
@@ -99,7 +99,23 @@ seen. Of the lines that report a failure the boot accepts only those of
 the first process and the drivers, each as often as it is reported and
 no more, and any other fails it; it then goes on as system mode does,
 matching the screen against the host's render and logging in on the
-console. In window mode, the boot of window.img, a
+console. In noanswer mode, the boot of noanswer.img, a test disk whose
+first process has the compositor answer no connection, at every start,
+must show the first process end the compositor at the deadline of its
+wait for the answer, and give it up (docs/spec/display.md D3 and D19,
+rules 2 and 9): the compositor's refusal of the background and its
+display line, its line for each input endpoint, which shows it serving
+while it does not answer, the first process's line for the wait that
+failed with ERR_TIMED_OUT, and the compositor's end with
+PROCESS_EXIT_KILLED, the display line, the wait's and the end each once
+for each of its two starts; the first process restarting it once and
+giving it up; each of the three input drivers started again for the
+compositor's second start; and the console drawing the display after it.
+A line for a connection issued or for the console's window fails the
+boot, since the compositor answers none. Of the lines that report a
+failure it accepts those the fallback boot accepts and the wait's, once
+for each start, and it then goes on as the fallback boot does. In window
+mode, the boot of window.img, a
 test disk whose first process starts a test client that makes a window
 on the compositor in the console's place (docs/spec/display.md D19,
 rules 2, 4, 5, 8 and 11), must report the compositor refusing the background and computing
@@ -432,6 +448,29 @@ FALLBACK_LINES = (
     + [INPUT_RESTARTED[0].repeated(INPUT_FUNCTIONS)]
     + [CONSOLE_AFTER])
 
+# The no-answer boot's lines (docs/spec/display.md D3 and D19, rules 2
+# and 9). The compositor of noanswer.img takes the display, serves its
+# input endpoints and answers no connection, so the first process's wait
+# for the console's connection passes its deadline at each of the
+# compositor's two starts: it logs that the wait failed with
+# ERR_TIMED_OUT and ends the compositor with task_kill, whose end it logs
+# with PROCESS_EXIT_KILLED (include/native_abi.h). It restarts the
+# compositor once and then gives it up, as the fallback boot's, and the
+# input drivers and the console follow as they do there. The compositor's
+# line for each input endpoint comes from its first start alone: the
+# drivers are started again for the second only once its wait is over.
+ERR_TIMED_OUT = 10
+PROCESS_EXIT_KILLED = 0x100
+CONNECTION_UNANSWERED = Event("nova-init: connection wait failed status=%d"
+                              % ERR_TIMED_OUT)
+COMPOSITOR_KILLED = Event("nova-init: child ended name=compositor exit=%d"
+                          % PROCESS_EXIT_KILLED)
+
+# How long the first process waits for the compositor's answer to a
+# connection, COMPOSITOR_CONNECT_DEADLINE_SECONDS in init/compositor.h:
+# the no-answer boot sits through one such wait for each start.
+CONNECT_DEADLINE_SECONDS = 30
+
 STARTUP_LINES = [
     Event("nova-store: serving"),
     STARTUP_DONE,
@@ -443,6 +482,15 @@ STARTUP_LINES = [
 # once the compositor is given up.
 SYSTEM_LINES = STARTUP_LINES + input_lines("nova-compositor")
 FALLBACK_STARTUP_LINES = STARTUP_LINES + INPUT_LINES
+NO_ANSWER_LINES = (
+    input_lines("nova-compositor")
+    + [REFUSED_BACKGROUND,
+       COMPOSITOR_DISPLAY.repeated(COMPOSITOR_STARTS),
+       CONNECTION_UNANSWERED.repeated(COMPOSITOR_STARTS),
+       COMPOSITOR_KILLED.repeated(COMPOSITOR_STARTS),
+       COMPOSITOR_RESTARTED, COMPOSITOR_GIVEN_UP]
+    + [INPUT_RESTARTED[0].repeated(INPUT_FUNCTIONS)]
+    + [CONSOLE_AFTER])
 
 # The window boot's lines (docs/spec/display.md D19, rules 2, 4, 5 and 8,
 # and test/wintest.h). The compositor, started on a test disk, refuses the
@@ -490,9 +538,18 @@ COMPOSITOR_REFUSED = [Event("nova-compositor: window closed"),
 # since the test client is the compositor's one.
 WINDOW_REFUSED = COMPOSITOR_REFUSED + [Event("nova-console: window")]
 
+# The no-answer boot's compositor answers no connection, so a line of its
+# for one issued, or of the console's for a window, means it answered.
+NO_ANSWER_REFUSED = [CONSOLE_CONNECTION, CONSOLE_WINDOW]
+
 # The modes whose console draws in a window on the compositor, through
 # which the boot types and points (docs/spec/display.md D19, rule 2).
 WINDOW_PATH_MODES = ("system", "persist", "logout")
+
+# The modes whose compositor is given up, so that the console takes the
+# display and the boot types and points through the console alone (rule
+# 9).
+GIVEN_UP_MODES = ("fallback", "noanswer")
 
 CHAIN_LINES = [STARTUP_DONE]
 
@@ -570,6 +627,10 @@ PPM_FIELDS = 4
 DEFAULT_TIMEOUTS = {"system": 300, "fallback": 300, "window": 300,
                     "persist": 300, "chain": 2700, "specimen": 300,
                     "logout": 300}
+# The no-answer boot is the fallback boot's with the waits it sits through.
+DEFAULT_TIMEOUTS["noanswer"] = (
+    DEFAULT_TIMEOUTS["fallback"]
+    + COMPOSITOR_STARTS * CONNECT_DEADLINE_SECONDS)
 
 DATA_LINES = [
     Event("nova-fs: pool opened", lba=ANY_VALUE),
@@ -1429,31 +1490,43 @@ ACCEPTED_FAILURES = [(COMPOSITOR_RESTARTED, False),
                      (COMPOSITOR_GIVEN_UP, False)] + [
     (event, True) for event in INPUT_RESTARTED]
 
+# What the no-answer boot accepts of those lines: the fallback boot's, and
+# the first process's line for its wait that failed, once for each start
+# of the compositor (docs/spec/display.md D19, rule 2, step 4).
+NO_ANSWER_FAILURES = ACCEPTED_FAILURES + [
+    (CONNECTION_UNANSWERED.repeated(COMPOSITOR_STARTS), False)]
+
 
 def accepted_failures(mode):
     """The failure lines a boot in mode accepts: those of the fallback
-    boot in fallback mode, and none in any other."""
-    return ACCEPTED_FAILURES if mode == "fallback" else []
+    boot in fallback mode, those of the no-answer boot in noanswer mode,
+    and none in any other."""
+    return {"fallback": ACCEPTED_FAILURES,
+            "noanswer": NO_ANSWER_FAILURES}.get(mode, [])
 
 
 def refused_lines(mode):
     """The lines, besides those that report a failure, that fail a boot
     in mode: the window boot's WINDOW_REFUSED, the console in a window's
-    COMPOSITOR_REFUSED, and none in any other."""
+    COMPOSITOR_REFUSED, the no-answer boot's NO_ANSWER_REFUSED, and none
+    in any other."""
     if mode == "window":
         return WINDOW_REFUSED
+    if mode == "noanswer":
+        return NO_ANSWER_REFUSED
     return COMPOSITOR_REFUSED if mode in WINDOW_PATH_MODES else []
 
 
 class Accepted:
     """The failure lines a boot may report, as ACCEPTED_FAILURES gives
-    them, and none other: take a line, and it is accepted only the first
-    time it comes, or for the first time for its input function, of
-    which there are INPUT_FUNCTIONS at most, each with a pci key."""
+    them, and none other: take a line, and it is accepted only as often
+    as its Event is to be reported, once unless it says more, in all or
+    for its input function, of which there are INPUT_FUNCTIONS at most,
+    each with a pci key."""
 
     def __init__(self, accepted):
         self.accepted = accepted
-        self.seen = set()
+        self.seen = {}
         self.functions = set()
 
     def take(self, parsed):
@@ -1466,9 +1539,10 @@ class Accepted:
                                      and len(self.functions)
                                      == INPUT_FUNCTIONS)):
                 return False
-            if (index, function) in self.seen:
+            key = (index, function)
+            if self.seen.get(key, 0) == event.times:
                 return False
-            self.seen.add((index, function))
+            self.seen[key] = self.seen.get(key, 0) + 1
             if per_function:
                 self.functions.add(function)
             return True
@@ -1822,8 +1896,7 @@ class Serial:
                 raise BootFailed("reported a failure: "
                                  + line[LINE_START.search(line).start():])
             if any(event.matches(parsed) for event in self.refused):
-                raise BootFailed("reported a close its holder does not "
-                                 "make: "
+                raise BootFailed("reported a line this boot refuses: "
                                  + line[LINE_START.search(line).start():])
             if self.script:
                 self.script.take(parsed)
@@ -2713,7 +2786,7 @@ def boot(args, scratch, log, data_drive, data_lines, first):
     accounts = (args.mode not in ("chain", "specimen", "window")
                 and data_drive and not args.corrupt_gpt)
     screens = None
-    if (accounts and args.mode in ("system", "fallback")
+    if (accounts and args.mode in ("system",) + GIVEN_UP_MODES
             or args.mode == "window"):
         screens = build_screens(scratch)
     ready = []
@@ -2748,7 +2821,8 @@ def boot(args, scratch, log, data_drive, data_lines, first):
         lines = {"chain": CHAIN_LINES,
                  "specimen": SPECIMEN_LINES,
                  "window": WINDOW_LINES,
-                 "fallback": FALLBACK_STARTUP_LINES + FALLBACK_LINES}.get(
+                 "fallback": FALLBACK_STARTUP_LINES + FALLBACK_LINES,
+                 "noanswer": FALLBACK_STARTUP_LINES + NO_ANSWER_LINES}.get(
                      args.mode, SYSTEM_LINES + COMPOSITOR_DRAWN[args.tests])
         if not args.tests:
             lines = [RANDOM_PASSED] + lines
@@ -2766,7 +2840,7 @@ def boot(args, scratch, log, data_drive, data_lines, first):
             check_specimen(qmp_path, scratch, args.fonts, args.screen)
         if args.mode == "window":
             drive_window(serial, qmp_path, scratch, screens)
-        if args.mode in ("system", "fallback", "persist"):
+        if args.mode in ("system", "persist") + GIVEN_UP_MODES:
             drive(serial, qmp_path, os.path.join(scratch, DATA_COPY),
                   accounts, first, screens, scratch, args.tests,
                   serial.window if args.mode in WINDOW_PATH_MODES else None)
@@ -2827,10 +2901,10 @@ def main():
     args = parser.parse_args()
     if args.corrupt_gpt and not args.data:
         parser.error("--corrupt-gpt needs --data")
-    if args.mode in ("fallback", "persist") and (not args.data
-                                                 or args.corrupt_gpt):
+    if (args.mode in ("persist",) + GIVEN_UP_MODES
+            and (not args.data or args.corrupt_gpt)):
         parser.error("%s needs --data, whole" % args.mode)
-    if (args.mode in ("chain", "fallback", "specimen", "window")
+    if (args.mode in ("chain", "specimen", "window") + GIVEN_UP_MODES
             and not args.tests):
         parser.error("%s takes only a test disk, with --tests" % args.mode)
     if args.mode == "logout" and (args.tests or not args.data
@@ -2840,10 +2914,10 @@ def main():
         parser.error("specimen needs --fonts, and only specimen takes it")
     if args.screen and args.mode != "specimen":
         parser.error("only specimen takes --screen")
-    if args.size and args.mode not in ("system", "fallback", "window",
-                                       "persist"):
-        parser.error("only system, fallback, window and persist take "
-                     "--size")
+    if args.size and args.mode not in (("system", "window", "persist")
+                                       + GIVEN_UP_MODES):
+        parser.error("only system, fallback, noanswer, window and persist "
+                     "take --size")
     if args.timeout is None:
         args.timeout = DEFAULT_TIMEOUTS[args.mode]
     with tempfile.TemporaryDirectory() as scratch, \
