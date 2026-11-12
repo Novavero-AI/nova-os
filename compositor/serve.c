@@ -165,8 +165,13 @@ static const COMPOSE_POINTER pointer_image = {
     THEME_POINTER_EDGE_OPACITY_DEFAULT};
 static COMPOSE_CURSOR cursor;
 
-/* What is to be composed at the next frame, and when that may be. */
+/* What is to be composed at the next frame, and when that may be: the one
+   rectangle that holds what a window's presents and its closing damage,
+   and, apart from it, the pointer's image where the screen shows it and
+   where the pointer is now (D19, the notes on the damage between two
+   frames and on the pointer's two boxes). */
 static RECT damage;
+static COMPOSE_CURSOR_DAMAGE pointer_damage;
 static UINT64 next_frame;
 
 static void zero(void *memory, UINT64 count)
@@ -292,20 +297,17 @@ static void send_routed(const ROUTED *routed)
 }
 
 /* Move the pointer's image to the pixel the pointer's position rounds
-   down to, once the pointer has a place, and damage what that changes
-   (D19, rule 7). */
+   down to, once the pointer has a place, and record what that damages
+   (D19, rule 7): the image's old box and its new, which stay apart from
+   the frame's one rectangle, so that a long move composes no more than a
+   short one. */
 static void move_cursor(void)
 {
-    RECT boxes[2];
-    UINT32 count, i;
-
     if (!route_placed(&route))
         return;
-    count = compose_cursor_move(&cursor, host->screen,
-                                route.x / DISPLAY_POSITION_ONE,
-                                route.y / DISPLAY_POSITION_ONE, boxes);
-    for (i = 0; i < count; i++)
-        window_damage_join(&damage, &boxes[i]);
+    compose_cursor_move(&cursor, host->screen,
+                        route.x / DISPLAY_POSITION_ONE,
+                        route.y / DISPLAY_POSITION_ONE, &pointer_damage);
 }
 
 /* A pointer report of input's endpoint: what the window is sent, and the
@@ -892,20 +894,28 @@ static void serve_bootstrap(void)
 /* ------------------------------------------------------------------------
    Frames. */
 
-/* Whether a frame has something to do: damage to compose, or a frame to
-   tell the window of. */
+/* Whether a frame has something to do: damage to compose, the frame's one
+   rectangle or the pointer's, or a frame to tell the window of. */
 static int frame_wanted(void)
 {
-    return damage.left < damage.right || window.frame_owed;
+    RECT rects[COMPOSE_CURSOR_RECTS_MAX];
+
+    return damage.left < damage.right ||
+           compose_cursor_rects(&pointer_damage, rects) != 0 ||
+           window.frame_owed;
 }
 
 /* Compose the damage if a frame is due, and tell the window it showed its
    present (D7, rule 3): at most once each FRAME_NS, and only when
-   something is damaged or owed. */
+   something is damaged or owed. The frame's one rectangle is composed,
+   and then the pointer's rectangles, each apart, so that nothing between
+   them is composed; a pixel in more than one is composed once for each,
+   to the same colour. */
 static void frame(void)
 {
     COMPOSE_WINDOW shown;
-    UINT32 count = 0;
+    RECT rects[COMPOSE_CURSOR_RECTS_MAX];
+    UINT32 count = 0, pointer_count, i;
     UINT64 begun = timing_now(), time;
 
     if (!frame_wanted() || begun < next_frame)
@@ -929,10 +939,15 @@ static void frame(void)
     }
     compose_frame(host->screen, host->wallpaper, &shown, count, &damage,
                   host->band, TILE_ROWS, &cursor);
+    pointer_count = compose_cursor_rects(&pointer_damage, rects);
+    for (i = 0; i < pointer_count; i++)
+        compose_frame(host->screen, host->wallpaper, &shown, count, &rects[i],
+                      host->band, TILE_ROWS, &cursor);
     gfx_flush();
     time = timing_now();
     next_frame = begun + FRAME_NS;
     damage.left = damage.top = damage.right = damage.bottom = 0;
+    zero(&pointer_damage, sizeof pointer_damage);
     if (window.frame_owed) {
         backlog_frame(&window.backlog, time);
         window.frame_owed = 0;

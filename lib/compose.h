@@ -13,7 +13,8 @@
     blocks. The pointer's image is drawn over a band from the theme's
     outlines at the screen's scale, by lib/outline.c, last, so over every
     window; a frame draws it where a COMPOSE_CURSOR says the pointer is,
-    and compose_cursor_move says what a move of it damages.
+    compose_cursor_move says what a move of it damages, and
+    compose_cursor_rects which rectangles a frame composes for its moves.
 
     Integer arithmetic only, with no machine dependence, so a host build
     composes the pixels nova-os does (tools/check-compose.c), and every
@@ -189,6 +190,29 @@ typedef struct {
     INT64 y;                      /**< its row */
 } COMPOSE_CURSOR;
 
+/** The most rectangles a frame composes for the pointer's moves: the
+    image's old box and its new. */
+#define COMPOSE_CURSOR_RECTS_MAX 2
+
+/** What the pointer's moves between two frames damage (display.md D19,
+    rule 7, and its note on the pointer's two boxes): the image's box
+    where the screen shows it and its box where the pointer is now, each
+    cut by the screen and in whole blocks of its framebuffer
+    (compose_blocks). The two are kept apart from a frame's other damage
+    and from each other, so that a move across the screen composes two
+    images and nothing between them. All zero, no move has come since a
+    frame; the compositor zeroes it once a frame has composed its
+    rectangles (compose_cursor_rects). */
+typedef struct {
+    UINT32 moved; /**< nonzero once a move has come since the frame */
+    RECT old;     /**< the image's box where the last frame drew it,
+                       which the first move since that frame sets; no
+                       pixel where no frame has drawn the image, or its
+                       box lay off the screen */
+    RECT now;     /**< its box where the pointer is, which every move
+                       sets; no pixel where it lies off the screen */
+} COMPOSE_CURSOR_DAMAGE;
+
 /** Make the corners of radius, in OUTLINE_ONE units, 256ths of a pixel,
     as outline_rounded_rect takes it, so the console panel's radius at
     an 18 pixel cell, 22 pixels, is 5632: the coverage of a square of
@@ -327,18 +351,34 @@ int compose_pointer_box(OUTLINE *work, const COMPOSE_POINTER *pointer,
 /** Move the pointer, which a frame draws where cursor says, to the pixel
     (x, y) of screen: the hotspot is that pixel's top left corner, wherever
     in the pixel the pointer's position is (display.md D19, rule 7), so a
-    move within a pixel changes nothing. Sets boxes[0] and boxes[1] to
-    what the move damages and returns how many it set: 0 where the
-    pointer is on that pixel already, 1 for the first move, which gives
-    it a place, and 2 after that, the image's old place and its new. Each
-    box is compose_pointer_box's for the pixel, as compose_blocks gives it
-    for screen, so that a frame composed over the rectangle that holds
-    them, with cursor, shows the image at its new place and at no other. It
-    returns 0 with cursor unchanged where compose_pointer_box refuses the
-    image at the scale, which then is drawn nowhere; the compositor never
-    meets that, for the theme's arrow is within the rasterizer's reach at
-    every scale a screen it draws on gives. */
-UINT32 compose_cursor_move(COMPOSE_CURSOR *cursor, const SCREEN *screen,
-                           INT64 x, INT64 y, RECT boxes[2]);
+    move within a pixel changes nothing. Records in *damage what the move
+    damages. The first move since a frame, which finds damage->moved 0,
+    sets damage->old to the image's box at the place it leaves, where the
+    last frame drew it, or to no pixel if the pointer had no place; a
+    later move leaves damage->old, since no frame drew the image at the
+    places between. Every move sets damage->now to the image's box at
+    (x, y). Each box is compose_pointer_box's for its pixel, as
+    compose_blocks gives it for screen. cursor and *damage are unchanged
+    where the pointer is on that pixel already, and where
+    compose_pointer_box refuses the image at the scale, which then is
+    drawn nowhere; the compositor never meets that, for the theme's arrow
+    is within the rasterizer's reach at every scale a screen it draws on
+    gives. */
+void compose_cursor_move(COMPOSE_CURSOR *cursor, const SCREEN *screen,
+                         INT64 x, INT64 y, COMPOSE_CURSOR_DAMAGE *damage);
+
+/** The rectangles a frame composes for the pointer's moves since the
+    last frame (display.md D19, the note on the pointer's two boxes):
+    sets rects from rects[0] and returns how many it set, at most
+    COMPOSE_CURSOR_RECTS_MAX. Where damage's old box and its new share no
+    pixel they are each of them that has one, the old first, so that
+    nothing between them is composed however far the pointer moved. Where
+    they share one they are their join alone, the smallest rectangle that
+    holds both, so that no pixel is composed twice. It returns 0 where no
+    move has come or neither box has a pixel. A frame composed over each
+    of them (compose_frame), with the cursor the moves were made on,
+    shows the image at its new place and at no other. */
+UINT32 compose_cursor_rects(const COMPOSE_CURSOR_DAMAGE *damage,
+                            RECT rects[COMPOSE_CURSOR_RECTS_MAX]);
 
 #endif
